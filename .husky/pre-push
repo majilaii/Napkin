@@ -1,0 +1,1 @@
+deno test --allow-env --allow-net supabase/functions/foursquare-search/test.ts
