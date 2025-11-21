@@ -57,7 +57,6 @@ This stack is chosen for rapid development, solo-dev efficiency, and scalability
 *   **1. The Logging Flow**
     *   Search for a restaurant (Foursquare default).
     *   Add a review, including:
-        *   "The Vibe" Tags.
         *   The "Value Profile" sliders/tags.
         *   Photo Upload (compressed via the client).
         *   Review Text.

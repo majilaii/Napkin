@@ -105,8 +105,6 @@ Date Picker.
 
 Star Rating (1-5).
 
-"The Vibe" Tags.
-
 Value Profile: Sliders/Tags for this specific meal.
 
 Photo Upload (Compressed via expo-image-manipulator before upload).

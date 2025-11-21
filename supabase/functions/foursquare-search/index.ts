@@ -11,12 +11,16 @@ type SearchPayload = {
 };
 
 const FOURSQUARE_API_KEY = Deno.env.get('FOURSQUARE_API_KEY');
-const FOURSQUARE_BASE_URL = 'https://api.foursquare.com/v3/places/search';
+const FOURSQUARE_BASE_URL = 'https://places-api.foursquare.com/places/search';
+
+
 
 serve(async req => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
+
+  console.log('FOURSQUARE_API_KEY', FOURSQUARE_API_KEY);
 
   try {
     if (!FOURSQUARE_API_KEY) {
@@ -30,6 +34,7 @@ serve(async req => {
     }
 
     const payload: SearchPayload = await parsePayload(req);
+    console.log('payload', payload);
     const query = payload.query?.trim();
 
     if (!query) {
@@ -45,7 +50,7 @@ serve(async req => {
     const searchParams = new URLSearchParams({
       query,
       limit: String(clamp(payload.limit ?? 5, 1, 20)),
-      fields: 'fsq_id,name,location,geocodes,link,website,categories,distance',
+      fields: 'fsq_place_id,name,location,latitude,longitude,link,website,categories,distance',
     });
 
     if (payload.radius) {
@@ -63,11 +68,17 @@ serve(async req => {
     const upstream = await fetch(`${FOURSQUARE_BASE_URL}?${searchParams.toString()}`, {
       headers: {
         Accept: 'application/json',
-        Authorization: FOURSQUARE_API_KEY,
+        'Authorization': `Bearer ${FOURSQUARE_API_KEY}`,
+        'X-Places-Api-Version': '2025-06-17',
       },
     });
 
     const responseBody = await upstream.json();
+
+    // DEBUG: Log the first result to see the raw structure
+    if (responseBody.results && responseBody.results.length > 0) {
+      console.log('Raw Foursquare Result:', JSON.stringify(responseBody.results[0]));
+    }
 
     if (!upstream.ok) {
       return new Response(
@@ -83,14 +94,14 @@ serve(async req => {
     }
 
     const sanitized = (responseBody?.results ?? []).map((place: any) => ({
-      id: place.fsq_id,
+      id: place.fsq_place_id,
       name: place.name,
       formattedAddress: place?.location?.formatted_address ?? null,
       locality: place?.location?.locality ?? null,
       region: place?.location?.region ?? null,
       country: place?.location?.country ?? null,
-      latitude: place?.geocodes?.main?.latitude ?? null,
-      longitude: place?.geocodes?.main?.longitude ?? null,
+      latitude: place.latitude ?? null,
+      longitude: place.longitude ?? null,
       categories: (place?.categories ?? []).map((category: any) => category?.name).filter(Boolean),
       distance: place?.distance ?? null,
       website: place?.website ?? null,

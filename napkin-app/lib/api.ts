@@ -1,3 +1,4 @@
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 
 export interface FoursquarePlace {
@@ -27,6 +28,11 @@ export async function searchRestaurants(query: string, near?: string, latitude?:
   });
 
   if (error) {
+    if (error instanceof FunctionsHttpError) {
+      const errorMessage = await error.context.json();
+      console.error('Edge Function returned an error:', errorMessage);
+      throw new Error(errorMessage.error || 'Search failed');
+    }
     console.error('Search error:', error);
     throw error;
   }
