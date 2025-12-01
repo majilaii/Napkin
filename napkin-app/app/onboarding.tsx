@@ -12,10 +12,10 @@ export default function OnboardingScreen() {
     const theme = Colors[colorScheme ?? 'light'];
     const [loading, setLoading] = useState(false);
     const [values, setValues] = useState({
-        flavor: 10,
-        ambience: 10,
-        value: 10,
-        service: 10,
+        flavor: 0,
+        ambience: 0,
+        value: 0,
+        service: 0,
     });
 
     const handleSave = async () => {

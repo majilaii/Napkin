@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { router } from 'expo-router';
+import { supabase } from '@/lib/supabase';
 
 export default function TabTwoScreen() {
   const colorScheme = useColorScheme();
@@ -20,6 +21,7 @@ export default function TabTwoScreen() {
       <Text style={{ color: theme.text, fontSize: 24, marginBottom: 20 }}>Explore</Text>
       <Button title="Search" onPress={handleSearch} color={theme.tint} />
       <Button title="test onboarding" onPress={() => router.push('/onboarding')} color='red' />
+      <Button title="test log out" onPress={() => supabase.auth.signOut()} color='blue' />
       <ScrollView style={{ width: '100%', padding: 20 }}>
         {restaurants.map((restaurant) => (
           <View key={restaurant.id} style={[styles.restaurant, { backgroundColor: theme.tint }]}>

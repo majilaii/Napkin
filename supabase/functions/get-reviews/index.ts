@@ -20,6 +20,9 @@ serve(async (req) => {
         // Ideally we might want to look up by Foursquare ID too?
         const foursquareId = searchParams.get('foursquare_id');
 
+        console.log('get-reviews called');
+        console.log('Params:', { userId, restaurantId, foursquareId });
+
         let query = supabaseClient
             .from('reviews')
             .select(`
@@ -50,7 +53,11 @@ serve(async (req) => {
 
         const { data, error } = await query;
 
-        if (error) throw error;
+        if (error) {
+            console.error('get-reviews error:', error);
+            throw error;
+        }
+        console.log('get-reviews success, count:', data?.length);
 
         return new Response(
             JSON.stringify({ data }),
