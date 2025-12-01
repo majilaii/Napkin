@@ -39,7 +39,7 @@ export function LogModal({
 
     const handleRating = (r: number) => {
         setRating(r);
-        onRate(r);
+        // onRate(r); // Wait for Done button
     };
 
     const toggleOption = (key: keyof typeof toggles) => {
@@ -138,7 +138,10 @@ export function LogModal({
 
                                 <TouchableOpacity
                                     style={styles.actionRow}
-                                    onPress={() => onAction('review')}
+                                    onPress={() => {
+                                        if (rating > 0) onRate(rating);
+                                        onAction('review');
+                                    }}
                                 >
                                     <Ionicons name="create-outline" size={24} color="#333" />
                                     <Text style={styles.actionText}>Review or Log</Text>
@@ -153,6 +156,15 @@ export function LogModal({
                                     <Text style={styles.actionText}>Share</Text>
                                 </TouchableOpacity>
                             </View>
+
+                            {rating > 0 && (
+                                <TouchableOpacity
+                                    style={[styles.doneButton, { backgroundColor: 'black' }]}
+                                    onPress={() => onRate(rating)}
+                                >
+                                    <Text style={styles.doneButtonText}>Done</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
                     </TouchableWithoutFeedback>
                 </View>
@@ -236,5 +248,19 @@ const styles = StyleSheet.create({
     actionText: {
         fontSize: 16,
         color: '#333',
+    },
+    doneButton: {
+        marginTop: 24,
+        paddingHorizontal: 32,
+        paddingVertical: 16,
+        borderRadius: 30,
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+    },
+    doneButtonText: {
+        color: 'white',
+        fontSize: 18,
+        fontWeight: 'bold',
     },
 });

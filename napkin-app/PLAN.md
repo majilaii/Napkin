@@ -25,8 +25,6 @@ Ambience (Vibe/Decor)
 
 Value (Price-to-quality ratio)
 
-Location (Convenience)
-
 Service (Hospitality)
 
 Usage:

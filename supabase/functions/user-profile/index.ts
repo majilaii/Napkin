@@ -24,17 +24,24 @@ serve(async (req) => {
         }
 
         if (req.method === 'GET') {
+            console.log('user-profile GET called for user:', user.id);
             const { data, error } = await supabaseClient
-                .from('value_profiles')
-                .select('*')
+                .from('profiles')
+                .select(`
+                    *,
+                    value_profiles(*)
+                `)
                 .eq('user_id', user.id)
                 .single();
 
-            if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+            if (error) {
+                console.error('user-profile GET error:', error);
                 throw error;
             }
+            console.log('user-profile GET success, found:', !!data);
 
             return new Response(
+                JSON.stringify(data),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
         }

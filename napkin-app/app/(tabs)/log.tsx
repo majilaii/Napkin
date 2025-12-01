@@ -4,8 +4,19 @@ import {
     Text,
     TextInput,
     StyleSheet,
-    ScrollView
-} from 'react-native'
+    ScrollView,
+    TouchableOpacity,
+    ActivityIndicator,
+    SafeAreaView,
+    Alert,
+    useColorScheme as useRNColorScheme
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { supabase } from '@/lib/supabase';
+import { LogModal } from '@/components/LogModal';
+import { StarRating } from '@/components/StarRating';
 
 type Restaurant = {
     id: string;
@@ -135,19 +146,21 @@ export default function LogScreen() {
 
         // Fast review (rating only)
         try {
-            const { error } = await supabase.functions.invoke('review', {
-                body: {
-                    restaurant: {
-                        foursquare_id: selectedRestaurant.id,
-                        name: selectedRestaurant.name,
-                        location: {
-                            address: selectedRestaurant.formattedAddress,
-                        },
-                        latitude: selectedRestaurant.latitude,
-                        longitude: selectedRestaurant.longitude,
+            const payload = {
+                restaurant: {
+                    foursquare_id: selectedRestaurant.id,
+                    name: selectedRestaurant.name,
+                    location: {
+                        address: selectedRestaurant.formattedAddress,
                     },
-                    rating: r,
-                }
+                    latitude: selectedRestaurant.latitude,
+                    longitude: selectedRestaurant.longitude,
+                },
+                rating: r,
+            };
+            console.log('Sending fast review payload:', JSON.stringify(payload));
+            const { error } = await supabase.functions.invoke('review', {
+                body: payload
             });
             if (error) throw error;
             console.log('Rating saved:', r);
@@ -159,22 +172,30 @@ export default function LogScreen() {
     const handleSubmitReview = async () => {
         if (!selectedRestaurant) return;
 
+        if (rating === 0) {
+            Alert.alert('Rating Required', 'Please provide a rating of at least 0.5 stars.');
+            return;
+        }
+
         try {
-            const { error } = await supabase.functions.invoke('review', {
-                body: {
-                    restaurant: {
-                        foursquare_id: selectedRestaurant.id,
-                        name: selectedRestaurant.name,
-                        location: {
-                            address: selectedRestaurant.formattedAddress,
-                        },
-                        latitude: selectedRestaurant.latitude,
-                        longitude: selectedRestaurant.longitude,
+            const payload = {
+                restaurant: {
+                    foursquare_id: selectedRestaurant.id,
+                    name: selectedRestaurant.name,
+                    location: {
+                        address: selectedRestaurant.formattedAddress,
                     },
-                    rating: rating,
-                    content: reviewText,
-                    value_profile: valueProfile,
-                }
+                    latitude: selectedRestaurant.latitude,
+                    longitude: selectedRestaurant.longitude,
+                },
+                rating: rating,
+                content: reviewText,
+                value_profile: valueProfile,
+            };
+            console.log('Submitting full review payload:', JSON.stringify(payload));
+
+            const { error } = await supabase.functions.invoke('review', {
+                body: payload
             });
 
             if (error) throw error;
@@ -297,10 +318,17 @@ export default function LogScreen() {
 
             <Text style={[styles.header, { color: theme.text }]}>Write a Review</Text>
 
+            <View style={{ alignItems: 'center', marginBottom: 24 }}>
+                <StarRating
+                    rating={rating}
+                    onRatingChange={setRating}
+                    size={40}
+                />
+            </View>
+
             <View style={styles.section}>
                 <Text style={[styles.label, { color: theme.text }]}>Value Profile Snapshot</Text>
                 <Text style={styles.helperText}>Your current profile will be attached to this review.</Text>
-                {/* We could show a read-only ValueProfile here if we wanted, but for now just text is fine or a mini visualization */}
                 <View style={{ padding: 10, backgroundColor: theme.tint + '20', borderRadius: 8 }}>
                     <Text style={{ color: theme.text }}>
                         Flavor: {valueProfile.flavor}, Ambience: {valueProfile.ambience}, Value: {valueProfile.value}, Service: {valueProfile.service}
@@ -321,12 +349,12 @@ export default function LogScreen() {
             </View>
 
             <TouchableOpacity
-                style={[styles.submitButton, { backgroundColor: theme.tint }]}
+                style={[styles.submitButton, { backgroundColor: 'red' }]}
                 onPress={handleSubmitReview}
             >
                 <Text style={styles.submitButtonText}>Submit Log</Text>
             </TouchableOpacity>
-        </ScrollView>
+        </ScrollView >
     );
 
     return (
@@ -350,7 +378,7 @@ export default function LogScreen() {
         </SafeAreaView>
     );
 }
-import { useColorScheme } from 'react-native';
+
 
 const styles = StyleSheet.create({
     container: {

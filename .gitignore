@@ -36,6 +36,9 @@ yarn-error.log*
 *.sublime-project
 *.sublime-workspace
 
+# Documentation (auto-generated)
+doc/
+
 # Supabase
 supabase/.temp/
 supabase/.branches/

@@ -8,34 +8,64 @@ serve(async (req) => {
     }
 
     try {
-        const supabaseClient = createClient(
-            Deno.env.get('SUPABASE_URL') ?? '',
-            Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-            { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+        // Debug logging
+        const authHeader = req.headers.get('Authorization');
+        const supabaseUrl = Deno.env.get('SUPABASE_URL');
+        const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+
+        console.log('Debug Env:', {
+            hasUrl: !!supabaseUrl,
+            hasAnonKey: !!supabaseAnonKey,
+            urlPrefix: supabaseUrl?.substring(0, 10),
+            hasAuthHeader: !!authHeader,
+            authHeaderLength: authHeader?.length
+        });
+
+        if (!authHeader) {
+            console.error('Missing Authorization header');
+            return new Response(
+                JSON.stringify({ error: 'Missing Authorization header' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        const token = authHeader.replace('Bearer ', '');
+
+        // Single Supabase Client with User Authentication
+        // This client enforces RLS policies - the database handles security
+        const supabase = createClient(
+            supabaseUrl ?? '',
+            supabaseAnonKey ?? '',
+            { global: { headers: { Authorization: authHeader } } }
         );
 
-        const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+        // Verify User Authentication
+        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
 
         if (userError || !user) {
+            console.error('Auth Error Details:', JSON.stringify(userError));
             return new Response(
-                JSON.stringify({ error: 'Unauthorized' }),
+                JSON.stringify({ error: 'Unauthorized', details: userError }),
                 { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
         }
 
         if (req.method === 'POST') {
             const body = await req.json();
+            console.log('review function called with body:', JSON.stringify(body));
             const { restaurant, rating, content, value_profile } = body;
 
             if (!restaurant || !restaurant.foursquare_id || typeof rating !== 'number') {
+                console.error('Invalid payload:', { restaurant, rating });
                 return new Response(
                     JSON.stringify({ error: 'Invalid payload: missing restaurant or rating' }),
                     { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 );
             }
 
-            // 1. Upsert Restaurant
-            const { data: restaurantData, error: restaurantError } = await supabaseClient
+            // 1. Upsert Restaurant (Protected by RLS)
+            console.log('Upserting restaurant:', restaurant.name);
+            const { data: restaurantData, error: restaurantError } = await supabase
                 .from('restaurants')
                 .upsert({
                     foursquare_id: restaurant.foursquare_id,
@@ -55,9 +85,10 @@ serve(async (req) => {
             }
 
             const restaurantId = restaurantData.id;
+            console.log('Restaurant upserted, ID:', restaurantId);
 
-            // 2. Upsert Review
-            const { data: existingReview } = await supabaseClient
+            // 2. Upsert Review (Protected by RLS)
+            const { data: existingReview } = await supabase
                 .from('reviews')
                 .select('id')
                 .eq('user_id', user.id)
@@ -66,19 +97,20 @@ serve(async (req) => {
 
             let reviewResult;
             if (existingReview) {
-                reviewResult = await supabaseClient
+                console.log('Updating existing review:', existingReview.id);
+                reviewResult = await supabase
                     .from('reviews')
                     .update({
                         rating,
                         content,
                         value_profile: value_profile || {},
-                        updated_at: new Date().toISOString(),
                     })
                     .eq('id', existingReview.id)
                     .select()
                     .single();
             } else {
-                reviewResult = await supabaseClient
+                console.log('Creating new review');
+                reviewResult = await supabase
                     .from('reviews')
                     .insert({
                         user_id: user.id,
@@ -91,7 +123,11 @@ serve(async (req) => {
                     .single();
             }
 
-            if (reviewResult.error) throw reviewResult.error;
+            if (reviewResult.error) {
+                console.error('Review upsert error:', reviewResult.error);
+                throw reviewResult.error;
+            }
+            console.log('Review saved successfully');
 
             return new Response(
                 JSON.stringify({ data: reviewResult.data }),
