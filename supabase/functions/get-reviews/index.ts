@@ -8,27 +8,75 @@ serve(async (req) => {
     }
 
     try {
+        const authHeader = req.headers.get('Authorization');
+        const supabaseUrl = Deno.env.get('SUPABASE_URL');
+        const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+
+        console.log('get-reviews: Auth check', {
+            hasAuthHeader: !!authHeader,
+            authHeaderLength: authHeader?.length
+        });
+
+        if (!authHeader) {
+            console.error('get-reviews: Missing Authorization header');
+            return new Response(
+                JSON.stringify({ error: 'Missing Authorization header' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        const token = authHeader.replace('Bearer ', '');
+
         const supabaseClient = createClient(
-            Deno.env.get('SUPABASE_URL') ?? '',
-            Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-            { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+            supabaseUrl ?? '',
+            supabaseAnonKey ?? '',
+            { global: { headers: { Authorization: authHeader } } }
         );
 
-        const { searchParams } = new URL(req.url);
-        const userId = searchParams.get('user_id');
-        const restaurantId = searchParams.get('restaurant_id'); // This would be the UUID, not Foursquare ID, unless we handle lookup.
-        // Ideally we might want to look up by Foursquare ID too?
-        const foursquareId = searchParams.get('foursquare_id');
+        // Verify User Authentication
+        const { data: { user }, error: userError } = await supabaseClient.auth.getUser(token);
 
-        console.log('get-reviews called');
-        console.log('Params:', { userId, restaurantId, foursquareId });
+        if (userError || !user) {
+            console.error('get-reviews: Auth Error:', JSON.stringify(userError));
+            return new Response(
+                JSON.stringify({ error: 'Unauthorized', details: userError }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        console.log('get-reviews: User authenticated:', user.id);
+
+        // Parse query params - support both URL params and body
+        let userId: string | null = null;
+        let restaurantId: string | null = null;
+        let foursquareId: string | null = null;
+
+        // Check URL params first
+        const { searchParams } = new URL(req.url);
+        userId = searchParams.get('user_id');
+        restaurantId = searchParams.get('restaurant_id');
+        foursquareId = searchParams.get('foursquare_id');
+
+        // Also check body for POST-like invocations via supabase.functions.invoke
+        if (req.method === 'POST') {
+            try {
+                const body = await req.json();
+                userId = body.user_id ?? userId;
+                restaurantId = body.restaurant_id ?? restaurantId;
+                foursquareId = body.foursquare_id ?? foursquareId;
+            } catch {
+                // Body parsing failed, use URL params only
+            }
+        }
+
+        console.log('get-reviews: Params:', { userId, restaurantId, foursquareId });
 
         let query = supabaseClient
             .from('reviews')
             .select(`
-        *,
-        restaurant:restaurants(*)
-      `);
+                *,
+                restaurant:restaurants(*)
+            `);
 
         if (userId) {
             query = query.eq('user_id', userId);
@@ -37,14 +85,12 @@ serve(async (req) => {
         if (restaurantId) {
             query = query.eq('restaurant_id', restaurantId);
         } else if (foursquareId) {
-            // If we only have Foursquare ID, we need to filter on the joined table?
-            // Supabase/PostgREST allows filtering on joined tables: restaurant!inner(foursquare_id)
             query = supabaseClient
                 .from('reviews')
                 .select(`
-          *,
-          restaurant:restaurants!inner(*)
-        `)
+                    *,
+                    restaurant:restaurants!inner(*)
+                `)
                 .eq('restaurant.foursquare_id', foursquareId);
         }
 
@@ -54,10 +100,10 @@ serve(async (req) => {
         const { data, error } = await query;
 
         if (error) {
-            console.error('get-reviews error:', error);
+            console.error('get-reviews: Query error:', error);
             throw error;
         }
-        console.log('get-reviews success, count:', data?.length);
+        console.log('get-reviews: Success, count:', data?.length);
 
         return new Response(
             JSON.stringify({ data }),
@@ -65,7 +111,7 @@ serve(async (req) => {
         );
 
     } catch (error) {
-        console.error(error);
+        console.error('get-reviews: Error:', error);
         return new Response(
             JSON.stringify({ error: 'Internal Server Error', details: String(error) }),
             { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
