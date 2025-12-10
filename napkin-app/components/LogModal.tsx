@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -19,6 +19,16 @@ interface LogModalProps {
     restaurantName: string;
     onRate: (rating: number) => void;
     onAction: (action: 'been' | 'like' | 'try' | 'list' | 'review' | 'share') => void;
+    onDeleteReview?: () => void; // Called when user undoes a review (turns off Been after having reviewed)
+    onStatusChange?: (updates: { been?: boolean; liked?: boolean; want_to_try?: boolean }) => void; // Update status in backend
+    // Initial state from existing review
+    initialRating?: number;
+    initialToggles?: {
+        been?: boolean;
+        like?: boolean;
+        try?: boolean;
+    };
+    hasReviewed?: boolean; // If user has already written a detailed review
 }
 
 export function LogModal({
@@ -27,29 +37,96 @@ export function LogModal({
     restaurantName,
     onRate,
     onAction,
+    onDeleteReview,
+    onStatusChange,
+    initialRating = 0,
+    initialToggles = {},
+    hasReviewed = false,
 }: LogModalProps) {
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
-    const [rating, setRating] = useState(0);
+    const [rating, setRating] = useState(initialRating);
     const [toggles, setToggles] = useState({
-        been: false,
-        like: false,
-        try: false,
+        been: initialToggles.been ?? false,
+        like: initialToggles.like ?? false,
+        try: initialToggles.try ?? false,
     });
+
+    // Sync state when modal OPENS (not on every prop change to avoid flicker)
+    const wasVisible = React.useRef(false);
+    useEffect(() => {
+        // Only sync when modal transitions from closed to open
+        if (visible && wasVisible.current === false) {
+            setRating(initialRating);
+            setToggles({
+                been: initialToggles.been ?? false,
+                like: initialToggles.like ?? false,
+                try: initialToggles.try ?? false,
+            });
+        }
+        wasVisible.current = visible;
+    }, [visible, initialRating, initialToggles.been, initialToggles.like, initialToggles.try]);
 
     const handleRating = (r: number) => {
         setRating(r);
-        // onRate(r); // Wait for Done button
+        // Auto-toggle "Been" when user rates non-zero (they've been there!)
+        if (r > 0 && !toggles.been) {
+            setToggles((prev) => ({ ...prev, been: true }));
+        }
+    };
+
+    const handleDismiss = () => {
+        // Submit if user has rating OR has Been toggled on
+        if (rating > 0 || toggles.been) {
+            onRate(rating); // rating can be 0 (no rating / just visited)
+            if (toggles.been) {
+                onAction('been');
+            }
+        }
+        // Reset state for next open
+        setRating(0);
+        setToggles({ been: false, like: false, try: false });
+        onClose();
+    };
+
+    // Cancel: X button - close without submitting
+    const handleCancel = () => {
+        setRating(0);
+        setToggles({ been: false, like: false, try: false });
+        onClose();
     };
 
     const toggleOption = (key: keyof typeof toggles) => {
-        setToggles((prev) => {
-            const newState = { ...prev, [key]: !prev[key] };
-            if (newState[key]) {
-                onAction(key);
+        const newValue = !toggles[key];
+
+        // Special handling for "Been" toggle when turning OFF
+        if (key === 'been' && toggles.been) {
+            // Trying to turn OFF "Been"
+            // Only allow if current rating is 0 (user cleared their stars)
+            if (rating > 0) {
+                // Can't toggle off Been if there's a current rating
+                return;
             }
-            return newState;
-        });
+
+            // If "Been" was initially true (from backend), user is "undoing" their visit/review
+            // Delete in backend but DON'T close modal - user may want to do more
+            if (initialToggles.been && onDeleteReview) {
+                onDeleteReview();
+            }
+        }
+
+        // Update local state
+        setToggles((prev) => ({ ...prev, [key]: newValue }));
+
+        // Map toggle keys to backend field names and update backend status
+        if (onStatusChange) {
+            const fieldMap: Record<string, string> = {
+                been: 'been',
+                like: 'liked',
+                try: 'want_to_try',
+            };
+            onStatusChange({ [fieldMap[key]]: newValue });
+        }
     };
 
     return (
@@ -57,9 +134,9 @@ export function LogModal({
             visible={visible}
             transparent
             animationType="slide"
-            onRequestClose={onClose}
+            onRequestClose={handleDismiss}
         >
-            <TouchableWithoutFeedback onPress={onClose}>
+            <TouchableWithoutFeedback onPress={handleDismiss}>
                 <View style={styles.overlay}>
                     <TouchableWithoutFeedback>
                         <View style={styles.content}>
@@ -68,7 +145,7 @@ export function LogModal({
                                 <Text style={styles.restaurantName} numberOfLines={1}>
                                     {restaurantName}
                                 </Text>
-                                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                                <TouchableOpacity onPress={handleCancel} style={styles.closeButton}>
                                     <Ionicons name="close" size={24} color="#666" />
                                 </TouchableOpacity>
                             </View>
@@ -83,11 +160,15 @@ export function LogModal({
 
                             <View style={styles.togglesRow}>
                                 <TouchableOpacity
-                                    style={[styles.toggleBtn, toggles.been && { backgroundColor: theme.tint }]}
+                                    style={[
+                                        styles.toggleBtn,
+                                        toggles.been && { backgroundColor: '#00897b' },
+                                    ]}
                                     onPress={() => toggleOption('been')}
+                                    activeOpacity={toggles.been && rating > 0 ? 1 : 0.2}
                                 >
                                     <Ionicons
-                                        name={toggles.been ? 'eye' : 'eye-outline'}
+                                        name={toggles.been ? (rating > 0 ? 'checkmark-circle' : 'eye') : 'eye-outline'}
                                         size={24}
                                         color={toggles.been ? 'white' : '#666'}
                                     />
@@ -139,12 +220,14 @@ export function LogModal({
                                 <TouchableOpacity
                                     style={styles.actionRow}
                                     onPress={() => {
-                                        if (rating > 0) onRate(rating);
+                                        onRate(rating);
                                         onAction('review');
                                     }}
                                 >
                                     <Ionicons name="create-outline" size={24} color="#333" />
-                                    <Text style={styles.actionText}>Review or Log</Text>
+                                    <Text style={styles.actionText}>
+                                        {hasReviewed ? 'Review Again' : 'Review or Log'}
+                                    </Text>
                                     <Ionicons name="chevron-forward" size={20} color="#ccc" style={{ marginLeft: 'auto' }} />
                                 </TouchableOpacity>
 
@@ -157,14 +240,14 @@ export function LogModal({
                                 </TouchableOpacity>
                             </View>
 
-                            {rating > 0 && (
-                                <TouchableOpacity
-                                    style={[styles.doneButton, { backgroundColor: 'black' }]}
-                                    onPress={() => onRate(rating)}
-                                >
-                                    <Text style={styles.doneButtonText}>Done</Text>
-                                </TouchableOpacity>
-                            )}
+
+                            <TouchableOpacity
+                                style={[styles.doneButton, { backgroundColor: 'black' }]}
+                                onPress={handleDismiss}
+                            >
+                                <Text style={styles.doneButtonText}>Done</Text>
+                            </TouchableOpacity>
+
                         </View>
                     </TouchableWithoutFeedback>
                 </View>

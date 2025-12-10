@@ -117,13 +117,45 @@ The Graph: Visual representation of their "Value Profile."
 
 The Diary: Chronological list of past logs.
 
-3. Social (The Hook)
+3. Social (The Hook & Growth Engine)
 
-The "Table": When logging, tag other users.
+This system differentiates between casual dining (Tagging) and core relationships (The Table).
 
-Feed: Chronological feed of friends' logs.
+A. Ad-Hoc Dining: "The Open Seat" (Tagging)
 
-Follow Graph: Standard Follower/Following.
+    Logic: Ephemeral tagging for one-off meals.
+
+    The Ghost Tag (Growth Hack): If a user dines with a non-user (e.g., "Dad"), they can tag them as a "Ghost."
+
+        Action: The app generates a web-link receipt: "Review logged. Send Dad his receipt?"
+
+        Conversion: If Dad downloads the app via the link, that "Ghost" tag converts to a real User ID, retroactively populating his diary with this meal immediately.
+
+B. Core Squads: "The Table" (Permanent Entity)
+
+    The Concept: A "Table" is not a group chat; it is a Shared Profile Entity (e.g., "The Sunday Roast Club").
+
+    The Structure: It has its own Avatar, Stats (Aggregate Value Profile), and Map.
+
+    The Utility (Retention):
+
+        Shared Wishlist: Members add spots to the Table’s "To-Eat" list. (Solves the "Where should we eat?" friction).
+
+        Shared Diary: A filtered timeline showing only meals eaten by this specific group.
+
+    The Limits (Business Model):
+
+        Free: 1 Permanent Table (Targeting the Partner/Spouse use case).
+
+        Pro: Unlimited Tables (Targeting Friend Groups, Work Lunch Crews).
+
+C. The Feed (Aggregated View)
+
+    Logic: Chronological, but "De-Cluttered."
+
+    Bundled Events: If User A and User B belong to the same Table and log the same meal, the Feed displays a single "Table Event Card" (Split-screen photos/ratings) rather than two separate posts.
+
+    The Interaction: Likes/Comments apply to the Event, reinforcing the social proof of the group outing.
 
 6. Development Roadmap (3-Month Sprint)
 

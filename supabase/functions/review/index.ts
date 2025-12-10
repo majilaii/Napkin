@@ -55,10 +55,11 @@ serve(async (req) => {
             console.log('review function called with body:', JSON.stringify(body));
             const { restaurant, rating, content, value_profile } = body;
 
-            if (!restaurant || !restaurant.foursquare_id || typeof rating !== 'number') {
+            // Rating can be null (visited but no rating) or a number
+            if (!restaurant || !restaurant.foursquare_id) {
                 console.error('Invalid payload:', { restaurant, rating });
                 return new Response(
-                    JSON.stringify({ error: 'Invalid payload: missing restaurant or rating' }),
+                    JSON.stringify({ error: 'Invalid payload: missing restaurant' }),
                     { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 );
             }
@@ -95,13 +96,16 @@ serve(async (req) => {
                 .eq('restaurant_id', restaurantId)
                 .maybeSingle();
 
+            // Convert rating of 0 to null (means "visited but no rating")
+            const ratingValue = (rating === 0 || rating === undefined || rating === null) ? null : rating;
+
             let reviewResult;
             if (existingReview) {
                 console.log('Updating existing review:', existingReview.id);
                 reviewResult = await supabase
                     .from('reviews')
                     .update({
-                        rating,
+                        rating: ratingValue,
                         content,
                         value_profile: value_profile || {},
                     })
@@ -115,7 +119,7 @@ serve(async (req) => {
                     .insert({
                         user_id: user.id,
                         restaurant_id: restaurantId,
-                        rating,
+                        rating: ratingValue,
                         content,
                         value_profile: value_profile || {},
                     })
@@ -128,6 +132,36 @@ serve(async (req) => {
                 throw reviewResult.error;
             }
             console.log('Review saved successfully');
+
+            // 3. Upsert user_restaurant_status (mark as "been", optionally "liked")
+            const statusPayload: { been: boolean; liked?: boolean; want_to_try?: boolean } = {
+                been: true, // If they reviewed it, they've been there
+            };
+
+            // If liked is explicitly passed in the body, set it
+            if (typeof body.liked === 'boolean') {
+                statusPayload.liked = body.liked;
+            }
+
+            // If they've been, they probably don't "want to try" anymore
+            statusPayload.want_to_try = false;
+
+            console.log('Upserting user_restaurant_status:', statusPayload);
+            const { error: statusError } = await supabase
+                .from('user_restaurant_status')
+                .upsert({
+                    user_id: user.id,
+                    restaurant_id: restaurantId,
+                    ...statusPayload,
+                    updated_at: new Date().toISOString(),
+                }, { onConflict: 'user_id,restaurant_id' });
+
+            if (statusError) {
+                // Log but don't fail - status is secondary to the review
+                console.error('Status upsert error (non-fatal):', statusError);
+            } else {
+                console.log('Status updated successfully');
+            }
 
             return new Response(
                 JSON.stringify({ data: reviewResult.data }),

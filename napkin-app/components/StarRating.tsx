@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
+import React, { useRef, useCallback } from 'react';
+import { View, StyleSheet, ViewStyle, GestureResponderEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -20,35 +20,69 @@ export function StarRating({
   style,
 }: StarRatingProps) {
   const colorScheme = useColorScheme();
-  const activeColor = "black"
+  const activeColor = "black";
   const inactiveColor = 'grey';
 
-  const handlePress = (starIndex: number, isHalf: boolean) => {
-    const newRating = starIndex + (isHalf ? 0.5 : 1);
+  // Store container layout info
+  const containerLayout = useRef({ x: 0, width: 0 });
+
+  // Calculate rating from touch position
+  const getRatingFromTouch = useCallback((pageX: number): number => {
+    const { x, width } = containerLayout.current;
+    if (width === 0) return rating;
+
+    const relativeX = pageX - x;
+    const starWidth = width / maxStars;
+
+    if (relativeX <= 0) return 0; // Allow 0 stars
+    if (relativeX >= width) return maxStars;
+
+    // Calculate which star and whether it's left or right half
+    const starIndex = Math.floor(relativeX / starWidth);
+    const positionInStar = (relativeX % starWidth) / starWidth;
+
+    // Left half = 0.5, Right half = 1.0
+    const halfValue = positionInStar < 0.5 ? 0.5 : 1;
+    return Math.min(starIndex + halfValue, maxStars);
+  }, [maxStars, rating]);
+
+  // Handle touch start (tap or drag start)
+  const handleTouchStart = useCallback((event: GestureResponderEvent) => {
+    const newRating = getRatingFromTouch(event.nativeEvent.pageX);
     onRatingChange(newRating);
-  };
+  }, [getRatingFromTouch, onRatingChange]);
+
+  // Handle drag movement
+  const handleTouchMove = useCallback((event: GestureResponderEvent) => {
+    const newRating = getRatingFromTouch(event.nativeEvent.pageX);
+    onRatingChange(newRating);
+  }, [getRatingFromTouch, onRatingChange]);
+
+  // Measure container on layout
+  const handleLayout = useCallback(() => {
+    containerRef.current?.measureInWindow((x, _y, width) => {
+      containerLayout.current = { x, width };
+    });
+  }, []);
+
+  const containerRef = useRef<View>(null);
 
   return (
-    <View style={[styles.container, style]}>
+    <View
+      ref={containerRef}
+      style={[styles.container, style]}
+      onLayout={handleLayout}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={handleTouchStart}
+      onResponderMove={handleTouchMove}
+    >
       {Array.from({ length: maxStars }).map((_, index) => {
         const filled = rating >= index + 1;
         const halfFilled = rating >= index + 0.5 && rating < index + 1;
 
         return (
           <View key={index} style={styles.starContainer}>
-            {/* Left half tap target */}
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={[styles.tapTarget, styles.leftTap]}
-              onPress={() => handlePress(index, true)}
-            />
-            {/* Right half tap target */}
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={[styles.tapTarget, styles.rightTap]}
-              onPress={() => handlePress(index, false)}
-            />
-
             <Ionicons
               name={filled ? 'star' : halfFilled ? 'star-half' : 'star-outline'}
               size={size}
@@ -65,23 +99,9 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center', // Center the stars
+    justifyContent: 'center',
   },
   starContainer: {
-    position: 'relative',
     marginHorizontal: 4,
-  },
-  tapTarget: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: '50%',
-    zIndex: 1,
-  },
-  leftTap: {
-    left: 0,
-  },
-  rightTap: {
-    right: 0,
   },
 });
