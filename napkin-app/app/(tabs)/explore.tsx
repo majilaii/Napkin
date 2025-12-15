@@ -1,5 +1,5 @@
 import { Text, StyleSheet, View, Button, ScrollView } from 'react-native';
-import { FoursquarePlace, searchRestaurants } from '@/lib/api';
+import { Place, searchRestaurants } from '@/lib/api';
 import { useState } from 'react';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase';
 export default function TabTwoScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const [restaurants, setRestaurants] = useState<FoursquarePlace[]>([]);
+  const [restaurants, setRestaurants] = useState<Place[]>([]);
 
   const handleSearch = async () => {
     const restaurants = await searchRestaurants('restaurant', 'London');

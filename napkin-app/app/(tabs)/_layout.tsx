@@ -28,12 +28,6 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <Ionicons size={28} name="add-circle" color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="index"
-        options={{
-          href: null,
-        }}
-      />
     </Tabs>
   );
 }

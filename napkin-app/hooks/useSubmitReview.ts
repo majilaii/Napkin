@@ -45,6 +45,8 @@ export function useSubmitReview() {
             queryClient.invalidateQueries({ queryKey: queryKeys.restaurant(variables.restaurantId) });
             // Invalidate existing review cache so modal shows updated state
             queryClient.invalidateQueries({ queryKey: queryKeys.reviews.existing(variables.userId, variables.restaurantId) });
+            // Invalidate visit history cache for repeat dining feature
+            queryClient.invalidateQueries({ queryKey: queryKeys.reviews.history(variables.userId, variables.restaurantId) });
         },
     });
 }

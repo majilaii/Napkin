@@ -11,6 +11,8 @@ export const queryKeys = {
         byUser: (userId: string) => ['reviews', userId] as const,
         existing: (userId: string, restaurantId: string) =>
             ['existingReview', userId, restaurantId] as const,
+        history: (userId: string, restaurantId: string) =>
+            ['visitHistory', userId, restaurantId] as const,
     },
 
     // Restaurants
