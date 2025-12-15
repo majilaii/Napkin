@@ -1,0 +1,286 @@
+/* Reset and Base */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    min-height: 100vh;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Napkin Background */
+.napkin-background {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+}
+
+.napkin-texture {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    /* Warm cream/beige napkin color */
+    background: linear-gradient(135deg,
+            #f5f0e6 0%,
+            #ebe5d9 25%,
+            #f2ece0 50%,
+            #e8e2d6 75%,
+            #f0ead8 100%);
+    /* Paper texture overlay */
+    background-image:
+        url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E"),
+        linear-gradient(135deg, #f5f0e6 0%, #ebe5d9 25%, #f2ece0 50%, #e8e2d6 75%, #f0ead8 100%);
+    background-blend-mode: overlay;
+    opacity: 0.95;
+}
+
+/* Subtle fold lines on napkin */
+.napkin-texture::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.03), transparent);
+}
+
+.napkin-texture::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 1px;
+    height: 100%;
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.03), transparent);
+}
+
+/* Restaurant Entries Container */
+.restaurant-entries {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    padding: 60px 80px;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Individual Restaurant Entry */
+.restaurant-entry {
+    font-family: 'Permanent Marker', cursive;
+    color: #1a1a1a;
+    opacity: 0;
+    transform: translateX(-20px) rotate(var(--rotation, 0deg));
+    white-space: nowrap;
+    font-size: 55px;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    /* Subtle ink bleed effect */
+    text-shadow:
+        0 0 1px rgba(0, 0, 0, 0.3),
+        0.5px 0.5px 0 rgba(0, 0, 0, 0.1);
+}
+
+.restaurant-entry.visible {
+    opacity: 1;
+    transform: translateX(0) rotate(var(--rotation, 0deg));
+}
+
+.restaurant-entry .rank {
+    display: inline-block;
+    min-width: 45px;
+}
+
+.restaurant-entry .name {
+    display: inline;
+}
+
+/* SVG Text Animation */
+.restaurant-entry svg {
+    overflow: visible;
+}
+
+.restaurant-entry svg text {
+    font-family: 'Permanent Marker', cursive;
+    fill: none;
+    stroke: #1a1a1a;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+}
+
+.restaurant-entry.animate svg text {
+    animation: handwrite 1.5s ease-out forwards;
+}
+
+.restaurant-entry.filled svg text {
+    fill: #1a1a1a;
+    stroke-dashoffset: 0;
+}
+
+@keyframes handwrite {
+    0% {
+        stroke-dashoffset: 1000;
+        fill: transparent;
+    }
+
+    70% {
+        stroke-dashoffset: 0;
+        fill: transparent;
+    }
+
+    100% {
+        stroke-dashoffset: 0;
+        fill: #1a1a1a;
+    }
+}
+
+/* Onboarding Card */
+.onboarding-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    padding: 20px;
+}
+
+.onboarding-card {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 24px;
+    padding: 48px 40px;
+    max-width: 380px;
+    width: 100%;
+    text-align: center;
+    box-shadow:
+        0 4px 6px rgba(0, 0, 0, 0.02),
+        0 12px 24px rgba(0, 0, 0, 0.06),
+        0 24px 48px rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+.step-indicator {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 32px;
+}
+
+.step {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ddd;
+    transition: all 0.3s ease;
+}
+
+.step.active {
+    background: #1a1a1a;
+    width: 24px;
+    border-radius: 4px;
+}
+
+.step.completed {
+    background: #4CAF50;
+}
+
+.onboarding-card h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin-bottom: 12px;
+    letter-spacing: -0.5px;
+}
+
+.onboarding-card p {
+    font-size: 16px;
+    color: #666;
+    line-height: 1.5;
+    margin-bottom: 32px;
+}
+
+.next-btn {
+    width: 100%;
+    padding: 16px 32px;
+    font-size: 16px;
+    font-weight: 600;
+    color: white;
+    background: linear-gradient(135deg, #1a1a1a 0%, #333 100%);
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.next-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.next-btn:active {
+    transform: translateY(0);
+}
+
+/* Completed State */
+.onboarding-card.completed {
+    animation: cardExit 0.6s ease-out forwards;
+}
+
+@keyframes cardExit {
+    0% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    100% {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+}
+
+/* Welcome Home Screen */
+.home-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s ease;
+}
+
+.home-screen.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.home-screen h1 {
+    font-size: 48px;
+    font-weight: 700;
+    color: #1a1a1a;
+}
