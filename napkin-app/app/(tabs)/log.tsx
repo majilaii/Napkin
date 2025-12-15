@@ -3,13 +3,17 @@ import { StyleSheet, SafeAreaView, Alert } from 'react-native';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { LogModal } from '@/components/LogModal';
+import { EntriesModal } from '@/components/EntriesModal';
+import { EditEntryModal } from '@/components/EditEntryModal';
 import { useAuth } from '@/providers/AuthProvider';
 import { useProfile } from '@/hooks/useProfile';
 import { useRestaurantSearch, SearchResult } from '@/hooks/useRestaurantSearch';
 import { useSubmitReview } from '@/hooks/useSubmitReview';
 import { useExistingReview } from '@/hooks/useExistingReview';
+import { useVisitHistory, VisitEntry } from '@/hooks/useVisitHistory';
 import { useRestaurantStatus, useUpdateRestaurantStatus } from '@/hooks/useRestaurantStatus';
 import { useDeleteReview } from '@/hooks/useDeleteReview';
+import { useUpdateReview } from '@/hooks/useUpdateReview';
 import { SearchView, DetailsView, ReviewView } from '@/components/log';
 
 type Restaurant = SearchResult;
@@ -32,6 +36,9 @@ export default function LogScreen() {
     // Selected restaurant / review flow
     const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
     const [modalVisible, setModalVisible] = useState(false);
+    const [entriesModalVisible, setEntriesModalVisible] = useState(false);
+    const [editModalVisible, setEditModalVisible] = useState(false);
+    const [selectedEntry, setSelectedEntry] = useState<VisitEntry | null>(null);
     const [isReviewing, setIsReviewing] = useState(false);
 
     // Review State
@@ -62,8 +69,17 @@ export default function LogScreen() {
     // Delete review mutation
     const deleteReviewMutation = useDeleteReview();
 
+    // Update review mutation for editing entries
+    const updateReviewMutation = useUpdateReview();
+
     // Update restaurant status mutation (for been/like/try toggles)
     const updateStatusMutation = useUpdateRestaurantStatus();
+
+    // Get visit history for repeat dining
+    const { data: visitHistory = [] } = useVisitHistory(
+        userId,
+        selectedRestaurant?.id
+    );
 
     // Handler to update status when toggled in modal
     const handleStatusChange = (updates: { been?: boolean; liked?: boolean; want_to_try?: boolean }) => {
@@ -104,9 +120,14 @@ export default function LogScreen() {
 
     const handleModalAction = (action: string) => {
         console.log('Action:', action);
-        if (action === 'review') {
+        if (action === 'addEntry' || action === 'review') {
+            // Close modal and go to detailed review entry
             setModalVisible(false);
             setIsReviewing(true);
+        } else if (action === 'viewEntries') {
+            // Open entries modal
+            setModalVisible(false);
+            setEntriesModalVisible(true);
         } else {
             console.log('Action', `Selected: ${action}`);
         }
@@ -229,7 +250,7 @@ export default function LogScreen() {
                     onAction={handleModalAction}
                     onDeleteReview={handleDeleteReview}
                     onStatusChange={handleStatusChange}
-                    // Pass existing review state
+                    // Pass existing review state (latest entry)
                     initialRating={existingReview?.rating ?? 0}
                     initialToggles={{
                         been: restaurantStatus?.been ?? existingReview != null,
@@ -237,6 +258,74 @@ export default function LogScreen() {
                         try: restaurantStatus?.want_to_try ?? false,
                     }}
                     hasReviewed={existingReview?.content != null && existingReview.content.length > 0}
+                    // Repeat dining info
+                    visitCount={visitHistory.length}
+                    lastVisitDate={visitHistory[0]?.visited_at}
+                />
+            )}
+
+            {/* Entries Modal */}
+            {selectedRestaurant && (
+                <EntriesModal
+                    visible={entriesModalVisible}
+                    onClose={() => setEntriesModalVisible(false)}
+                    restaurantName={selectedRestaurant.name}
+                    entries={visitHistory}
+                    isLoading={false}
+                    onEditEntry={(entry) => {
+                        // Close EntriesModal first, then open EditEntryModal
+                        setEntriesModalVisible(false);
+                        setSelectedEntry(entry);
+                        // Small delay to allow modal transition
+                        setTimeout(() => setEditModalVisible(true), 100);
+                    }}
+                />
+            )}
+
+            {/* Edit Entry Modal */}
+            {selectedRestaurant && selectedEntry && (
+                <EditEntryModal
+                    visible={editModalVisible}
+                    onClose={() => {
+                        setEditModalVisible(false);
+                        setSelectedEntry(null);
+                        // Go back to entries list
+                        setTimeout(() => setEntriesModalVisible(true), 100);
+                    }}
+                    entry={selectedEntry}
+                    restaurantName={selectedRestaurant.name}
+                    onSave={async (entryId, updates) => {
+                        try {
+                            await updateReviewMutation.mutateAsync({
+                                reviewId: entryId,
+                                userId,
+                                restaurantId: selectedRestaurant.id,
+                                updates,
+                            });
+                            setEditModalVisible(false);
+                            setSelectedEntry(null);
+                            Alert.alert('Success', 'Entry updated!');
+                        } catch (e) {
+                            console.error('Error updating entry:', e);
+                            Alert.alert('Error', 'Failed to update entry');
+                        }
+                    }}
+                    onDelete={async (entryId) => {
+                        try {
+                            await deleteReviewMutation.mutateAsync({
+                                reviewId: entryId,
+                                userId,
+                                restaurantId: selectedRestaurant.id,
+                            });
+                            setEditModalVisible(false);
+                            setSelectedEntry(null);
+                            Alert.alert('Success', 'Entry deleted');
+                        } catch (e) {
+                            console.error('Error deleting entry:', e);
+                            Alert.alert('Error', 'Failed to delete entry');
+                        }
+                    }}
+                    isLoading={updateReviewMutation.isPending || deleteReviewMutation.isPending}
                 />
             )}
         </SafeAreaView>

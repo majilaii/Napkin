@@ -1,7 +1,7 @@
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 
-export interface FoursquarePlace {
+export interface Place {
   id: string;
   name: string;
   formattedAddress: string | null;
@@ -17,10 +17,9 @@ export interface FoursquarePlace {
 }
 
 export async function searchRestaurants(query: string, near?: string, latitude?: number, longitude?: number) {
-  const { data, error } = await supabase.functions.invoke('foursquare-search', {
+  const { data, error } = await supabase.functions.invoke('places-search', {
     body: {
       query,
-      near,
       latitude,
       longitude,
       limit: 10,
@@ -37,7 +36,7 @@ export async function searchRestaurants(query: string, near?: string, latitude?:
     throw error;
   }
 
-  return data.data as FoursquarePlace[];
+  return data.data as Place[];
 }
 
 // Review types

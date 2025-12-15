@@ -18,7 +18,7 @@ interface LogModalProps {
     onClose: () => void;
     restaurantName: string;
     onRate: (rating: number) => void;
-    onAction: (action: 'been' | 'like' | 'try' | 'list' | 'review' | 'share') => void;
+    onAction: (action: 'been' | 'like' | 'try' | 'list' | 'review' | 'share' | 'addEntry' | 'viewEntries') => void;
     onDeleteReview?: () => void; // Called when user undoes a review (turns off Been after having reviewed)
     onStatusChange?: (updates: { been?: boolean; liked?: boolean; want_to_try?: boolean }) => void; // Update status in backend
     // Initial state from existing review
@@ -29,6 +29,9 @@ interface LogModalProps {
         try?: boolean;
     };
     hasReviewed?: boolean; // If user has already written a detailed review
+    // Repeat dining info
+    visitCount?: number; // Number of previous visits
+    lastVisitDate?: string; // Date of most recent visit
 }
 
 export function LogModal({
@@ -42,6 +45,8 @@ export function LogModal({
     initialRating = 0,
     initialToggles = {},
     hasReviewed = false,
+    visitCount = 0,
+    lastVisitDate,
 }: LogModalProps) {
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
@@ -76,13 +81,23 @@ export function LogModal({
     };
 
     const handleDismiss = () => {
-        // Submit if user has rating OR has Been toggled on
-        if (rating > 0 || toggles.been) {
-            onRate(rating); // rating can be 0 (no rating / just visited)
-            if (toggles.been) {
-                onAction('been');
+        // Check if anything actually changed from initial values
+        const ratingChanged = rating !== initialRating;
+        const beenChanged = toggles.been !== (initialToggles.been ?? false);
+        const likeChanged = toggles.like !== (initialToggles.like ?? false);
+        const tryChanged = toggles.try !== (initialToggles.try ?? false);
+
+        const hasChanges = ratingChanged || beenChanged || likeChanged || tryChanged;
+
+        // Only submit if there are actual changes
+        if (hasChanges) {
+            // Only call onRate if rating changed or if this is a new entry with a rating
+            if (ratingChanged && rating > 0) {
+                onRate(rating);
             }
+            // Note: Status changes (been/like/try) are already saved via onStatusChange in toggleOption
         }
+
         // Reset state for next open
         setRating(0);
         setToggles({ been: false, like: false, try: false });
@@ -206,29 +221,53 @@ export function LogModal({
                                 </TouchableOpacity>
                             </View>
 
+                            {/* Visit info for repeat dining */}
+                            {visitCount > 0 && (
+                                <View style={styles.visitInfo}>
+                                    <Ionicons name="calendar-outline" size={16} color="#666" />
+                                    <Text style={styles.visitInfoText}>
+                                        {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
+                                        {lastVisitDate && ` • Last: ${new Date(lastVisitDate).toLocaleDateString()}`}
+                                    </Text>
+                                </View>
+                            )}
+
                             <View style={styles.divider} />
 
                             <View style={styles.actionsList}>
+                                {/* Add Another Entry - primary action for repeat visits */}
+                                <TouchableOpacity
+                                    style={styles.actionRow}
+                                    onPress={() => {
+                                        onRate(rating);
+                                        onAction('addEntry');
+                                    }}
+                                >
+                                    <Ionicons name="add-circle-outline" size={24} color="#00897b" />
+                                    <Text style={[styles.actionText, { color: '#00897b', fontWeight: '600' }]}>
+                                        {visitCount > 0 ? 'Add Another Entry' : 'Log This Visit'}
+                                    </Text>
+                                    <Ionicons name="chevron-forward" size={20} color="#00897b" style={{ marginLeft: 'auto' }} />
+                                </TouchableOpacity>
+
+                                {/* View All Entries - only show if there are previous visits */}
+                                {visitCount > 0 && (
+                                    <TouchableOpacity
+                                        style={styles.actionRow}
+                                        onPress={() => onAction('viewEntries')}
+                                    >
+                                        <Ionicons name="time-outline" size={24} color="#333" />
+                                        <Text style={styles.actionText}>View All Entries</Text>
+                                        <Ionicons name="chevron-forward" size={20} color="#ccc" style={{ marginLeft: 'auto' }} />
+                                    </TouchableOpacity>
+                                )}
+
                                 <TouchableOpacity
                                     style={styles.actionRow}
                                     onPress={() => onAction('list')}
                                 >
                                     <Ionicons name="list" size={24} color="#333" />
                                     <Text style={styles.actionText}>Add to lists...</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    style={styles.actionRow}
-                                    onPress={() => {
-                                        onRate(rating);
-                                        onAction('review');
-                                    }}
-                                >
-                                    <Ionicons name="create-outline" size={24} color="#333" />
-                                    <Text style={styles.actionText}>
-                                        {hasReviewed ? 'Review Again' : 'Review or Log'}
-                                    </Text>
-                                    <Ionicons name="chevron-forward" size={20} color="#ccc" style={{ marginLeft: 'auto' }} />
                                 </TouchableOpacity>
 
                                 <TouchableOpacity
@@ -345,5 +384,19 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 18,
         fontWeight: 'bold',
+    },
+    visitInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        marginBottom: 16,
+        paddingVertical: 8,
+        backgroundColor: '#f8f8f8',
+        borderRadius: 8,
+    },
+    visitInfoText: {
+        fontSize: 14,
+        color: '#666',
     },
 });

@@ -145,9 +145,9 @@ B. Core Squads: "The Table" (Permanent Entity)
 
     The Limits (Business Model):
 
-        Free: 1 Permanent Table (Targeting the Partner/Spouse use case).
+        Free: Unlimited Tables (V1 - for user growth).
 
-        Pro: Unlimited Tables (Targeting Friend Groups, Work Lunch Crews).
+        Pro (Future): Premium Table features (analytics, custom avatars, etc.).
 
 C. The Feed (Aggregated View)
 

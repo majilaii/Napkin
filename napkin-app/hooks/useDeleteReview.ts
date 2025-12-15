@@ -26,7 +26,9 @@ export function useDeleteReview() {
             // Invalidate related caches
             queryClient.invalidateQueries({ queryKey: queryKeys.reviews.byUser(variables.userId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.reviews.existing(variables.userId, variables.restaurantId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.reviews.history(variables.userId, variables.restaurantId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.restaurantStatus(variables.userId, variables.restaurantId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.feed() });
         },
     });
 }

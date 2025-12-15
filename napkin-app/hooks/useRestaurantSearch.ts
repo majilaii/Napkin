@@ -13,7 +13,7 @@ export interface SearchResult {
 async function searchRestaurants(query: string): Promise<SearchResult[]> {
     if (query.length < 3) return [];
 
-    const { data, error } = await supabase.functions.invoke('foursquare-search', {
+    const { data, error } = await supabase.functions.invoke('places-search', {
         body: { query, limit: 5 },
     });
 

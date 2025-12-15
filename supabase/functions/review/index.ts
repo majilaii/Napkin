@@ -88,50 +88,77 @@ serve(async (req) => {
             const restaurantId = restaurantData.id;
             console.log('Restaurant upserted, ID:', restaurantId);
 
-            // 2. Upsert Review (Protected by RLS)
-            const { data: existingReview } = await supabase
-                .from('reviews')
-                .select('id')
-                .eq('user_id', user.id)
-                .eq('restaurant_id', restaurantId)
-                .maybeSingle();
-
-            // Convert rating of 0 to null (means "visited but no rating")
+            // 2. Smart Review Logic:
+            // - Fast review (rating only, no content): UPSERT — updates existing fast review or creates one
+            // - Manual review (has content): INSERT — always creates a new entry
             const ratingValue = (rating === 0 || rating === undefined || rating === null) ? null : rating;
+            const visitedAt = body.visited_at ? new Date(body.visited_at).toISOString() : new Date().toISOString();
+            const hasContent = content && content.trim().length > 0;
 
             let reviewResult;
-            if (existingReview) {
-                console.log('Updating existing review:', existingReview.id);
-                reviewResult = await supabase
-                    .from('reviews')
-                    .update({
-                        rating: ratingValue,
-                        content,
-                        value_profile: value_profile || {},
-                    })
-                    .eq('id', existingReview.id)
-                    .select()
-                    .single();
-            } else {
-                console.log('Creating new review');
+
+            if (hasContent) {
+                // Manual review with content → Always INSERT new entry
+                console.log('Creating manual review entry with content');
                 reviewResult = await supabase
                     .from('reviews')
                     .insert({
                         user_id: user.id,
                         restaurant_id: restaurantId,
                         rating: ratingValue,
-                        content,
+                        content: content.trim(),
                         value_profile: value_profile || {},
+                        visited_at: visitedAt,
                     })
                     .select()
                     .single();
+            } else {
+                // Fast review (rating only) → UPSERT existing fast review
+                // Look for existing fast review (one without content)
+                const { data: existingFastReview } = await supabase
+                    .from('reviews')
+                    .select('id')
+                    .eq('user_id', user.id)
+                    .eq('restaurant_id', restaurantId)
+                    .is('content', null)
+                    .limit(1)
+                    .maybeSingle();
+
+                if (existingFastReview) {
+                    // Update existing fast review
+                    console.log('Updating existing fast review:', existingFastReview.id);
+                    reviewResult = await supabase
+                        .from('reviews')
+                        .update({
+                            rating: ratingValue,
+                            visited_at: visitedAt,
+                        })
+                        .eq('id', existingFastReview.id)
+                        .select()
+                        .single();
+                } else {
+                    // Create new fast review
+                    console.log('Creating new fast review entry');
+                    reviewResult = await supabase
+                        .from('reviews')
+                        .insert({
+                            user_id: user.id,
+                            restaurant_id: restaurantId,
+                            rating: ratingValue,
+                            content: null,
+                            value_profile: value_profile || {},
+                            visited_at: visitedAt,
+                        })
+                        .select()
+                        .single();
+                }
             }
 
             if (reviewResult.error) {
-                console.error('Review upsert error:', reviewResult.error);
+                console.error('Review operation error:', reviewResult.error);
                 throw reviewResult.error;
             }
-            console.log('Review saved successfully');
+            console.log('Review operation completed successfully');
 
             // 3. Upsert user_restaurant_status (mark as "been", optionally "liked")
             const statusPayload: { been: boolean; liked?: boolean; want_to_try?: boolean } = {
