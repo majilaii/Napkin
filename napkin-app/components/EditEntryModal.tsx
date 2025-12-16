@@ -13,12 +13,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StarRating } from './StarRating';
-import { VisitEntry } from '@/hooks/useVisitHistory';
+import { Entry } from '@/hooks/useEntryHistory';
 
 interface EditEntryModalProps {
     visible: boolean;
     onClose: () => void;
-    entry: VisitEntry | null;
+    entry: Entry | null;
     restaurantName: string;
     onSave: (entryId: string, updates: { rating?: number | null; content?: string | null }) => void;
     onDelete: (entryId: string) => void;

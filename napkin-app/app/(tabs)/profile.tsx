@@ -13,9 +13,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useUserReviews } from '@/hooks/useUserReviews';
+import { useUserEntries } from '@/hooks/useUserEntries';
 import { useProfile } from '@/hooks/useProfile';
-import { Review } from '@/lib/api';
+import { Entry } from '@/lib/api';
 import { StarRating } from '@/components/StarRating';
 import { Top4Grid, Top4Restaurant } from '@/components/Top4Grid';
 
@@ -29,11 +29,11 @@ export default function ProfileScreen() {
 
     // Server state from React Query
     const {
-        data: reviews = [],
-        isLoading: reviewsLoading,
-        error: reviewsError,
-        refetch: refetchReviews
-    } = useUserReviews(userId);
+        data: entries = [],
+        isLoading: entriesLoading,
+        error: entriesError,
+        refetch: refetchEntries
+    } = useUserEntries(userId);
 
     const {
         data: profile,
@@ -41,8 +41,8 @@ export default function ProfileScreen() {
     } = useProfile(userId);
 
     const displayName = profile?.display_name ?? 'User';
-    const loading = reviewsLoading || profileLoading;
-    const error = reviewsError?.message ?? null;
+    const loading = entriesLoading || profileLoading;
+    const error = entriesError?.message ?? null;
 
     // Top 4 state (local for now)
     const [top4Restaurants, setTop4Restaurants] = useState<(Top4Restaurant | null)[]>([]);
@@ -52,7 +52,7 @@ export default function ProfileScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const onRefresh = async () => {
         setRefreshing(true);
-        await refetchReviews();
+        await refetchEntries();
         setRefreshing(false);
     };
 
@@ -82,67 +82,84 @@ export default function ProfileScreen() {
         // TODO: Remove from database
     };
 
-    // Render a single review card
-    const renderReviewCard = (review: Review) => (
-        <View key={review.id} style={[styles.reviewCard, { backgroundColor: colors.background }]}>
-            {/* Restaurant name */}
-            <Text style={[styles.restaurantName, { color: colors.text }]}>
-                {review.restaurant?.name || 'Unknown Restaurant'}
-            </Text>
+    // Render a single entry card
+    const renderEntryCard = (entry: Entry) => {
+        const locationName = entry.restaurant?.name || entry.user_place?.name || 'Unknown Location';
+        const locationCity = entry.restaurant?.city;
+        const locationCountry = entry.restaurant?.country;
 
-            {/* Location */}
-            {review.restaurant?.city && (
-                <Text style={[styles.location, { color: colors.icon }]}>
-                    {review.restaurant.city}{review.restaurant.country ? `, ${review.restaurant.country}` : ''}
+        return (
+            <View key={entry.id} style={[styles.reviewCard, { backgroundColor: colors.background }]}>
+                {/* Location name */}
+                <Text style={[styles.restaurantName, { color: colors.text }]}>
+                    {locationName}
                 </Text>
-            )}
 
-            {/* Rating */}
-            <View style={styles.ratingRow}>
-                <StarRating rating={review.rating} size={20} onRatingChange={() => { }} />
-                <Text style={[styles.ratingText, { color: colors.text }]}>
-                    {review !== undefined && review.rating !== null ? review.rating.toFixed(1) : ''}
+                {/* Location */}
+                {locationCity && (
+                    <Text style={[styles.location, { color: colors.icon }]}>
+                        {locationCity}{locationCountry ? `, ${locationCountry}` : ''}
+                    </Text>
+                )}
+
+                {/* Dish description if present */}
+                {entry.dish_description && (
+                    <Text style={[styles.dishDescription, { color: colors.text }]}>
+                        {entry.dish_description}
+                    </Text>
+                )}
+
+                {/* Rating */}
+                {entry.rating !== null && (
+                    <View style={styles.ratingRow}>
+                        <StarRating rating={entry.rating} size={20} onRatingChange={() => { }} />
+                        <Text style={[styles.ratingText, { color: colors.text }]}>
+                            {entry.rating.toFixed(1)}
+                        </Text>
+                    </View>
+                )}
+
+                {/* Entry content */}
+                {entry.content && (
+                    <Text style={[styles.reviewContent, { color: colors.text }]}>
+                        {entry.content}
+                    </Text>
+                )}
+
+                {/* Value profile breakdown */}
+                {entry.value_profile && Object.keys(entry.value_profile).length > 0 && (
+                    <View style={styles.valueProfileContainer}>
+                        <Text style={[styles.sectionLabel, { color: colors.icon }]}>Value Profile</Text>
+                        <View style={styles.valueProfileGrid}>
+                            {Object.entries(entry.value_profile).map(([key, value]) => (
+                                value !== undefined && (
+                                    <View key={key} style={styles.valueItem}>
+                                        <Text style={[styles.valueLabel, { color: colors.icon }]}>
+                                            {key.charAt(0).toUpperCase() + key.slice(1)}
+                                        </Text>
+                                        <View style={styles.valueBarContainer}>
+                                            <View
+                                                style={[
+                                                    styles.valueBar,
+                                                    { width: `${((value as number) / 40) * 100}%`, backgroundColor: colors.tint },
+                                                ]}
+                                            />
+                                        </View>
+                                        <Text style={[styles.valueNumber, { color: colors.text }]}>{value}</Text>
+                                    </View>
+                                )
+                            ))}
+                        </View>
+                    </View>
+                )}
+
+                {/* Date */}
+                <Text style={[styles.dateText, { color: colors.icon }]}>
+                    {formatDate(entry.visited_at)}
                 </Text>
             </View>
-
-            {/* Review content */}
-            {review.content && (
-                <Text style={[styles.reviewContent, { color: colors.text }]}>
-                    {review.content}
-                </Text>
-            )}
-
-            {/* Value profile breakdown */}
-            {review.value_profile && (
-                <View style={styles.valueProfileContainer}>
-                    <Text style={[styles.sectionLabel, { color: colors.icon }]}>Value Profile</Text>
-                    <View style={styles.valueProfileGrid}>
-                        {Object.entries(review.value_profile).map(([key, value]) => (
-                            <View key={key} style={styles.valueItem}>
-                                <Text style={[styles.valueLabel, { color: colors.icon }]}>
-                                    {key.charAt(0).toUpperCase() + key.slice(1)}
-                                </Text>
-                                <View style={styles.valueBarContainer}>
-                                    <View
-                                        style={[
-                                            styles.valueBar,
-                                            { width: `${(value / 40) * 100}%`, backgroundColor: colors.tint },
-                                        ]}
-                                    />
-                                </View>
-                                <Text style={[styles.valueNumber, { color: colors.text }]}>{value}</Text>
-                            </View>
-                        ))}
-                    </View>
-                </View>
-            )}
-
-            {/* Date */}
-            <Text style={[styles.dateText, { color: colors.icon }]}>
-                Visited {formatDate(review.visited_at)}
-            </Text>
-        </View>
-    );
+        );
+    };
 
     // Loading state
     if (loading) {
@@ -174,7 +191,7 @@ export default function ProfileScreen() {
                 <Text style={[styles.headerTitle, { color: colors.text }]}>Profile</Text>
                 <Text style={[styles.displayName, { color: colors.text }]}>{displayName}</Text>
                 <Text style={[styles.reviewCount, { color: colors.icon }]}>
-                    {reviews.length} {reviews.length === 1 ? 'review' : 'reviews'}
+                    {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
                 </Text>
             </View>
 
@@ -219,15 +236,15 @@ export default function ProfileScreen() {
                     <Text style={[styles.errorText, { color: 'red' }]}>{error}</Text>
                 )}
 
-                {reviews.length === 0 ? (
+                {entries.length === 0 ? (
                     <View style={styles.emptyState}>
-                        <Text style={[styles.emptyTitle, { color: colors.text }]}>No reviews yet</Text>
+                        <Text style={[styles.emptyTitle, { color: colors.text }]}>No entries yet</Text>
                         <Text style={[styles.emptySubtitle, { color: colors.icon }]}>
-                            Start logging your restaurant visits to see them here!
+                            Start logging your meals to see them here!
                         </Text>
                     </View>
                 ) : (
-                    reviews.map(renderReviewCard)
+                    entries.map(renderEntryCard)
                 )}
             </ScrollView>
         </SafeAreaView>
@@ -294,6 +311,11 @@ const styles = StyleSheet.create({
     },
     location: {
         fontSize: 14,
+        marginBottom: 8,
+    },
+    dishDescription: {
+        fontSize: 15,
+        fontStyle: 'italic',
         marginBottom: 8,
     },
     ratingRow: {

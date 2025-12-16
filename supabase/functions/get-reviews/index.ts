@@ -49,13 +49,13 @@ serve(async (req) => {
         // Parse query params - support both URL params and body
         let userId: string | null = null;
         let restaurantId: string | null = null;
-        let foursquareId: string | null = null;
+        let externalId: string | null = null;
 
         // Check URL params first
         const { searchParams } = new URL(req.url);
         userId = searchParams.get('user_id');
         restaurantId = searchParams.get('restaurant_id');
-        foursquareId = searchParams.get('foursquare_id');
+        externalId = searchParams.get('external_id');
 
         // Also check body for POST-like invocations via supabase.functions.invoke
         if (req.method === 'POST') {
@@ -63,13 +63,13 @@ serve(async (req) => {
                 const body = await req.json();
                 userId = body.user_id ?? userId;
                 restaurantId = body.restaurant_id ?? restaurantId;
-                foursquareId = body.foursquare_id ?? foursquareId;
+                externalId = body.external_id ?? externalId;
             } catch {
                 // Body parsing failed, use URL params only
             }
         }
 
-        console.log('get-reviews: Params:', { userId, restaurantId, foursquareId });
+        console.log('get-reviews: Params:', { userId, restaurantId, externalId });
 
         let query = supabaseClient
             .from('reviews')
@@ -84,14 +84,14 @@ serve(async (req) => {
 
         if (restaurantId) {
             query = query.eq('restaurant_id', restaurantId);
-        } else if (foursquareId) {
+        } else if (externalId) {
             query = supabaseClient
                 .from('reviews')
                 .select(`
                     *,
                     restaurant:restaurants!inner(*)
                 `)
-                .eq('restaurant.foursquare_id', foursquareId);
+                .eq('restaurant.external_id', externalId);
         }
 
         // Order by newest

@@ -10,13 +10,13 @@ export interface RestaurantStatus {
 
 async function fetchRestaurantStatus(
     userId: string,
-    foursquareId: string
+    placeId: string
 ): Promise<RestaurantStatus | null> {
     // First get the restaurant ID
     const { data: restaurant } = await supabase
         .from('restaurants')
         .select('id')
-        .eq('foursquare_id', foursquareId)
+        .eq('external_id', placeId)
         .single();
 
     if (!restaurant) return null;
@@ -39,14 +39,14 @@ async function fetchRestaurantStatus(
 
 async function updateRestaurantStatus(
     userId: string,
-    foursquareId: string,
+    placeId: string,
     updates: Partial<RestaurantStatus>
 ): Promise<void> {
     // First get the restaurant ID
     const { data: restaurant } = await supabase
         .from('restaurants')
         .select('id')
-        .eq('foursquare_id', foursquareId)
+        .eq('external_id', placeId)
         .single();
 
     if (!restaurant) {
@@ -68,12 +68,12 @@ async function updateRestaurantStatus(
 
 export function useRestaurantStatus(
     userId: string | null | undefined,
-    foursquareId: string | null | undefined
+    placeId: string | null | undefined
 ) {
     return useQuery<RestaurantStatus | null, Error>({
-        queryKey: queryKeys.restaurantStatus(userId!, foursquareId!),
-        queryFn: () => fetchRestaurantStatus(userId!, foursquareId!),
-        enabled: !!userId && !!foursquareId,
+        queryKey: queryKeys.restaurantStatus(userId!, placeId!),
+        queryFn: () => fetchRestaurantStatus(userId!, placeId!),
+        enabled: !!userId && !!placeId,
         staleTime: 1000 * 60 * 5, // 5 minutes
     });
 }
@@ -84,17 +84,17 @@ export function useUpdateRestaurantStatus() {
     return useMutation({
         mutationFn: ({
             userId,
-            foursquareId,
+            placeId,
             updates,
         }: {
             userId: string;
-            foursquareId: string;
+            placeId: string;
             updates: Partial<RestaurantStatus>;
-        }) => updateRestaurantStatus(userId, foursquareId, updates),
+        }) => updateRestaurantStatus(userId, placeId, updates),
         onSuccess: (_data, variables) => {
             // Invalidate the status cache
             queryClient.invalidateQueries({
-                queryKey: queryKeys.restaurantStatus(variables.userId, variables.foursquareId),
+                queryKey: queryKeys.restaurantStatus(variables.userId, variables.placeId),
             });
         },
     });

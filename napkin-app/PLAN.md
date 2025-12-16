@@ -47,19 +47,13 @@ Why: Allows for a completely custom "Dark Mode" map to match the premium aesthet
 
 B. The Data Layer (Waterfall Logic)
 
-Step 1 (Default): Search Foursquare API first.
+Step 1 (Default): Search Google Places API first.
 
 Role: Autocomplete, Feed Metadata, Location names.
 
 Cost: Low.
 
 Action: When a user selects a place, cache the Name, Address, and Lat/Long into your Supabase Restaurants table immediately.
-
-Step 2 (Fallback): The "Not Found?" Button.
-
-Role: If Foursquare fails, user clicks this to query Google Places API.
-
-Cost: High (use sparingly).
 
 Step 3 (Enrichment): Google Places Photos.
 
@@ -85,7 +79,7 @@ Auth: Supabase Auth (Apple Login + Email/Password).
 
 Logic: Supabase Edge Functions (TypeScript).
 
-Purpose: Acts as the "Proxy" to hide API keys. The App calls the Edge Function -> Edge Function calls Foursquare/Google -> Returns JSON to App.
+Purpose: Acts as the "Proxy" to hide API keys. The App calls the Edge Function -> Edge Function calls Google -> Returns JSON to App.
 
 State Management
 
@@ -97,7 +91,7 @@ Purpose: Handles caching, pull-to-refresh, and optimistic updates. Essential for
 
 1. The Logging Engine (The Atom)
 
-Search Restaurant (Foursquare waterfall).
+Search Restaurant (Google default).
 
 Date Picker.
 
@@ -165,7 +159,7 @@ Initialize Expo Router project.
 
 Setup Supabase project (Auth + Tables).
 
-Critical: Build the Supabase Edge Function to query Foursquare.
+Critical: Build the Supabase Edge Function to query Google Places.
 
 Build the "Search & Select" UI (unstyled).
 
@@ -202,5 +196,3 @@ NO Direct Messaging (Use WhatsApp/iMessage).
 NO Dish-level ratings (Keep it to Restaurant-level for V1 to save data headaches).
 
 NO Web Dashboard (Focus 100% on Mobile experience).
-
-Final Verdict: This plan minimizes your monthly API costs (Foursquare > Google), maximizes your aesthetic control (Mapbox), and leverages the most efficient solo-dev stack (Expo/Supabase). You are building a sustainable business, not just an app.

@@ -56,7 +56,7 @@ serve(async (req) => {
             const { restaurant, rating, content, value_profile } = body;
 
             // Rating can be null (visited but no rating) or a number
-            if (!restaurant || !restaurant.foursquare_id) {
+            if (!restaurant || !restaurant.external_id) {
                 console.error('Invalid payload:', { restaurant, rating });
                 return new Response(
                     JSON.stringify({ error: 'Invalid payload: missing restaurant' }),
@@ -69,14 +69,14 @@ serve(async (req) => {
             const { data: restaurantData, error: restaurantError } = await supabase
                 .from('restaurants')
                 .upsert({
-                    foursquare_id: restaurant.foursquare_id,
+                    external_id: restaurant.external_id,
                     name: restaurant.name,
                     address: restaurant.location?.address,
                     city: restaurant.location?.locality,
                     country: restaurant.location?.country,
                     lat: restaurant.latitude,
                     lng: restaurant.longitude,
-                }, { onConflict: 'foursquare_id' })
+                }, { onConflict: 'external_id' })
                 .select('id')
                 .single();
 
