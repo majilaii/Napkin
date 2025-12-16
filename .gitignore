@@ -42,3 +42,5 @@ doc/
 # Supabase
 supabase/.temp/
 supabase/.branches/
+**/supabase/.temp/
+**/.temp/cli-latest

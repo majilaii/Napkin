@@ -9,15 +9,15 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { VisitEntry } from '@/hooks/useVisitHistory';
+import { Entry } from '@/hooks/useEntryHistory';
 
 interface EntriesModalProps {
     visible: boolean;
     onClose: () => void;
     restaurantName: string;
-    entries: VisitEntry[];
+    entries: Entry[];
     isLoading?: boolean;
-    onEditEntry?: (entry: VisitEntry) => void;
+    onEditEntry?: (entry: Entry) => void;
 }
 
 export function EntriesModal({
@@ -29,7 +29,7 @@ export function EntriesModal({
     onEditEntry,
 }: EntriesModalProps) {
 
-    const renderEntry = ({ item, index }: { item: VisitEntry; index: number }) => {
+    const renderEntry = ({ item, index }: { item: Entry; index: number }) => {
         const isFastReview = !item.content;
         const date = new Date(item.visited_at || item.created_at);
 

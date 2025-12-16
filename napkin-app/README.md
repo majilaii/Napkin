@@ -49,13 +49,13 @@ Join our community of developers creating universal apps.
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
 
-## Supabase + Foursquare proxy
+## Supabase + Google Places proxy
 
 The Explore tab queries the Supabase Edge Function
-`foursquare-search`, which securely calls the Foursquare Places API.
+`places-search`, which securely calls the Google Places API.
 
-1. Copy `.env.example` to `.env` inside the `supabase` directory and set the `FOURSQUARE_API_KEY`.
-2. Run the function locally with `supabase functions serve foursquare-search --env-file supabase/.env`.
+1. Set up `GOOGLE_PLACES_API_KEY` as a Supabase secret.
+2. Run the function locally with `supabase functions serve places-search --env-file supabase/.env`.
 3. Start Expo with `npm start` inside `napkin-app` and begin typing inside the Explore search field to hit the proxy.
 
 Additional context for the Edge Function lives in `../supabase/README.md`.

@@ -5,15 +5,16 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { LogModal } from '@/components/LogModal';
 import { EntriesModal } from '@/components/EntriesModal';
 import { EditEntryModal } from '@/components/EditEntryModal';
+import { LogTypeActionSheet } from '@/components/LogTypeActionSheet';
+import { MealLogModal, MealLogData } from '@/components/MealLogModal';
 import { useAuth } from '@/providers/AuthProvider';
 import { useProfile } from '@/hooks/useProfile';
 import { useRestaurantSearch, SearchResult } from '@/hooks/useRestaurantSearch';
-import { useSubmitReview } from '@/hooks/useSubmitReview';
-import { useExistingReview } from '@/hooks/useExistingReview';
-import { useVisitHistory, VisitEntry } from '@/hooks/useVisitHistory';
+import { useCreateEntry } from '@/hooks/useCreateEntry';
+import { useUpdateEntry } from '@/hooks/useUpdateEntry';
+import { useDeleteEntry } from '@/hooks/useDeleteEntry';
+import { useEntryHistory, useLatestEntry, Entry } from '@/hooks/useEntryHistory';
 import { useRestaurantStatus, useUpdateRestaurantStatus } from '@/hooks/useRestaurantStatus';
-import { useDeleteReview } from '@/hooks/useDeleteReview';
-import { useUpdateReview } from '@/hooks/useUpdateReview';
 import { SearchView, DetailsView, ReviewView } from '@/components/log';
 
 type Restaurant = SearchResult;
@@ -38,8 +39,12 @@ export default function LogScreen() {
     const [modalVisible, setModalVisible] = useState(false);
     const [entriesModalVisible, setEntriesModalVisible] = useState(false);
     const [editModalVisible, setEditModalVisible] = useState(false);
-    const [selectedEntry, setSelectedEntry] = useState<VisitEntry | null>(null);
+    const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null);
     const [isReviewing, setIsReviewing] = useState(false);
+
+    // Action sheet and meal modal state
+    const [actionSheetVisible, setActionSheetVisible] = useState(false);
+    const [mealModalVisible, setMealModalVisible] = useState(false);
 
     // Review State
     const [reviewText, setReviewText] = useState('');
@@ -51,42 +56,44 @@ export default function LogScreen() {
         service: 20,
     });
 
-    // Submit review mutation
-    const submitReviewMutation = useSubmitReview();
+    // Create entry mutation (for all entries)
+    const createEntryMutation = useCreateEntry();
 
-    // Get existing review for the selected restaurant (to show initial state in modal)
-    const { data: existingReview } = useExistingReview(
+    // Update entry mutation
+    const updateEntryMutation = useUpdateEntry();
+
+    // Delete entry mutation
+    const deleteEntryMutation = useDeleteEntry();
+
+    // Get latest entry for the selected restaurant
+    const { data: latestEntry } = useLatestEntry(
         userId,
-        selectedRestaurant?.id // foursquare_id
+        selectedRestaurant?.id,
+        'restaurant'
+    );
+
+    // Get entry history for the selected restaurant
+    const { data: entryHistory = [] } = useEntryHistory(
+        userId,
+        selectedRestaurant?.id,
+        'restaurant'
     );
 
     // Get restaurant status (been, liked, want_to_try)
     const { data: restaurantStatus } = useRestaurantStatus(
         userId,
-        selectedRestaurant?.id // foursquare_id
+        selectedRestaurant?.id
     );
-
-    // Delete review mutation
-    const deleteReviewMutation = useDeleteReview();
-
-    // Update review mutation for editing entries
-    const updateReviewMutation = useUpdateReview();
 
     // Update restaurant status mutation (for been/like/try toggles)
     const updateStatusMutation = useUpdateRestaurantStatus();
-
-    // Get visit history for repeat dining
-    const { data: visitHistory = [] } = useVisitHistory(
-        userId,
-        selectedRestaurant?.id
-    );
 
     // Handler to update status when toggled in modal
     const handleStatusChange = (updates: { been?: boolean; liked?: boolean; want_to_try?: boolean }) => {
         if (!selectedRestaurant || !userId) return;
         updateStatusMutation.mutate({
             userId,
-            foursquareId: selectedRestaurant.id,
+            placeId: selectedRestaurant.id,
             updates,
         });
     };
@@ -106,6 +113,40 @@ export default function LogScreen() {
     const handleSelectRestaurant = (restaurant: Restaurant) => {
         setSelectedRestaurant(restaurant);
         setSearchQuery('');
+    };
+
+    // Handle log type selection from action sheet
+    const handleLogTypeSelect = (type: 'meal' | 'restaurant' | 'table') => {
+        if (type === 'meal') {
+            setMealModalVisible(true);
+        } else if (type === 'restaurant') {
+            // Just close action sheet - user continues with search flow
+            setActionSheetVisible(false);
+        }
+        // Table coming soon
+    };
+
+    // Handle meal submission
+    const handleMealSubmit = async (data: MealLogData) => {
+        if (!userId) return;
+
+        try {
+            await createEntryMutation.mutateAsync({
+                user_place_id: data.user_place_id || undefined,
+                rating: data.rating,
+                content: data.content,
+                dish_description: data.dish_description,
+                cooked_by: data.cooked_by,
+                visited_at: data.date.toISOString(),
+                userId,
+            });
+
+            setMealModalVisible(false);
+            Alert.alert('Success', 'Meal logged successfully!');
+        } catch (e) {
+            console.error('Error logging meal:', e);
+            Alert.alert('Error', 'Failed to log meal');
+        }
     };
 
     const handleBackToSearch = () => {
@@ -137,27 +178,35 @@ export default function LogScreen() {
         setRating(num);
         if (!selectedRestaurant || !userId) return;
 
-        // Fast review (rating only) using mutation
-        const payload = {
-            restaurant: {
-                foursquare_id: selectedRestaurant.id,
-                name: selectedRestaurant.name,
-                location: {
-                    address: selectedRestaurant.formattedAddress,
-                },
-                latitude: selectedRestaurant.latitude,
-                longitude: selectedRestaurant.longitude,
-            },
-            rating: num,
-        };
-
         try {
-            await submitReviewMutation.mutateAsync({
-                payload,
-                userId,
-                restaurantId: selectedRestaurant.id,
-            });
-            console.log('Rating saved:', num);
+            // Quick rating: update existing entry if one exists, otherwise create new
+            if (latestEntry) {
+                // Update the existing entry's rating
+                await updateEntryMutation.mutateAsync({
+                    entryId: latestEntry.id,
+                    userId,
+                    locationId: selectedRestaurant.id,
+                    updates: { rating: num },
+                });
+                console.log('Rating updated:', num);
+            } else {
+                // No existing entry, create a new quick rating entry
+                await createEntryMutation.mutateAsync({
+                    restaurant: {
+                        external_id: selectedRestaurant.id,
+                        name: selectedRestaurant.name,
+                        location: {
+                            address: selectedRestaurant.formattedAddress || undefined,
+                        },
+                        latitude: selectedRestaurant.latitude || undefined,
+                        longitude: selectedRestaurant.longitude || undefined,
+                    },
+                    rating: num,
+                    userId,
+                    locationId: selectedRestaurant.id,
+                });
+                console.log('Rating saved (new entry):', num);
+            }
         } catch (e) {
             console.error('Error saving rating:', e);
         }
@@ -166,46 +215,42 @@ export default function LogScreen() {
     const handleSubmitReview = async () => {
         if (!selectedRestaurant || !userId) return;
 
-        const payload = {
-            restaurant: {
-                foursquare_id: selectedRestaurant.id,
-                name: selectedRestaurant.name,
-                location: {
-                    address: selectedRestaurant.formattedAddress,
-                },
-                latitude: selectedRestaurant.latitude,
-                longitude: selectedRestaurant.longitude,
-            },
-            rating: rating,
-            content: reviewText,
-            value_profile: valueProfile,
-        };
-
         try {
-            await submitReviewMutation.mutateAsync({
-                payload,
+            await createEntryMutation.mutateAsync({
+                restaurant: {
+                    external_id: selectedRestaurant.id,
+                    name: selectedRestaurant.name,
+                    location: {
+                        address: selectedRestaurant.formattedAddress || undefined,
+                    },
+                    latitude: selectedRestaurant.latitude || undefined,
+                    longitude: selectedRestaurant.longitude || undefined,
+                },
+                rating: rating,
+                content: reviewText,
+                value_profile: valueProfile,
                 userId,
-                restaurantId: selectedRestaurant.id,
+                locationId: selectedRestaurant.id,
             });
 
-            Alert.alert('Success', 'Review logged successfully!');
+            Alert.alert('Success', 'Entry logged successfully!');
             setIsReviewing(false);
             setSelectedRestaurant(null);
             setSearchQuery('');
             setRating(0);
             setReviewText('');
         } catch (e) {
-            console.error('Error submitting review:', e);
-            Alert.alert('Error', 'Failed to submit review');
+            console.error('Error submitting entry:', e);
+            Alert.alert('Error', 'Failed to submit entry');
         }
     };
 
-    const handleDeleteReview = () => {
-        if (existingReview && userId && selectedRestaurant) {
-            deleteReviewMutation.mutate({
-                reviewId: existingReview.id,
+    const handleDeleteEntry = () => {
+        if (latestEntry && userId && selectedRestaurant) {
+            deleteEntryMutation.mutate({
+                entryId: latestEntry.id,
                 userId,
-                restaurantId: selectedRestaurant.id,
+                locationId: selectedRestaurant.id,
             });
         }
     };
@@ -248,19 +293,19 @@ export default function LogScreen() {
                     restaurantName={selectedRestaurant.name}
                     onRate={handleRate}
                     onAction={handleModalAction}
-                    onDeleteReview={handleDeleteReview}
+                    onDeleteReview={handleDeleteEntry}
                     onStatusChange={handleStatusChange}
-                    // Pass existing review state (latest entry)
-                    initialRating={existingReview?.rating ?? 0}
+                    // Pass existing entry state (latest entry)
+                    initialRating={latestEntry?.rating ?? 0}
                     initialToggles={{
-                        been: restaurantStatus?.been ?? existingReview != null,
+                        been: restaurantStatus?.been ?? latestEntry != null,
                         like: restaurantStatus?.liked ?? false,
                         try: restaurantStatus?.want_to_try ?? false,
                     }}
-                    hasReviewed={existingReview?.content != null && existingReview.content.length > 0}
+                    hasReviewed={latestEntry?.content != null && latestEntry.content.length > 0}
                     // Repeat dining info
-                    visitCount={visitHistory.length}
-                    lastVisitDate={visitHistory[0]?.visited_at}
+                    visitCount={entryHistory.length}
+                    lastVisitDate={entryHistory[0]?.visited_at}
                 />
             )}
 
@@ -270,7 +315,7 @@ export default function LogScreen() {
                     visible={entriesModalVisible}
                     onClose={() => setEntriesModalVisible(false)}
                     restaurantName={selectedRestaurant.name}
-                    entries={visitHistory}
+                    entries={entryHistory}
                     isLoading={false}
                     onEditEntry={(entry) => {
                         // Close EntriesModal first, then open EditEntryModal
@@ -296,10 +341,10 @@ export default function LogScreen() {
                     restaurantName={selectedRestaurant.name}
                     onSave={async (entryId, updates) => {
                         try {
-                            await updateReviewMutation.mutateAsync({
-                                reviewId: entryId,
+                            await updateEntryMutation.mutateAsync({
+                                entryId,
                                 userId,
-                                restaurantId: selectedRestaurant.id,
+                                locationId: selectedRestaurant.id,
                                 updates,
                             });
                             setEditModalVisible(false);
@@ -312,10 +357,10 @@ export default function LogScreen() {
                     }}
                     onDelete={async (entryId) => {
                         try {
-                            await deleteReviewMutation.mutateAsync({
-                                reviewId: entryId,
+                            await deleteEntryMutation.mutateAsync({
+                                entryId,
                                 userId,
-                                restaurantId: selectedRestaurant.id,
+                                locationId: selectedRestaurant.id,
                             });
                             setEditModalVisible(false);
                             setSelectedEntry(null);
@@ -325,9 +370,25 @@ export default function LogScreen() {
                             Alert.alert('Error', 'Failed to delete entry');
                         }
                     }}
-                    isLoading={updateReviewMutation.isPending || deleteReviewMutation.isPending}
+                    isLoading={updateEntryMutation.isPending || deleteEntryMutation.isPending}
                 />
             )}
+
+            {/* Log Type Action Sheet */}
+            <LogTypeActionSheet
+                visible={actionSheetVisible}
+                onClose={() => setActionSheetVisible(false)}
+                onSelect={handleLogTypeSelect}
+            />
+
+            {/* Meal Log Modal */}
+            <MealLogModal
+                visible={mealModalVisible}
+                onClose={() => setMealModalVisible(false)}
+                onSubmit={handleMealSubmit}
+                isSubmitting={createEntryMutation.isPending}
+                userId={userId}
+            />
         </SafeAreaView>
     );
 }

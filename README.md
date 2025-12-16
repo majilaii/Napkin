@@ -28,14 +28,9 @@ To balance the high cost of data (especially Google Places) with the need for a 
     *   **Why:** Allows for a completely custom "Dark Mode" map to match the premium aesthetic. The standard Google Maps SDK is too restrictive.
 
 *   **B. The Data Fetching Logic:**
-    *   **Step 1 (Default): Foursquare Places API**
+    *   **Step 1 (Default): Google Places API**
         *   **Role:** Primary tool for autocomplete search. It's cost-effective.
         *   **Action:** When a user selects a place, cache the Name, Address, and Lat/Long into our Supabase `Restaurants` table.
-    *   **Step 2 (Fallback): "Not Found" Flow**
-        *   **Role:** If Foursquare fails, the user can click a "Can't find it?" button which then uses the Google Places API.
-        *   **Cost:** High, so this is a fallback, not the default.
-    *   **Step 3 (Enrichment): Google Place Details**
-        *   **Role:** Only fetch high-resolution hero images and other rich details from Google if a user explicitly opens the "Restaurant Details" page. This action is deferred to minimize costs.
 
 ## 4. Technical Architecture: The "Indie Stack"
 
@@ -48,14 +43,14 @@ This stack is chosen for rapid development, solo-dev efficiency, and scalability
     *   **Database:** PostgreSQL
     *   **Auth:** Supabase Auth (Apple, Google sign-in)
     *   **Logic:** Supabase Edge Functions (TypeScript/Deno)
-        *   **Purpose:** Acts as a secure "Proxy" to our API providers. The app calls our Edge Function, which then calls Foursquare/Google. This hides our API keys from the client application.
+        *   **Purpose:** Acts as a secure "Proxy" to our API providers. The app calls our Edge Function, which then calls Google. This hides our API keys from the client application.
 *   **Data Management & State:** TanStack Query (formerly React Query)
     *   **Purpose:** Handles server state, caching, pull-to-refresh, and optimistic updates. Essential for a polished, responsive feel.
 
 ## 5. Core Features (MVP "Walk" Phase)
 
 *   **1. The Logging Flow**
-    *   Search for a restaurant (Foursquare default).
+    *   Search for a restaurant (Google default).
     *   Add a review, including:
         *   The "Value Profile" sliders/tags.
         *   Photo Upload (compressed via the client).
@@ -98,4 +93,3 @@ To ensure a focused and timely launch, the following features are explicitly **o
 *   NO complex web dashboard (focus 100% on the mobile experience).
 
 ---
-*Final Verdict: This plan minimizes monthly API costs (Foursquare > Google), maximizes aesthetic control (Mapbox), and leverages an efficient solo-dev stack (Expo/Supabase). It prioritizes building a sustainable business, not just a feature- bloated app.*
