@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StarRating } from './StarRating';
-import { Entry } from '@/hooks/useEntryHistory';
+import { Entry } from '@/hooks/entries/useEntryHistory';
 
 interface EditEntryModalProps {
     visible: boolean;

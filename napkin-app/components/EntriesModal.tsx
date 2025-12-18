@@ -9,7 +9,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Entry } from '@/hooks/useEntryHistory';
+import { Entry } from '@/hooks/entries/useEntryHistory';
 
 interface EntriesModalProps {
     visible: boolean;

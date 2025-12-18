@@ -17,7 +17,7 @@ interface ValueProfile {
     service: number;
 }
 
-interface ReviewViewProps {
+interface RestaurantReviewProps {
     theme: {
         text: string;
         tint: string;
@@ -31,7 +31,7 @@ interface ReviewViewProps {
     onSubmit: () => void;
 }
 
-export function ReviewView({
+export function RestaurantReview({
     theme,
     rating,
     setRating,
@@ -40,7 +40,7 @@ export function ReviewView({
     setReviewText,
     onBack,
     onSubmit,
-}: ReviewViewProps) {
+}: RestaurantReviewProps) {
     return (
         <ScrollView contentContainerStyle={styles.scrollContent}>
             <TouchableOpacity onPress={onBack} style={styles.backButton}>

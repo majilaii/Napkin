@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import ImageViewing from 'react-native-image-viewing';
 
 interface BentoPhotoGridProps {
     photos: string[];
@@ -30,6 +31,18 @@ export function BentoPhotoGrid({
     const GRID_HEIGHT = 140;
     const GAP = 4;
 
+    // State for fullscreen image viewer
+    const [isViewerVisible, setIsViewerVisible] = useState(false);
+    const [viewerStartIndex, setViewerStartIndex] = useState(0);
+
+    // Convert photos to format expected by ImageViewing
+    const imageUrls = photos.map(uri => ({ uri }));
+
+    const openViewer = (index: number) => {
+        setViewerStartIndex(index);
+        setIsViewerVisible(true);
+    };
+
     const pickImage = async () => {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -50,7 +63,13 @@ export function BentoPhotoGrid({
 
     const renderPhotoWithRemove = (uri: string, index: number, style: any) => (
         <View key={index} style={[styles.bentoPhotoWrapper, style]}>
-            <Image source={{ uri }} style={styles.bentoPhoto} />
+            <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() => openViewer(index)}
+                style={{ flex: 1 }}
+            >
+                <Image source={{ uri }} style={styles.bentoPhoto} />
+            </TouchableOpacity>
             <TouchableOpacity
                 style={styles.removePhotoButton}
                 onPress={() => removePhoto(index)}
@@ -91,52 +110,84 @@ export function BentoPhotoGrid({
     // 1 photo - full width
     if (count === 1) {
         return (
-            <View style={[styles.bentoContainer, { height: GRID_HEIGHT }]}>
-                {renderPhotoWithRemove(photos[0], 0, { flex: 1 })}
-                {renderAddButton()}
-            </View>
+            <>
+                <View style={[styles.bentoContainer, { height: GRID_HEIGHT }]}>
+                    {renderPhotoWithRemove(photos[0], 0, { flex: 1 })}
+                    {renderAddButton()}
+                </View>
+                <ImageViewing
+                    images={imageUrls}
+                    imageIndex={viewerStartIndex}
+                    visible={isViewerVisible}
+                    onRequestClose={() => setIsViewerVisible(false)}
+                />
+            </>
         );
     }
 
     // 2 photos - 50/50 split
     if (count === 2) {
         return (
-            <View style={[styles.bentoContainer, { height: GRID_HEIGHT, gap: GAP }]}>
-                {renderPhotoWithRemove(photos[0], 0, { flex: 1 })}
-                {renderPhotoWithRemove(photos[1], 1, { flex: 1 })}
-                {renderAddButton()}
-            </View>
+            <>
+                <View style={[styles.bentoContainer, { height: GRID_HEIGHT, gap: GAP }]}>
+                    {renderPhotoWithRemove(photos[0], 0, { flex: 1 })}
+                    {renderPhotoWithRemove(photos[1], 1, { flex: 1 })}
+                    {renderAddButton()}
+                </View>
+                <ImageViewing
+                    images={imageUrls}
+                    imageIndex={viewerStartIndex}
+                    visible={isViewerVisible}
+                    onRequestClose={() => setIsViewerVisible(false)}
+                />
+            </>
         );
     }
 
     // 3 photos - Hero left (50%), 2 stacked right
     if (count === 3) {
         return (
-            <View style={[styles.bentoContainer, { height: GRID_HEIGHT, gap: GAP }]}>
-                {renderPhotoWithRemove(photos[0], 0, { flex: 1 })}
-                <View style={{ flex: 1, gap: GAP }}>
-                    {renderPhotoWithRemove(photos[1], 1, { flex: 1 })}
-                    {renderPhotoWithRemove(photos[2], 2, { flex: 1 })}
+            <>
+                <View style={[styles.bentoContainer, { height: GRID_HEIGHT, gap: GAP }]}>
+                    {renderPhotoWithRemove(photos[0], 0, { flex: 1 })}
+                    <View style={{ flex: 1, gap: GAP }}>
+                        {renderPhotoWithRemove(photos[1], 1, { flex: 1 })}
+                        {renderPhotoWithRemove(photos[2], 2, { flex: 1 })}
+                    </View>
+                    {renderAddButton()}
                 </View>
-                {renderAddButton()}
-            </View>
+                <ImageViewing
+                    images={imageUrls}
+                    imageIndex={viewerStartIndex}
+                    visible={isViewerVisible}
+                    onRequestClose={() => setIsViewerVisible(false)}
+                />
+            </>
         );
     }
 
     // 4 photos - Hero left, 2+1 on right
     if (count === 4) {
         return (
-            <View style={[styles.bentoContainer, { height: GRID_HEIGHT, gap: GAP }]}>
-                {renderPhotoWithRemove(photos[0], 0, { flex: 1 })}
-                <View style={{ flex: 1, gap: GAP }}>
-                    <View style={{ flex: 1, flexDirection: 'row', gap: GAP }}>
-                        {renderPhotoWithRemove(photos[1], 1, { flex: 1 })}
-                        {renderPhotoWithRemove(photos[2], 2, { flex: 1 })}
+            <>
+                <View style={[styles.bentoContainer, { height: GRID_HEIGHT, gap: GAP }]}>
+                    {renderPhotoWithRemove(photos[0], 0, { flex: 1 })}
+                    <View style={{ flex: 1, gap: GAP }}>
+                        <View style={{ flex: 1, flexDirection: 'row', gap: GAP }}>
+                            {renderPhotoWithRemove(photos[1], 1, { flex: 1 })}
+                            {renderPhotoWithRemove(photos[2], 2, { flex: 1 })}
+                        </View>
+                        {renderPhotoWithRemove(photos[3], 3, { flex: 1 })}
                     </View>
-                    {renderPhotoWithRemove(photos[3], 3, { flex: 1 })}
+                    {renderAddButton()}
                 </View>
-                {renderAddButton()}
-            </View>
+                <ImageViewing
+                    images={imageUrls}
+                    imageIndex={viewerStartIndex}
+                    visible={isViewerVisible}
+                    onRequestClose={() => setIsViewerVisible(false)}
+                />
+            </>
         );
     }
 
@@ -174,7 +225,13 @@ export function BentoPhotoGrid({
                 >
                     {photos.slice(5).map((photo, i) => (
                         <View key={i + 5} style={[styles.extraPhotoContainer, { marginRight: GAP }]}>
-                            <Image source={{ uri: photo }} style={styles.extraPhoto} />
+                            <TouchableOpacity
+                                activeOpacity={0.9}
+                                onPress={() => openViewer(i + 5)}
+                                style={{ flex: 1 }}
+                            >
+                                <Image source={{ uri: photo }} style={styles.extraPhoto} />
+                            </TouchableOpacity>
                             <TouchableOpacity
                                 style={styles.removePhotoButtonSmall}
                                 onPress={() => removePhoto(i + 5)}
@@ -193,6 +250,12 @@ export function BentoPhotoGrid({
                     )}
                 </ScrollView>
             )}
+            <ImageViewing
+                images={imageUrls}
+                imageIndex={viewerStartIndex}
+                visible={isViewerVisible}
+                onRequestClose={() => setIsViewerVisible(false)}
+            />
         </View>
     );
 }

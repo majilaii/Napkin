@@ -3,26 +3,31 @@ import {
     View,
     Text,
     TouchableOpacity,
+    TouchableWithoutFeedback,
     Modal,
     StyleSheet,
     ScrollView,
     ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
+    Keyboard,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { UserPlace, useUserPlaces } from '@/hooks/useUserPlaces';
+import { UserPlace } from '@/hooks/places/useUserPlaces';
+import { SearchResult } from '@/hooks/places/useRestaurantSearch';
 
 // Import extracted components
 import {
     BentoPhotoGrid,
     DatePickerRow,
+    CookedByRow,
     RatingSection,
     NotesSection,
-    PlacePicker,
     MetadataSection,
-} from './meal-log';
+    LocationSearchModal,
+} from '.';
 
 interface MealLogModalProps {
     visible: boolean;
@@ -36,12 +41,30 @@ export interface MealLogData {
     dish_description: string;
     rating: number | null;
     user_place_id: string | null;
+    // Restaurant data for linking to real restaurants
+    restaurant?: {
+        external_id: string;
+        name: string;
+        location?: {
+            address?: string;
+            locality?: string;
+            country?: string;
+        };
+        latitude?: number;
+        longitude?: number;
+    };
     cooked_by: string;
     content: string;
     photos: string[];
     date: Date;
     isLiked: boolean;
 }
+
+// Union type for selected location (either restaurant or user place)
+type SelectedLocation =
+    | { type: 'restaurant'; data: SearchResult }
+    | { type: 'userPlace'; data: UserPlace }
+    | null;
 
 export function MealLogModal({
     visible,
@@ -58,14 +81,11 @@ export function MealLogModal({
     const [rating, setRating] = useState<number>(0);
     const [isLiked, setIsLiked] = useState(false);
     const [notes, setNotes] = useState('');
-    const [selectedPlace, setSelectedPlace] = useState<UserPlace | null>(null);
+    const [selectedLocation, setSelectedLocation] = useState<SelectedLocation>(null);
     const [cookedBy, setCookedBy] = useState('');
-    const [showPlacePicker, setShowPlacePicker] = useState(false);
+    const [showLocationSearch, setShowLocationSearch] = useState(false);
     const [mealDate, setMealDate] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
-
-    // Fetch user's saved places
-    const { data: userPlaces = [], isLoading: placesLoading } = useUserPlaces(userId);
 
     // Reset when modal closes
     useEffect(() => {
@@ -74,27 +94,53 @@ export function MealLogModal({
             setRating(0);
             setIsLiked(false);
             setNotes('');
-            setSelectedPlace(null);
+            setSelectedLocation(null);
             setCookedBy('');
-            setShowPlacePicker(false);
+            setShowLocationSearch(false);
             setMealDate(new Date());
             setShowDatePicker(false);
         }
     }, [visible]);
 
-    // Auto-select Home if available
-    useEffect(() => {
-        if (userPlaces.length > 0 && !selectedPlace) {
-            const home = userPlaces.find(p => p.is_home);
-            if (home) setSelectedPlace(home);
+    const handleSelectRestaurant = (restaurant: SearchResult) => {
+        setSelectedLocation({ type: 'restaurant', data: restaurant });
+    };
+
+    const handleSelectUserPlace = (place: UserPlace) => {
+        setSelectedLocation({ type: 'userPlace', data: place });
+    };
+
+    const getLocationDisplay = (): { icon: string; name: string } => {
+        if (!selectedLocation) {
+            return { icon: '', name: 'Add location' };
         }
-    }, [userPlaces, selectedPlace]);
+        if (selectedLocation.type === 'restaurant') {
+            return { icon: '🍽️', name: selectedLocation.data.name };
+        }
+        return { icon: selectedLocation.data.icon, name: selectedLocation.data.name };
+    };
 
     const handleSubmit = () => {
+        // Build restaurant data if a restaurant was selected
+        let restaurantData: MealLogData['restaurant'] | undefined;
+        if (selectedLocation?.type === 'restaurant') {
+            const r = selectedLocation.data;
+            restaurantData = {
+                external_id: r.id,
+                name: r.name,
+                location: {
+                    address: r.formattedAddress || undefined,
+                },
+                latitude: r.latitude || undefined,
+                longitude: r.longitude || undefined,
+            };
+        }
+
         onSubmit({
             dish_description: '',
             rating: rating > 0 ? rating : null,
-            user_place_id: selectedPlace?.id || null,
+            user_place_id: selectedLocation?.type === 'userPlace' ? selectedLocation.data.id : null,
+            restaurant: restaurantData,
             cooked_by: cookedBy.trim(),
             content: notes.trim(),
             photos,
@@ -102,6 +148,8 @@ export function MealLogModal({
             isLiked,
         });
     };
+
+    const locationDisplay = getLocationDisplay();
 
     return (
         <Modal
@@ -143,6 +191,7 @@ export function MealLogModal({
                     style={styles.content}
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
+                    onScrollBeginDrag={Keyboard.dismiss}
                 >
                     {/* Photo Area - Bento Grid */}
                     <View style={styles.photoSection}>
@@ -164,6 +213,13 @@ export function MealLogModal({
                         colorScheme={colorScheme}
                     />
 
+                    {/* Who Cooked Row */}
+                    <CookedByRow
+                        cookedBy={cookedBy}
+                        onCookedByChange={setCookedBy}
+                        theme={theme}
+                    />
+
                     {/* Rating Section */}
                     <RatingSection
                         rating={rating}
@@ -173,32 +229,45 @@ export function MealLogModal({
                         theme={theme}
                     />
 
-                    {/* Notes Section */}
+                    {/* Location Row (opens modal) */}
+                    <TouchableOpacity
+                        style={[styles.locationRow, { borderBottomColor: theme.border }]}
+                        onPress={() => setShowLocationSearch(true)}
+                    >
+                        <View style={styles.locationLeft}>
+                            <Ionicons name="location" size={18} color={theme.textSecondary} />
+                            <Text style={[styles.locationLabel, { color: theme.textSecondary }]}>
+                                Location
+                            </Text>
+                        </View>
+                        <View style={styles.locationRight}>
+                            <Text style={[styles.locationValue, { color: theme.text }]}>
+                                {locationDisplay.icon} {locationDisplay.name}
+                            </Text>
+                            <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
+                        </View>
+                    </TouchableOpacity>
+
+                    {/* Notes Section (second-last) */}
                     <NotesSection
                         notes={notes}
                         onNotesChange={setNotes}
                         theme={theme}
                     />
 
-                    {/* Metadata Section */}
-                    <MetadataSection
-                        cookedBy={cookedBy}
-                        onCookedByChange={setCookedBy}
-                        theme={theme}
-                    >
-                        <PlacePicker
-                            userId={userId}
-                            selectedPlace={selectedPlace}
-                            onPlaceSelect={setSelectedPlace}
-                            places={userPlaces}
-                            isLoading={placesLoading}
-                            isExpanded={showPlacePicker}
-                            onExpandedChange={setShowPlacePicker}
-                            theme={theme}
-                        />
-                    </MetadataSection>
+                    {/* Tags Section (bottom - coming soon) */}
+                    <MetadataSection theme={theme} />
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            {/* Location Search Modal */}
+            <LocationSearchModal
+                visible={showLocationSearch}
+                onClose={() => setShowLocationSearch(false)}
+                onSelectRestaurant={handleSelectRestaurant}
+                onSelectUserPlace={handleSelectUserPlace}
+                userId={userId}
+            />
         </Modal>
     );
 }
@@ -231,5 +300,29 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingTop: 12,
         paddingBottom: 8,
+    },
+    locationRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 14,
+        paddingHorizontal: 20,
+        borderBottomWidth: 1,
+    },
+    locationLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    locationLabel: {
+        fontSize: 15,
+    },
+    locationRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    locationValue: {
+        fontSize: 15,
     },
 });

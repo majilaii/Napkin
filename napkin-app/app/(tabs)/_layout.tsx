@@ -5,9 +5,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { LogTypeActionSheet } from '@/components/LogTypeActionSheet';
-import { MealLogModal, MealLogData } from '@/components/MealLogModal';
+import { MealLogModal, MealLogData } from '@/components/meal-log/MealLogModal';
 import { useAuth } from '@/providers/AuthProvider';
-import { useCreateEntry } from '@/hooks/useCreateEntry';
+import { useCreateEntry } from '@/hooks/entries/useCreateEntry';
 import { useRouter } from 'expo-router';
 import { Alert } from 'react-native';
 
@@ -27,8 +27,9 @@ export default function TabLayout() {
     if (type === 'meal') {
       setMealModalVisible(true);
     } else if (type === 'restaurant') {
-      router.push('/(tabs)/log');
+      router.push('/restaurant/search');
     }
+    // Table coming soon
   };
 
   const handleMealSubmit = async (data: MealLogData) => {
@@ -36,12 +37,18 @@ export default function TabLayout() {
 
     try {
       await createEntryMutation.mutateAsync({
-        user_place_id: data.user_place_id || undefined,
+        // Pass restaurant if selected (links entry to restaurant)
+        restaurant: data.restaurant,
+        // Pass user_place_id if no restaurant was selected
+        user_place_id: data.restaurant ? undefined : (data.user_place_id || undefined),
         rating: data.rating,
         content: data.content,
         dish_description: data.dish_description,
         cooked_by: data.cooked_by,
+        visited_at: data.date.toISOString(),
         userId,
+        // For cache invalidation
+        locationId: data.restaurant?.external_id || data.user_place_id || undefined,
       });
 
       setMealModalVisible(false);

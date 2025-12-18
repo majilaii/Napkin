@@ -9,7 +9,7 @@ import {
     StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { UserPlace, useCreateUserPlace } from '@/hooks/useUserPlaces';
+import { UserPlace, useCreateUserPlace } from '@/hooks/places/useUserPlaces';
 
 interface PlacePickerProps {
     userId: string;

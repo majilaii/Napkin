@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
     TextInput,
     StyleSheet,
+    NativeSyntheticEvent,
+    TextInputContentSizeChangeEventData,
 } from 'react-native';
 
 interface NotesSectionProps {
@@ -18,6 +20,8 @@ interface NotesSectionProps {
     };
 }
 
+const MIN_HEIGHT = 300;
+
 export function NotesSection({
     notes,
     onNotesChange,
@@ -25,6 +29,15 @@ export function NotesSection({
     label = "Your Review",
     theme,
 }: NotesSectionProps) {
+    const [inputHeight, setInputHeight] = useState(MIN_HEIGHT);
+
+    const handleContentSizeChange = (
+        e: NativeSyntheticEvent<TextInputContentSizeChangeEventData>
+    ) => {
+        const newHeight = e.nativeEvent.contentSize.height;
+        setInputHeight(Math.max(MIN_HEIGHT, newHeight));
+    };
+
     return (
         <View style={styles.notesSection}>
             <Text style={[styles.notesSectionLabel, { color: theme.textSecondary }]}>
@@ -36,6 +49,7 @@ export function NotesSection({
                     {
                         color: theme.text,
                         backgroundColor: theme.background,
+                        minHeight: inputHeight,
                     },
                 ]}
                 placeholder={placeholder}
@@ -44,7 +58,7 @@ export function NotesSection({
                 onChangeText={onNotesChange}
                 multiline
                 textAlignVertical="top"
-                scrollEnabled={true}
+                onContentSizeChange={handleContentSizeChange}
             />
         </View>
     );
@@ -52,10 +66,9 @@ export function NotesSection({
 
 const styles = StyleSheet.create({
     notesSection: {
-        flex: 1,
         paddingHorizontal: 16,
         paddingTop: 16,
-        paddingBottom: 8,
+        paddingBottom: 8
     },
     notesSectionLabel: {
         fontSize: 13,
@@ -67,7 +80,6 @@ const styles = StyleSheet.create({
     notesInput: {
         fontSize: 16,
         lineHeight: 24,
-        minHeight: 200,
         paddingHorizontal: 0,
         paddingVertical: 0,
     },

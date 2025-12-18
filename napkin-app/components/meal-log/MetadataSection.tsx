@@ -2,52 +2,30 @@ import React from 'react';
 import {
     View,
     Text,
-    TextInput,
     TouchableOpacity,
     StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 interface MetadataSectionProps {
-    cookedBy: string;
-    onCookedByChange: (value: string) => void;
     theme: {
         border: string;
         text: string;
         textSecondary: string;
     };
-    children?: React.ReactNode; // For PlacePicker
+    children?: React.ReactNode; // For Location row
 }
 
 export function MetadataSection({
-    cookedBy,
-    onCookedByChange,
     theme,
     children,
 }: MetadataSectionProps) {
     return (
         <View style={[styles.metadataSection, { borderTopColor: theme.border }]}>
-            {/* Place Picker (passed as children) */}
+            {/* Location (passed as children) */}
             {children}
 
-            {/* Who Cooked */}
-            <View style={[styles.metadataRow, { borderBottomColor: theme.border }]}>
-                <View style={styles.metadataLeft}>
-                    <Ionicons name="person" size={20} color={theme.textSecondary} />
-                    <Text style={[styles.metadataLabel, { color: theme.textSecondary }]}>
-                        Cooked by
-                    </Text>
-                </View>
-                <TextInput
-                    style={[styles.metadataInput, { color: theme.text }]}
-                    placeholder="Me"
-                    placeholderTextColor={theme.textSecondary}
-                    value={cookedBy}
-                    onChangeText={onCookedByChange}
-                />
-            </View>
-
-            {/* Future: Tags */}
+            {/* Future: Tags (will open a modal) */}
             <TouchableOpacity
                 style={[styles.metadataRow, { borderBottomColor: theme.border, opacity: 0.5 }]}
                 disabled
@@ -96,11 +74,5 @@ const styles = StyleSheet.create({
     },
     metadataValue: {
         fontSize: 15,
-    },
-    metadataInput: {
-        flex: 1,
-        fontSize: 15,
-        textAlign: 'right',
-        paddingVertical: 0,
     },
 });

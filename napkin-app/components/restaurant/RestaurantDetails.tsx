@@ -7,9 +7,9 @@ import {
     TouchableOpacity,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SearchResult } from '@/hooks/useRestaurantSearch';
+import { SearchResult } from '@/hooks/places/useRestaurantSearch';
 
-interface DetailsViewProps {
+interface RestaurantDetailsProps {
     theme: {
         text: string;
         tint: string;
@@ -19,12 +19,12 @@ interface DetailsViewProps {
     onOpenModal: () => void;
 }
 
-export function DetailsView({
+export function RestaurantDetails({
     theme,
     restaurant,
     onBack,
     onOpenModal,
-}: DetailsViewProps) {
+}: RestaurantDetailsProps) {
     return (
         <ScrollView contentContainerStyle={styles.detailsContent}>
             <TouchableOpacity onPress={onBack} style={styles.backButton}>

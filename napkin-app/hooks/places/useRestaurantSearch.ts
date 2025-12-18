@@ -6,8 +6,8 @@ export interface SearchResult {
     id: string;
     name: string;
     formattedAddress: string;
-    latitude: number;
-    longitude: number;
+    latitude?: number;
+    longitude?: number;
 }
 
 async function searchRestaurants(query: string): Promise<SearchResult[]> {
