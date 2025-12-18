@@ -9,9 +9,9 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SearchResult } from '@/hooks/useRestaurantSearch';
+import { SearchResult } from '@/hooks/places/useRestaurantSearch';
 
-interface SearchViewProps {
+interface RestaurantSearchProps {
     theme: {
         text: string;
         tint: string;
@@ -23,14 +23,14 @@ interface SearchViewProps {
     onSelectRestaurant: (restaurant: SearchResult) => void;
 }
 
-export function SearchView({
+export function RestaurantSearch({
     theme,
     searchQuery,
     setSearchQuery,
     isSearching,
     searchResults,
     onSelectRestaurant,
-}: SearchViewProps) {
+}: RestaurantSearchProps) {
     return (
         <View style={styles.searchContent}>
             <Text style={[styles.header, { color: theme.text }]}>Find a place</Text>

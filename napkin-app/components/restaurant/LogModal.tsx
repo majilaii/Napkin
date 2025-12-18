@@ -11,7 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { StarRating } from './StarRating';
+import { StarRating } from '../StarRating';
 
 interface LogModalProps {
     visible: boolean;

@@ -13,11 +13,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useUserEntries } from '@/hooks/useUserEntries';
-import { useProfile } from '@/hooks/useProfile';
+import { useUserEntries } from '@/hooks/entries/useUserEntries';
+import { useProfile } from '@/hooks/user/useProfile';
 import { Entry } from '@/lib/api';
 import { StarRating } from '@/components/StarRating';
-import { Top4Grid, Top4Restaurant } from '@/components/Top4Grid';
+import { Top4Grid, Top4Restaurant } from '@/components/profile/Top4Grid';
 
 export default function ProfileScreen() {
     const colorScheme = useColorScheme();
