@@ -151,6 +151,64 @@ C. The Feed (Aggregated View)
 
     The Interaction: Likes/Comments apply to the Event, reinforcing the social proof of the group outing.
 
+D. Wishlist Overlap Detection (The "Perfect Pick" Feature)
+
+    The Problem: "Where should we eat?" is the #1 friction for group dining.
+
+    The Solution: When users share a Table, the app automatically detects overlapping "Want to Try" restaurants.
+
+    The UX:
+        - Table Dashboard: Shows a "Mutual Picks" section with restaurants wishlisted by 2+ members.
+        - Sort by Overlap: "Everyone wants to try Carbone. Just go already."
+
+    The Psychology: Creates FOMO and urgency. "We've both wanted to try this place forever!"
+
+E. External Sharing → Auto-Wishlist (The Growth Hack)
+
+    The Problem: Users discover restaurants on TikTok, Instagram, and Google Maps but forget to save them.
+
+    The Solution: Share a link TO Napkin → Save to wishlist.
+
+    MVP Scope (User-Assisted Entry):
+
+        Tier 1 — Auto-Parse (When Possible):
+            - Google Maps links: Direct Place ID extraction → Auto-add ✅
+            - Instagram location tags: Extract if tagged → Auto-add ✅
+
+        Tier 2 — User-Assisted Entry (Default Fallback):
+            - TikTok/Reels without location: Show search prompt
+            - Compilation videos ("What I ate in December"): User adds each restaurant manually
+
+        The UX Flow:
+            1. User shares TikTok/Reel/Maps link to Napkin
+            2. App attempts to parse restaurant (Google Maps = auto-success)
+            3. If parse fails → Prompt:
+               ┌────────────────────────────────┐
+               │ 📍 What restaurant is this?    │
+               │ [Search for restaurant...]     │
+               │                                │
+               │ 🔗 Link saved for reference    │
+               │ [I'll add it later]            │
+               └────────────────────────────────┘
+            4. User searches → Adds to wishlist
+            5. Optional: "Share to Sunday Roast Club wishlist?"
+
+        Compilation Videos:
+            - If multiple restaurants detected in caption OR user indicates
+            - Show multi-add interface:
+               [+ Add restaurant]
+                 • First restaurant added
+                 • Second restaurant added
+               [+ Add another]
+               [Save All to Wishlist]
+
+    Future (Post-MVP):
+        - AI thumbnail analysis for restaurant name extraction
+        - Video keyframe extraction for compilations
+        - Audio transcription parsing
+
+    The Hook: "Napkin is your second brain for restaurants. Share once, never forget."
+
 6. Development Roadmap (3-Month Sprint)
 
 Month 1: The Foundation (Data & Logic)

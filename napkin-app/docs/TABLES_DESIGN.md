@@ -246,31 +246,41 @@ CREATE TABLE table_night_dish_ratings (
 );
 ```
 
-### reviews (modifications)
+### entries (modifications for Tables integration)
 ```sql
-ALTER TABLE reviews 
+-- Add Table Night linkage to entries table
+ALTER TABLE entries 
   ADD COLUMN table_id UUID REFERENCES tables(id),
   ADD COLUMN table_night_id UUID REFERENCES table_nights(id),
   ADD COLUMN visibility TEXT DEFAULT 'private' 
     CHECK (visibility IN ('private', 'friends', 'table', 'both'));
 
 -- Index for table activity feed queries
-CREATE INDEX idx_reviews_table_id ON reviews(table_id);
-CREATE INDEX idx_reviews_visibility ON reviews(visibility);
+CREATE INDEX idx_entries_table_id ON entries(table_id);
+CREATE INDEX idx_entries_table_night_id ON entries(table_night_id);
+CREATE INDEX idx_entries_visibility ON entries(visibility);
 ```
+
+> [!NOTE]
+> When a user rates during a Table Night, an `entry` is created with:
+> - `restaurant_id` → links to the restaurant (for restaurant detail page)
+> - `table_night_id` → links to the Table Night event
+> - `table_id` → links to the Table
+> 
+> This allows viewing Table Night entries alongside solo entries on a restaurant's page.
 
 ### table_activity_interactions
 ```sql
 CREATE TABLE table_activity_likes (
-  review_id UUID REFERENCES reviews(id) ON DELETE CASCADE,
+  entry_id UUID REFERENCES entries(id) ON DELETE CASCADE,
   user_id UUID REFERENCES profiles(user_id),
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY (review_id, user_id)
+  PRIMARY KEY (entry_id, user_id)
 );
 
 CREATE TABLE table_activity_comments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  review_id UUID REFERENCES reviews(id) ON DELETE CASCADE,
+  entry_id UUID REFERENCES entries(id) ON DELETE CASCADE,
   user_id UUID REFERENCES profiles(user_id),
   content TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()

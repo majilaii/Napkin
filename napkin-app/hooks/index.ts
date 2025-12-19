@@ -5,4 +5,5 @@ export { useThemeColor } from './use-theme-color';
 // Re-export from subfolders
 export * from './entries';
 export * from './places';
+export * from './restaurant';
 export * from './user';
