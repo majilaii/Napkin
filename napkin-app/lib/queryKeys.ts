@@ -26,5 +26,13 @@ export const queryKeys = {
 
     // Feed
     feed: () => ['feed'] as const,
+
+    // Tables (supper club groups)
+    tables: {
+        list: (userId: string) => ['tables', userId] as const,
+        detail: (tableId: string) => ['table', tableId] as const,
+        members: (tableId: string) => ['tableMembers', tableId] as const,
+        nights: (tableId: string) => ['tableNights', tableId] as const,
+    },
 } as const;
 
