@@ -47,7 +47,7 @@ serve(async (req) => {
                 .from('table_members')
                 .select('role')
                 .eq('table_id', tableId)
-                .eq('user_id', user.id)
+                .eq('member_id', user.id)
                 .single();
             return data?.role === 'admin';
         }
@@ -68,7 +68,7 @@ serve(async (req) => {
         async function countAdmins(tableId: string): Promise<number> {
             const { data } = await supabase
                 .from('table_members')
-                .select('user_id')
+                .select('member_id')
                 .eq('table_id', tableId)
                 .eq('role', 'admin');
             return data?.length ?? 0;
@@ -96,9 +96,9 @@ serve(async (req) => {
             // Check if user is already a member
             const { data: existingMember } = await supabase
                 .from('table_members')
-                .select('user_id')
+                .select('member_id')
                 .eq('table_id', table_id)
-                .eq('user_id', invite_user_id)
+                .eq('member_id', invite_user_id)
                 .single();
 
             if (existingMember) {
@@ -146,7 +146,7 @@ serve(async (req) => {
 
         // POST /join - Join a table (self) - requires valid invitation
         if (req.method === 'POST' && action === 'join') {
-            const { table_id, invitation_code } = body;
+            const { table_id } = body;
 
             if (!table_id) {
                 return new Response(
@@ -167,7 +167,7 @@ serve(async (req) => {
             // Add the user as a member
             const { data, error } = await supabase
                 .from('table_members')
-                .insert({ table_id, user_id: user.id, role: 'member' })
+                .insert({ table_id, member_id: user.id, role: 'member' })
                 .select()
                 .single();
 
@@ -212,7 +212,7 @@ serve(async (req) => {
                 .from('table_members')
                 .delete()
                 .eq('table_id', table_id)
-                .eq('user_id', targetUserId);
+                .eq('member_id', targetUserId);
 
             if (error) throw error;
 
@@ -248,7 +248,7 @@ serve(async (req) => {
                     .from('table_members')
                     .select('role')
                     .eq('table_id', table_id)
-                    .eq('user_id', targetUserId)
+                    .eq('member_id', targetUserId)
                     .single();
 
                 if (targetMember?.role === 'admin') {
@@ -266,7 +266,7 @@ serve(async (req) => {
                 .from('table_members')
                 .update({ role })
                 .eq('table_id', table_id)
-                .eq('user_id', targetUserId)
+                .eq('member_id', targetUserId)
                 .select()
                 .single();
 

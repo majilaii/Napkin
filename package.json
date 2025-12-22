@@ -36,6 +36,8 @@
     "test:functions": "~/.deno/bin/deno test --allow-env supabase/functions/",
     "test:app": "cd napkin-app && npm test",
     "test": "npm run test:functions && npm run test:app",
+    "lint": "cd napkin-app && npm run lint",
+    "lint:fix": "cd napkin-app && npm run lint -- --fix",
     "prepare": "husky"
   },
   "repository": {

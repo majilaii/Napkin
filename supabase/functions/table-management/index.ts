@@ -53,7 +53,7 @@ serve(async (req) => {
                         updated_at
                     )
                 `)
-                .eq('user_id', user.id)
+                .eq('member_id', user.id)
                 .order('joined_at', { ascending: false });
 
             if (error) throw error;
@@ -77,7 +77,7 @@ serve(async (req) => {
             const { data: members, error: membersError } = await supabase
                 .from('table_members')
                 .select(`
-                    user_id,
+                    member_id,
                     role,
                     joined_at,
                     profiles (
@@ -119,7 +119,7 @@ serve(async (req) => {
             // Add creator as admin member
             const { error: memberError } = await supabase
                 .from('table_members')
-                .insert({ table_id: newTable.id, user_id: user.id, role: 'admin' });
+                .insert({ table_id: newTable.id, member_id: user.id, role: 'admin' });
 
             if (memberError) throw memberError;
 
