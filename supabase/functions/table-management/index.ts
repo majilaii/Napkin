@@ -119,7 +119,7 @@ serve(async (req) => {
             // Add creator as admin member
             const { error: memberError } = await supabase
                 .from('table_members')
-                .insert({ table_id: newTable.id, member_id: user.id, role: 'admin' });
+                .insert({ table_id: newTable.id, user_id: user.id, role: 'admin' });
 
             if (memberError) throw memberError;
 

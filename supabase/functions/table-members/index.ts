@@ -47,14 +47,36 @@ serve(async (req) => {
                 .from('table_members')
                 .select('role')
                 .eq('table_id', tableId)
-                .eq('member_id', user.id)
+                .eq('user_id', user.id)
                 .single();
             return data?.role === 'admin';
         }
 
-        // POST /invite - Add a member to a table
+        // Helper: check if user has a pending invitation
+        async function hasPendingInvitation(tableId: string, userId: string): Promise<boolean> {
+            const { data } = await supabase
+                .from('table_invitations')
+                .select('id')
+                .eq('table_id', tableId)
+                .eq('invited_user_id', userId)
+                .eq('status', 'pending')
+                .single();
+            return !!data;
+        }
+
+        // Helper: count admins in a table
+        async function countAdmins(tableId: string): Promise<number> {
+            const { data } = await supabase
+                .from('table_members')
+                .select('user_id')
+                .eq('table_id', tableId)
+                .eq('role', 'admin');
+            return data?.length ?? 0;
+        }
+
+        // POST /invite - Send an invitation to a user
         if (req.method === 'POST' && action === 'invite') {
-            const { table_id, invite_user_id, role = 'member' } = body;
+            const { table_id, invite_user_id } = body;
 
             if (!table_id || !invite_user_id) {
                 return new Response(
@@ -71,9 +93,46 @@ serve(async (req) => {
                 );
             }
 
-            const { data, error } = await supabase
+            // Check if user is already a member
+            const { data: existingMember } = await supabase
                 .from('table_members')
-                .insert({ table_id, member_id: invite_user_id, role })
+                .select('user_id')
+                .eq('table_id', table_id)
+                .eq('user_id', invite_user_id)
+                .single();
+
+            if (existingMember) {
+                return new Response(
+                    JSON.stringify({ error: 'User is already a member of this table' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Check if there's already a pending invitation
+            const { data: existingInvitation } = await supabase
+                .from('table_invitations')
+                .select('id')
+                .eq('table_id', table_id)
+                .eq('invited_user_id', invite_user_id)
+                .eq('status', 'pending')
+                .single();
+
+            if (existingInvitation) {
+                return new Response(
+                    JSON.stringify({ error: 'User already has a pending invitation' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Create the invitation
+            const { data, error } = await supabase
+                .from('table_invitations')
+                .insert({
+                    table_id,
+                    invited_user_id: invite_user_id,
+                    invited_by: user.id,
+                    status: 'pending'
+                })
                 .select()
                 .single();
 
@@ -85,9 +144,9 @@ serve(async (req) => {
             );
         }
 
-        // POST /join - Join a table (self)
+        // POST /join - Join a table (self) - requires valid invitation
         if (req.method === 'POST' && action === 'join') {
-            const { table_id } = body;
+            const { table_id, invitation_code } = body;
 
             if (!table_id) {
                 return new Response(
@@ -96,13 +155,31 @@ serve(async (req) => {
                 );
             }
 
+            // Check if user has a pending invitation
+            const hasInvitation = await hasPendingInvitation(table_id, user.id);
+            if (!hasInvitation) {
+                return new Response(
+                    JSON.stringify({ error: 'You must be invited to join this table' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Add the user as a member
             const { data, error } = await supabase
                 .from('table_members')
-                .insert({ table_id, member_id: user.id, role: 'member' })
+                .insert({ table_id, user_id: user.id, role: 'member' })
                 .select()
                 .single();
 
             if (error) throw error;
+
+            // Mark invitation as accepted
+            await supabase
+                .from('table_invitations')
+                .update({ status: 'accepted' })
+                .eq('table_id', table_id)
+                .eq('invited_user_id', user.id)
+                .eq('status', 'pending');
 
             return new Response(
                 JSON.stringify({ data }),
@@ -135,7 +212,7 @@ serve(async (req) => {
                 .from('table_members')
                 .delete()
                 .eq('table_id', table_id)
-                .eq('member_id', targetUserId);
+                .eq('user_id', targetUserId);
 
             if (error) throw error;
 
@@ -164,11 +241,32 @@ serve(async (req) => {
                 );
             }
 
+            // Prevent demoting the last admin
+            if (role === 'member') {
+                // Get the target user's current role
+                const { data: targetMember } = await supabase
+                    .from('table_members')
+                    .select('role')
+                    .eq('table_id', table_id)
+                    .eq('user_id', targetUserId)
+                    .single();
+
+                if (targetMember?.role === 'admin') {
+                    const adminCount = await countAdmins(table_id);
+                    if (adminCount <= 1) {
+                        return new Response(
+                            JSON.stringify({ error: 'Cannot demote the last admin. Promote another member to admin first.' }),
+                            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        );
+                    }
+                }
+            }
+
             const { data, error } = await supabase
                 .from('table_members')
                 .update({ role })
                 .eq('table_id', table_id)
-                .eq('member_id', targetUserId)
+                .eq('user_id', targetUserId)
                 .select()
                 .single();
 
