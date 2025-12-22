@@ -60,7 +60,7 @@ export default function ValueProfile({ values, setValues, readOnly = false }: Va
             const y = center + r * Math.sin(index * angleStep - Math.PI / 2);
             return `${x},${y}`;
         }).join(' ');
-    }, [values]);
+    }, [values, center, angleStep, radius]);
 
     const axisPoints = useMemo(() => {
         return CATEGORIES.map((_, index) => {
@@ -68,7 +68,7 @@ export default function ValueProfile({ values, setValues, readOnly = false }: Va
             const y = center + radius * Math.sin(index * angleStep - Math.PI / 2);
             return { x, y };
         });
-    }, []);
+    }, [center, angleStep, radius]);
 
     return (
         <View style={styles.container}>

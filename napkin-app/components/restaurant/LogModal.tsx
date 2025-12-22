@@ -6,11 +6,8 @@ import {
     Modal,
     TouchableOpacity,
     TouchableWithoutFeedback,
-    Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { StarRating } from '../StarRating';
 
 interface LogModalProps {
@@ -48,8 +45,6 @@ export function LogModal({
     visitCount = 0,
     lastVisitDate,
 }: LogModalProps) {
-    const colorScheme = useColorScheme();
-    const theme = Colors[colorScheme ?? 'light'];
     const [rating, setRating] = useState(initialRating);
     const [toggles, setToggles] = useState({
         been: initialToggles.been ?? false,

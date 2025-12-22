@@ -1,8 +1,6 @@
 import React, { useRef, useCallback } from 'react';
 import { View, StyleSheet, ViewStyle, GestureResponderEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface StarRatingProps {
   rating: number;
@@ -19,7 +17,6 @@ export function StarRating({
   size = 32,
   style,
 }: StarRatingProps) {
-  const colorScheme = useColorScheme();
   const activeColor = "black";
   const inactiveColor = 'grey';
 
