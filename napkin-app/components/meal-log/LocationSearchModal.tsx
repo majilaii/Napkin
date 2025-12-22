@@ -76,7 +76,7 @@ export function LocationSearchModal({
             setNewPlaceName('');
             setIsAddingPlace(false);
             onClose();
-        } catch (error) {
+        } catch {
             Alert.alert('Error', 'Failed to add location. Please try again.');
         }
     };

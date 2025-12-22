@@ -58,7 +58,7 @@ export function PlacePicker({
             setNewPlaceName('');
             setIsAddingPlace(false);
             onExpandedChange(false);
-        } catch (error) {
+        } catch {
             Alert.alert('Error', 'Failed to add location. Please try again.');
         }
     };

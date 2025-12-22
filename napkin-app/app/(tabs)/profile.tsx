@@ -45,7 +45,7 @@ export default function ProfileScreen() {
     const error = entriesError?.message ?? null;
 
     // Top 4 state (local for now)
-    const [top4Restaurants, setTop4Restaurants] = useState<(Top4Restaurant | null)[]>([]);
+    const [top4Restaurants] = useState<(Top4Restaurant | null)[]>([]);
     const [isEditingTop4, setIsEditingTop4] = useState(false);
 
     // Pull to refresh

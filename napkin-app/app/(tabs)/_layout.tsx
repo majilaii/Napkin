@@ -1,6 +1,6 @@
-import { Tabs } from 'expo-router';
-import React, { createContext, useContext, useState } from 'react';
-import { TouchableOpacity, StyleSheet } from 'react-native';
+import { Tabs, useRouter } from 'expo-router';
+import React, { useState } from 'react';
+import { TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -8,8 +8,7 @@ import { LogTypeActionSheet } from '@/components/LogTypeActionSheet';
 import { MealLogModal, MealLogData } from '@/components/meal-log/MealLogModal';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCreateEntry } from '@/hooks/entries/useCreateEntry';
-import { useRouter } from 'expo-router';
-import { Alert } from 'react-native';
+
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();

@@ -142,10 +142,10 @@ ALTER TABLE tables ENABLE ROW LEVEL SECURITY;
 ```sql
 CREATE TABLE table_members (
   table_id UUID REFERENCES tables(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES profiles(user_id) ON DELETE CASCADE,
+  member_id UUID REFERENCES profiles(user_id) ON DELETE CASCADE,
   role TEXT DEFAULT 'member' CHECK (role IN ('admin', 'member')),
   joined_at TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY (table_id, user_id)
+  PRIMARY KEY (table_id, member_id)
 );
 
 -- RLS: Users can see tables they're members of
