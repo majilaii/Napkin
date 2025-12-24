@@ -13,6 +13,9 @@ serve(async (req) => {
 
     try {
         const authHeader = req.headers.get('Authorization');
+        const supabaseUrl = Deno.env.get('SUPABASE_URL');
+        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
         if (!authHeader) {
             return new Response(
                 JSON.stringify({ error: 'Missing Authorization header' }),
@@ -20,13 +23,15 @@ serve(async (req) => {
             );
         }
 
+        const token = authHeader.replace('Bearer ', '');
+
+        // Use service role key to bypass RLS - we validate auth manually via getUser
         const supabase = createClient(
-            Deno.env.get('SUPABASE_URL') ?? '',
-            Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-            { global: { headers: { Authorization: authHeader } } }
+            supabaseUrl ?? '',
+            supabaseServiceKey ?? ''
         );
 
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
         if (userError || !user) {
             return new Response(
                 JSON.stringify({ error: 'Unauthorized' }),

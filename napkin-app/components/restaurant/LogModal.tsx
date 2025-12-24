@@ -52,22 +52,50 @@ export function LogModal({
         try: initialToggles.try ?? false,
     });
 
-    // Sync state when modal OPENS (not on every prop change to avoid flicker)
+    // Track if user has interacted with the form
+    const hasUserInteracted = React.useRef(false);
+    const prevPropsRef = React.useRef({ initialRating, initialToggles });
+
+    // Sync state when:
+    // 1. Modal transitions from closed to open (reset interaction tracking)
+    // 2. Data arrives while modal is open AND user hasn't interacted yet
     const wasVisible = React.useRef(false);
     useEffect(() => {
-        // Only sync when modal transitions from closed to open
+        // Modal just opened - sync and reset interaction tracking
         if (visible && wasVisible.current === false) {
+            hasUserInteracted.current = false;
             setRating(initialRating);
             setToggles({
                 been: initialToggles.been ?? false,
                 like: initialToggles.like ?? false,
                 try: initialToggles.try ?? false,
             });
+            prevPropsRef.current = { initialRating, initialToggles };
+        }
+        // Modal is open and data changed - sync only if user hasn't interacted
+        else if (visible && !hasUserInteracted.current) {
+            const propsChanged =
+                initialRating !== prevPropsRef.current.initialRating ||
+                initialToggles.been !== prevPropsRef.current.initialToggles.been ||
+                initialToggles.like !== prevPropsRef.current.initialToggles.like ||
+                initialToggles.try !== prevPropsRef.current.initialToggles.try;
+
+            if (propsChanged) {
+                setRating(initialRating);
+                setToggles({
+                    been: initialToggles.been ?? false,
+                    like: initialToggles.like ?? false,
+                    try: initialToggles.try ?? false,
+                });
+                prevPropsRef.current = { initialRating, initialToggles };
+            }
         }
         wasVisible.current = visible;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible, initialRating, initialToggles.been, initialToggles.like, initialToggles.try]);
 
     const handleRating = (r: number) => {
+        hasUserInteracted.current = true;
         setRating(r);
         // Auto-toggle "Been" when user rates non-zero (they've been there!)
         if (r > 0 && !toggles.been) {
@@ -107,6 +135,7 @@ export function LogModal({
     };
 
     const toggleOption = (key: keyof typeof toggles) => {
+        hasUserInteracted.current = true;
         const newValue = !toggles[key];
 
         // Special handling for "Been" toggle when turning OFF

@@ -47,8 +47,12 @@ export function useRemoveMember() {
 
     return useMutation({
         mutationFn: async ({ tableId, userId }: RemoveMemberInput) => {
+            const { data: { session } } = await supabase.auth.getSession();
             const { data, error } = await supabase.functions.invoke(`table-members/${userId}?table_id=${tableId}`, {
                 method: 'DELETE',
+                headers: session?.access_token ? {
+                    Authorization: `Bearer ${session.access_token}`,
+                } : undefined,
             });
             if (error) throw error;
             return data;
@@ -66,8 +70,12 @@ export function useChangeRole() {
 
     return useMutation({
         mutationFn: async ({ tableId, userId, role }: ChangeRoleInput) => {
+            const { data: { session } } = await supabase.auth.getSession();
             const { data, error } = await supabase.functions.invoke(`table-members/${userId}/role`, {
                 body: { table_id: tableId, role },
+                headers: session?.access_token ? {
+                    Authorization: `Bearer ${session.access_token}`,
+                } : undefined,
             });
             if (error) throw error;
             if (data?.error) throw new Error(data.error);
