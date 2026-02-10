@@ -33,6 +33,9 @@ describe('useCreateTable', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
         expect(mockSupabase.functions.invoke).toHaveBeenCalledWith('table-management', {
             body: { name: 'Pizza Pals' },
+            headers: {
+                Authorization: 'Bearer mock-access-token',
+            },
         });
     });
 

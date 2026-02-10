@@ -75,6 +75,14 @@ export default function TabLayout() {
         />
 
         <Tabs.Screen
+          name="tables"
+          options={{
+            title: 'Tables',
+            tabBarIcon: ({ color }) => <Ionicons size={28} name="people" color={color} />,
+          }}
+        />
+
+        <Tabs.Screen
           name="log"
           options={{
             title: 'Log',
@@ -85,12 +93,17 @@ export default function TabLayout() {
                 color={Colors[colorScheme ?? 'light'].primary}
               />
             ),
-            tabBarButton: (props) => (
+            tabBarButton: () => (
               <TouchableOpacity
-                {...props}
                 onPress={() => setActionSheetVisible(true)}
                 style={styles.logButton}
-              />
+              >
+                <Ionicons
+                  size={32}
+                  name="add-circle"
+                  color={Colors[colorScheme ?? 'light'].primary}
+                />
+              </TouchableOpacity>
             ),
           }}
         />

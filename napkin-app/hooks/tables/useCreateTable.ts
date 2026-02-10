@@ -12,8 +12,14 @@ interface CreateTableInput {
 }
 
 async function createTable(input: CreateTableInput): Promise<Table> {
+    // Get current session to include auth header
+    const { data: { session } } = await supabase.auth.getSession();
+
     const { data, error } = await supabase.functions.invoke('table-management', {
         body: input,
+        headers: session?.access_token ? {
+            Authorization: `Bearer ${session.access_token}`,
+        } : undefined,
     });
 
     if (error) throw error;
