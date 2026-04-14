@@ -1,7 +1,7 @@
 import { Redirect } from 'expo-router';
 
 export default function Index() {
-    // Redirect to explore tab by default
-    // Auth redirection is handled in _layout.tsx
-    return <Redirect href="/(tabs)/explore" />;
+    // Group segments are transparent in expo-router URLs — `/tables` resolves
+    // to app/(tabs)/tables.tsx. This is more reliable than `/(tabs)/tables`.
+    return <Redirect href="/tables" />;
 }

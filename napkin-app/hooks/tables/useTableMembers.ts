@@ -1,90 +1,41 @@
 /**
- * Hook to manage table members
+ * Hook to fetch members of a specific table.
+ * Used by create-entry.tsx for the participant tagging UI.
  */
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
 
-interface InviteMemberInput {
-    tableId: string;
-    inviteUserId: string;
-    role?: 'admin' | 'member';
+export interface TableMember {
+    member_id: string;
+    role: string;
+    joined_at: string;
+    profiles: {
+        display_name: string;
+        avatar_url: string | null;
+    };
 }
 
-interface RemoveMemberInput {
-    tableId: string;
-    userId: string;
+async function fetchTableMembers(tableId: string): Promise<TableMember[]> {
+    const { data: { session } } = await supabase.auth.getSession();
+    const { data, error } = await supabase.functions.invoke(
+        `table-management/${tableId}`,
+        {
+            method: 'GET',
+            headers: session?.access_token
+                ? { Authorization: `Bearer ${session.access_token}` }
+                : undefined,
+        }
+    );
+    if (error) throw error;
+    return data?.data?.members ?? [];
 }
 
-interface ChangeRoleInput {
-    tableId: string;
-    userId: string;
-    role: 'admin' | 'member';
-}
-
-export function useInviteMember() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: async ({ tableId, inviteUserId, role = 'member' }: InviteMemberInput) => {
-            const { data, error } = await supabase.functions.invoke('table-members/invite', {
-                body: { table_id: tableId, invite_user_id: inviteUserId, role },
-            });
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
-            return data?.data;
-        },
-        onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: queryKeys.tables.detail(variables.tableId),
-            });
-        },
-    });
-}
-
-export function useRemoveMember() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: async ({ tableId, userId }: RemoveMemberInput) => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke(`table-members/${userId}?table_id=${tableId}`, {
-                method: 'DELETE',
-                headers: session?.access_token ? {
-                    Authorization: `Bearer ${session.access_token}`,
-                } : undefined,
-            });
-            if (error) throw error;
-            return data;
-        },
-        onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: queryKeys.tables.detail(variables.tableId),
-            });
-        },
-    });
-}
-
-export function useChangeRole() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: async ({ tableId, userId, role }: ChangeRoleInput) => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke(`table-members/${userId}/role`, {
-                body: { table_id: tableId, role },
-                headers: session?.access_token ? {
-                    Authorization: `Bearer ${session.access_token}`,
-                } : undefined,
-            });
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
-            return data?.data;
-        },
-        onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({
-                queryKey: queryKeys.tables.detail(variables.tableId),
-            });
-        },
+export function useTableMembers(tableId: string | null | undefined) {
+    return useQuery<TableMember[], Error>({
+        queryKey: queryKeys.tables.members(tableId!),
+        queryFn: () => fetchTableMembers(tableId!),
+        enabled: !!tableId,
+        staleTime: 1000 * 60 * 5,
     });
 }

@@ -10,6 +10,7 @@ export interface Table {
     name: string;
     avatar_url: string | null;
     owner_id: string;
+    is_personal?: boolean;
     created_at: string;
     updated_at: string;
 }

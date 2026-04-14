@@ -4,12 +4,16 @@ import { corsHeaders } from '../_shared/cors.ts';
 
 /**
  * Entry Edge Function
- * 
+ *
  * Creates unified meal log entries. Can reference:
  * - restaurant_id: For restaurant entries (counts as restaurant review)
  * - place_id: For non-restaurant Google Places (parks, etc.)
  * - user_place_id: For saved places (Home, Grandma's)
  * - None: Just a meal log with no location
+ *
+ * POST actions:
+ * - (no action): Create a new entry, optionally tagging participant_ids
+ * - add-take: Update the caller's entry_participants row with their rating/notes
  */
 
 // Food establishment types from Google Places
@@ -23,7 +27,7 @@ serve(async (req) => {
     try {
         const authHeader = req.headers.get('Authorization');
         const supabaseUrl = Deno.env.get('SUPABASE_URL');
-        const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
         if (!authHeader) {
             return new Response(
@@ -33,10 +37,10 @@ serve(async (req) => {
         }
 
         const token = authHeader.replace('Bearer ', '');
+        // Use service role key to bypass RLS - we validate auth manually via getUser
         const supabase = createClient(
             supabaseUrl ?? '',
-            supabaseAnonKey ?? '',
-            { global: { headers: { Authorization: authHeader } } }
+            supabaseServiceKey ?? ''
         );
 
         const { data: { user }, error: userError } = await supabase.auth.getUser(token);
@@ -52,6 +56,71 @@ serve(async (req) => {
             const body = await req.json();
             console.log('entry function called with body:', JSON.stringify(body));
 
+            // ── add-take action ────────────────────────────────────────────
+            if (body.action === 'add-take') {
+                const { entry_id, rating, notes } = body;
+
+                if (!entry_id) {
+                    return new Response(
+                        JSON.stringify({ error: 'entry_id is required' }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Validate rating if provided
+                if (rating !== null && rating !== undefined) {
+                    if (typeof rating !== 'number' || rating < 0.5 || rating > 5.0) {
+                        return new Response(
+                            JSON.stringify({ error: 'Rating must be between 0.5 and 5.0' }),
+                            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        );
+                    }
+                }
+
+                // Validate user is a participant with null rating
+                const { data: participant, error: partError } = await supabase
+                    .from('entry_participants')
+                    .select('rating')
+                    .eq('entry_id', entry_id)
+                    .eq('user_id', user.id)
+                    .single();
+
+                if (partError || !participant) {
+                    return new Response(
+                        JSON.stringify({ error: 'You are not a participant in this entry' }),
+                        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                if (participant.rating !== null) {
+                    return new Response(
+                        JSON.stringify({ error: 'You have already added your take' }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                const ratingValue = (rating === 0 || rating === undefined || rating === null) ? null : rating;
+
+                const { data: updated, error: updateError } = await supabase
+                    .from('entry_participants')
+                    .update({
+                        rating: ratingValue,
+                        notes: notes?.trim() || null,
+                    })
+                    .eq('entry_id', entry_id)
+                    .eq('user_id', user.id)
+                    .select()
+                    .single();
+
+                if (updateError) throw updateError;
+
+                return new Response(
+                    JSON.stringify({ data: updated }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // ── Create entry (default action) ──────────────────────────────
             const {
                 // Location info (one of these)
                 restaurant,      // { external_id, name, location, types, ... }
@@ -65,6 +134,13 @@ serve(async (req) => {
                 cooked_by,
                 value_profile,
                 visited_at,
+
+                // Table sharing (optional)
+                table_id,
+                visibility,
+
+                // Collaborative (optional)
+                participant_ids,
             } = body;
 
             let restaurantId: string | null = null;
@@ -132,10 +208,30 @@ serve(async (req) => {
                 placeId = placeData.id;
             }
 
-            // Create entry
+            // Prepare participant list before creating entry
             const ratingValue = (rating === 0 || rating === undefined || rating === null) ? null : rating;
             const visitedAtValue = visited_at ? new Date(visited_at).toISOString() : new Date().toISOString();
+            const extraParticipantIds: string[] = Array.isArray(participant_ids) ? participant_ids : [];
 
+            // Validate all tagged participants are members of the target table
+            if (table_id && extraParticipantIds.length > 0) {
+                const { data: members } = await supabase
+                    .from('table_members')
+                    .select('member_id')
+                    .eq('table_id', table_id)
+                    .in('member_id', extraParticipantIds);
+
+                const memberSet = new Set((members ?? []).map((m: { member_id: string }) => m.member_id));
+                const nonMembers = extraParticipantIds.filter((id: string) => !memberSet.has(id));
+                if (nonMembers.length > 0) {
+                    return new Response(
+                        JSON.stringify({ error: `Some participants are not members of this table: ${nonMembers.join(', ')}` }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+            }
+
+            // Create entry
             const { data: entryData, error: entryError } = await supabase
                 .from('entries')
                 .insert({
@@ -149,6 +245,8 @@ serve(async (req) => {
                     cooked_by: cooked_by?.trim() || null,
                     value_profile: value_profile || null,
                     visited_at: visitedAtValue,
+                    ...(table_id ? { table_id } : {}),
+                    ...(visibility ? { visibility } : {}),
                 })
                 .select()
                 .single();
@@ -173,6 +271,26 @@ serve(async (req) => {
                 if (statusError) {
                     console.error('Status upsert error (non-fatal):', statusError);
                 }
+            }
+
+            // Insert entry_participants
+            // Always include the creator; deduplicate in case creator is in participant_ids
+            const allParticipantIds = [user.id, ...extraParticipantIds.filter((id: string) => id !== user.id)];
+
+            const participantRows = allParticipantIds.map((pid: string) => ({
+                entry_id: entryData.id,
+                user_id: pid,
+                rating: pid === user.id ? ratingValue : null,
+                notes: pid === user.id ? (content?.trim() || null) : null,
+            }));
+
+            const { error: partInsertError } = await supabase
+                .from('entry_participants')
+                .insert(participantRows);
+
+            if (partInsertError) {
+                console.error('entry_participants insert error:', partInsertError);
+                throw partInsertError;
             }
 
             console.log('Entry created:', entryData.id);

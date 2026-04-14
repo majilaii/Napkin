@@ -1,108 +1,269 @@
+/**
+ * Auth screen — Heirloom Journal aesthetic.
+ *
+ * Minimal editorial layout:
+ *   - Warm paper background
+ *   - Newsreader serif wordmark "Napkin" with a hairline rule
+ *   - Italic tagline
+ *   - Underline-only inputs (design system rule: no 1px borders for sectioning)
+ *   - Terracotta pill CTA
+ *   - Quiet mode toggle at the bottom ("Already have an account? ·")
+ *
+ * Keeps the Supabase AppState auto-refresh pattern from the original screen.
+ */
+
 import React, { useState } from 'react';
-import { Alert, StyleSheet, View, AppState, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard } from 'react-native';
-import { supabase } from '@/lib/supabase';
-import { Button, Input } from '@rneui/themed';
+import {
+    View,
+    Text,
+    StyleSheet,
+    TextInput,
+    Pressable,
+    KeyboardAvoidingView,
+    Platform,
+    TouchableWithoutFeedback,
+    Keyboard,
+    ActivityIndicator,
+    AppState,
+    Alert,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 
-// Tells Supabase Auth to continuously refresh the session automatically if
-// the app is in the foreground. When this is added, you will continue to receive
-// `onAuthStateChange` events with the `TOKEN_REFRESHED` or `SIGNED_OUT` event
-// if the user's session is terminated. This should only be registered once.
+import { Colors, Radius, Spacing, Type } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { supabase } from '@/lib/supabase';
+
+// Supabase auth auto-refresh when foregrounded. Registered once at module load.
 AppState.addEventListener('change', (state) => {
-    if (state === 'active') {
-        supabase.auth.startAutoRefresh()
-    } else {
-        supabase.auth.stopAutoRefresh()
-    }
-})
+    if (state === 'active') supabase.auth.startAutoRefresh();
+    else supabase.auth.stopAutoRefresh();
+});
 
-export default function Auth() {
-    const [email, setEmail] = useState('')
-    const [password, setPassword] = useState('')
-    const [loading, setLoading] = useState(false)
+type Mode = 'sign-in' | 'sign-up';
 
-    async function signInWithEmail() {
-        setLoading(true)
-        const { error } = await supabase.auth.signInWithPassword({
-            email: email,
-            password: password,
-        })
+export default function AuthScreen() {
+    const scheme = useColorScheme() ?? 'light';
+    const palette = Colors[scheme];
+    const insets = useSafeAreaInsets();
 
-        if (error) Alert.alert(error.message)
-        setLoading(false)
-    }
+    const [mode, setMode] = useState<Mode>('sign-in');
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [emailFocused, setEmailFocused] = useState(false);
+    const [passwordFocused, setPasswordFocused] = useState(false);
 
-    async function signUpWithEmail() {
-        setLoading(true)
-        const {
-            data: { session },
-            error,
-        } = await supabase.auth.signUp({
-            email: email,
-            password: password,
-            options: {
-                data: {
-                    display_name: email.split('@')[0], // Default display name
+    const submit = async () => {
+        if (!email || !password) {
+            Alert.alert('Missing info', 'Email and password are required.');
+            return;
+        }
+        setLoading(true);
+        try {
+            if (mode === 'sign-in') {
+                const { error } = await supabase.auth.signInWithPassword({ email, password });
+                if (error) Alert.alert("Couldn't sign in", error.message);
+            } else {
+                const { data, error } = await supabase.auth.signUp({ email, password });
+                if (error) {
+                    Alert.alert("Couldn't create account", error.message);
+                } else if (!data.session) {
+                    Alert.alert('Check your email', 'Confirm your address to finish signing up.');
                 }
             }
-        })
+        } finally {
+            setLoading(false);
+        }
+    };
 
-        if (error) Alert.alert(error.message)
-        if (!session) Alert.alert('Please check your inbox for email verification!')
-        setLoading(false)
-    }
+    const ctaLabel = loading ? '' : mode === 'sign-in' ? 'Sign in' : 'Create account';
+    const toggleLabel =
+        mode === 'sign-in'
+            ? 'New here? · Create an account'
+            : 'Already have one? · Sign in';
 
     return (
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-                <View style={styles.container}>
-                    <Stack.Screen options={{ title: 'Welcome to Napkin' }} />
-                    <View style={[styles.verticallySpaced, styles.mt20]}>
-                        <Input
-                            label="Email"
-                            leftIcon={{ type: 'font-awesome', name: 'envelope' }}
-                            onChangeText={(text: string) => setEmail(text)}
-                            value={email}
-                            placeholder="email@address.com"
-                            autoCapitalize={'none'}
-                        />
+        <>
+            <Stack.Screen options={{ headerShown: false }} />
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                style={{ flex: 1, backgroundColor: palette.background }}
+            >
+                <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+                    <View
+                        style={[
+                            styles.root,
+                            { paddingTop: insets.top + Spacing.xxl, paddingBottom: insets.bottom + Spacing.lg },
+                        ]}
+                    >
+                        {/* Masthead */}
+                        <View style={styles.masthead}>
+                            <View style={[styles.rule, { backgroundColor: 'rgba(160, 63, 40, 0.25)' }]} />
+                            <Text style={[Type.displayLarge, { color: palette.text, textAlign: 'center' }]}>
+                                Napkin
+                            </Text>
+                            <View style={[styles.rule, { backgroundColor: 'rgba(160, 63, 40, 0.25)' }]} />
+                            <Text
+                                style={[
+                                    Type.headlineItalic,
+                                    { color: palette.textSecondary, textAlign: 'center', marginTop: Spacing.md },
+                                ]}
+                            >
+                                A private table for those you trust.
+                            </Text>
+                        </View>
+
+                        {/* Form */}
+                        <View style={styles.form}>
+                            <FieldLabel palette={palette}>Email</FieldLabel>
+                            <View
+                                style={[
+                                    styles.underline,
+                                    {
+                                        borderBottomColor: emailFocused
+                                            ? palette.primary
+                                            : 'rgba(138, 114, 108, 0.25)',
+                                        borderBottomWidth: emailFocused ? 2 : 1,
+                                    },
+                                ]}
+                            >
+                                <TextInput
+                                    value={email}
+                                    onChangeText={setEmail}
+                                    onFocus={() => setEmailFocused(true)}
+                                    onBlur={() => setEmailFocused(false)}
+                                    placeholder="you@somewhere"
+                                    placeholderTextColor={palette.textMuted}
+                                    autoCapitalize="none"
+                                    keyboardType="email-address"
+                                    autoComplete="email"
+                                    textContentType="emailAddress"
+                                    style={[styles.input, Type.body, { color: palette.text }]}
+                                />
+                            </View>
+
+                            <View style={{ height: Spacing.lg }} />
+
+                            <FieldLabel palette={palette}>Password</FieldLabel>
+                            <View
+                                style={[
+                                    styles.underline,
+                                    {
+                                        borderBottomColor: passwordFocused
+                                            ? palette.primary
+                                            : 'rgba(138, 114, 108, 0.25)',
+                                        borderBottomWidth: passwordFocused ? 2 : 1,
+                                    },
+                                ]}
+                            >
+                                <TextInput
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    onFocus={() => setPasswordFocused(true)}
+                                    onBlur={() => setPasswordFocused(false)}
+                                    placeholder="••••••••"
+                                    placeholderTextColor={palette.textMuted}
+                                    secureTextEntry
+                                    autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
+                                    textContentType={mode === 'sign-in' ? 'password' : 'newPassword'}
+                                    style={[styles.input, Type.body, { color: palette.text }]}
+                                />
+                            </View>
+
+                            {/* Primary CTA — terracotta pill */}
+                            <Pressable
+                                onPress={submit}
+                                disabled={loading}
+                                style={({ pressed }) => [
+                                    styles.cta,
+                                    {
+                                        backgroundColor: palette.primary,
+                                        opacity: pressed || loading ? 0.85 : 1,
+                                    },
+                                ]}
+                            >
+                                {loading ? (
+                                    <ActivityIndicator color="#fff" />
+                                ) : (
+                                    <Text style={[Type.label, { color: '#fff' }]}>{ctaLabel}</Text>
+                                )}
+                            </Pressable>
+
+                            {/* Mode toggle */}
+                            <Pressable
+                                onPress={() => setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
+                                style={styles.toggle}
+                                hitSlop={12}
+                            >
+                                <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
+                                    {toggleLabel}
+                                </Text>
+                            </Pressable>
+                        </View>
+
+                        {/* Footer flourish */}
+                        <Text style={[Type.labelSmall, styles.footer, { color: palette.textMuted }]}>
+                            est. at the table
+                        </Text>
                     </View>
-                    <View style={styles.verticallySpaced}>
-                        <Input
-                            label="Password"
-                            leftIcon={{ type: 'font-awesome', name: 'lock' }}
-                            onChangeText={(text: string) => setPassword(text)}
-                            value={password}
-                            secureTextEntry={true}
-                            placeholder="Password"
-                            autoCapitalize={'none'}
-                        />
-                    </View>
-                    <View style={[styles.verticallySpaced, styles.mt20]}>
-                        <Button title="Sign in" disabled={loading} onPress={() => signInWithEmail()} />
-                    </View>
-                    <View style={styles.verticallySpaced}>
-                        <Button title="Sign up" disabled={loading} onPress={() => signUpWithEmail()} />
-                    </View>
-                </View>
-            </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-    )
+                </TouchableWithoutFeedback>
+            </KeyboardAvoidingView>
+        </>
+    );
+}
+
+function FieldLabel({
+    children,
+    palette,
+}: {
+    children: string;
+    palette: typeof Colors.light;
+}) {
+    return (
+        <Text style={[Type.labelSmall, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
+            {children}
+        </Text>
+    );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        marginTop: 40,
-        padding: 12,
+    root: {
         flex: 1,
+        paddingHorizontal: Spacing.xl,
+        justifyContent: 'space-between',
+    },
+    masthead: {
+        gap: Spacing.md,
+        marginTop: Spacing.xl,
+    },
+    rule: {
+        height: StyleSheet.hairlineWidth,
+    },
+    form: {
+        marginVertical: Spacing.xxl,
+    },
+    underline: {
+        paddingBottom: Spacing.xs,
+    },
+    input: {
+        paddingVertical: Spacing.sm,
+    },
+    cta: {
+        marginTop: Spacing.xxl,
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.lg,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        minHeight: 52,
         justifyContent: 'center',
     },
-    verticallySpaced: {
-        paddingTop: 4,
-        paddingBottom: 4,
-        alignSelf: 'stretch',
+    toggle: {
+        marginTop: Spacing.lg,
+        alignItems: 'center',
     },
-    mt20: {
-        marginTop: 20,
+    footer: {
+        textAlign: 'center',
+        marginBottom: Spacing.md,
     },
-})
+});

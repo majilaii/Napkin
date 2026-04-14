@@ -1,334 +1,1323 @@
 /**
- * Tables Tab - Main tables screen with table switcher and content
+ * Tables tab — the daily surface.
+ *
+ * Matches the Stitch "sunday_roast_activity_feed_updated" wireframe:
+ *   - Editorial masthead with hairline rules and italic tagline
+ *   - Conditional terracotta "Table Night is live" banner
+ *   - Group entry label ("GROUP ENTRY — 14 DEC")
+ *   - Featured restaurant card: full-bleed photo, serif name, amber rating
+ *     pill, avatar stack, italic editorial blurb
+ *   - Activity rows: verb + restaurant, amber rating, scrapbook-clip tags
+ *
+ * When the user has no table or no activity, we render a DEMO feed using
+ * hardcoded wireframe content. This lets us iterate on the UI without
+ * needing backend data. The demo ribbon makes it obvious it's not real.
  */
-import React, { useState, useEffect } from 'react';
+
+import React, { useMemo, useState } from 'react';
 import {
     View,
     Text,
     StyleSheet,
-    SafeAreaView,
     ScrollView,
-    TouchableOpacity,
     RefreshControl,
+    Pressable,
     ActivityIndicator,
+    Image,
+    Modal,
+    TextInput,
+    KeyboardAvoidingView,
+    Platform,
     Alert,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '@/constants/theme';
+import Slider from '@react-native-community/slider';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useTables, Table } from '@/hooks/tables/useTables';
-import { useTableDetail } from '@/hooks/tables/useTableDetail';
-import { useCreateTable } from '@/hooks/tables/useCreateTable';
+import { useTables } from '@/hooks/tables/useTables';
+import { useAddTake } from '@/hooks/tables/useAddTake';
 import {
-    TableHeader,
-    TableSwitcher,
-    EmptyTableState,
-    CreateTableModal,
-} from '@/components/tables';
+    useTableActivity,
+    type ActivityItem,
+    type SoloShareActivity,
+    type TableNightActivity,
+    type CollaborativeEntryActivity,
+} from '@/hooks/tables/useTableActivity';
 
-type TabType = 'activity' | 'wishlist' | 'stats' | 'top4';
+type Palette = typeof Colors.light;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Demo data — matches the Stitch wireframe pixel-for-pixel in content
+// ────────────────────────────────────────────────────────────────────────────
+
+const DEMO_TABLE_NAME = 'Sunday Roast Club';
+
+const DEMO_FEATURED = {
+    id: 'demo-featured',
+    restaurantName: 'Carbone',
+    rating: 4.2,
+    heroPhoto:
+        'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=900&auto=format&fit=crop',
+    blurb:
+        'The spicy rigatoni lived up to the hype. An evening defined by velvet drapes and too many glasses of Chianti.',
+    participants: [
+        { name: 'Julian M', url: null },
+        { name: 'Clara Rose', url: null },
+        { name: 'Thomas H', url: null },
+        { name: 'Maya L', url: null },
+    ],
+};
+
+type DemoRow =
+    | {
+        kind: 'solo';
+        id: string;
+        person: string;
+        verb: 'tried' | 'noted';
+        restaurant: string;
+        rating: number | null;
+        note: string | null;
+        tags?: string[];
+    }
+    | {
+        kind: 'tn';
+        id: string;
+        restaurant: string;
+        rating: number;
+    };
+
+const DEMO_ROWS: DemoRow[] = [
+    {
+        kind: 'solo',
+        id: 'demo-1',
+        person: 'Maya',
+        verb: 'tried',
+        restaurant: 'Tatiana',
+        rating: 3.4,
+        note: 'Chef pastiches were wonderful but the music was a touch too loud for a Tuesday.',
+    },
+    {
+        kind: 'solo',
+        id: 'demo-2',
+        person: 'Julian',
+        verb: 'noted',
+        restaurant: 'Apotheke Nomads',
+        rating: null,
+        note: null,
+        tags: ['Café', 'Night', 'Cocktails'],
+    },
+    {
+        kind: 'solo',
+        id: 'demo-3',
+        person: 'Clara',
+        verb: 'tried',
+        restaurant: "Lil' Frankie's",
+        rating: 4.5,
+        note: 'Pizza al taglio, a glass of Montepulciano, perfect Tuesday night.',
+    },
+];
+
+// ────────────────────────────────────────────────────────────────────────────
+// Screen
+// ────────────────────────────────────────────────────────────────────────────
 
 export default function TablesScreen() {
-    const colorScheme = useColorScheme();
-    const theme = Colors[colorScheme ?? 'light'];
-
+    const scheme = useColorScheme() ?? 'light';
+    const palette = Colors[scheme];
+    const insets = useSafeAreaInsets();
     const { user } = useAuth();
-    const userId = user?.id ?? null;
 
-    // Fetch user's tables
+    const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
+    const activeTable = tables?.[0]?.tables;
+
     const {
-        data: tablesData = [],
-        isLoading: tablesLoading,
-        refetch: refetchTables,
-    } = useTables(userId);
+        data,
+        isLoading: feedLoading,
+        isRefetching,
+        refetch,
+    } = useTableActivity(activeTable?.id);
 
-    // Selected table state
-    const [selectedTable, setSelectedTable] = useState<Table | null>(null);
-    const [activeTab, setActiveTab] = useState<TabType>('activity');
-    const [createModalVisible, setCreateModalVisible] = useState(false);
-    const [refreshing, setRefreshing] = useState(false);
+    const items: ActivityItem[] = useMemo(() => data?.pages.flat() ?? [], [data]);
 
-    // Set initial selected table when data loads
-    useEffect(() => {
-        if (tablesData.length > 0 && !selectedTable) {
-            setSelectedTable(tablesData[0].tables);
-        }
-    }, [tablesData, selectedTable]);
+    const { featured, rows } = useMemo(() => {
+        const featuredItem = items.find(
+            (i): i is TableNightActivity =>
+                i.type === 'table_night' && i.status === 'revealed',
+        );
+        const restItems = items.filter((i) => i !== featuredItem);
+        return { featured: featuredItem, rows: restItems };
+    }, [items]);
 
-    // Fetch selected table details
-    const {
-        data: tableDetail,
-        isLoading: detailLoading,
-        refetch: refetchDetail,
-    } = useTableDetail(selectedTable?.id ?? null);
+    const isEmpty = !tablesLoading && !feedLoading && !activeTable;
+    const hasNoActivity = !!activeTable && !feedLoading && items.length === 0;
+    const showDemo = isEmpty || hasNoActivity;
 
-    // Create table mutation
-    const createTableMutation = useCreateTable(userId);
+    if (tablesLoading) return <CenteredSpinner palette={palette} />;
 
-    const handleCreateTable = async (name: string) => {
-        await createTableMutation.mutateAsync({ name });
-        // After creation, the new table will appear via refetch
-    };
+    // Table Night banner stub (wire to useActiveTableNight next)
+    const activeTableNight = showDemo
+        ? { id: 'demo', restaurantName: 'Carbone' }
+        : null;
 
-    const onRefresh = async () => {
-        setRefreshing(true);
-        await Promise.all([refetchTables(), selectedTable && refetchDetail()]);
-        setRefreshing(false);
-    };
-
-    const hasNoTables = !tablesLoading && tablesData.length === 0;
-    const isLoading = tablesLoading || (selectedTable && detailLoading);
-    const members = (tableDetail?.members ?? []).map(m => ({
-        member_id: m.user_id,
-        role: m.role,
-        joined_at: m.joined_at,
-        profiles: {
-            display_name: m.profiles.display_name,
-            avatar_url: m.profiles.avatar_url ?? undefined,
-        },
-    }));
-
-    const tabs: { key: TabType; label: string; icon: string }[] = [
-        { key: 'activity', label: 'Activity', icon: 'newspaper-outline' },
-        { key: 'wishlist', label: 'Wishlist', icon: 'bookmark-outline' },
-        { key: 'stats', label: 'Stats', icon: 'stats-chart-outline' },
-        { key: 'top4', label: 'Top 4', icon: 'trophy-outline' },
-    ];
-
-    const renderTabContent = () => {
-        switch (activeTab) {
-            case 'activity':
-                return (
-                    <View style={styles.tabContent}>
-                        <Text style={[styles.comingSoon, { color: theme.textSecondary }]}>
-                            Activity feed coming in Phase 3
-                        </Text>
-                    </View>
-                );
-            case 'wishlist':
-                return (
-                    <View style={styles.tabContent}>
-                        <Text style={[styles.comingSoon, { color: theme.textSecondary }]}>
-                            Shared wishlist coming soon
-                        </Text>
-                    </View>
-                );
-            case 'stats':
-                return (
-                    <View style={styles.tabContent}>
-                        <Text style={[styles.comingSoon, { color: theme.textSecondary }]}>
-                            Table stats coming soon
-                        </Text>
-                    </View>
-                );
-            case 'top4':
-                return (
-                    <View style={styles.tabContent}>
-                        <Text style={[styles.comingSoon, { color: theme.textSecondary }]}>
-                            Table&apos;s Top 4 restaurants coming soon
-                        </Text>
-                    </View>
-                );
-        }
-    };
-
-    // Empty state
-    if (hasNoTables) {
-        return (
-            <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-                <View style={styles.emptyHeader}>
-                    <Text style={[styles.headerTitle, { color: theme.text }]}>Tables</Text>
-                </View>
-                <EmptyTableState onCreateTable={() => setCreateModalVisible(true)} theme={theme} />
-                <CreateTableModal
-                    visible={createModalVisible}
-                    onClose={() => setCreateModalVisible(false)}
-                    onSubmit={handleCreateTable}
-                    isSubmitting={createTableMutation.isPending}
-                    theme={theme}
+    return (
+        <ScrollView
+            style={{ flex: 1, backgroundColor: palette.background }}
+            contentContainerStyle={{
+                paddingTop: insets.top + Spacing.sm,
+                paddingBottom: insets.bottom + Spacing.xxl + 80,
+            }}
+            refreshControl={
+                <RefreshControl
+                    refreshing={isRefetching}
+                    onRefresh={refetch}
+                    tintColor={palette.primary}
                 />
-            </SafeAreaView>
+            }
+            showsVerticalScrollIndicator={false}
+        >
+            {showDemo ? <DemoRibbon palette={palette} /> : null}
+
+            <Masthead
+                name={activeTable?.name ?? DEMO_TABLE_NAME}
+                palette={palette}
+            />
+
+            {activeTableNight ? (
+                <TableNightBanner
+                    restaurantName={activeTableNight.restaurantName}
+                    onPress={() => { /* TODO: router.push(`/table-night/${id}`) */ }}
+                    palette={palette}
+                />
+            ) : null}
+
+            <GroupEntryHeader date={new Date()} palette={palette} />
+
+            {showDemo ? (
+                <>
+                    <DemoFeaturedCard palette={palette} />
+                    <View style={styles.rowList}>
+                        {DEMO_ROWS.map((r) => (
+                            <DemoRowCard key={r.id} row={r} palette={palette} />
+                        ))}
+                    </View>
+                </>
+            ) : (
+                <>
+                    {featured ? <FeaturedTableNightCard item={featured} palette={palette} /> : null}
+                    <View style={styles.rowList}>
+                        {rows.map((item) => (
+                            <ActivityRow
+                                key={`${item.type}-${item.id}`}
+                                item={item}
+                                palette={palette}
+                                currentUserId={user?.id}
+                                activeTableId={activeTable?.id}
+                            />
+                        ))}
+                    </View>
+                </>
+            )}
+
+            {isEmpty ? (
+                <EmptyCTA palette={palette} />
+            ) : hasNoActivity ? (
+                <InviteToLogCTA palette={palette} />
+            ) : null}
+        </ScrollView>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Demo mode ribbon
+// ────────────────────────────────────────────────────────────────────────────
+
+function DemoRibbon({ palette }: { palette: Palette }) {
+    return (
+        <View style={[styles.ribbon, { backgroundColor: palette.secondaryContainer }]}>
+            <Text style={[Type.labelSmall, { color: palette.secondary }]}>
+                Preview · sample content
+            </Text>
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Masthead — editorial header with hairline rules + tagline
+// ────────────────────────────────────────────────────────────────────────────
+
+function Masthead({ name, palette }: { name: string; palette: Palette }) {
+    return (
+        <View style={styles.masthead}>
+            <View style={[styles.hairline, { backgroundColor: 'rgba(160, 63, 40, 0.25)' }]} />
+            <Text
+                style={[Type.displayMedium, { color: palette.text, textAlign: 'center' }]}
+                numberOfLines={1}
+            >
+                {name}
+            </Text>
+            <View style={[styles.hairline, { backgroundColor: 'rgba(160, 63, 40, 0.25)' }]} />
+            <Text
+                style={[
+                    Type.headlineItalic,
+                    { color: palette.textSecondary, textAlign: 'center', fontSize: 14, marginTop: Spacing.xs },
+                ]}
+            >
+                est. with those you trust
+            </Text>
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Table Night banner — terracotta, tap to join
+// ────────────────────────────────────────────────────────────────────────────
+
+function TableNightBanner({
+    restaurantName,
+    onPress,
+    palette,
+}: {
+    restaurantName: string;
+    onPress: () => void;
+    palette: Palette;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.tnBanner,
+                { backgroundColor: palette.primary, opacity: pressed ? 0.9 : 1 },
+                Shadow.subtle,
+            ]}
+        >
+            <View style={styles.tnDot} />
+            <View style={{ flex: 1 }}>
+                <Text style={[Type.label, { color: '#fff' }]}>Table Night is live</Text>
+                <Text style={[Type.bodySmall, { color: '#fff', opacity: 0.9, marginTop: 2 }]}>
+                    at {restaurantName} · tap to join
+                </Text>
+            </View>
+            <Text style={{ color: '#fff', fontSize: 20, marginLeft: Spacing.sm }}>›</Text>
+        </Pressable>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Group entry label
+// ────────────────────────────────────────────────────────────────────────────
+
+function GroupEntryHeader({ date, palette }: { date: Date; palette: Palette }) {
+    const label = date
+        .toLocaleDateString('en-US', { day: 'numeric', month: 'short' })
+        .toUpperCase();
+    return (
+        <View style={styles.groupEntry}>
+            <Text style={[Type.label, { color: palette.textSecondary }]}>
+                Group entry · {label}
+            </Text>
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Featured card — real data
+// ────────────────────────────────────────────────────────────────────────────
+
+function FeaturedTableNightCard({
+    item,
+    palette,
+}: {
+    item: TableNightActivity;
+    palette: Palette;
+}) {
+    return (
+        <FeaturedCardLayout
+            restaurantName={item.restaurants.name}
+            rating={item.average_rating}
+            heroPhoto={undefined}
+            blurb={item.participants[0]?.notes ?? null}
+            participants={item.participants.map((p) => ({
+                name: p.profiles.display_name,
+                url: p.profiles.avatar_url,
+            }))}
+            palette={palette}
+        />
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Featured card — demo
+// ────────────────────────────────────────────────────────────────────────────
+
+function DemoFeaturedCard({ palette }: { palette: Palette }) {
+    return (
+        <FeaturedCardLayout
+            restaurantName={DEMO_FEATURED.restaurantName}
+            rating={DEMO_FEATURED.rating}
+            heroPhoto={DEMO_FEATURED.heroPhoto}
+            blurb={DEMO_FEATURED.blurb}
+            participants={DEMO_FEATURED.participants}
+            palette={palette}
+        />
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Featured card layout (shared)
+// ────────────────────────────────────────────────────────────────────────────
+
+function FeaturedCardLayout({
+    restaurantName,
+    rating,
+    heroPhoto,
+    blurb,
+    participants,
+    palette,
+}: {
+    restaurantName: string;
+    rating: number | null;
+    heroPhoto: string | undefined;
+    blurb: string | null;
+    participants: { name: string; url: string | null }[];
+    palette: Palette;
+}) {
+    return (
+        <View style={[styles.featuredCard, { backgroundColor: palette.card }, Shadow.ambient]}>
+            <View style={[styles.featuredHero, { backgroundColor: palette.surfaceContainerHigh }]}>
+                {heroPhoto ? (
+                    <Image
+                        source={{ uri: heroPhoto }}
+                        style={StyleSheet.absoluteFill}
+                        resizeMode="cover"
+                    />
+                ) : null}
+                {rating != null ? (
+                    <View style={[styles.ratingPill, { backgroundColor: palette.tertiaryFixed }]}>
+                        <Text style={[Type.rating, { color: palette.tertiary, fontSize: 20 }]}>
+                            {rating.toFixed(1)}
+                        </Text>
+                    </View>
+                ) : null}
+            </View>
+
+            <View style={styles.featuredBody}>
+                <Text style={[Type.headlineLarge, { color: palette.text, fontSize: 32, lineHeight: 36 }]}>
+                    {restaurantName}
+                </Text>
+
+                <AvatarStack participants={participants} palette={palette} />
+
+                {blurb ? (
+                    <Text
+                        style={[
+                            Type.headlineItalic,
+                            {
+                                color: palette.textSecondary,
+                                marginTop: Spacing.md,
+                                lineHeight: 26,
+                            },
+                        ]}
+                    >
+                        {blurb}
+                    </Text>
+                ) : null}
+            </View>
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Activity rows — real data
+// ────────────────────────────────────────────────────────────────────────────
+
+function ActivityRow({
+    item,
+    palette,
+    currentUserId,
+    activeTableId,
+}: {
+    item: ActivityItem;
+    palette: Palette;
+    currentUserId: string | undefined;
+    activeTableId: string | undefined;
+}) {
+    if (item.type === 'solo_share') return <SoloShareRow item={item} palette={palette} />;
+    if (item.type === 'collaborative_entry') {
+        return (
+            <CollaborativeEntryCard
+                item={item}
+                palette={palette}
+                currentUserId={currentUserId}
+                activeTableId={activeTableId}
+            />
         );
     }
+    return <TableNightRow item={item} palette={palette} />;
+}
 
-    // Loading state
-    if (isLoading && !selectedTable) {
-        return (
-            <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-                <View style={styles.centerContent}>
-                    <ActivityIndicator size="large" color={theme.primary} />
+function SoloShareRow({
+    item,
+    palette,
+}: {
+    item: SoloShareActivity;
+    palette: Palette;
+}) {
+    return (
+        <RowLayout
+            avatar={{ name: item.profiles.display_name, url: item.profiles.avatar_url }}
+            person={item.profiles.display_name}
+            verb={item.rating != null ? 'tried' : 'noted'}
+            restaurant={item.restaurants?.name ?? 'somewhere'}
+            note={item.content}
+            rating={item.rating}
+            tags={undefined}
+            palette={palette}
+        />
+    );
+}
+
+function TableNightRow({
+    item,
+    palette,
+}: {
+    item: TableNightActivity;
+    palette: Palette;
+}) {
+    return (
+        <View style={[styles.tnRow, { backgroundColor: palette.surfaceContainerLow }]}>
+            <View style={[styles.tnRowIcon, { backgroundColor: palette.primaryMuted }]}>
+                <Text style={{ color: palette.primary, fontSize: 18 }}>◆</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+                <Text style={[Type.labelSmall, { color: palette.primary }]}>Table Night</Text>
+                <Text
+                    style={[
+                        Type.headlineMedium,
+                        { color: palette.text, fontSize: 20, marginTop: 2 },
+                    ]}
+                >
+                    {item.restaurants.name}
+                </Text>
+            </View>
+            {item.average_rating != null ? (
+                <Text style={[Type.rating, { color: palette.tertiary, fontSize: 22 }]}>
+                    {item.average_rating.toFixed(1)}
+                </Text>
+            ) : null}
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Collaborative entry card
+// ────────────────────────────────────────────────────────────────────────────
+
+function CollaborativeEntryCard({
+    item,
+    palette,
+    currentUserId,
+    activeTableId,
+}: {
+    item: CollaborativeEntryActivity;
+    palette: Palette;
+    currentUserId: string | undefined;
+    activeTableId: string | undefined;
+}) {
+    const [sheetVisible, setSheetVisible] = useState(false);
+
+    const restaurantName = item.restaurants?.name ?? 'somewhere';
+
+    const isPendingParticipant =
+        currentUserId != null &&
+        item.participants.some(p => p.user_id === currentUserId && p.rating === null);
+
+    return (
+        <>
+            <Pressable
+                onPress={() => {
+                    if (isPendingParticipant) setSheetVisible(true);
+                }}
+                style={({ pressed }) => [
+                    styles.collabCard,
+                    {
+                        backgroundColor: palette.surfaceContainerLow,
+                        opacity: pressed && isPendingParticipant ? 0.85 : 1,
+                    },
+                    Shadow.subtle,
+                ]}
+            >
+                {/* Header row */}
+                <View style={styles.collabHeader}>
+                    <Text
+                        style={[Type.headlineMedium, { color: palette.text, fontSize: 20, flex: 1 }]}
+                        numberOfLines={1}
+                    >
+                        {restaurantName}
+                    </Text>
+                    {item.average_rating != null ? (
+                        <Text style={[Type.rating, { color: palette.tertiary, fontSize: 22 }]}>
+                            {item.average_rating.toFixed(1)}
+                        </Text>
+                    ) : null}
                 </View>
-            </SafeAreaView>
+
+                {/* Participant pills */}
+                <View style={styles.pillRow}>
+                    {item.participants.map(p => (
+                        <ParticipantPill
+                            key={p.user_id}
+                            name={p.profiles.display_name}
+                            avatarUrl={p.profiles.avatar_url}
+                            rating={p.rating}
+                            pending={p.rating === null}
+                            palette={palette}
+                        />
+                    ))}
+                </View>
+
+                {/* Prompt for pending participant */}
+                {isPendingParticipant ? (
+                    <Text style={[Type.caption, { color: palette.primary, marginTop: Spacing.sm }]}>
+                        Tap to add your take
+                    </Text>
+                ) : null}
+            </Pressable>
+
+            {sheetVisible && activeTableId ? (
+                <AddYourTakeSheet
+                    entryId={item.id}
+                    tableId={activeTableId}
+                    restaurantName={restaurantName}
+                    onClose={() => setSheetVisible(false)}
+                    palette={palette}
+                />
+            ) : null}
+        </>
+    );
+}
+
+function ParticipantPill({
+    name,
+    avatarUrl,
+    rating,
+    pending,
+    palette,
+}: {
+    name: string;
+    avatarUrl: string | null;
+    rating: number | null;
+    pending: boolean;
+    palette: Palette;
+}) {
+    const initials = name
+        .split(' ')
+        .map(n => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
+
+    return (
+        <View
+            style={[
+                styles.pill,
+                {
+                    backgroundColor: pending
+                        ? palette.surfaceContainerHigh
+                        : palette.tertiaryFixed,
+                },
+            ]}
+        >
+            <View
+                style={[
+                    styles.pillAvatar,
+                    { backgroundColor: palette.primaryMuted },
+                ]}
+            >
+                {avatarUrl ? (
+                    <Image source={{ uri: avatarUrl }} style={StyleSheet.absoluteFill} />
+                ) : (
+                    <Text style={{ fontSize: 9, color: palette.text, fontFamily: 'Manrope_600SemiBold' }}>
+                        {initials}
+                    </Text>
+                )}
+            </View>
+            <Text style={[Type.caption, { color: palette.text }]} numberOfLines={1}>
+                {name.split(' ')[0]}
+            </Text>
+            {pending ? (
+                <Text style={[Type.caption, { color: palette.textMuted }]}>  —</Text>
+            ) : (
+                <Text style={[Type.rating, { color: palette.tertiary, fontSize: 13 }]}>
+                    {' '}{rating!.toFixed(1)}
+                </Text>
+            )}
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Add Your Take sheet
+// ────────────────────────────────────────────────────────────────────────────
+
+function AddYourTakeSheet({
+    entryId,
+    tableId,
+    restaurantName,
+    onClose,
+    palette,
+}: {
+    entryId: string;
+    tableId: string;
+    restaurantName: string;
+    onClose: () => void;
+    palette: Palette;
+}) {
+    const [rating, setRating] = useState(3.0);
+    const [includeRating, setIncludeRating] = useState(false);
+    const [notes, setNotes] = useState('');
+    const insets = useSafeAreaInsets();
+    const addTake = useAddTake();
+
+    const handleSave = async () => {
+        try {
+            await addTake.mutateAsync({
+                entry_id: entryId,
+                table_id: tableId,
+                rating: includeRating ? Math.round(rating * 2) / 2 : null,
+                notes: notes.trim() || null,
+            });
+            onClose();
+        } catch (e: any) {
+            Alert.alert('Error', e.message ?? 'Could not save your take');
+        }
+    };
+
+    return (
+        <Modal
+            visible
+            transparent
+            animationType="slide"
+            onRequestClose={onClose}
+        >
+            <View style={{ flex: 1 }}>
+            <Pressable
+                style={[styles.sheetOverlay, { backgroundColor: palette.overlay }]}
+                onPress={onClose}
+            />
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                style={{ justifyContent: 'flex-end', flex: 1 }}
+                pointerEvents="box-none"
+            >
+                <View
+                    style={[
+                        styles.sheet,
+                        {
+                            backgroundColor: palette.background,
+                            paddingBottom: insets.bottom + Spacing.lg,
+                        },
+                    ]}
+                >
+                    {/* Handle */}
+                    <View style={[styles.sheetHandle, { backgroundColor: palette.outlineVariant }]} />
+
+                    {/* Title */}
+                    <Text
+                        style={[
+                            Type.headlineMedium,
+                            {
+                                color: palette.text,
+                                fontSize: 22,
+                                fontFamily: 'Newsreader_400Regular_Italic',
+                                marginBottom: Spacing.lg,
+                                textAlign: 'center',
+                            },
+                        ]}
+                    >
+                        {restaurantName}
+                    </Text>
+
+                    {/* Rating toggle */}
+                    <Pressable
+                        style={styles.toggleRow}
+                        onPress={() => setIncludeRating(!includeRating)}
+                    >
+                        <Text style={[Type.label, { color: palette.textSecondary }]}>Add a Rating</Text>
+                        <View
+                            style={[
+                                styles.toggle,
+                                {
+                                    backgroundColor: includeRating
+                                        ? palette.primary
+                                        : palette.surfaceContainerHigh,
+                                },
+                            ]}
+                        >
+                            <View
+                                style={[
+                                    styles.toggleKnob,
+                                    {
+                                        backgroundColor: '#fff',
+                                        transform: [{ translateX: includeRating ? 18 : 2 }],
+                                    },
+                                ]}
+                            />
+                        </View>
+                    </Pressable>
+
+                    {includeRating ? (
+                        <View style={{ marginTop: Spacing.md }}>
+                            <Text
+                                style={[
+                                    Type.ratingLarge,
+                                    { color: palette.tertiary, fontSize: 36, textAlign: 'center' },
+                                ]}
+                            >
+                                {rating.toFixed(1)}
+                            </Text>
+                            <Slider
+                                style={{ width: '100%', height: 36 }}
+                                minimumValue={0.5}
+                                maximumValue={5}
+                                step={0.5}
+                                value={rating}
+                                onValueChange={setRating}
+                                minimumTrackTintColor={palette.primary}
+                                maximumTrackTintColor={palette.surfaceContainerHigh}
+                                thumbTintColor={palette.primary}
+                            />
+                        </View>
+                    ) : null}
+
+                    {/* Notes */}
+                    <View style={{ marginTop: Spacing.lg }}>
+                        <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
+                            Notes
+                        </Text>
+                        <TextInput
+                            style={[
+                                styles.sheetTextArea,
+                                {
+                                    backgroundColor: palette.surfaceContainerLow,
+                                    color: palette.text,
+                                    fontFamily: 'Manrope_400Regular',
+                                    fontSize: 15,
+                                },
+                            ]}
+                            placeholder="How was it?"
+                            placeholderTextColor={palette.textMuted}
+                            value={notes}
+                            onChangeText={setNotes}
+                            multiline
+                            numberOfLines={3}
+                            textAlignVertical="top"
+                        />
+                    </View>
+
+                    {/* Save */}
+                    <Pressable
+                        onPress={handleSave}
+                        disabled={addTake.isPending}
+                        style={({ pressed }) => [
+                            styles.sheetSave,
+                            {
+                                marginTop: Spacing.xl,
+                                backgroundColor: palette.primary,
+                                opacity: pressed ? 0.9 : addTake.isPending ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                        {addTake.isPending ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={[Type.label, { color: '#fff', letterSpacing: 2 }]}>
+                                SAVE MY TAKE
+                            </Text>
+                        )}
+                    </Pressable>
+                </View>
+            </KeyboardAvoidingView>
+            </View>
+        </Modal>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Activity row — demo
+// ────────────────────────────────────────────────────────────────────────────
+
+function DemoRowCard({ row, palette }: { row: DemoRow; palette: Palette }) {
+    if (row.kind === 'tn') {
+        return (
+            <View style={[styles.tnRow, { backgroundColor: palette.surfaceContainerLow }]}>
+                <View style={[styles.tnRowIcon, { backgroundColor: palette.primaryMuted }]}>
+                    <Text style={{ color: palette.primary, fontSize: 18 }}>◆</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                    <Text style={[Type.labelSmall, { color: palette.primary }]}>Table Night</Text>
+                    <Text style={[Type.headlineMedium, { color: palette.text, fontSize: 20, marginTop: 2 }]}>
+                        {row.restaurant}
+                    </Text>
+                </View>
+                <Text style={[Type.rating, { color: palette.tertiary, fontSize: 22 }]}>
+                    {row.rating.toFixed(1)}
+                </Text>
+            </View>
         );
     }
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-            {/* Header with Table Switcher */}
-            <View style={[styles.header, { borderBottomColor: theme.border }]}>
-                <TableSwitcher
-                    tables={tablesData}
-                    selectedTable={selectedTable}
-                    onSelectTable={setSelectedTable}
-                    onCreateTable={() => setCreateModalVisible(true)}
-                    theme={theme}
-                />
-                <TouchableOpacity
-                    style={styles.settingsButton}
-                    onPress={() => Alert.alert('Settings', 'Table settings coming soon')}
-                >
-                    <Ionicons name="settings-outline" size={22} color={theme.textSecondary} />
-                </TouchableOpacity>
-            </View>
-
-            <ScrollView
-                style={styles.scrollView}
-                contentContainerStyle={styles.scrollContent}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        tintColor={theme.primary}
-                    />
-                }
-            >
-                {/* Table Header */}
-                {selectedTable && (
-                    <TableHeader table={selectedTable} members={members} theme={theme} />
-                )}
-
-                {/* Start Table Night CTA */}
-                <TouchableOpacity
-                    style={[styles.tableNightButton, { backgroundColor: theme.primary }]}
-                    onPress={() => Alert.alert('Table Night', 'Coming in Phase 5!')}
-                >
-                    <Ionicons name="flash" size={20} color="white" />
-                    <Text style={styles.tableNightButtonText}>Start Table Night</Text>
-                </TouchableOpacity>
-
-                {/* Tab Bar */}
-                <View style={[styles.tabBar, { borderBottomColor: theme.border }]}>
-                    {tabs.map((tab) => (
-                        <TouchableOpacity
-                            key={tab.key}
-                            style={[
-                                styles.tabItem,
-                                activeTab === tab.key && {
-                                    borderBottomColor: theme.primary,
-                                    borderBottomWidth: 2,
-                                },
-                            ]}
-                            onPress={() => setActiveTab(tab.key)}
-                        >
-                            <Ionicons
-                                name={tab.icon as keyof typeof Ionicons.glyphMap}
-                                size={18}
-                                color={activeTab === tab.key ? theme.primary : theme.textSecondary}
-                            />
-                            <Text
-                                style={[
-                                    styles.tabLabel,
-                                    {
-                                        color:
-                                            activeTab === tab.key ? theme.primary : theme.textSecondary,
-                                    },
-                                ]}
-                            >
-                                {tab.label}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-                </View>
-
-                {/* Tab Content */}
-                {renderTabContent()}
-            </ScrollView>
-
-            {/* Create Table Modal */}
-            <CreateTableModal
-                visible={createModalVisible}
-                onClose={() => setCreateModalVisible(false)}
-                onSubmit={handleCreateTable}
-                isSubmitting={createTableMutation.isPending}
-                theme={theme}
-            />
-        </SafeAreaView>
+        <RowLayout
+            avatar={{ name: row.person, url: null }}
+            person={row.person}
+            verb={row.verb}
+            restaurant={row.restaurant}
+            note={row.note}
+            rating={row.rating}
+            tags={row.tags}
+            palette={palette}
+        />
     );
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Shared row layout — solo share style
+// ────────────────────────────────────────────────────────────────────────────
+
+function RowLayout({
+    avatar,
+    person,
+    verb,
+    restaurant,
+    note,
+    rating,
+    tags,
+    palette,
+}: {
+    avatar: { name: string; url: string | null };
+    person: string;
+    verb: 'tried' | 'noted';
+    restaurant: string;
+    note: string | null;
+    rating: number | null;
+    tags?: string[];
+    palette: Palette;
+}) {
+    return (
+        <View style={styles.row}>
+            <Avatar url={avatar.url} name={avatar.name} size={44} palette={palette} />
+            <View style={{ flex: 1 }}>
+                <View style={styles.rowHeader}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[Type.titleSmall, { color: palette.text }]}>
+                            {person}{' '}
+                            <Text style={[Type.body, { color: palette.textSecondary, fontWeight: '400' }]}>
+                                {verb}
+                            </Text>
+                        </Text>
+                        <Text
+                            style={[
+                                Type.headlineMedium,
+                                { color: palette.text, fontSize: 20, lineHeight: 24, marginTop: 2 },
+                            ]}
+                            numberOfLines={1}
+                        >
+                            {restaurant}
+                        </Text>
+                    </View>
+                    {rating != null ? (
+                        <Text
+                            style={[
+                                Type.rating,
+                                { color: palette.tertiary, fontSize: 22, marginLeft: Spacing.md },
+                            ]}
+                        >
+                            {rating.toFixed(1)}
+                        </Text>
+                    ) : null}
+                </View>
+
+                {note ? (
+                    <Text
+                        style={[
+                            Type.bodySmall,
+                            { color: palette.textMuted, marginTop: Spacing.xs, lineHeight: 18 },
+                        ]}
+                        numberOfLines={2}
+                    >
+                        {note}
+                    </Text>
+                ) : null}
+
+                {tags && tags.length > 0 ? (
+                    <View style={styles.tagRow}>
+                        {tags.map((t) => (
+                            <ScrapbookClip key={t} label={t} palette={palette} />
+                        ))}
+                    </View>
+                ) : null}
+            </View>
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Scrapbook clip — amber tag chip
+// ────────────────────────────────────────────────────────────────────────────
+
+function ScrapbookClip({ label, palette }: { label: string; palette: Palette }) {
+    return (
+        <View style={[styles.clip, { backgroundColor: palette.tertiaryFixed }]}>
+            <Text style={[Type.labelSmall, { color: palette.tertiary }]}>{label}</Text>
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Empty & invite CTAs
+// ────────────────────────────────────────────────────────────────────────────
+
+function EmptyCTA({ palette }: { palette: Palette }) {
+    return (
+        <View style={styles.cta}>
+            <Text
+                style={[
+                    Type.headlineMedium,
+                    { color: palette.text, textAlign: 'center', lineHeight: 26 },
+                ]}
+            >
+                Set a Table of your own
+            </Text>
+            <Text
+                style={[
+                    Type.bodySmall,
+                    {
+                        color: palette.textSecondary,
+                        textAlign: 'center',
+                        marginTop: Spacing.sm,
+                        marginBottom: Spacing.lg,
+                    },
+                ]}
+            >
+                Invite your circle. Log where you ate.{'\n'}Vote together when you sit down.
+            </Text>
+            <Pressable
+                style={({ pressed }) => [
+                    styles.primaryCta,
+                    { backgroundColor: palette.primary, opacity: pressed ? 0.9 : 1 },
+                ]}
+            >
+                <Text style={[Type.label, { color: '#fff' }]}>Create a Table</Text>
+            </Pressable>
+        </View>
+    );
+}
+
+function InviteToLogCTA({ palette }: { palette: Palette }) {
+    return (
+        <View style={styles.cta}>
+            <Text
+                style={[Type.bodySmall, { color: palette.textMuted, textAlign: 'center' }]}
+            >
+                Quiet at the table. Log a meal to start.
+            </Text>
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Primitives
+// ────────────────────────────────────────────────────────────────────────────
+
+function AvatarStack({
+    participants,
+    palette,
+}: {
+    participants: { name: string; url: string | null }[];
+    palette: Palette;
+}) {
+    return (
+        <View style={{ flexDirection: 'row', marginTop: Spacing.md, alignItems: 'center' }}>
+            {participants.slice(0, 5).map((p, i) => (
+                <View key={`${p.name}-${i}`} style={{ marginLeft: i === 0 ? 0 : -10 }}>
+                    <Avatar url={p.url} name={p.name} size={32} palette={palette} bordered />
+                </View>
+            ))}
+            {participants.length > 5 ? (
+                <Text style={[Type.labelSmall, { color: palette.textSecondary, marginLeft: Spacing.sm }]}>
+                    +{participants.length - 5}
+                </Text>
+            ) : null}
+        </View>
+    );
+}
+
+function Avatar({
+    url,
+    name,
+    size,
+    palette,
+    bordered = false,
+}: {
+    url: string | null;
+    name: string;
+    size: number;
+    palette: Palette;
+    bordered?: boolean;
+}) {
+    const initials = name
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
+
+    // Rotating palette for demo avatars so the stack looks lived-in
+    const tints = [palette.tertiaryFixed, palette.secondaryContainer, palette.primaryMuted];
+    const tint = tints[(initials.charCodeAt(0) || 0) % tints.length];
+
+    const containerStyle = {
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: tint,
+        alignItems: 'center' as const,
+        justifyContent: 'center' as const,
+        borderWidth: bordered ? 2 : 0,
+        borderColor: palette.background,
+    };
+
+    if (url) return <Image source={{ uri: url }} style={containerStyle} />;
+
+    return (
+        <View style={containerStyle}>
+            <Text
+                style={{
+                    ...Type.titleSmall,
+                    color: palette.text,
+                    fontSize: size * 0.36,
+                }}
+            >
+                {initials}
+            </Text>
+        </View>
+    );
+}
+
+function CenteredSpinner({ palette }: { palette: Palette }) {
+    return (
+        <View style={[styles.emptyRoot, { backgroundColor: palette.background }]}>
+            <ActivityIndicator color={palette.primary} />
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Styles
+// ────────────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-    container: {
+    emptyRoot: {
         flex: 1,
-    },
-    centerContent: {
-        flex: 1,
+        alignItems: 'center',
         justifyContent: 'center',
+        paddingHorizontal: Spacing.xl,
+    },
+
+    ribbon: {
+        alignSelf: 'center',
+        paddingHorizontal: Spacing.md,
+        paddingVertical: 6,
+        borderRadius: Radius.full,
+        marginTop: Spacing.sm,
+    },
+
+    masthead: {
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.lg,
+        paddingBottom: Spacing.md,
+        gap: Spacing.md,
+    },
+    hairline: {
+        height: StyleSheet.hairlineWidth,
+    },
+
+    tnBanner: {
+        marginHorizontal: Spacing.lg,
+        marginTop: Spacing.md,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.md,
+        borderRadius: Radius.lg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+    },
+    tnDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#fff',
+    },
+
+    groupEntry: {
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.lg,
+        paddingBottom: Spacing.sm,
+    },
+
+    featuredCard: {
+        marginHorizontal: Spacing.lg,
+        borderRadius: Radius.xl,
+        overflow: 'hidden',
+    },
+    featuredHero: {
+        height: 220,
+        position: 'relative',
+    },
+    ratingPill: {
+        position: 'absolute',
+        top: Spacing.md,
+        right: Spacing.md,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.xs,
+        borderRadius: Radius.sm,
+    },
+    featuredBody: {
+        padding: Spacing.lg,
+    },
+
+    rowList: {
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.xl,
+        gap: Spacing.xl,
+    },
+    row: {
+        flexDirection: 'row',
+        gap: Spacing.md,
+        alignItems: 'flex-start',
+    },
+    rowHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+    },
+    tagRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: Spacing.xs,
+        marginTop: Spacing.sm,
+    },
+    clip: {
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 4,
+        borderRadius: Radius.sm,
+    },
+
+    tnRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+        padding: Spacing.md,
+        borderRadius: Radius.lg,
+    },
+    tnRowIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+
+    cta: {
+        marginTop: Spacing.xxl,
+        marginHorizontal: Spacing.lg,
         alignItems: 'center',
     },
-    emptyHeader: {
-        paddingHorizontal: 20,
-        paddingVertical: 16,
+    primaryCta: {
+        paddingHorizontal: Spacing.xl,
+        paddingVertical: Spacing.md,
+        borderRadius: Radius.full,
+        minHeight: 48,
+        justifyContent: 'center',
     },
-    headerTitle: {
-        fontSize: 28,
-        fontWeight: 'bold',
+
+    // Collaborative entry card
+    collabCard: {
+        borderRadius: Radius.lg,
+        padding: Spacing.md,
     },
-    header: {
+    collabHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: Spacing.sm,
+        marginBottom: Spacing.sm,
+    },
+    pillRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: Spacing.xs,
+    },
+    pill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 4,
+        borderRadius: Radius.full,
+    },
+    pillAvatar: {
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+
+    // Add your take sheet
+    sheetOverlay: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    sheet: {
+        borderTopLeftRadius: Radius.xl,
+        borderTopRightRadius: Radius.xl,
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.md,
+    },
+    sheetHandle: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        alignSelf: 'center',
+        marginBottom: Spacing.md,
+    },
+    sheetTextArea: {
+        borderRadius: Radius.lg,
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.md,
+        minHeight: 80,
+    },
+    sheetSave: {
+        height: 56,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    toggleRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderBottomWidth: 1,
     },
-    settingsButton: {
-        padding: 8,
-    },
-    scrollView: {
-        flex: 1,
-    },
-    scrollContent: {
-        paddingBottom: 40,
-    },
-    tableNightButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
+    toggle: {
+        width: 44,
+        height: 26,
+        borderRadius: 13,
         justifyContent: 'center',
-        marginHorizontal: 20,
-        marginBottom: 20,
-        paddingVertical: 14,
-        borderRadius: 30,
-        gap: 8,
     },
-    tableNightButtonText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: '600',
-    },
-    tabBar: {
-        flexDirection: 'row',
-        borderBottomWidth: 1,
-        marginHorizontal: 16,
-    },
-    tabItem: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 12,
-        gap: 6,
-    },
-    tabLabel: {
-        fontSize: 13,
-        fontWeight: '500',
-    },
-    tabContent: {
-        padding: 40,
-        alignItems: 'center',
-    },
-    comingSoon: {
-        fontSize: 14,
-        fontStyle: 'italic',
+    toggleKnob: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
     },
 });

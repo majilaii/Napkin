@@ -1,7 +1,9 @@
 {
   "devDependencies": {
+    "@types/react": "~19.2.10",
     "husky": "^9.1.7",
-    "supabase": "^2.58.5"
+    "supabase": "^2.58.5",
+    "typescript": "~5.9.2"
   },
   "name": "napkin",
   "version": "1.0.0",
@@ -14,6 +16,7 @@
     "cmd-shim": "^8.0.0",
     "data-uri-to-buffer": "^4.0.1",
     "debug": "^4.4.3",
+    "expo": "^55.0.14",
     "fetch-blob": "^3.2.0",
     "formdata-polyfill": "^4.0.10",
     "https-proxy-agent": "^7.0.6",
