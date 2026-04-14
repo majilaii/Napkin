@@ -55,7 +55,33 @@ export interface TableNightActivity {
     }[];
 }
 
-export type ActivityItem = SoloShareActivity | TableNightActivity;
+export interface CollaborativeEntryActivity {
+    type: 'collaborative_entry';
+    id: string;
+    user_id: string;
+    restaurant_id: string | null;
+    visited_at: string;
+    created_at: string;
+    sort_date: string;
+    restaurants: {
+        id: string;
+        name: string;
+        address: string | null;
+        city: string | null;
+    } | null;
+    participants: {
+        user_id: string;
+        rating: number | null;
+        notes: string | null;
+        profiles: {
+            display_name: string;
+            avatar_url: string | null;
+        };
+    }[];
+    average_rating: number | null;
+}
+
+export type ActivityItem = SoloShareActivity | TableNightActivity | CollaborativeEntryActivity;
 
 const PAGE_SIZE = 20;
 

@@ -54,6 +54,7 @@ serve(async (req) => {
                         name,
                         avatar_url,
                         owner_id,
+                        is_personal,
                         created_at,
                         updated_at
                     )

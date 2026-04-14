@@ -14,7 +14,7 @@
  * needing backend data. The demo ribbon makes it obvious it's not real.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -24,18 +24,26 @@ import {
     Pressable,
     ActivityIndicator,
     Image,
+    Modal,
+    TextInput,
+    KeyboardAvoidingView,
+    Platform,
+    Alert,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
+import { useAddTake } from '@/hooks/tables/useAddTake';
 import {
     useTableActivity,
     type ActivityItem,
     type SoloShareActivity,
     type TableNightActivity,
+    type CollaborativeEntryActivity,
 } from '@/hooks/tables/useTableActivity';
 
 type Palette = typeof Colors.light;
@@ -204,6 +212,8 @@ export default function TablesScreen() {
                                 key={`${item.type}-${item.id}`}
                                 item={item}
                                 palette={palette}
+                                currentUserId={user?.id}
+                                activeTableId={activeTable?.id}
                             />
                         ))}
                     </View>
@@ -422,8 +432,28 @@ function FeaturedCardLayout({
 // Activity rows — real data
 // ────────────────────────────────────────────────────────────────────────────
 
-function ActivityRow({ item, palette }: { item: ActivityItem; palette: Palette }) {
+function ActivityRow({
+    item,
+    palette,
+    currentUserId,
+    activeTableId,
+}: {
+    item: ActivityItem;
+    palette: Palette;
+    currentUserId: string | undefined;
+    activeTableId: string | undefined;
+}) {
     if (item.type === 'solo_share') return <SoloShareRow item={item} palette={palette} />;
+    if (item.type === 'collaborative_entry') {
+        return (
+            <CollaborativeEntryCard
+                item={item}
+                palette={palette}
+                currentUserId={currentUserId}
+                activeTableId={activeTableId}
+            />
+        );
+    }
     return <TableNightRow item={item} palette={palette} />;
 }
 
@@ -477,6 +507,340 @@ function TableNightRow({
                 </Text>
             ) : null}
         </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Collaborative entry card
+// ────────────────────────────────────────────────────────────────────────────
+
+function CollaborativeEntryCard({
+    item,
+    palette,
+    currentUserId,
+    activeTableId,
+}: {
+    item: CollaborativeEntryActivity;
+    palette: Palette;
+    currentUserId: string | undefined;
+    activeTableId: string | undefined;
+}) {
+    const [sheetVisible, setSheetVisible] = useState(false);
+
+    const restaurantName = item.restaurants?.name ?? 'somewhere';
+
+    const isPendingParticipant =
+        currentUserId != null &&
+        item.participants.some(p => p.user_id === currentUserId && p.rating === null);
+
+    return (
+        <>
+            <Pressable
+                onPress={() => {
+                    if (isPendingParticipant) setSheetVisible(true);
+                }}
+                style={({ pressed }) => [
+                    styles.collabCard,
+                    {
+                        backgroundColor: palette.surfaceContainerLow,
+                        opacity: pressed && isPendingParticipant ? 0.85 : 1,
+                    },
+                    Shadow.subtle,
+                ]}
+            >
+                {/* Header row */}
+                <View style={styles.collabHeader}>
+                    <Text
+                        style={[Type.headlineMedium, { color: palette.text, fontSize: 20, flex: 1 }]}
+                        numberOfLines={1}
+                    >
+                        {restaurantName}
+                    </Text>
+                    {item.average_rating != null ? (
+                        <Text style={[Type.rating, { color: palette.tertiary, fontSize: 22 }]}>
+                            {item.average_rating.toFixed(1)}
+                        </Text>
+                    ) : null}
+                </View>
+
+                {/* Participant pills */}
+                <View style={styles.pillRow}>
+                    {item.participants.map(p => (
+                        <ParticipantPill
+                            key={p.user_id}
+                            name={p.profiles.display_name}
+                            avatarUrl={p.profiles.avatar_url}
+                            rating={p.rating}
+                            pending={p.rating === null}
+                            palette={palette}
+                        />
+                    ))}
+                </View>
+
+                {/* Prompt for pending participant */}
+                {isPendingParticipant ? (
+                    <Text style={[Type.caption, { color: palette.primary, marginTop: Spacing.sm }]}>
+                        Tap to add your take
+                    </Text>
+                ) : null}
+            </Pressable>
+
+            {sheetVisible && activeTableId ? (
+                <AddYourTakeSheet
+                    entryId={item.id}
+                    tableId={activeTableId}
+                    restaurantName={restaurantName}
+                    onClose={() => setSheetVisible(false)}
+                    palette={palette}
+                />
+            ) : null}
+        </>
+    );
+}
+
+function ParticipantPill({
+    name,
+    avatarUrl,
+    rating,
+    pending,
+    palette,
+}: {
+    name: string;
+    avatarUrl: string | null;
+    rating: number | null;
+    pending: boolean;
+    palette: Palette;
+}) {
+    const initials = name
+        .split(' ')
+        .map(n => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
+
+    return (
+        <View
+            style={[
+                styles.pill,
+                {
+                    backgroundColor: pending
+                        ? palette.surfaceContainerHigh
+                        : palette.tertiaryFixed,
+                },
+            ]}
+        >
+            <View
+                style={[
+                    styles.pillAvatar,
+                    { backgroundColor: palette.primaryMuted },
+                ]}
+            >
+                {avatarUrl ? (
+                    <Image source={{ uri: avatarUrl }} style={StyleSheet.absoluteFill} />
+                ) : (
+                    <Text style={{ fontSize: 9, color: palette.text, fontFamily: 'Manrope_600SemiBold' }}>
+                        {initials}
+                    </Text>
+                )}
+            </View>
+            <Text style={[Type.caption, { color: palette.text }]} numberOfLines={1}>
+                {name.split(' ')[0]}
+            </Text>
+            {pending ? (
+                <Text style={[Type.caption, { color: palette.textMuted }]}>  —</Text>
+            ) : (
+                <Text style={[Type.rating, { color: palette.tertiary, fontSize: 13 }]}>
+                    {' '}{rating!.toFixed(1)}
+                </Text>
+            )}
+        </View>
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Add Your Take sheet
+// ────────────────────────────────────────────────────────────────────────────
+
+function AddYourTakeSheet({
+    entryId,
+    tableId,
+    restaurantName,
+    onClose,
+    palette,
+}: {
+    entryId: string;
+    tableId: string;
+    restaurantName: string;
+    onClose: () => void;
+    palette: Palette;
+}) {
+    const [rating, setRating] = useState(3.0);
+    const [includeRating, setIncludeRating] = useState(false);
+    const [notes, setNotes] = useState('');
+    const insets = useSafeAreaInsets();
+    const addTake = useAddTake();
+
+    const handleSave = async () => {
+        try {
+            await addTake.mutateAsync({
+                entry_id: entryId,
+                table_id: tableId,
+                rating: includeRating ? Math.round(rating * 2) / 2 : null,
+                notes: notes.trim() || null,
+            });
+            onClose();
+        } catch (e: any) {
+            Alert.alert('Error', e.message ?? 'Could not save your take');
+        }
+    };
+
+    return (
+        <Modal
+            visible
+            transparent
+            animationType="slide"
+            onRequestClose={onClose}
+        >
+            <View style={{ flex: 1 }}>
+            <Pressable
+                style={[styles.sheetOverlay, { backgroundColor: palette.overlay }]}
+                onPress={onClose}
+            />
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                style={{ justifyContent: 'flex-end', flex: 1 }}
+                pointerEvents="box-none"
+            >
+                <View
+                    style={[
+                        styles.sheet,
+                        {
+                            backgroundColor: palette.background,
+                            paddingBottom: insets.bottom + Spacing.lg,
+                        },
+                    ]}
+                >
+                    {/* Handle */}
+                    <View style={[styles.sheetHandle, { backgroundColor: palette.outlineVariant }]} />
+
+                    {/* Title */}
+                    <Text
+                        style={[
+                            Type.headlineMedium,
+                            {
+                                color: palette.text,
+                                fontSize: 22,
+                                fontFamily: 'Newsreader_400Regular_Italic',
+                                marginBottom: Spacing.lg,
+                                textAlign: 'center',
+                            },
+                        ]}
+                    >
+                        {restaurantName}
+                    </Text>
+
+                    {/* Rating toggle */}
+                    <Pressable
+                        style={styles.toggleRow}
+                        onPress={() => setIncludeRating(!includeRating)}
+                    >
+                        <Text style={[Type.label, { color: palette.textSecondary }]}>Add a Rating</Text>
+                        <View
+                            style={[
+                                styles.toggle,
+                                {
+                                    backgroundColor: includeRating
+                                        ? palette.primary
+                                        : palette.surfaceContainerHigh,
+                                },
+                            ]}
+                        >
+                            <View
+                                style={[
+                                    styles.toggleKnob,
+                                    {
+                                        backgroundColor: '#fff',
+                                        transform: [{ translateX: includeRating ? 18 : 2 }],
+                                    },
+                                ]}
+                            />
+                        </View>
+                    </Pressable>
+
+                    {includeRating ? (
+                        <View style={{ marginTop: Spacing.md }}>
+                            <Text
+                                style={[
+                                    Type.ratingLarge,
+                                    { color: palette.tertiary, fontSize: 36, textAlign: 'center' },
+                                ]}
+                            >
+                                {rating.toFixed(1)}
+                            </Text>
+                            <Slider
+                                style={{ width: '100%', height: 36 }}
+                                minimumValue={0.5}
+                                maximumValue={5}
+                                step={0.5}
+                                value={rating}
+                                onValueChange={setRating}
+                                minimumTrackTintColor={palette.primary}
+                                maximumTrackTintColor={palette.surfaceContainerHigh}
+                                thumbTintColor={palette.primary}
+                            />
+                        </View>
+                    ) : null}
+
+                    {/* Notes */}
+                    <View style={{ marginTop: Spacing.lg }}>
+                        <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
+                            Notes
+                        </Text>
+                        <TextInput
+                            style={[
+                                styles.sheetTextArea,
+                                {
+                                    backgroundColor: palette.surfaceContainerLow,
+                                    color: palette.text,
+                                    fontFamily: 'Manrope_400Regular',
+                                    fontSize: 15,
+                                },
+                            ]}
+                            placeholder="How was it?"
+                            placeholderTextColor={palette.textMuted}
+                            value={notes}
+                            onChangeText={setNotes}
+                            multiline
+                            numberOfLines={3}
+                            textAlignVertical="top"
+                        />
+                    </View>
+
+                    {/* Save */}
+                    <Pressable
+                        onPress={handleSave}
+                        disabled={addTake.isPending}
+                        style={({ pressed }) => [
+                            styles.sheetSave,
+                            {
+                                marginTop: Spacing.xl,
+                                backgroundColor: palette.primary,
+                                opacity: pressed ? 0.9 : addTake.isPending ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                        {addTake.isPending ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={[Type.label, { color: '#fff', letterSpacing: 2 }]}>
+                                SAVE MY TAKE
+                            </Text>
+                        )}
+                    </Pressable>
+                </View>
+            </KeyboardAvoidingView>
+            </View>
+        </Modal>
     );
 }
 
@@ -876,5 +1240,84 @@ const styles = StyleSheet.create({
         borderRadius: Radius.full,
         minHeight: 48,
         justifyContent: 'center',
+    },
+
+    // Collaborative entry card
+    collabCard: {
+        borderRadius: Radius.lg,
+        padding: Spacing.md,
+    },
+    collabHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: Spacing.sm,
+        marginBottom: Spacing.sm,
+    },
+    pillRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: Spacing.xs,
+    },
+    pill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 4,
+        borderRadius: Radius.full,
+    },
+    pillAvatar: {
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+
+    // Add your take sheet
+    sheetOverlay: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    sheet: {
+        borderTopLeftRadius: Radius.xl,
+        borderTopRightRadius: Radius.xl,
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.md,
+    },
+    sheetHandle: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        alignSelf: 'center',
+        marginBottom: Spacing.md,
+    },
+    sheetTextArea: {
+        borderRadius: Radius.lg,
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.md,
+        minHeight: 80,
+    },
+    sheetSave: {
+        height: 56,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    toggleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    toggle: {
+        width: 44,
+        height: 26,
+        borderRadius: 13,
+        justifyContent: 'center',
+    },
+    toggleKnob: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
     },
 });

@@ -14,6 +14,13 @@ export const queryKeys = {
         activity: (tableId: string) => ['tableActivity', tableId] as const,
     },
 
+    // Entries (individual meal logs)
+    entries: {
+        list: (userId: string) => ['entries', userId] as const,
+        detail: (entryId: string) => ['entry', entryId] as const,
+        participants: (entryId: string) => ['entry', entryId, 'participants'] as const,
+    },
+
     // Table Night (real-time group rating sessions)
     tableNight: {
         status: (nightId: string) => ['tableNight', nightId] as const,
