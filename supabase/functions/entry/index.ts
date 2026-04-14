@@ -23,7 +23,7 @@ serve(async (req) => {
     try {
         const authHeader = req.headers.get('Authorization');
         const supabaseUrl = Deno.env.get('SUPABASE_URL');
-        const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
         if (!authHeader) {
             return new Response(
@@ -33,10 +33,10 @@ serve(async (req) => {
         }
 
         const token = authHeader.replace('Bearer ', '');
+        // Use service role key to bypass RLS - we validate auth manually via getUser
         const supabase = createClient(
             supabaseUrl ?? '',
-            supabaseAnonKey ?? '',
-            { global: { headers: { Authorization: authHeader } } }
+            supabaseServiceKey ?? ''
         );
 
         const { data: { user }, error: userError } = await supabase.auth.getUser(token);
@@ -65,6 +65,10 @@ serve(async (req) => {
                 cooked_by,
                 value_profile,
                 visited_at,
+
+                // Table sharing (optional)
+                table_id,
+                visibility,
             } = body;
 
             let restaurantId: string | null = null;
@@ -149,6 +153,8 @@ serve(async (req) => {
                     cooked_by: cooked_by?.trim() || null,
                     value_profile: value_profile || null,
                     visited_at: visitedAtValue,
+                    ...(table_id ? { table_id } : {}),
+                    ...(visibility ? { visibility } : {}),
                 })
                 .select()
                 .single();
