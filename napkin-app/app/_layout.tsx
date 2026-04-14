@@ -50,6 +50,18 @@ function RootLayoutNav() {
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="auth" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="create-entry"
+          options={{ presentation: 'modal', headerShown: false }}
+        />
+        <Stack.Screen
+          name="table-night"
+          options={{ presentation: 'modal', headerShown: false }}
+        />
+        <Stack.Screen
+          name="table-night-detail"
+          options={{ headerShown: false }}
+        />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
