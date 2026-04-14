@@ -1,21 +1,21 @@
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import React from 'react';
 
 import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 /**
- * Four-tab nav matching the Stitch wireframe bottom bar.
- * Journal | Tables | Friends | Settings.
+ * Three-tab nav: Tables | (+) Log | Settings
  *
- * No hard top border (design system rule). Tab bar sits on the warm paper
- * background with a subtle surface-container-low fill.
+ * The centre "Log" tab is a terracotta circle that opens the create-entry
+ * modal instead of navigating to a tab screen.
  */
 export default function TabsLayout() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const router = useRouter();
 
     return (
         <Tabs
@@ -30,15 +30,16 @@ export default function TabsLayout() {
                 tabBarLabelStyle: [Type.labelSmall, { marginTop: 2 }],
             }}
         >
+            {/* Hidden — file exists but not a visible tab */}
             <Tabs.Screen
                 name="journal"
-                options={{
-                    title: 'Journal',
-                    tabBarIcon: ({ color, size }) => (
-                        <Ionicons name="book-outline" size={size} color={color} />
-                    ),
-                }}
+                options={{ href: null }}
             />
+            <Tabs.Screen
+                name="friends"
+                options={{ href: null }}
+            />
+
             <Tabs.Screen
                 name="tables"
                 options={{
@@ -49,11 +50,29 @@ export default function TabsLayout() {
                 }}
             />
             <Tabs.Screen
-                name="friends"
+                name="log"
                 options={{
-                    title: 'Friends',
-                    tabBarIcon: ({ color, size }) => (
-                        <Ionicons name="people-outline" size={size} color={color} />
+                    title: '',
+                    tabBarIcon: () => (
+                        <View
+                            style={{
+                                width: 44,
+                                height: 44,
+                                borderRadius: 22,
+                                backgroundColor: palette.primary,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                marginBottom: 8,
+                            }}
+                        >
+                            <Ionicons name="add" size={26} color="#fff" />
+                        </View>
+                    ),
+                    tabBarButton: ({ ref: _ref, ...props }) => (
+                        <Pressable
+                            {...props}
+                            onPress={() => router.push('/create-entry')}
+                        />
                     ),
                 }}
             />
@@ -72,7 +91,7 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
     tabBar: {
-        borderTopWidth: 0, // no hard line per design system
+        borderTopWidth: 0,
         elevation: 0,
         height: 72,
         paddingTop: 8,
