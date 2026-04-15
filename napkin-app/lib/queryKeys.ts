@@ -11,7 +11,10 @@ export const queryKeys = {
         list: (userId: string) => ['tables', userId] as const,
         detail: (tableId: string) => ['table', tableId] as const,
         members: (tableId: string) => ['tableMembers', tableId] as const,
-        activity: (tableId: string) => ['tableActivity', tableId] as const,
+        activity: (tableId: string, filters?: { filterType?: string; filterUserId?: string }) =>
+            filters && (filters.filterType || filters.filterUserId)
+                ? ['tableActivity', tableId, filters] as const
+                : ['tableActivity', tableId] as const,
     },
 
     // Entries (individual meal logs)
