@@ -135,6 +135,12 @@ serve(async (req) => {
                 value_profile,
                 visited_at,
 
+                // Secondary ratings (optional, 0.5–5.0)
+                vibe_rating,
+                flavor_rating,
+                service_rating,
+                value_rating,
+
                 // Table sharing (optional)
                 table_id,
                 visibility,
@@ -142,6 +148,18 @@ serve(async (req) => {
                 // Collaborative (optional)
                 participant_ids,
             } = body;
+
+            // Validate secondary ratings if provided
+            for (const [name, val] of Object.entries({ vibe_rating, flavor_rating, service_rating, value_rating })) {
+                if (val !== null && val !== undefined) {
+                    if (typeof val !== 'number' || val < 0.5 || val > 5.0) {
+                        return new Response(
+                            JSON.stringify({ error: `${name} must be between 0.5 and 5.0` }),
+                            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        );
+                    }
+                }
+            }
 
             let restaurantId: string | null = null;
             let placeId: string | null = null;
@@ -245,6 +263,10 @@ serve(async (req) => {
                     cooked_by: cooked_by?.trim() || null,
                     value_profile: value_profile || null,
                     visited_at: visitedAtValue,
+                    ...(vibe_rating != null ? { vibe_rating } : {}),
+                    ...(flavor_rating != null ? { flavor_rating } : {}),
+                    ...(service_rating != null ? { service_rating } : {}),
+                    ...(value_rating != null ? { value_rating } : {}),
                     ...(table_id ? { table_id } : {}),
                     ...(visibility ? { visibility } : {}),
                 })

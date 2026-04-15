@@ -24,7 +24,6 @@ export interface SoloShareActivity {
     } | null;
     profiles: {
         display_name: string;
-        avatar_url: string | null;
     };
 }
 
@@ -36,6 +35,7 @@ export interface TableNightActivity {
     status: string;
     created_at: string;
     revealed_at: string | null;
+    is_async: boolean;
     sort_date: string;
     average_rating: number | null;
     restaurants: {
@@ -50,7 +50,6 @@ export interface TableNightActivity {
         notes: string | null;
         profiles: {
             display_name: string;
-            avatar_url: string | null;
         };
     }[];
 }
@@ -75,7 +74,6 @@ export interface CollaborativeEntryActivity {
         notes: string | null;
         profiles: {
             display_name: string;
-            avatar_url: string | null;
         };
     }[];
     average_rating: number | null;

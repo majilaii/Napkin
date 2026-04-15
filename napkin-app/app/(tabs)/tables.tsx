@@ -163,11 +163,12 @@ export default function TablesScreen() {
     const isEmpty = !feedLoading && items.length === 0;
 
     return (
+        <View style={{ flex: 1, backgroundColor: palette.background }}>
         <ScrollView
-            style={{ flex: 1, backgroundColor: palette.background }}
+            style={{ flex: 1 }}
             contentContainerStyle={{
                 paddingTop: insets.top + Spacing.sm,
-                paddingBottom: insets.bottom + 120,
+                paddingBottom: 100,
             }}
             showsVerticalScrollIndicator={false}
             refreshControl={
@@ -261,6 +262,7 @@ export default function TablesScreen() {
                 </View>
             )}
         </ScrollView>
+        </View>
     );
 }
 
@@ -274,12 +276,13 @@ function TableNightCard({
     palette: Palette;
 }) {
     const router = useRouter();
+    const isActive = item.status === 'rating';
 
     return (
         <Pressable
             onPress={() =>
                 router.push({
-                    pathname: '/table-night-detail',
+                    pathname: isActive ? '/table-night' : '/table-night-detail',
                     params: { nightId: item.id },
                 })
             }
@@ -293,10 +296,10 @@ function TableNightCard({
             ]}
         >
             {/* Badge */}
-            <View style={[styles.tnBadge, { backgroundColor: palette.primaryMuted }]}>
-                <PulseDot size={7} color={palette.primary} />
-                <Text style={[Type.labelSmall, { color: palette.primary }]}>
-                    TABLE NIGHT
+            <View style={[styles.tnBadge, { backgroundColor: isActive ? palette.tertiaryFixed : palette.primaryMuted }]}>
+                {isActive && <PulseDot size={7} color={palette.tertiary} />}
+                <Text style={[Type.labelSmall, { color: isActive ? palette.tertiary : palette.primary }]}>
+                    {isActive ? 'ACTIVE ROUND' : 'ROUND'}
                 </Text>
             </View>
 
@@ -327,10 +330,24 @@ function TableNightCard({
             {item.participants?.length > 0 && (
                 <View style={styles.tnVoters}>
                     {item.participants.map((p, i) => (
-                        <View key={`${p.user_id}-${i}`} style={styles.voterChip}>
+                        <Pressable
+                            key={`${p.user_id}-${i}`}
+                            onPress={() => {
+                                if (p.rating != null) {
+                                    router.push({
+                                        pathname: '/entry-detail',
+                                        params: { nightId: item.id, userId: p.user_id },
+                                    });
+                                }
+                            }}
+                            style={({ pressed }) => [
+                                styles.voterChip,
+                                p.rating != null && { opacity: pressed ? 0.6 : 1 },
+                            ]}
+                        >
                             <Avatar
                                 name={p.profiles?.display_name ?? '?'}
-                                url={p.profiles?.avatar_url ?? null}
+                                url={null}
                                 size={28}
                                 palette={palette}
                             />
@@ -356,7 +373,17 @@ function TableNightCard({
                                     {p.rating.toFixed(1)}
                                 </Text>
                             )}
-                        </View>
+                            {p.rating != null && (
+                                <Text
+                                    style={[
+                                        Type.labelSmall,
+                                        { color: palette.textMuted, marginLeft: 'auto' },
+                                    ]}
+                                >
+                                    →
+                                </Text>
+                            )}
+                        </Pressable>
                     ))}
                 </View>
             )}
@@ -373,15 +400,27 @@ function SoloShareCard({
     item: SoloShareActivity;
     palette: Palette;
 }) {
+    const router = useRouter();
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
     const verb = item.rating != null ? 'tried' : 'noted';
 
     return (
-        <View style={styles.soloCard}>
+        <Pressable
+            onPress={() =>
+                router.push({
+                    pathname: '/entry-detail',
+                    params: { entryId: item.id },
+                })
+            }
+            style={({ pressed }) => [
+                styles.soloCard,
+                { opacity: pressed ? 0.7 : 1 },
+            ]}
+        >
             <Avatar
                 name={displayName}
-                url={item.profiles?.avatar_url ?? null}
+                url={null}
                 size={40}
                 palette={palette}
             />
@@ -461,7 +500,7 @@ function SoloShareCard({
                     </Text>
                 ) : null}
             </View>
-        </View>
+        </Pressable>
     );
 }
 

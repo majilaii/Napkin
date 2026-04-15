@@ -53,3 +53,10 @@ supabase/.temp/
 supabase/.branches/
 **/supabase/.temp/
 **/.temp/cli-latest
+
+# Local AI / workflow tooling
+.claude/
+.kanban/
+
+# Accidental nested local Supabase workspace inside app
+napkin-app/supabase/

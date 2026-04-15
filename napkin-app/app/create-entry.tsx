@@ -1,6 +1,8 @@
 /**
- * Create Entry — log a meal / share to your table.
- * Restaurant search via Google Places → pick table → tag who was there → rate → notes → share.
+ * Create Entry — unified logger for solo shares, journal entries, and Rounds.
+ *
+ * Flow: Restaurant search → Table picker → [Mode picker if group] →
+ *       [Attendee picker if Round] → Impression form → Submit
  */
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
@@ -17,7 +19,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import Slider from '@react-native-community/slider';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -25,9 +27,13 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useTables } from '@/hooks/tables/useTables';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
+import { useStartRound } from '@/hooks/tables/useStartRound';
+import { StarRating } from '@/components/StarRating';
 import { supabase } from '@/lib/supabase';
 
-// ── Place result type ──────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────
+
+type PostMode = 'solo' | 'round';
 
 interface PlaceResult {
     id: string;
@@ -38,7 +44,7 @@ interface PlaceResult {
     categories: string[];
 }
 
-// ── Screen ─────────────────────────────────────────────────────────────────
+// ── Screen ────────────────────────────────────────────────────────────────
 
 export default function CreateEntryScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -52,7 +58,6 @@ export default function CreateEntryScreen() {
     // Tables data
     const { data: tableMemberships } = useTables(user?.id);
 
-    // Sort tables: personal table first
     const tables = (tableMemberships ?? []).map(m => m.tables);
     const sortedTables = [...tables].sort((a, b) => {
         if (a.is_personal && !b.is_personal) return -1;
@@ -60,12 +65,10 @@ export default function CreateEntryScreen() {
         return 0;
     });
 
-    // Default selected table: use tableId param if present, else personal table, else first table
     const personalTable = sortedTables.find(t => t.is_personal);
     const defaultTableId = tableIdParam ?? personalTable?.id ?? sortedTables[0]?.id ?? null;
     const [selectedTableId, setSelectedTableId] = useState<string | null>(defaultTableId);
 
-    // Update selected table when tables load (in case they weren't available on mount)
     useEffect(() => {
         if (!selectedTableId && defaultTableId) {
             setSelectedTableId(defaultTableId);
@@ -75,16 +78,27 @@ export default function CreateEntryScreen() {
     const selectedTable = sortedTables.find(t => t.id === selectedTableId) ?? null;
     const isPersonalTable = selectedTable?.is_personal === true;
 
-    // Participant tagging (only for group tables)
-    const { data: tableMembers } = useTableMembers(isPersonalTable ? null : selectedTableId);
+    // Mode picker (group tables only)
+    const [postMode, setPostMode] = useState<PostMode>('solo');
+
+    // Reset mode when switching to personal table
+    useEffect(() => {
+        if (isPersonalTable) setPostMode('solo');
+    }, [isPersonalTable]);
+
+    // Participant tagging (Round mode on group tables)
+    const { data: tableMembers, isLoading: membersLoading } = useTableMembers(
+        !isPersonalTable && postMode === 'round' ? selectedTableId : null
+    );
     const [selectedParticipantIds, setSelectedParticipantIds] = useState<Set<string>>(new Set());
 
-    // Reset participant selection when table changes
+    // Reset participants when table or mode changes
     useEffect(() => {
         setSelectedParticipantIds(new Set());
-    }, [selectedTableId]);
+    }, [selectedTableId, postMode]);
 
     const createEntry = useCreateEntry(user?.id, selectedTableId);
+    const startRound = useStartRound(user?.id, selectedTableId);
 
     // Search state
     const [query, setQuery] = useState('');
@@ -93,18 +107,23 @@ export default function CreateEntryScreen() {
     const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Form state
-    const [rating, setRating] = useState(3.0);
-    const [includeRating, setIncludeRating] = useState(false);
+    // Impression form state
+    const [rating, setRating] = useState(0);
+    const [vibeRating, setVibeRating] = useState(0);
+    const [flavorRating, setFlavorRating] = useState(0);
+    const [serviceRating, setServiceRating] = useState(0);
+    const [valueRating, setValueRating] = useState(0);
+    const [showDetails, setShowDetails] = useState(false);
     const [notes, setNotes] = useState('');
     const [dish, setDish] = useState('');
 
-    const canSubmit = selectedPlace !== null || query.trim().length > 0;
+    const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0;
+    const isSubmitting = createEntry.isPending || startRound.isPending;
 
-    // ── Debounced search ───────────────────────────────────────────────────
+    // ── Debounced search ──────────────────────────────────────────────────
 
     useEffect(() => {
-        if (selectedPlace) return; // Don't search after selecting
+        if (selectedPlace) return;
         if (query.trim().length < 2) {
             setResults([]);
             return;
@@ -128,7 +147,6 @@ export default function CreateEntryScreen() {
             setResults(data?.data ?? []);
         } catch (e) {
             console.warn('Places search failed:', e);
-            // Silently fail — user can still submit manually
         } finally {
             setSearching(false);
         }
@@ -147,7 +165,7 @@ export default function CreateEntryScreen() {
     };
 
     const toggleParticipant = (memberId: string) => {
-        if (!user || memberId === user.id) return; // creator cannot be deselected
+        if (!user || memberId === user.id) return;
         setSelectedParticipantIds(prev => {
             const next = new Set(prev);
             if (next.has(memberId)) {
@@ -159,7 +177,7 @@ export default function CreateEntryScreen() {
         });
     };
 
-    // ── Submit ─────────────────────────────────────────────────────────────
+    // ── Submit ────────────────────────────────────────────────────────────
 
     const handleSubmit = useCallback(async () => {
         if (!canSubmit) return;
@@ -178,51 +196,64 @@ export default function CreateEntryScreen() {
                 longitude: selectedPlace.longitude ?? undefined,
             }
             : {
-                // Fallback for manual entry (no Google Places result)
                 external_id: `manual-${query.trim().toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
                 name: query.trim(),
                 types: ['restaurant'] as string[],
             };
 
-        // Build participant_ids: only tagged others (creator is always included server-side)
-        const participantIds = isPersonalTable
-            ? undefined
-            : Array.from(selectedParticipantIds);
+        const secondaryRatings = {
+            vibe_rating: vibeRating > 0 ? vibeRating : null,
+            flavor_rating: flavorRating > 0 ? flavorRating : null,
+            service_rating: serviceRating > 0 ? serviceRating : null,
+            value_rating: valueRating > 0 ? valueRating : null,
+        };
+
+        const ratingValue = Math.round(rating * 2) / 2;
 
         try {
-            await createEntry.mutateAsync({
-                restaurant: restaurantData,
-                rating: includeRating ? Math.round(rating * 2) / 2 : null,
-                content: notes.trim() || undefined,
-                dish_description: dish.trim() || undefined,
-                table_id: selectedTableId ?? undefined,
-                visibility: selectedTableId ? 'table' : 'private',
-                participant_ids: participantIds,
-            });
+            if (!isPersonalTable && postMode === 'round') {
+                // Start a Round
+                await startRound.mutateAsync({
+                    table_id: selectedTableId!,
+                    restaurant: restaurantData,
+                    participant_ids: Array.from(selectedParticipantIds),
+                    rating: ratingValue,
+                    notes: notes.trim() || undefined,
+                    dish_description: dish.trim() || undefined,
+                    ...secondaryRatings,
+                });
+            } else {
+                // Solo journal or Solo share
+                await createEntry.mutateAsync({
+                    restaurant: restaurantData,
+                    rating: ratingValue,
+                    content: notes.trim() || undefined,
+                    dish_description: dish.trim() || undefined,
+                    table_id: selectedTableId ?? undefined,
+                    visibility: selectedTableId ? 'table' : 'private',
+                    ...secondaryRatings,
+                });
+            }
             router.back();
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not save entry');
         }
     }, [
-        canSubmit,
-        selectedPlace,
-        query,
-        includeRating,
-        rating,
-        notes,
-        dish,
-        selectedTableId,
-        isPersonalTable,
-        selectedParticipantIds,
-        createEntry,
-        router,
+        canSubmit, rating, notes, dish, selectedPlace, query,
+        selectedTableId, isPersonalTable, postMode, selectedParticipantIds,
+        vibeRating, flavorRating, serviceRating, valueRating,
+        createEntry, startRound, router,
     ]);
 
-    const submitLabel = selectedTableId
-        ? selectedTable?.is_personal
-            ? 'SAVE TO JOURNAL'
-            : 'SHARE TO TABLE'
-        : 'SAVE ENTRY';
+    // ── Submit label ──────────────────────────────────────────────────────
+
+    const submitLabel = isPersonalTable
+        ? 'LOG IT'
+        : postMode === 'round'
+            ? 'START THE ROUND'
+            : 'SHARE';
+
+    // ── Render ────────────────────────────────────────────────────────────
 
     return (
         <>
@@ -269,7 +300,6 @@ export default function CreateEntryScreen() {
                         </Text>
 
                         {selectedPlace ? (
-                            /* Selected place chip */
                             <Pressable
                                 onPress={handleClearPlace}
                                 style={[
@@ -279,13 +309,11 @@ export default function CreateEntryScreen() {
                             >
                                 <View style={{ flex: 1 }}>
                                     <Text
-                                        style={[
-                                            {
-                                                fontFamily: 'Newsreader_400Regular_Italic',
-                                                fontSize: 22,
-                                                color: palette.text,
-                                            },
-                                        ]}
+                                        style={{
+                                            fontFamily: 'Newsreader_400Regular_Italic',
+                                            fontSize: 22,
+                                            color: palette.text,
+                                        }}
                                         numberOfLines={1}
                                     >
                                         {selectedPlace.name}
@@ -307,7 +335,6 @@ export default function CreateEntryScreen() {
                                 </Text>
                             </Pressable>
                         ) : (
-                            /* Search input */
                             <View>
                                 <View style={{ position: 'relative' }}>
                                     <TextInput
@@ -335,7 +362,6 @@ export default function CreateEntryScreen() {
                                     )}
                                 </View>
 
-                                {/* Search results dropdown */}
                                 {results.length > 0 && (
                                     <View
                                         style={[
@@ -389,7 +415,6 @@ export default function CreateEntryScreen() {
                                     </View>
                                 )}
 
-                                {/* Manual fallback hint */}
                                 {query.trim().length >= 2 && results.length === 0 && !searching && (
                                     <Text
                                         style={[
@@ -405,7 +430,7 @@ export default function CreateEntryScreen() {
                     </View>
 
                     {/* Table picker */}
-                    {sortedTables.length > 0 ? (
+                    {sortedTables.length > 0 && (
                         <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
                             <Text style={[Type.label, { color: palette.textSecondary }]}>
                                 Post to
@@ -441,142 +466,233 @@ export default function CreateEntryScreen() {
                                             ]}
                                             numberOfLines={1}
                                         >
-                                            {t.is_personal ? `${t.name}` : t.name}
+                                            {t.name}
                                         </Text>
                                     </Pressable>
                                 ))}
                             </ScrollView>
                         </View>
-                    ) : null}
+                    )}
 
-                    {/* Participant tagging (only for group tables) */}
-                    {!isPersonalTable && selectedTableId && tableMembers && tableMembers.length > 1 ? (
+                    {/* Mode picker (group tables only) */}
+                    {!isPersonalTable && selectedTableId && (
+                        <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
+                            <Text style={[Type.label, { color: palette.textSecondary }]}>
+                                How are you posting?
+                            </Text>
+                            <View style={styles.modePicker}>
+                                <Pressable
+                                    onPress={() => setPostMode('solo')}
+                                    style={[
+                                        styles.modeCard,
+                                        {
+                                            backgroundColor: postMode === 'solo'
+                                                ? palette.primaryMuted
+                                                : palette.surfaceContainerLow,
+                                            borderWidth: postMode === 'solo' ? 1.5 : 0,
+                                            borderColor: postMode === 'solo' ? palette.primary : 'transparent',
+                                        },
+                                    ]}
+                                >
+                                    <Ionicons
+                                        name="chatbubble-outline"
+                                        size={20}
+                                        color={postMode === 'solo' ? palette.primary : palette.textSecondary}
+                                    />
+                                    <Text
+                                        style={[
+                                            Type.titleSmall,
+                                            { color: postMode === 'solo' ? palette.primary : palette.text, marginTop: Spacing.xs },
+                                        ]}
+                                    >
+                                        Solo Share
+                                    </Text>
+                                    <Text
+                                        style={[
+                                            Type.caption,
+                                            { color: palette.textMuted, marginTop: 2 },
+                                        ]}
+                                    >
+                                        Quick rec to the group
+                                    </Text>
+                                </Pressable>
+                                <Pressable
+                                    onPress={() => setPostMode('round')}
+                                    style={[
+                                        styles.modeCard,
+                                        {
+                                            backgroundColor: postMode === 'round'
+                                                ? palette.primaryMuted
+                                                : palette.surfaceContainerLow,
+                                            borderWidth: postMode === 'round' ? 1.5 : 0,
+                                            borderColor: postMode === 'round' ? palette.primary : 'transparent',
+                                        },
+                                    ]}
+                                >
+                                    <Ionicons
+                                        name="people-outline"
+                                        size={20}
+                                        color={postMode === 'round' ? palette.primary : palette.textSecondary}
+                                    />
+                                    <Text
+                                        style={[
+                                            Type.titleSmall,
+                                            { color: postMode === 'round' ? palette.primary : palette.text, marginTop: Spacing.xs },
+                                        ]}
+                                    >
+                                        Start a Round
+                                    </Text>
+                                    <Text
+                                        style={[
+                                            Type.caption,
+                                            { color: palette.textMuted, marginTop: 2 },
+                                        ]}
+                                    >
+                                        Everyone rates it
+                                    </Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    )}
+
+                    {/* Attendee picker (Round mode only) */}
+                    {!isPersonalTable && postMode === 'round' && selectedTableId && (
                         <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
                             <Text style={[Type.label, { color: palette.textSecondary }]}>
                                 Who was there?
                             </Text>
-                            <View style={styles.participantGrid}>
-                                {tableMembers.map(member => {
-                                    const isCreator = member.member_id === user?.id;
-                                    const isSelected = isCreator || selectedParticipantIds.has(member.member_id);
-                                    const displayName = member.profiles?.display_name ?? 'Member';
-                                    const initials = displayName
-                                        .split(' ')
-                                        .map(n => n[0])
-                                        .join('')
-                                        .slice(0, 2)
-                                        .toUpperCase();
 
-                                    return (
-                                        <Pressable
-                                            key={member.member_id}
-                                            onPress={() => toggleParticipant(member.member_id)}
-                                            disabled={isCreator}
-                                            style={[
-                                                styles.participantChip,
-                                                {
-                                                    backgroundColor: isSelected
-                                                        ? palette.primary
-                                                        : palette.surfaceContainerLow,
-                                                },
-                                            ]}
-                                        >
-                                            <View
+                            {membersLoading ? (
+                                <ActivityIndicator size="small" color={palette.textMuted} style={{ marginTop: Spacing.sm }} />
+                            ) : tableMembers && tableMembers.filter(m => m.member_id !== user?.id).length > 0 ? (
+                                <View style={styles.participantGrid}>
+                                    {tableMembers.map(member => {
+                                        const isCreator = member.member_id === user?.id;
+                                        const isSelected = isCreator || selectedParticipantIds.has(member.member_id);
+                                        const displayName = member.profiles?.display_name ?? 'Member';
+                                        const initials = displayName
+                                            .split(' ')
+                                            .map(n => n[0])
+                                            .join('')
+                                            .slice(0, 2)
+                                            .toUpperCase();
+
+                                        return (
+                                            <Pressable
+                                                key={member.member_id}
+                                                onPress={() => toggleParticipant(member.member_id)}
+                                                disabled={isCreator}
                                                 style={[
-                                                    styles.participantAvatar,
+                                                    styles.participantChip,
                                                     {
                                                         backgroundColor: isSelected
-                                                            ? 'rgba(255,255,255,0.25)'
-                                                            : palette.surfaceContainerHigh,
+                                                            ? palette.primary
+                                                            : palette.surfaceContainerLow,
                                                     },
                                                 ]}
                                             >
-                                                <Text
-                                                    style={{
-                                                        fontSize: 11,
-                                                        color: isSelected ? '#fff' : palette.text,
-                                                        fontFamily: 'Manrope_600SemiBold',
-                                                    }}
+                                                <View
+                                                    style={[
+                                                        styles.participantAvatar,
+                                                        {
+                                                            backgroundColor: isSelected
+                                                                ? 'rgba(255,255,255,0.25)'
+                                                                : palette.surfaceContainerHigh,
+                                                        },
+                                                    ]}
                                                 >
-                                                    {initials}
+                                                    <Text
+                                                        style={{
+                                                            fontSize: 11,
+                                                            color: isSelected ? '#fff' : palette.text,
+                                                            fontFamily: 'Manrope_600SemiBold',
+                                                        }}
+                                                    >
+                                                        {initials}
+                                                    </Text>
+                                                </View>
+                                                <Text
+                                                    style={[
+                                                        Type.caption,
+                                                        {
+                                                            color: isSelected ? '#fff' : palette.text,
+                                                            maxWidth: 60,
+                                                        },
+                                                    ]}
+                                                    numberOfLines={1}
+                                                >
+                                                    {displayName.split(' ')[0]}
+                                                    {isCreator ? ' (you)' : ''}
                                                 </Text>
-                                            </View>
-                                            <Text
-                                                style={[
-                                                    Type.caption,
-                                                    {
-                                                        color: isSelected ? '#fff' : palette.text,
-                                                        maxWidth: 60,
-                                                    },
-                                                ]}
-                                                numberOfLines={1}
-                                            >
-                                                {displayName.split(' ')[0]}
-                                                {isCreator ? ' (you)' : ''}
-                                            </Text>
-                                        </Pressable>
-                                    );
-                                })}
-                            </View>
-                        </View>
-                    ) : null}
-
-                    {/* Rating toggle + slider */}
-                    <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                        <Pressable
-                            style={styles.toggleRow}
-                            onPress={() => setIncludeRating(!includeRating)}
-                        >
-                            <Text style={[Type.label, { color: palette.textSecondary }]}>
-                                Add a Rating
-                            </Text>
-                            <View
-                                style={[
-                                    styles.toggle,
-                                    {
-                                        backgroundColor: includeRating
-                                            ? palette.primary
-                                            : palette.surfaceContainerHigh,
-                                    },
-                                ]}
-                            >
-                                <View
-                                    style={[
-                                        styles.toggleKnob,
-                                        {
-                                            backgroundColor: '#fff',
-                                            transform: [
-                                                { translateX: includeRating ? 18 : 2 },
-                                            ],
-                                        },
-                                    ]}
-                                />
-                            </View>
-                        </Pressable>
-
-                        {includeRating && (
-                            <View style={{ marginTop: Spacing.md }}>
-                                <View style={styles.ratingDisplay}>
-                                    <Text
-                                        style={[
-                                            Type.ratingLarge,
-                                            { color: palette.tertiary, fontSize: 36 },
-                                        ]}
-                                    >
-                                        {rating.toFixed(1)}
+                                            </Pressable>
+                                        );
+                                    })}
+                                </View>
+                            ) : (
+                                <View style={[styles.emptyMembersBox, { backgroundColor: palette.surfaceContainerLow }]}>
+                                    <Text style={[Type.body, { color: palette.textMuted, textAlign: 'center' }]}>
+                                        No friends at this table yet
+                                    </Text>
+                                    <Text style={[Type.caption, { color: palette.textMuted, textAlign: 'center', marginTop: 2 }]}>
+                                        Invite people from the table settings
                                     </Text>
                                 </View>
-                                <Slider
-                                    style={{ width: '100%', height: 36 }}
-                                    minimumValue={0.5}
-                                    maximumValue={5}
-                                    step={0.5}
-                                    value={rating}
-                                    onValueChange={setRating}
-                                    minimumTrackTintColor={palette.primary}
-                                    maximumTrackTintColor={palette.surfaceContainerHigh}
-                                    thumbTintColor={palette.primary}
-                                />
+                            )}
+                        </View>
+                    )}
+
+                    {/* Overall rating (always visible) */}
+                    <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
+                        <Text style={[Type.label, { color: palette.textSecondary }]}>
+                            Your rating
+                        </Text>
+                        <View style={styles.ratingRow}>
+                            <StarRating
+                                value={rating}
+                                size={36}
+                                editable
+                                onChange={setRating}
+                                showValue
+                            />
+                        </View>
+                    </View>
+
+                    {/* Secondary ratings (collapsible) */}
+                    <View style={[styles.fieldGroup, { marginTop: Spacing.lg }]}>
+                        <Pressable
+                            style={styles.detailsToggle}
+                            onPress={() => setShowDetails(!showDetails)}
+                        >
+                            <Text style={[Type.label, { color: palette.textSecondary }]}>
+                                Rate the details
+                            </Text>
+                            <Ionicons
+                                name={showDetails ? 'chevron-up' : 'chevron-down'}
+                                size={16}
+                                color={palette.textSecondary}
+                            />
+                        </Pressable>
+
+                        {showDetails && (
+                            <View style={styles.detailRatings}>
+                                {([
+                                    ['Flavor', flavorRating, setFlavorRating],
+                                    ['Vibes', vibeRating, setVibeRating],
+                                    ['Service', serviceRating, setServiceRating],
+                                    ['Value', valueRating, setValueRating],
+                                ] as const).map(([label, val, setter]) => (
+                                    <View key={label} style={styles.detailRow}>
+                                        <Text style={[Type.bodySmall, { color: palette.text, width: 60 }]}>
+                                            {label}
+                                        </Text>
+                                        <StarRating
+                                            value={val as number}
+                                            size={22}
+                                            editable
+                                            onChange={setter as (v: number) => void}
+                                        />
+                                    </View>
+                                ))}
                             </View>
                         )}
                     </View>
@@ -628,9 +744,9 @@ export default function CreateEntryScreen() {
                         />
                     </View>
 
-                    {/* Submit — inline at the bottom of the scroll */}
+                    {/* Submit */}
                     <Pressable
-                        disabled={!canSubmit || createEntry.isPending}
+                        disabled={!canSubmit || isSubmitting}
                         onPress={handleSubmit}
                         style={({ pressed }) => [
                             styles.ctaButton,
@@ -639,11 +755,11 @@ export default function CreateEntryScreen() {
                                 backgroundColor: canSubmit
                                     ? palette.primary
                                     : palette.surfaceContainerHigh,
-                                opacity: pressed ? 0.9 : createEntry.isPending ? 0.6 : 1,
+                                opacity: pressed ? 0.9 : isSubmitting ? 0.6 : 1,
                             },
                         ]}
                     >
-                        {createEntry.isPending ? (
+                        {isSubmitting ? (
                             <ActivityIndicator color="#fff" />
                         ) : (
                             <Text
@@ -665,7 +781,7 @@ export default function CreateEntryScreen() {
     );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
     header: {
@@ -687,26 +803,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingVertical: Spacing.md,
         minHeight: 100,
-    },
-    toggleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    toggle: {
-        width: 44,
-        height: 26,
-        borderRadius: 13,
-        justifyContent: 'center',
-    },
-    toggleKnob: {
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-    },
-    ratingDisplay: {
-        alignItems: 'center',
-        marginBottom: Spacing.sm,
     },
     ctaButton: {
         height: 56,
@@ -731,7 +827,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingVertical: Spacing.md,
     },
-    // Table picker
     chipRow: {
         gap: Spacing.sm,
         paddingRight: Spacing.sm,
@@ -742,7 +837,38 @@ const styles = StyleSheet.create({
         borderRadius: Radius.full,
         maxWidth: 160,
     },
-    // Participant tagging
+    // Mode picker
+    modePicker: {
+        flexDirection: 'row',
+        gap: Spacing.sm,
+    },
+    modeCard: {
+        flex: 1,
+        alignItems: 'center',
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.sm,
+        borderRadius: Radius.lg,
+    },
+    // Rating
+    ratingRow: {
+        alignItems: 'center',
+        paddingVertical: Spacing.sm,
+    },
+    detailsToggle: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    detailRatings: {
+        gap: Spacing.md,
+        paddingTop: Spacing.sm,
+    },
+    detailRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+    },
+    // Participants
     participantGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -762,5 +888,11 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    emptyMembersBox: {
+        paddingVertical: Spacing.lg,
+        paddingHorizontal: Spacing.md,
+        borderRadius: Radius.lg,
+        alignItems: 'center',
     },
 });

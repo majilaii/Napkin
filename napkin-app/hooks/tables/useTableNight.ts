@@ -23,6 +23,10 @@ export interface TableNightParticipant {
     rating: number | null;
     ready: boolean;
     notes: string | null;
+    vibe_rating: number | null;
+    flavor_rating: number | null;
+    service_rating: number | null;
+    value_rating: number | null;
     profiles: {
         display_name: string;
         avatar_url: string | null;
@@ -30,6 +34,12 @@ export interface TableNightParticipant {
 }
 
 export interface TableNightStatus extends TableNight {
+    restaurants: {
+        id: string;
+        name: string;
+        address: string | null;
+        city: string | null;
+    } | null;
     participants: TableNightParticipant[];
 }
 
@@ -124,8 +134,16 @@ export function useRateTableNight() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (input: { table_night_id: string; rating: number }) =>
-            invokeTableNight({ action: 'rate', ...input }),
+        mutationFn: (input: {
+            table_night_id: string;
+            rating: number;
+            notes?: string;
+            dish_description?: string;
+            vibe_rating?: number | null;
+            flavor_rating?: number | null;
+            service_rating?: number | null;
+            value_rating?: number | null;
+        }) => invokeTableNight({ action: 'rate', ...input }),
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({
                 queryKey: queryKeys.tableNight.status(variables.table_night_id),
