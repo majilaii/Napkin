@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { FlatList, Pressable, Text, StyleSheet, View } from 'react-native';
+import { FlatList, Pressable, Text, StyleSheet } from 'react-native';
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 
 type Palette = typeof Colors.light;

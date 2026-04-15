@@ -213,7 +213,6 @@ export default function TablesScreen() {
     }, [items]);
 
     // Date sections — memoized; `now` is stable for the lifetime of this render pass
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     const now = useMemo(() => new Date(), []);
     const sections: FeedSection[] = useMemo(
         () => groupIntoSections(feedItems, now),
