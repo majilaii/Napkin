@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { upsertRestaurant } from '../_shared/restaurant.ts';
 
 /**
  * Entry Edge Function
@@ -170,23 +171,19 @@ serve(async (req) => {
                 const isRestaurant = restaurant.types?.some((t: string) => FOOD_TYPES.includes(t)) ?? true;
 
                 if (isRestaurant) {
-                    // Upsert to restaurants table
-                    const { data: restaurantData, error: restaurantError } = await supabase
-                        .from('restaurants')
-                        .upsert({
-                            external_id: restaurant.external_id,
-                            name: restaurant.name,
+                    restaurantId = await upsertRestaurant(supabase, {
+                        external_id: restaurant.external_id,
+                        name: restaurant.name,
+                        location: {
                             address: restaurant.location?.address,
-                            city: restaurant.location?.locality,
+                            locality: restaurant.location?.locality,
                             country: restaurant.location?.country,
-                            lat: restaurant.latitude,
-                            lng: restaurant.longitude,
-                        }, { onConflict: 'external_id' })
-                        .select('id')
-                        .single();
-
-                    if (restaurantError) throw restaurantError;
-                    restaurantId = restaurantData.id;
+                        },
+                        types: restaurant.types,
+                        latitude: restaurant.latitude,
+                        longitude: restaurant.longitude,
+                        photoReference: restaurant.photoReference,
+                    });
                 } else {
                     // Upsert to places table (non-restaurant)
                     const { data: placeData, error: placeError } = await supabase

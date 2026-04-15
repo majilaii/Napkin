@@ -21,6 +21,7 @@ export interface SoloShareActivity {
         name: string;
         address: string | null;
         city: string | null;
+        photo_url: string | null;
     } | null;
     profiles: {
         display_name: string;
@@ -43,6 +44,7 @@ export interface TableNightActivity {
         name: string;
         address: string | null;
         city: string | null;
+        photo_url: string | null;
     };
     participants: {
         user_id: string;
@@ -67,6 +69,7 @@ export interface CollaborativeEntryActivity {
         name: string;
         address: string | null;
         city: string | null;
+        photo_url: string | null;
     } | null;
     participants: {
         user_id: string;

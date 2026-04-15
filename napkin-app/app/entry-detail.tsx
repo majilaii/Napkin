@@ -10,6 +10,7 @@ import {
     ScrollView,
     Pressable,
     ActivityIndicator,
+    Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
@@ -246,6 +247,7 @@ export default function EntryDetailScreen() {
         entry.value_rating != null;
 
     const isRoundEntry = !!entry.table_night_id;
+    const heroPhotoUrl = entry.restaurants?.photo_url ?? null;
 
     return (
         <>
@@ -254,16 +256,46 @@ export default function EntryDetailScreen() {
                 <ScrollView
                     contentContainerStyle={{
                         paddingBottom: insets.bottom + 40,
-                        paddingTop: insets.top + Spacing.md,
+                        paddingTop: heroPhotoUrl ? 0 : insets.top + Spacing.md,
                     }}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Top bar */}
-                    <View style={styles.topBar}>
-                        <Pressable onPress={() => router.back()}>
-                            <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
-                        </Pressable>
-                    </View>
+                    {/* Hero image with scrim overlay */}
+                    {heroPhotoUrl ? (
+                        <View>
+                            <Image
+                                source={{ uri: heroPhotoUrl }}
+                                style={{ width: '100%', aspectRatio: 16 / 9 }}
+                                resizeMode="cover"
+                            />
+                            <View
+                                style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    height: insets.top + 56,
+                                    backgroundColor: 'rgba(0,0,0,0.35)',
+                                }}
+                            />
+                            <View
+                                style={[
+                                    styles.topBar,
+                                    { position: 'absolute', top: insets.top, left: 0, right: 0 },
+                                ]}
+                            >
+                                <Pressable onPress={() => router.back()}>
+                                    <Text style={[Type.body, { color: '#fff' }]}>← Back</Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    ) : (
+                        <View style={styles.topBar}>
+                            <Pressable onPress={() => router.back()}>
+                                <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
+                            </Pressable>
+                        </View>
+                    )}
 
                     {/* Header */}
                     <View style={styles.headerSection}>

@@ -42,6 +42,7 @@ interface PlaceResult {
     latitude: number | null;
     longitude: number | null;
     categories: string[];
+    photoReference: string | null;
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────
@@ -194,6 +195,7 @@ export default function CreateEntryScreen() {
                     : ['restaurant'],
                 latitude: selectedPlace.latitude ?? undefined,
                 longitude: selectedPlace.longitude ?? undefined,
+                photoReference: selectedPlace.photoReference ?? undefined,
             }
             : {
                 external_id: `manual-${query.trim().toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,

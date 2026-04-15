@@ -80,7 +80,8 @@ serve(async (req) => {
                         id,
                         name,
                         address,
-                        city
+                        city,
+                        photo_url
                     )
                 `)
                 .eq('table_id', tableId)
@@ -173,7 +174,8 @@ serve(async (req) => {
                         id,
                         name,
                         address,
-                        city
+                        city,
+                        photo_url
                     )
                 `)
                 .eq('table_id', tableId)
