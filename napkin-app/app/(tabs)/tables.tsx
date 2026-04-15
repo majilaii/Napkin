@@ -1,139 +1,88 @@
 /**
  * Tables tab — activity feed for the active table.
- * Phase 1 features:
- *   - Filter chips (All, Rounds, Solo Shares, By Me, per-member)
- *   - Sticky date section headers (Today/Yesterday/This Week/Last Week/Month Year)
- *   - Pinned active rounds shelf above the feed
- *   - Compact mode for entries older than 14 days (tap to expand)
- *   - Server-side filtering via filter_type / filter_user_id params
+ * Real data via useTables + useTableActivity hooks.
+ * Features: table switcher, PulseDot on live banner, Table Night cards, solo share rows.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
     View,
     Text,
     StyleSheet,
-    SectionList,
+    ScrollView,
     RefreshControl,
     Pressable,
     ActivityIndicator,
+    Image,
+    Animated,
+    Easing,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
-import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import {
     useTableActivity,
     type ActivityItem,
-    type TableNightActivity,
     type SoloShareActivity,
+    type TableNightActivity,
 } from '@/hooks/tables/useTableActivity';
-import {
-    FilterChipRow,
-    DateSectionHeader,
-    ActiveRoundsShelf,
-    CompactEntryRow,
-    TableNightCard,
-    SoloShareCard,
-    type FilterChip,
-} from '@/components/feed';
 
-// ── Date bucketing ──────────────────────────────────────────────────────────
+type Palette = typeof Colors.light;
 
-function isoWeek(d: Date): number {
-    const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-    date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-    return Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+// ── PulseDot — animated live indicator ─────────────────────────────────────
+
+function PulseDot({ size = 8, color = '#fff' }: { size?: number; color?: string }) {
+    const pulse = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        const loop = Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulse, {
+                    toValue: 1.6,
+                    duration: 800,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(pulse, {
+                    toValue: 1,
+                    duration: 800,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true,
+                }),
+            ]),
+        );
+        loop.start();
+        return () => loop.stop();
+    }, [pulse]);
+
+    return (
+        <View style={{ width: size, height: size }}>
+            <Animated.View
+                style={{
+                    position: 'absolute',
+                    width: size,
+                    height: size,
+                    borderRadius: size / 2,
+                    backgroundColor: color,
+                    opacity: 0.3,
+                    transform: [{ scale: pulse }],
+                }}
+            />
+            <View
+                style={{
+                    width: size,
+                    height: size,
+                    borderRadius: size / 2,
+                    backgroundColor: color,
+                }}
+            />
+        </View>
+    );
 }
-
-function isoYear(d: Date): number {
-    const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-    date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
-    return date.getUTCFullYear();
-}
-
-const MONTH_NAMES = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-];
-
-function dateBucketLabel(sortDate: string, now: Date): string {
-    const d = new Date(sortDate);
-    const dY = d.getFullYear();
-    const dM = d.getMonth();
-    const dD = d.getDate();
-    const nY = now.getFullYear();
-    const nM = now.getMonth();
-    const nD = now.getDate();
-
-    if (dY === nY && dM === nM && dD === nD) return 'Today';
-
-    const yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
-    if (
-        dY === yesterday.getFullYear() &&
-        dM === yesterday.getMonth() &&
-        dD === yesterday.getDate()
-    ) {
-        return 'Yesterday';
-    }
-
-    const dWeek = isoWeek(d);
-    const dIsoYear = isoYear(d);
-    const nWeek = isoWeek(now);
-    const nIsoYear = isoYear(now);
-
-    if (dIsoYear === nIsoYear && dWeek === nWeek) return 'This Week';
-
-    const prevWeekDate = new Date(now);
-    prevWeekDate.setDate(now.getDate() - 7);
-    const prevWeek = isoWeek(prevWeekDate);
-    const prevIsoYear = isoYear(prevWeekDate);
-    if (dIsoYear === prevIsoYear && dWeek === prevWeek) return 'Last Week';
-
-    return `${MONTH_NAMES[dM]} ${dY}`;
-}
-
-interface FeedSection {
-    title: string;
-    data: ActivityItem[];
-}
-
-function groupIntoSections(items: ActivityItem[], now: Date): FeedSection[] {
-    const sectionMap = new Map<string, ActivityItem[]>();
-    const sectionOrder: string[] = [];
-
-    for (const item of items) {
-        const label = dateBucketLabel(item.sort_date, now);
-        if (!sectionMap.has(label)) {
-            sectionMap.set(label, []);
-            sectionOrder.push(label);
-        }
-        sectionMap.get(label)!.push(item);
-    }
-
-    return sectionOrder.map((title) => ({
-        title,
-        data: sectionMap.get(title)!,
-    }));
-}
-
-// ── Static filter chips ────────────────────────────────────────────────────
-
-const STATIC_CHIPS: FilterChip[] = [
-    { key: 'all', label: 'All' },
-    { key: 'round', label: 'Rounds' },
-    { key: 'solo_share', label: 'Solo Shares' },
-    { key: 'by_me', label: 'By Me' },
-];
-
-// ── Compact mode cutoff ────────────────────────────────────────────────────
-
-const COMPACT_CUTOFF_MS = 14 * 24 * 60 * 60 * 1000;
 
 // ── Screen ─────────────────────────────────────────────────────────────────
 
@@ -143,7 +92,7 @@ export default function TablesScreen() {
     const insets = useSafeAreaInsets();
     const { user } = useAuth();
 
-    // Table switching
+    // Real data
     const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
@@ -154,94 +103,17 @@ export default function TablesScreen() {
         setSelectedIndex((i) => (i + 1) % tables.length);
     };
 
-    // Filter state — reset when table changes
-    const [activeFilter, setActiveFilter] = useState<string | null>(null);
-
-    useEffect(() => {
-        setActiveFilter(null);
-    }, [activeTable?.id]);
-
-    // Member list for per-member chips
-    const { data: members } = useTableMembers(activeTable?.id);
-
-    const chips: FilterChip[] = useMemo(() => {
-        const memberChips: FilterChip[] = (members ?? [])
-            .filter((m) => m.member_id !== user?.id)
-            .map((m) => ({
-                key: m.member_id,
-                label: m.profiles?.display_name ?? 'Member',
-            }));
-        return [...STATIC_CHIPS, ...memberChips];
-    }, [members, user?.id]);
-
-    // Derive server-side filter params from the active chip
-    const filterParams = useMemo(() => {
-        if (!activeFilter || activeFilter === 'all') return undefined;
-        if (activeFilter === 'round') return { filterType: 'round' as const };
-        if (activeFilter === 'solo_share') return { filterType: 'solo_share' as const };
-        if (activeFilter === 'by_me') return { filterUserId: user?.id };
-        return { filterUserId: activeFilter };
-    }, [activeFilter, user?.id]);
-
     const {
         data: activityData,
         isLoading: feedLoading,
         isRefetching,
         refetch,
-    } = useTableActivity(activeTable?.id, filterParams);
+    } = useTableActivity(activeTable?.id);
 
     const items: ActivityItem[] = useMemo(
         () => activityData?.pages?.flat() ?? [],
         [activityData],
     );
-
-    // Partition: active rounds go to the pinned shelf, rest goes into date sections
-    const { activeRounds, feedItems } = useMemo(() => {
-        const rounds: TableNightActivity[] = [];
-        const feed: ActivityItem[] = [];
-        for (const item of items) {
-            if (
-                item.type === 'table_night' &&
-                (item as TableNightActivity).status === 'rating'
-            ) {
-                rounds.push(item as TableNightActivity);
-            } else {
-                feed.push(item);
-            }
-        }
-        return { activeRounds: rounds, feedItems: feed };
-    }, [items]);
-
-    // Date sections — memoized; `now` is stable for the lifetime of this render pass
-    const now = useMemo(() => new Date(), []);
-    const sections: FeedSection[] = useMemo(
-        () => groupIntoSections(feedItems, now),
-        [feedItems, now],
-    );
-
-    // Compact mode — one expanded entry at a time
-    const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
-
-    const handleToggleExpand = (itemId: string) => {
-        setExpandedItemId((prev) => (prev === itemId ? null : itemId));
-    };
-
-    // Per-filter empty state labels
-    const emptyLabel = useMemo(() => {
-        if (!activeFilter || activeFilter === 'all') return 'Nothing here yet';
-        if (activeFilter === 'round') return 'No rounds yet';
-        if (activeFilter === 'solo_share') return 'No solo shares yet';
-        if (activeFilter === 'by_me') return 'No entries from you yet';
-        const chip = chips.find((c) => c.key === activeFilter);
-        return chip ? `No entries from ${chip.label}` : 'Nothing here yet';
-    }, [activeFilter, chips]);
-
-    const emptySubLabel = useMemo(() => {
-        if (!activeFilter || activeFilter === 'all') {
-            return 'Log a meal or start a Table Night to get the conversation going.';
-        }
-        return 'Try switching to a different filter.';
-    }, [activeFilter]);
 
     if (tablesLoading) {
         return (
@@ -274,44 +146,48 @@ export default function TablesScreen() {
     }
 
     const tableName = activeTable.name;
-    const isEmpty =
-        !feedLoading && items.length === 0 && activeRounds.length === 0;
-    const compactCutoff = now.getTime() - COMPACT_CUTOFF_MS;
+    const isEmpty = !feedLoading && items.length === 0;
 
     return (
         <View style={{ flex: 1, backgroundColor: palette.background }}>
-            {/* Fixed header + filter chips */}
-            <View style={{ paddingTop: insets.top + Spacing.sm }}>
-                <View style={styles.header}>
-                    <Pressable
-                        onPress={cycleTable}
-                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-                    >
-                        <Text
-                            style={[
-                                Type.headlineLarge,
-                                {
-                                    color: palette.text,
-                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                    fontSize: 28,
-                                },
-                            ]}
-                            numberOfLines={1}
-                        >
-                            {tableName}
-                        </Text>
-                        {hasMultipleTables && (
-                            <Text style={{ color: palette.textMuted, fontSize: 14 }}>▾</Text>
-                        )}
-                    </Pressable>
-                </View>
-
-                <FilterChipRow
-                    chips={chips}
-                    activeKey={activeFilter}
-                    onSelect={(key) => setActiveFilter(key === 'all' ? null : key)}
-                    palette={palette}
+        <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{
+                paddingTop: insets.top + Spacing.sm,
+                paddingBottom: 100,
+            }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+                <RefreshControl
+                    refreshing={isRefetching}
+                    onRefresh={refetch}
+                    tintColor={palette.primary}
                 />
+            }
+        >
+            {/* Header */}
+            <View style={styles.header}>
+                <Pressable
+                    onPress={cycleTable}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                >
+                    <Text
+                        style={[
+                            Type.headlineLarge,
+                            {
+                                color: palette.text,
+                                fontFamily: 'Newsreader_400Regular_Italic',
+                                fontSize: 28,
+                            },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {tableName}
+                    </Text>
+                    {hasMultipleTables && (
+                        <Text style={{ color: palette.textMuted, fontSize: 14 }}>▾</Text>
+                    )}
+                </Pressable>
             </View>
 
             {/* Feed */}
@@ -334,7 +210,7 @@ export default function TablesScreen() {
                             { color: palette.text, textAlign: 'center' },
                         ]}
                     >
-                        {emptyLabel}
+                        Nothing here yet
                     </Text>
                     <Text
                         style={[
@@ -346,68 +222,380 @@ export default function TablesScreen() {
                             },
                         ]}
                     >
-                        {emptySubLabel}
+                        Log a meal or start a Table Night to get the conversation going.
                     </Text>
                 </View>
             ) : (
-                <SectionList
-                    sections={sections}
-                    keyExtractor={(item) => `${item.type}-${item.id}`}
-                    stickySectionHeadersEnabled
-                    showsVerticalScrollIndicator={false}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={isRefetching}
-                            onRefresh={refetch}
-                            tintColor={palette.primary}
-                        />
-                    }
-                    contentContainerStyle={{ paddingBottom: 100 }}
-                    ListHeaderComponent={
-                        <ActiveRoundsShelf items={activeRounds} palette={palette} />
-                    }
-                    renderSectionHeader={({ section }) => (
-                        <DateSectionHeader title={section.title} palette={palette} />
-                    )}
-                    renderItem={({ item }) => {
-                        const itemDate = new Date(item.sort_date).getTime();
-                        const isOld = itemDate < compactCutoff;
-                        const isExpanded = expandedItemId === item.id;
-
-                        if (isOld && !isExpanded) {
-                            return (
-                                <CompactEntryRow
-                                    item={item}
-                                    palette={palette}
-                                    onPress={() => handleToggleExpand(item.id)}
-                                />
-                            );
-                        }
-
+                <View style={styles.feedList}>
+                    {items.map((item) => {
                         if (item.type === 'table_night') {
                             return (
-                                <View style={styles.cardWrapper}>
-                                    <TableNightCard
-                                        item={item as TableNightActivity}
-                                        palette={palette}
-                                    />
-                                </View>
+                                <TableNightCard
+                                    key={`tn-${item.id}`}
+                                    item={item}
+                                    palette={palette}
+                                />
                             );
                         }
                         return (
-                            <View style={styles.cardWrapper}>
-                                <SoloShareCard
-                                    item={item as SoloShareActivity}
+                            <SoloShareCard
+                                key={`solo-${item.id}`}
+                                item={item as SoloShareActivity}
+                                palette={palette}
+                            />
+                        );
+                    })}
+                </View>
+            )}
+        </ScrollView>
+        </View>
+    );
+}
+
+// ── Table Night Card (revealed/closed) ─────────────────────────────────────
+
+function TableNightCard({
+    item,
+    palette,
+}: {
+    item: TableNightActivity;
+    palette: Palette;
+}) {
+    const router = useRouter();
+    const isActive = item.status === 'rating';
+    const photoUrl = item.restaurants?.photo_url ?? null;
+
+    return (
+        <Pressable
+            onPress={() =>
+                router.push({
+                    pathname: isActive ? '/table-night' : '/table-night-detail',
+                    params: { nightId: item.id },
+                })
+            }
+            style={({ pressed }) => [
+                styles.tnCard,
+                {
+                    backgroundColor: palette.surfaceContainerLow,
+                    opacity: pressed ? 0.95 : 1,
+                    overflow: 'hidden',
+                    ...(photoUrl ? { padding: 0 } : {}),
+                },
+                Shadow.subtle,
+            ]}
+        >
+            {/* Hero image (only when photo exists) */}
+            {photoUrl ? (
+                <Image
+                    source={{ uri: photoUrl }}
+                    style={{
+                        width: '100%',
+                        aspectRatio: 3 / 2,
+                        borderTopLeftRadius: Radius.xl,
+                        borderTopRightRadius: Radius.xl,
+                    }}
+                    resizeMode="cover"
+                />
+            ) : null}
+
+            {/* Card content */}
+            <View style={photoUrl ? { padding: Spacing.lg } : undefined}>
+                {/* Badge */}
+                <View style={[styles.tnBadge, { backgroundColor: isActive ? palette.tertiaryFixed : palette.primaryMuted }]}>
+                    {isActive && <PulseDot size={7} color={palette.tertiary} />}
+                    <Text style={[Type.labelSmall, { color: isActive ? palette.tertiary : palette.primary }]}>
+                        {isActive ? 'ACTIVE ROUND' : 'ROUND'}
+                    </Text>
+                </View>
+
+                {/* Restaurant + rating */}
+                <View style={styles.tnHeader}>
+                    <Text
+                        style={[
+                            Type.headlineLarge,
+                            { color: palette.text, fontSize: 24, flex: 1 },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {item.restaurants?.name ?? 'Unknown'}
+                    </Text>
+                    {item.average_rating != null && (
+                        <Text
+                            style={[
+                                Type.rating,
+                                { color: palette.tertiary, fontSize: 24 },
+                            ]}
+                        >
+                            {item.average_rating.toFixed(1)}
+                        </Text>
+                    )}
+                </View>
+
+                {/* Participants */}
+                {item.participants?.length > 0 && (
+                    <View style={styles.tnVoters}>
+                        {item.participants.map((p, i) => (
+                            <Pressable
+                                key={`${p.user_id}-${i}`}
+                                onPress={() => {
+                                    if (p.rating != null) {
+                                        router.push({
+                                            pathname: '/entry-detail',
+                                            params: { nightId: item.id, userId: p.user_id },
+                                        });
+                                    }
+                                }}
+                                style={({ pressed }) => [
+                                    styles.voterChip,
+                                    p.rating != null && { opacity: pressed ? 0.6 : 1 },
+                                ]}
+                            >
+                                <Avatar
+                                    name={p.profiles?.display_name ?? '?'}
+                                    url={null}
+                                    size={28}
                                     palette={palette}
                                 />
-                            </View>
-                        );
+                                <Text
+                                    style={[
+                                        Type.labelSmall,
+                                        { color: palette.text, marginLeft: 6 },
+                                    ]}
+                                >
+                                    {p.profiles?.display_name ?? 'User'}
+                                </Text>
+                                {p.rating != null && (
+                                    <Text
+                                        style={[
+                                            Type.rating,
+                                            {
+                                                color: palette.tertiary,
+                                                fontSize: 14,
+                                                marginLeft: 4,
+                                            },
+                                        ]}
+                                    >
+                                        {p.rating.toFixed(1)}
+                                    </Text>
+                                )}
+                                {p.rating != null && (
+                                    <Text
+                                        style={[
+                                            Type.labelSmall,
+                                            { color: palette.textMuted, marginLeft: 'auto' },
+                                        ]}
+                                    >
+                                        →
+                                    </Text>
+                                )}
+                            </Pressable>
+                        ))}
+                    </View>
+                )}
+            </View>
+        </Pressable>
+    );
+}
+
+// ── Solo Share Card ────────────────────────────────────────────────────────
+
+function SoloShareCard({
+    item,
+    palette,
+}: {
+    item: SoloShareActivity;
+    palette: Palette;
+}) {
+    const router = useRouter();
+    const displayName = item.profiles?.display_name ?? 'Someone';
+    const restaurantName = item.restaurants?.name ?? 'somewhere';
+    const verb = item.rating != null ? 'tried' : 'noted';
+    const photoUrl = item.restaurants?.photo_url ?? null;
+
+    const handlePress = () =>
+        router.push({ pathname: '/entry-detail', params: { entryId: item.id } });
+
+    // Content shared between photo and no-photo variants
+    const textContent = (
+        <>
+            <View style={styles.soloHeader}>
+                <View style={{ flex: 1 }}>
+                    <Text style={[Type.body, { color: palette.text }]}>
+                        <Text style={{ fontFamily: 'Manrope_600SemiBold' }}>
+                            {displayName}
+                        </Text>{' '}
+                        {verb}
+                    </Text>
+                    <Text
+                        style={[
+                            Type.headlineMedium,
+                            {
+                                color: palette.text,
+                                fontSize: 20,
+                                marginTop: 2,
+                            },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {restaurantName}
+                    </Text>
+                </View>
+                {item.rating != null && (
+                    <Text
+                        style={[
+                            Type.rating,
+                            {
+                                color: palette.tertiary,
+                                fontSize: 20,
+                                marginLeft: Spacing.sm,
+                            },
+                        ]}
+                    >
+                        {item.rating.toFixed(1)}
+                    </Text>
+                )}
+            </View>
+
+            {item.dish_description ? (
+                <Text
+                    style={[
+                        Type.labelSmall,
+                        {
+                            color: palette.tertiary,
+                            backgroundColor: palette.tertiaryFixed,
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: Radius.sm,
+                            alignSelf: 'flex-start',
+                            marginTop: Spacing.xs,
+                            overflow: 'hidden',
+                        },
+                    ]}
+                    numberOfLines={1}
+                >
+                    {item.dish_description}
+                </Text>
+            ) : null}
+
+            {item.content ? (
+                <Text
+                    style={[
+                        Type.bodySmall,
+                        {
+                            color: palette.textMuted,
+                            marginTop: Spacing.xs,
+                            lineHeight: 18,
+                        },
+                    ]}
+                    numberOfLines={2}
+                >
+                    {item.content}
+                </Text>
+            ) : null}
+        </>
+    );
+
+    // Photo variant — card with hero image on top
+    if (photoUrl) {
+        return (
+            <Pressable
+                onPress={handlePress}
+                style={({ pressed }) => [
+                    {
+                        backgroundColor: palette.surfaceContainerLow,
+                        borderRadius: Radius.xl,
+                        overflow: 'hidden',
+                        opacity: pressed ? 0.95 : 1,
+                    },
+                    Shadow.subtle,
+                ]}
+            >
+                <Image
+                    source={{ uri: photoUrl }}
+                    style={{
+                        width: '100%',
+                        aspectRatio: 3 / 2,
+                        borderTopLeftRadius: Radius.xl,
+                        borderTopRightRadius: Radius.xl,
                     }}
-                    ItemSeparatorComponent={() => (
-                        <View style={{ height: Spacing.xl }} />
-                    )}
+                    resizeMode="cover"
                 />
-            )}
+                <View style={{ padding: Spacing.lg }}>{textContent}</View>
+            </Pressable>
+        );
+    }
+
+    // No-photo variant — original inline layout with avatar
+    return (
+        <Pressable
+            onPress={handlePress}
+            style={({ pressed }) => [
+                styles.soloCard,
+                { opacity: pressed ? 0.7 : 1 },
+            ]}
+        >
+            <Avatar
+                name={displayName}
+                url={null}
+                size={40}
+                palette={palette}
+            />
+            <View style={{ flex: 1 }}>
+                {textContent}
+            </View>
+        </Pressable>
+    );
+}
+
+// ── Avatar ─────────────────────────────────────────────────────────────────
+
+function Avatar({
+    name,
+    url,
+    size,
+    palette,
+}: {
+    name: string;
+    url: string | null;
+    size: number;
+    palette: Palette;
+}) {
+    const initials = name
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
+
+    const tints = [
+        palette.tertiaryFixed,
+        palette.secondaryContainer,
+        palette.primaryMuted,
+    ];
+    const tint = tints[(initials.charCodeAt(0) || 0) % tints.length];
+
+    const baseStyle = {
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: tint,
+        alignItems: 'center' as const,
+        justifyContent: 'center' as const,
+    };
+
+    if (url) return <Image source={{ uri: url }} style={baseStyle} />;
+
+    return (
+        <View style={baseStyle}>
+            <Text
+                style={{
+                    fontFamily: 'Manrope_600SemiBold',
+                    fontSize: size * 0.36,
+                    color: palette.text,
+                }}
+            >
+                {initials}
+            </Text>
         </View>
     );
 }
@@ -426,7 +614,49 @@ const styles = StyleSheet.create({
         paddingTop: Spacing.lg,
         paddingBottom: Spacing.md,
     },
-    cardWrapper: {
+    feedList: {
         paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.xl,
+        gap: Spacing.xl,
+    },
+
+    // Table Night card
+    tnCard: {
+        borderRadius: Radius.xl,
+        padding: Spacing.lg,
+    },
+    tnBadge: {
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 3,
+        borderRadius: Radius.sm,
+        marginBottom: Spacing.sm,
+    },
+    tnHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    tnVoters: {
+        marginTop: Spacing.md,
+        gap: Spacing.sm,
+    },
+    voterChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+
+    // Solo share card
+    soloCard: {
+        flexDirection: 'row',
+        gap: Spacing.md,
+        alignItems: 'flex-start',
+    },
+    soloHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
     },
 });
