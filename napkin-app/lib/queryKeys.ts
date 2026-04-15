@@ -27,5 +27,6 @@ export const queryKeys = {
         active: (tableId: string) => ['tableNight', 'active', tableId] as const,
         participants: (nightId: string) =>
             ['tableNight', nightId, 'participants'] as const,
+        roundContext: (nightId: string) => ['roundContext', nightId] as const,
     },
 } as const;

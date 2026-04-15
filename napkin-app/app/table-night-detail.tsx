@@ -115,7 +115,7 @@ export default function TableNightDetailScreen() {
                         </Text>
                     </View>
 
-                    {/* Overall Rating */}
+                    {/* Overall Rating + Summary Sentence */}
                     {overallAvg != null && (
                         <View style={{ alignItems: 'center', marginTop: Spacing.lg }}>
                             <View
@@ -137,6 +137,7 @@ export default function TableNightDetailScreen() {
                                     Final Average
                                 </Text>
                             </View>
+                            <SummarySentence overallAvg={overallAvg} categoryAvgs={categoryAvgs} palette={palette} />
                         </View>
                     )}
 
@@ -209,6 +210,45 @@ function SectionLabel({ palette, children }: { palette: Palette; children: strin
     );
 }
 
+function SummarySentence({
+    overallAvg,
+    categoryAvgs,
+    palette,
+}: {
+    overallAvg: number;
+    categoryAvgs: { label: string; avg: number | null }[];
+    palette: Palette;
+}) {
+    const withData = categoryAvgs.filter((c) => c.avg != null) as { label: string; avg: number }[];
+    if (withData.length === 0) return null;
+
+    const highest = withData.reduce((best, c) => (c.avg > best.avg ? c : best), withData[0]);
+
+    // Check if all categories are within 0.1 of each other (consensus)
+    const allTied = withData.every((c) => Math.abs(c.avg - highest.avg) <= 0.1);
+
+    const sentence = allTied
+        ? `The table gave this a ${overallAvg.toFixed(1)} across the board.`
+        : `The table gave this a ${overallAvg.toFixed(1)}. ${highest.label} was the standout at ${highest.avg.toFixed(1)}.`;
+
+    return (
+        <Text
+            style={[
+                Type.bodySmall,
+                {
+                    color: palette.textMuted,
+                    fontStyle: 'italic',
+                    textAlign: 'center',
+                    marginTop: Spacing.sm,
+                    paddingHorizontal: Spacing.xl,
+                },
+            ]}
+        >
+            {sentence}
+        </Text>
+    );
+}
+
 function ParticipantRow({
     participant,
     nightId,
@@ -222,11 +262,47 @@ function ParticipantRow({
     const name = participant.profiles.display_name;
     const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2);
 
+    // Waiting state: participant hasn't submitted yet
+    const isWaiting = participant.rating === null && !participant.ready;
+
     const hasCategoryRatings =
         participant.vibe_rating != null ||
         participant.flavor_rating != null ||
         participant.service_rating != null ||
         participant.value_rating != null;
+
+    if (isWaiting) {
+        return (
+            <View
+                style={[
+                    styles.participantCard,
+                    { backgroundColor: palette.card, opacity: 0.5 },
+                    Shadow.subtle,
+                ]}
+            >
+                <View style={styles.participantTop}>
+                    <View
+                        style={[styles.participantAvatar, { backgroundColor: palette.surfaceContainerHigh }]}
+                    >
+                        <Text style={{ fontSize: 12, fontFamily: 'Manrope_700Bold', color: palette.textMuted }}>
+                            {initials}
+                        </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[Type.titleSmall, { color: palette.textMuted }]}>{name}</Text>
+                        <Text
+                            style={[
+                                Type.bodySmall,
+                                { color: palette.textMuted, fontStyle: 'italic', marginTop: 2 },
+                            ]}
+                        >
+                            hasn&apos;t submitted yet
+                        </Text>
+                    </View>
+                </View>
+            </View>
+        );
+    }
 
     return (
         <Pressable
@@ -251,13 +327,26 @@ function ParticipantRow({
                         {initials}
                     </Text>
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, gap: Spacing.xs }}>
                     <Text style={[Type.titleSmall, { color: palette.text }]}>{name}</Text>
+                    {/* Dish chip */}
+                    {participant.dish_description ? (
+                        <View
+                            style={[
+                                styles.dishChip,
+                                { backgroundColor: palette.tertiaryFixed },
+                            ]}
+                        >
+                            <Text style={[Type.bodySmall, { color: palette.tertiary }]}>
+                                {participant.dish_description}
+                            </Text>
+                        </View>
+                    ) : null}
                     {participant.notes ? (
                         <Text
                             style={[
                                 Type.bodySmall,
-                                { color: palette.textMuted, fontStyle: 'italic', marginTop: 2 },
+                                { color: palette.textMuted, fontStyle: 'italic' },
                             ]}
                         >
                             &ldquo;{participant.notes}&rdquo;
@@ -350,5 +439,11 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         borderRadius: Radius.sm,
         gap: 2,
+    },
+    dishChip: {
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 3,
+        borderRadius: Radius.sm,
+        alignSelf: 'flex-start',
     },
 });

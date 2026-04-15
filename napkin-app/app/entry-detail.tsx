@@ -18,6 +18,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
+import { StarRating } from '@/components/StarRating';
+import { useRoundContext } from '@/hooks/tables/useTableNight';
 
 type Palette = typeof Colors.light;
 
@@ -48,6 +50,7 @@ interface EntryDetail {
         name: string;
         address: string | null;
         city: string | null;
+        photo_url: string | null;
     } | null;
     profiles: {
         display_name: string;
@@ -80,7 +83,8 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                     id,
                     name,
                     address,
-                    city
+                    city,
+                    photo_url
                 )
             `)
             .eq('id', entryId)
@@ -111,7 +115,8 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                     id,
                     name,
                     address,
-                    city
+                    city,
+                    photo_url
                 )
             `)
             .eq('table_night_id', nightId)
@@ -144,6 +149,40 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
     } as unknown as EntryDetail;
 }
 
+function getRelativeDate(dateString: string): { relative: string; full: string } {
+    const date = new Date(dateString);
+    const full = date.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
+
+    if (isNaN(date.getTime())) return { relative: full, full };
+
+    const nowMs = Date.now();
+    const diffMs = nowMs - date.getTime();
+    if (diffMs < 0) return { relative: full, full };
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHrs = Math.floor(diffMin / 60);
+    const diffDays = Math.floor(diffHrs / 24);
+
+    let relative: string;
+    if (diffSec < 60) {
+        relative = 'Just now';
+    } else if (diffMin < 60) {
+        relative = `${diffMin} minute${diffMin === 1 ? '' : 's'} ago`;
+    } else if (diffHrs < 24) {
+        relative = `${diffHrs} hour${diffHrs === 1 ? '' : 's'} ago`;
+    } else if (diffDays === 1) {
+        relative = 'Yesterday';
+    } else if (diffDays < 7) {
+        relative = `${diffDays} days ago`;
+    } else if (diffDays < 14) {
+        relative = 'Last week';
+    } else {
+        relative = full;
+    }
+
+    return { relative, full };
+}
+
 function useEntryDetail(entryId?: string, nightId?: string, userId?: string) {
     return useQuery({
         queryKey: ['entry-detail', entryId ?? `${nightId}-${userId}`],
@@ -166,6 +205,8 @@ export default function EntryDetailScreen() {
         userId?: string;
     }>();
     const { data: entry, isLoading, error } = useEntryDetail(entryId, nightId, userId);
+    // Round context for banner — enabled only once we know the entry's table_night_id
+    const { data: roundContext } = useRoundContext(entry?.table_night_id ?? null);
 
     if (isLoading || !entry) {
         return (
@@ -196,11 +237,7 @@ export default function EntryDetailScreen() {
 
     const restaurantName = entry.restaurants?.name ?? 'Unknown spot';
     const displayName = entry.profiles?.display_name ?? 'Someone';
-    const date = new Date(entry.visited_at ?? entry.created_at).toLocaleDateString('en-US', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-    });
+    const { relative: relativeDate, full: fullDate } = getRelativeDate(entry.visited_at ?? entry.created_at);
 
     const hasCategoryRatings =
         entry.vibe_rating != null ||
@@ -236,8 +273,11 @@ export default function EntryDetailScreen() {
                                 <Text style={[Type.titleSmall, { color: palette.text }]}>
                                     {displayName}
                                 </Text>
-                                <Text style={[Type.labelSmall, { color: palette.textMuted }]}>
-                                    {date}
+                                <Text style={[Type.titleSmall, { color: palette.text }]}>
+                                    {relativeDate}
+                                </Text>
+                                <Text style={[Type.labelSmall, { color: palette.textMuted, marginTop: 1 }]}>
+                                    {fullDate}
                                     {isRoundEntry ? ' · Round' : ''}
                                 </Text>
                             </View>
@@ -249,8 +289,8 @@ export default function EntryDetailScreen() {
                                 {
                                     color: palette.text,
                                     fontFamily: 'Newsreader_400Regular_Italic',
-                                    fontSize: 34,
-                                    lineHeight: 40,
+                                    fontSize: 38,
+                                    lineHeight: 44,
                                     marginTop: Spacing.lg,
                                 },
                             ]}
@@ -264,6 +304,35 @@ export default function EntryDetailScreen() {
                             </Text>
                         ) : null}
                     </View>
+
+                    {/* Round Context Banner */}
+                    {isRoundEntry && roundContext && (
+                        <Pressable
+                            onPress={() =>
+                                router.push({
+                                    pathname: '/table-night-detail',
+                                    params: { nightId: entry.table_night_id! },
+                                })
+                            }
+                            style={({ pressed }) => [
+                                styles.roundBanner,
+                                { backgroundColor: palette.primaryMuted, opacity: pressed ? 0.7 : 1 },
+                            ]}
+                        >
+                            <View style={{ flex: 1 }}>
+                                <Text style={[Type.titleSmall, { color: palette.primary }]}>
+                                    Part of a Round
+                                </Text>
+                                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
+                                    {roundContext.participantCount} {roundContext.participantCount === 1 ? 'person' : 'people'}
+                                    {roundContext.groupAverage != null
+                                        ? ` · Group avg ${roundContext.groupAverage.toFixed(1)}`
+                                        : ''}
+                                </Text>
+                            </View>
+                            <Text style={[Type.body, { color: palette.primary }]}>›</Text>
+                        </Pressable>
+                    )}
 
                     {/* Overall Rating */}
                     {entry.rating != null && (
@@ -286,6 +355,9 @@ export default function EntryDetailScreen() {
                                 <Text style={[Type.labelSmall, { color: palette.tertiary, opacity: 0.7 }]}>
                                     Overall
                                 </Text>
+                            </View>
+                            <View style={{ marginTop: Spacing.sm }}>
+                                <StarRating value={entry.rating} size={24} editable={false} />
                             </View>
                         </View>
                     )}
@@ -350,18 +422,28 @@ export default function EntryDetailScreen() {
                             <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
                                 Notes
                             </Text>
-                            <Text
+                            <View
                                 style={[
-                                    Type.body,
+                                    styles.quoteCard,
                                     {
-                                        color: palette.text,
-                                        fontStyle: 'italic',
-                                        lineHeight: 24,
+                                        backgroundColor: palette.surfaceContainerLow,
+                                        borderLeftColor: palette.tertiaryFixed,
                                     },
                                 ]}
                             >
-                                &ldquo;{entry.content}&rdquo;
-                            </Text>
+                                <Text
+                                    style={[
+                                        Type.body,
+                                        {
+                                            color: palette.text,
+                                            fontStyle: 'italic',
+                                            lineHeight: 24,
+                                        },
+                                    ]}
+                                >
+                                    &ldquo;{entry.content}&rdquo;
+                                </Text>
+                            </View>
                         </View>
                     ) : null}
                 </ScrollView>
@@ -431,7 +513,7 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.md,
         borderRadius: Radius.xl,
     },
-    section: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.xl },
+    section: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.xxl },
     breakdownGrid: { flexDirection: 'row', gap: Spacing.sm },
     breakdownCell: {
         flex: 1,
@@ -444,5 +526,20 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.sm,
         borderRadius: Radius.sm,
         alignSelf: 'flex-start',
+    },
+    roundBanner: {
+        marginHorizontal: Spacing.lg,
+        marginTop: Spacing.lg,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.md,
+        borderRadius: Radius.md,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    quoteCard: {
+        padding: Spacing.md,
+        borderRadius: Radius.md,
+        borderLeftWidth: 3,
     },
 });
