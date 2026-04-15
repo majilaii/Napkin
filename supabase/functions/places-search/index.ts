@@ -36,7 +36,6 @@ serve(async req => {
         const requestBody: any = {
             textQuery: query,
             maxResultCount: clamp(payload.limit ?? 5, 1, 20),
-            // Only request fields we need (cost optimization - no photos!)
             // See: https://developers.google.com/maps/documentation/places/web-service/text-search
         };
 
@@ -53,8 +52,6 @@ serve(async req => {
             };
         }
 
-        // Field mask to request only what we need (cost optimization)
-        // Photos excluded to save on API costs
         const fieldMask = [
             'places.id',
             'places.displayName',
@@ -63,6 +60,7 @@ serve(async req => {
             'places.types',
             'places.websiteUri',
             'places.googleMapsUri',
+            'places.photos',
         ].join(',');
 
         const upstream = await fetch(GOOGLE_PLACES_BASE_URL, {
@@ -110,6 +108,7 @@ serve(async req => {
             distance: null, // Google doesn't return distance in text search
             website: place.websiteUri ?? null,
             link: place.googleMapsUri ?? null,
+            photoReference: place.photos?.[0]?.name ?? null,
         }));
 
         return new Response(JSON.stringify({ data: sanitized }), {

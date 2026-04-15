@@ -40,6 +40,9 @@ serve(async (req) => {
             const tableId = url.searchParams.get('table_id');
             const limit = parseInt(url.searchParams.get('limit') || '20');
             const offset = parseInt(url.searchParams.get('offset') || '0');
+            // Optional filter params
+            const filterType = url.searchParams.get('filter_type'); // 'round' | 'solo_share'
+            const filterUserId = url.searchParams.get('filter_user_id'); // UUID
 
             if (!tableId) {
                 return new Response(
@@ -63,165 +66,210 @@ serve(async (req) => {
                 );
             }
 
-            // Fetch entries shared to this table (no table_night_id)
-            const { data: soloEntries, error: soloError } = await supabase
-                .from('entries')
-                .select(`
-                    id,
-                    user_id,
-                    restaurant_id,
-                    rating,
-                    content,
-                    dish_description,
-                    visited_at,
-                    created_at,
-                    table_night_id,
-                    restaurants (
-                        id,
-                        name,
-                        address,
-                        city
-                    )
-                `)
-                .eq('table_id', tableId)
-                .is('table_night_id', null)
-                .order('visited_at', { ascending: false })
-                .range(offset, offset + limit - 1);
+            // ── Solo entries (skipped when filter_type=round) ──────────────────
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let taggedEntries: any[] = [];
 
-            if (soloError) {
-                console.error('Solo entries query error:', soloError);
-                throw soloError;
-            }
-
-            // Fetch profile info for each entry's creator
-            const userIds = [...new Set((soloEntries ?? []).map(e => e.user_id))];
-            const { data: profiles } = userIds.length > 0
-                ? await supabase
-                    .from('profiles')
-                    .select('user_id, display_name')
-                    .in('user_id', userIds)
-                : { data: [] };
-
-            const profileMap = new Map((profiles ?? []).map(p => [p.user_id, p]));
-            const entriesWithProfiles = (soloEntries ?? []).map(e => ({
-                ...e,
-                profiles: profileMap.get(e.user_id) ?? { display_name: 'User' },
-            }));
-
-            // Fetch entry_participants for all fetched entries
-            const entryIds = (soloEntries ?? []).map(e => e.id);
-            const { data: entryParticipants } = entryIds.length > 0
-                ? await supabase
-                    .from('entry_participants')
+            if (filterType !== 'round') {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                let soloQuery: any = supabase
+                    .from('entries')
                     .select(`
-                        entry_id,
+                        id,
                         user_id,
+                        restaurant_id,
                         rating,
-                        notes,
-                        profiles:user_id (
-                            display_name
+                        content,
+                        dish_description,
+                        visited_at,
+                        created_at,
+                        table_night_id,
+                        restaurants (
+                            id,
+                            name,
+                            address,
+                            city,
+                            photo_url
                         )
                     `)
-                    .in('entry_id', entryIds)
-                : { data: [] };
+                    .eq('table_id', tableId)
+                    .is('table_night_id', null)
+                    .order('visited_at', { ascending: false })
+                    .range(offset, offset + limit - 1);
 
-            // Group participants by entry_id
-            const participantsByEntry = new Map<string, typeof entryParticipants>();
-            for (const p of (entryParticipants ?? [])) {
-                const list = participantsByEntry.get(p.entry_id) ?? [];
-                list.push(p);
-                participantsByEntry.set(p.entry_id, list);
-            }
-
-            // Tag entries: solo_share (0-1 participants) or collaborative_entry (2+)
-            const taggedEntries = entriesWithProfiles.map(entry => {
-                const participants = participantsByEntry.get(entry.id) ?? [];
-                if (participants.length > 1) {
-                    const ratings = participants
-                        .filter(p => p.rating !== null)
-                        .map(p => p.rating as number);
-                    const average = ratings.length > 0
-                        ? ratings.reduce((a, b) => a + b, 0) / ratings.length
-                        : null;
-                    return {
-                        ...entry,
-                        type: 'collaborative_entry' as const,
-                        participants,
-                        average_rating: average,
-                        sort_date: entry.visited_at || entry.created_at,
-                    };
+                if (filterUserId) {
+                    soloQuery = soloQuery.eq('user_id', filterUserId);
                 }
-                return {
-                    ...entry,
-                    type: 'solo_share' as const,
-                    sort_date: entry.visited_at || entry.created_at,
-                };
-            });
 
-            // Fetch table nights for this table (all statuses including active rounds)
-            const { data: tableNights, error: nightsError } = await supabase
-                .from('table_nights')
-                .select(`
-                    id,
-                    restaurant_id,
-                    host_user_id,
-                    status,
-                    created_at,
-                    revealed_at,
-                    is_async,
-                    restaurants (
-                        id,
-                        name,
-                        address,
-                        city
-                    )
-                `)
-                .eq('table_id', tableId)
-                .in('status', ['rating', 'revealed', 'closed'])
-                .order('created_at', { ascending: false })
-                .range(offset, offset + limit - 1);
+                const { data: soloEntries, error: soloError } = await soloQuery;
 
-            if (nightsError) throw nightsError;
+                if (soloError) {
+                    console.error('Solo entries query error:', soloError);
+                    throw soloError;
+                }
 
-            // For each table night, fetch participants with ratings
-            const nightsWithParticipants = await Promise.all(
-                (tableNights ?? []).map(async (night) => {
-                    const { data: participants } = await supabase
-                        .from('table_night_participants')
+                // Fetch profile info for each entry's creator
+                const userIds = [...new Set((soloEntries ?? []).map((e: { user_id: string }) => e.user_id))];
+                const { data: profiles } = userIds.length > 0
+                    ? await supabase
+                        .from('profiles')
+                        .select('user_id, display_name')
+                        .in('user_id', userIds)
+                    : { data: [] };
+
+                const profileMap = new Map((profiles ?? []).map((p: { user_id: string; display_name: string }) => [p.user_id, p]));
+                const entriesWithProfiles = (soloEntries ?? []).map((e: { user_id: string }) => ({
+                    ...e,
+                    profiles: profileMap.get(e.user_id) ?? { display_name: 'User' },
+                }));
+
+                // Fetch entry_participants for all fetched entries
+                const entryIds = (soloEntries ?? []).map((e: { id: string }) => e.id);
+                const { data: entryParticipants } = entryIds.length > 0
+                    ? await supabase
+                        .from('entry_participants')
                         .select(`
+                            entry_id,
                             user_id,
                             rating,
                             notes,
-                            profiles (
+                            profiles:user_id (
                                 display_name
                             )
                         `)
-                        .eq('table_night_id', night.id);
+                        .in('entry_id', entryIds)
+                    : { data: [] };
 
-                    const ratings = (participants ?? [])
-                        .filter(p => p.rating !== null)
-                        .map(p => p.rating as number);
-                    const average = ratings.length > 0
-                        ? ratings.reduce((a, b) => a + b, 0) / ratings.length
-                        : null;
+                // Group participants by entry_id
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const participantsByEntry = new Map<string, any[]>();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                for (const p of (entryParticipants ?? []) as any[]) {
+                    const list = participantsByEntry.get(p.entry_id) ?? [];
+                    list.push(p);
+                    participantsByEntry.set(p.entry_id, list);
+                }
 
+                // Tag entries: solo_share (0-1 participants) or collaborative_entry (2+)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                taggedEntries = (entriesWithProfiles as any[]).map((entry) => {
+                    const participants = participantsByEntry.get(entry.id) ?? [];
+                    if (participants.length > 1) {
+                        const ratings = participants
+                            .filter((p: { rating: number | null }) => p.rating !== null)
+                            .map((p: { rating: number }) => p.rating as number);
+                        const average = ratings.length > 0
+                            ? ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length
+                            : null;
+                        return {
+                            ...entry,
+                            type: 'collaborative_entry' as const,
+                            participants,
+                            average_rating: average,
+                            sort_date: entry.visited_at || entry.created_at,
+                        };
+                    }
                     return {
-                        ...night,
-                        participants: participants ?? [],
-                        average_rating: average,
-                        type: 'table_night' as const,
+                        ...entry,
+                        type: 'solo_share' as const,
+                        sort_date: entry.visited_at || entry.created_at,
                     };
-                })
-            );
+                });
+            }
+
+            // ── Table nights (skipped when filter_type=solo_share) ─────────────
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let nightsWithParticipants: any[] = [];
+
+            if (filterType !== 'solo_share') {
+                // When filter_user_id is set, restrict to nights where that user is a participant
+                let nightIds: string[] | null = null;
+                if (filterUserId) {
+                    const { data: participantRows } = await supabase
+                        .from('table_night_participants')
+                        .select('table_night_id')
+                        .eq('user_id', filterUserId);
+                    nightIds = ((participantRows ?? []) as { table_night_id: string }[])
+                        .map((r) => r.table_night_id);
+                    if (nightIds.length === 0) {
+                        nightIds = ['__none__']; // forces empty result from IN clause
+                    }
+                }
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                let nightsQuery: any = supabase
+                    .from('table_nights')
+                    .select(`
+                        id,
+                        restaurant_id,
+                        host_user_id,
+                        status,
+                        created_at,
+                        revealed_at,
+                        is_async,
+                        restaurants (
+                            id,
+                            name,
+                            address,
+                            city,
+                            photo_url
+                        )
+                    `)
+                    .eq('table_id', tableId)
+                    .in('status', ['rating', 'revealed', 'closed'])
+                    .order('created_at', { ascending: false })
+                    .range(offset, offset + limit - 1);
+
+                if (nightIds !== null) {
+                    nightsQuery = nightsQuery.in('id', nightIds);
+                }
+
+                const { data: tableNights, error: nightsError } = await nightsQuery;
+
+                if (nightsError) throw nightsError;
+
+                // For each table night, fetch participants with ratings
+                nightsWithParticipants = await Promise.all(
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    (tableNights ?? []).map(async (night: any) => {
+                        const { data: participants } = await supabase
+                            .from('table_night_participants')
+                            .select(`
+                                user_id,
+                                rating,
+                                notes,
+                                profiles (
+                                    display_name
+                                )
+                            `)
+                            .eq('table_night_id', night.id);
+
+                        const ratings = (participants ?? [])
+                            .filter((p: { rating: number | null }) => p.rating !== null)
+                            .map((p: { rating: number }) => p.rating as number);
+                        const average = ratings.length > 0
+                            ? ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length
+                            : null;
+
+                        return {
+                            ...night,
+                            participants: participants ?? [],
+                            average_rating: average,
+                            type: 'table_night' as const,
+                            sort_date: night.revealed_at || night.created_at,
+                        };
+                    })
+                );
+            }
 
             // Merge and sort by date
             const allActivity = [
-                ...nightsWithParticipants.map(n => ({
-                    ...n,
-                    sort_date: n.revealed_at || n.created_at,
-                })),
+                ...nightsWithParticipants,
                 ...taggedEntries,
-            ].sort((a, b) => new Date(b.sort_date).getTime() - new Date(a.sort_date).getTime());
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ].sort((a: any, b: any) =>
+                new Date(b.sort_date).getTime() - new Date(a.sort_date).getTime()
+            );
 
             return new Response(
                 JSON.stringify({ data: allActivity }),

@@ -17,6 +17,7 @@ export interface RestaurantInput {
     types?: string[];
     latitude?: number;
     longitude?: number;
+    photoReference?: string;
 }
 
 /**
@@ -45,5 +46,26 @@ export async function upsertRestaurant(
         .single();
 
     if (error) throw error;
+
+    if (input.photoReference) {
+        try {
+            const apiKey = Deno.env.get('GOOGLE_PLACES_API_KEY');
+            if (apiKey) {
+                const mediaUrl = `https://places.googleapis.com/v1/${input.photoReference}/media?maxHeightPx=400&maxWidthPx=600&key=${apiKey}`;
+                const res = await fetch(mediaUrl, { redirect: 'manual' });
+                const photoUrl = res.headers.get('location');
+                if (photoUrl) {
+                    await supabase
+                        .from('restaurants')
+                        .update({ photo_url: photoUrl, photo_reference: input.photoReference })
+                        .eq('id', data.id)
+                        .is('photo_url', null);
+                }
+            }
+        } catch (e) {
+            console.error('Photo URL caching failed (non-fatal):', e);
+        }
+    }
+
     return data.id;
 }

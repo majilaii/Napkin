@@ -88,7 +88,7 @@ serve(async (req) => {
                 if (night.restaurant_id) {
                     const { data: r } = await supabase
                         .from('restaurants')
-                        .select('id, name, address, city')
+                        .select('id, name, address, city, photo_url')
                         .eq('id', night.restaurant_id)
                         .single();
                     restaurant = r;
@@ -113,9 +113,25 @@ serve(async (req) => {
 
                 if (partError) throw partError;
 
+                // Join entries to get dish_description per participant
+                const { data: entries } = await supabase
+                    .from('entries')
+                    .select('user_id, dish_description')
+                    .eq('table_night_id', tableNightId);
+
+                const dishByUser: Record<string, string | null> = {};
+                if (entries) {
+                    for (const e of entries) {
+                        dishByUser[e.user_id] = e.dish_description ?? null;
+                    }
+                }
+
                 // Hide ratings if not yet revealed
                 const safeParticipants = night.status === 'revealed'
-                    ? participants
+                    ? participants?.map((p: any) => ({
+                        ...p,
+                        dish_description: dishByUser[p.user_id] ?? null,
+                    }))
                     : participants?.map((p: any) => ({
                         ...p,
                         rating: null,
@@ -123,6 +139,7 @@ serve(async (req) => {
                         flavor_rating: null,
                         service_rating: null,
                         value_rating: null,
+                        dish_description: dishByUser[p.user_id] ?? null,
                     }));
 
                 return json({ ...night, restaurants: restaurant, participants: safeParticipants });

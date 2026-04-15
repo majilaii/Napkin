@@ -27,10 +27,17 @@ export interface TableNightParticipant {
     flavor_rating: number | null;
     service_rating: number | null;
     value_rating: number | null;
+    dish_description: string | null;
     profiles: {
         display_name: string;
         avatar_url: string | null;
     };
+}
+
+export interface RoundContext {
+    nightId: string;
+    participantCount: number;
+    groupAverage: number | null;
 }
 
 export interface TableNightStatus extends TableNight {
@@ -39,6 +46,7 @@ export interface TableNightStatus extends TableNight {
         name: string;
         address: string | null;
         city: string | null;
+        photo_url: string | null;
     } | null;
     participants: TableNightParticipant[];
 }
@@ -177,5 +185,49 @@ export function useRevealTableNight() {
                 queryKey: queryKeys.tableNight.status(variables.table_night_id),
             });
         },
+    });
+}
+
+/**
+ * Lightweight query for entry page round context banner.
+ * Only fetches participant count + group average — avoids pulling full night payload.
+ * Shows banner without average if the night is not yet revealed.
+ */
+export function useRoundContext(tableNightId: string | null | undefined) {
+    return useQuery<RoundContext | null, Error>({
+        queryKey: queryKeys.tableNight.roundContext(tableNightId!),
+        queryFn: async () => {
+            // Fetch night status to check if revealed
+            const { data: night, error: nightError } = await supabase
+                .from('table_nights')
+                .select('id, status')
+                .eq('id', tableNightId!)
+                .single();
+
+            if (nightError || !night) return null;
+
+            // Fetch participant count and ratings
+            const { data: participants, error: partError } = await supabase
+                .from('table_night_participants')
+                .select('rating')
+                .eq('table_night_id', tableNightId!);
+
+            if (partError || !participants) return null;
+
+            const participantCount = participants.length;
+
+            // Only compute group average if the night is revealed
+            let groupAverage: number | null = null;
+            if (night.status === 'revealed') {
+                const rated = participants.filter((p) => p.rating != null).map((p) => p.rating as number);
+                if (rated.length > 0) {
+                    groupAverage = rated.reduce((a, b) => a + b, 0) / rated.length;
+                }
+            }
+
+            return { nightId: tableNightId!, participantCount, groupAverage };
+        },
+        enabled: !!tableNightId,
+        staleTime: 1000 * 60 * 5,
     });
 }

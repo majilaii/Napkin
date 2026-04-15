@@ -21,6 +21,7 @@ export interface SoloShareActivity {
         name: string;
         address: string | null;
         city: string | null;
+        photo_url: string | null;
     } | null;
     profiles: {
         display_name: string;
@@ -43,6 +44,7 @@ export interface TableNightActivity {
         name: string;
         address: string | null;
         city: string | null;
+        photo_url: string | null;
     };
     participants: {
         user_id: string;
@@ -67,6 +69,7 @@ export interface CollaborativeEntryActivity {
         name: string;
         address: string | null;
         city: string | null;
+        photo_url: string | null;
     } | null;
     participants: {
         user_id: string;
@@ -83,27 +86,41 @@ export type ActivityItem = SoloShareActivity | TableNightActivity | Collaborativ
 
 const PAGE_SIZE = 20;
 
-async function fetchTableActivity(tableId: string, offset: number): Promise<ActivityItem[]> {
+export interface TableActivityFilters {
+    filterType?: string;   // 'round' | 'solo_share'
+    filterUserId?: string; // UUID
+}
+
+async function fetchTableActivity(
+    tableId: string,
+    offset: number,
+    filters?: TableActivityFilters,
+): Promise<ActivityItem[]> {
     const { data: { session } } = await supabase.auth.getSession();
 
-    const { data, error } = await supabase.functions.invoke(
-        `table-activity?table_id=${tableId}&limit=${PAGE_SIZE}&offset=${offset}`,
-        {
-            method: 'GET',
-            headers: session?.access_token
-                ? { Authorization: `Bearer ${session.access_token}` }
-                : undefined,
-        }
-    );
+    let url = `table-activity?table_id=${tableId}&limit=${PAGE_SIZE}&offset=${offset}`;
+    if (filters?.filterType) url += `&filter_type=${encodeURIComponent(filters.filterType)}`;
+    if (filters?.filterUserId) url += `&filter_user_id=${encodeURIComponent(filters.filterUserId)}`;
+
+    const { data, error } = await supabase.functions.invoke(url, {
+        method: 'GET',
+        headers: session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : undefined,
+    });
 
     if (error) throw error;
     return data?.data ?? [];
 }
 
-export function useTableActivity(tableId: string | null | undefined) {
+export function useTableActivity(
+    tableId: string | null | undefined,
+    filters?: TableActivityFilters,
+) {
     return useInfiniteQuery<ActivityItem[], Error>({
-        queryKey: queryKeys.tables.activity(tableId!),
-        queryFn: ({ pageParam }) => fetchTableActivity(tableId!, pageParam as number),
+        queryKey: queryKeys.tables.activity(tableId!, filters),
+        queryFn: ({ pageParam }) =>
+            fetchTableActivity(tableId!, pageParam as number, filters),
         initialPageParam: 0,
         getNextPageParam: (lastPage, allPages) => {
             if (lastPage.length < PAGE_SIZE) return undefined;

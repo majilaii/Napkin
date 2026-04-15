@@ -15,6 +15,7 @@ export interface StartRoundInput {
         types?: string[];
         latitude?: number;
         longitude?: number;
+        photoReference?: string;
     };
     participant_ids: string[];
     rating: number;

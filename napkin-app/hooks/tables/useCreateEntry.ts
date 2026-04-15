@@ -19,6 +19,7 @@ export interface CreateEntryInput {
         types?: string[];
         latitude?: number;
         longitude?: number;
+        photoReference?: string;
     };
     rating?: number | null;
     content?: string;
