@@ -1,6 +1,11 @@
 /**
- * SoloShareCard — card for solo share and collaborative entry activity items.
- * Extracted from tables.tsx; renders photo variant when photo_url is present.
+ * SoloShareCard — "Solo Share" card matching the wireframe.
+ *
+ * Layout: two-column asymmetric grid.
+ *  Left (~25%): tilted avatar with rounded corners + slight rotation
+ *  Right (~75%): card with "{Name} tried {Restaurant}" + rating + quote
+ *
+ * Used for solo_share items that HAVE a rating.
  */
 
 import React from 'react';
@@ -9,11 +14,10 @@ import {
     Text,
     StyleSheet,
     Pressable,
-    Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { Avatar } from './Avatar';
 
@@ -28,138 +32,186 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
     const router = useRouter();
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
-    const verb = item.rating != null ? 'tried' : 'noted';
-    const photoUrl = item.restaurants?.photo_url ?? null;
 
     const handlePress = () =>
         router.push({ pathname: '/entry-detail', params: { entryId: item.id } });
 
-    const contentBlock = (
-        <>
-            <View style={[styles.soloHeader, photoUrl ? { gap: Spacing.sm } : {}]}>
-                <Avatar
-                    name={displayName}
-                    url={null}
-                    size={photoUrl ? 28 : 40}
-                    palette={palette}
-                />
-                <View style={{ flex: 1 }}>
-                    <Text style={[Type.body, { color: palette.text }]}>
-                        <Text style={{ fontFamily: 'Manrope_600SemiBold' }}>
-                            {displayName}
-                        </Text>{' '}
-                        {verb}
-                    </Text>
-                    <Text
-                        style={[
-                            Type.headlineMedium,
-                            { color: palette.text, fontSize: 20, marginTop: 2 },
-                        ]}
-                        numberOfLines={1}
-                    >
-                        {restaurantName}
-                    </Text>
-                </View>
-                {item.rating != null && (
-                    <Text
-                        style={[
-                            Type.rating,
-                            {
-                                color: palette.tertiary,
-                                fontSize: 20,
-                                marginLeft: Spacing.sm,
-                            },
-                        ]}
-                    >
-                        {item.rating.toFixed(1)}
-                    </Text>
-                )}
-            </View>
-            {item.dish_description ? (
-                <Text
-                    style={[
-                        Type.labelSmall,
-                        {
-                            color: palette.tertiary,
-                            backgroundColor: palette.tertiaryFixed,
-                            paddingHorizontal: 8,
-                            paddingVertical: 3,
-                            borderRadius: Radius.sm,
-                            alignSelf: 'flex-start',
-                            marginTop: Spacing.xs,
-                            overflow: 'hidden',
-                        },
-                    ]}
-                    numberOfLines={1}
-                >
-                    {item.dish_description}
-                </Text>
-            ) : null}
-            {item.content ? (
-                <Text
-                    style={[
-                        Type.bodySmall,
-                        {
-                            color: palette.textMuted,
-                            marginTop: Spacing.xs,
-                            lineHeight: 18,
-                        },
-                    ]}
-                    numberOfLines={2}
-                >
-                    {item.content}
-                </Text>
-            ) : null}
-        </>
-    );
-
-    if (photoUrl) {
-        return (
-            <Pressable
-                onPress={handlePress}
-                style={({ pressed }) => [
-                    {
-                        backgroundColor: palette.surfaceContainerLow,
-                        borderRadius: Radius.xl,
-                        overflow: 'hidden',
-                        opacity: pressed ? 0.95 : 1,
-                    },
-                    Shadow.subtle,
-                ]}
-            >
-                <Image
-                    source={{ uri: photoUrl }}
-                    style={{
-                        width: '100%',
-                        aspectRatio: 3 / 2,
-                        borderTopLeftRadius: Radius.xl,
-                        borderTopRightRadius: Radius.xl,
-                    }}
-                    resizeMode="cover"
-                />
-                <View style={{ padding: Spacing.lg }}>{contentBlock}</View>
-            </Pressable>
-        );
-    }
-
     return (
         <Pressable
             onPress={handlePress}
-            style={({ pressed }) => [styles.soloCard, { opacity: pressed ? 0.7 : 1 }]}
+            style={({ pressed }) => ({
+                flexDirection: 'row',
+                gap: Spacing.md,
+                alignItems: 'center',
+                opacity: pressed ? 0.8 : 1,
+            })}
         >
-            {contentBlock}
+            {/* Left: Tilted avatar */}
+            <View
+                style={[
+                    styles.avatarFrame,
+                    {
+                        backgroundColor: palette.secondaryContainer,
+                        transform: [{ rotate: '-3deg' }],
+                        shadowColor: palette.text,
+                    },
+                ]}
+            >
+                <Avatar
+                    name={displayName}
+                    url={null}
+                    size={56}
+                    palette={palette}
+                />
+            </View>
+
+            {/* Right: Text card */}
+            <View
+                style={[
+                    styles.textCard,
+                    {
+                        backgroundColor: palette.card,
+                        shadowColor: palette.text,
+                        borderColor: palette.outlineVariant,
+                    },
+                ]}
+            >
+                {/* Header: "Name tried Restaurant" + rating */}
+                <View style={styles.headerRow}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[Type.labelSmall, { color: palette.text }]}>
+                            <Text style={{ fontFamily: 'Manrope_600SemiBold' }}>
+                                {displayName}
+                            </Text>
+                            {' tried '}
+                            <Text
+                                style={{
+                                    fontFamily: 'Newsreader_400Regular_Italic',
+                                    fontSize: 15,
+                                    color: palette.primary,
+                                }}
+                            >
+                                {restaurantName}
+                            </Text>
+                        </Text>
+                    </View>
+                    {item.rating != null && (
+                        <View style={styles.ratingBadge}>
+                            <Text
+                                style={[
+                                    styles.ratingText,
+                                    { color: palette.tertiary },
+                                ]}
+                            >
+                                {item.rating.toFixed(1)}
+                            </Text>
+                            <Text
+                                style={[
+                                    styles.starIcon,
+                                    { color: palette.tertiary },
+                                ]}
+                            >
+                                ★
+                            </Text>
+                        </View>
+                    )}
+                </View>
+
+                {/* Dish tag */}
+                {item.dish_description ? (
+                    <Text
+                        style={[
+                            styles.dishTag,
+                            {
+                                color: palette.tertiary,
+                                backgroundColor: palette.tertiaryFixed,
+                            },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {item.dish_description}
+                    </Text>
+                ) : null}
+
+                {/* Quote */}
+                {item.content ? (
+                    <Text
+                        style={[
+                            styles.quoteText,
+                            { color: palette.textSecondary },
+                        ]}
+                        numberOfLines={2}
+                    >
+                        {'\u201C'}{item.content}{'\u201D'}
+                    </Text>
+                ) : null}
+            </View>
         </Pressable>
     );
 }
 
 const styles = StyleSheet.create({
-    soloCard: {
-        flexDirection: 'row',
-        gap: Spacing.md,
-        alignItems: 'flex-start',
+    avatarFrame: {
+        width: 64,
+        height: 64,
+        borderRadius: 20,
+        padding: 4,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.04,
+        shadowRadius: 12,
+        elevation: 2,
     },
-    soloHeader: {
+    textCard: {
+        flex: 1,
+        borderRadius: Radius.xl,
+        padding: Spacing.md + 4,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: 'transparent',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.03,
+        shadowRadius: 30,
+        elevation: 1,
+    },
+    headerRow: {
         flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'flex-start',
+        marginBottom: 4,
+    },
+    ratingBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+        marginLeft: Spacing.sm,
+    },
+    ratingText: {
+        fontFamily: 'Newsreader_700Bold',
+        fontSize: 18,
+        lineHeight: 22,
+    },
+    starIcon: {
+        fontSize: 13,
+        marginTop: 1,
+    },
+    dishTag: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 4,
+        alignSelf: 'flex-start',
+        marginTop: Spacing.xs,
+        overflow: 'hidden',
+    },
+    quoteText: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 12,
+        lineHeight: 18,
+        fontStyle: 'italic',
+        marginTop: Spacing.xs + 2,
     },
 });
