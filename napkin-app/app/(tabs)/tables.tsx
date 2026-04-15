@@ -30,6 +30,9 @@ import {
     type SoloShareActivity,
     type TableNightActivity,
 } from '@/hooks/tables/useTableActivity';
+import { useTableMembers } from '@/hooks/tables/useTableMembers';
+import { FilterChipRow, type FilterChip } from '@/components/feed/FilterChipRow';
+import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
 
 type Palette = typeof Colors.light;
 
@@ -84,6 +87,25 @@ function PulseDot({ size = 8, color = '#fff' }: { size?: number; color?: string 
     );
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function getDateLabel(dateStr: string): string {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diff = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
+    if (diff <= 0) return 'Today';
+    if (diff === 1) return 'Yesterday';
+    if (diff < 7) return 'This Week';
+    if (diff < 14) return 'Last Week';
+    if (diff < 30) return 'This Month';
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+interface FeedSection {
+    label: string;
+    items: ActivityItem[];
+}
+
 // ── Screen ─────────────────────────────────────────────────────────────────
 
 export default function TablesScreen() {
@@ -114,6 +136,78 @@ export default function TablesScreen() {
         () => activityData?.pages?.flat() ?? [],
         [activityData],
     );
+
+    // ── Filter / group logic ───────────────────────────────────────────
+    const [activeFilter, setActiveFilter] = useState<string | null>(null);
+    const { data: members } = useTableMembers(activeTable?.id);
+
+    const filterChips = useMemo<FilterChip[]>(() => {
+        const chips: FilterChip[] = [{ key: 'rounds', label: 'Rounds' }];
+        if (members) {
+            for (const m of members) {
+                chips.push({
+                    key: `user:${m.member_id}`,
+                    label: m.profiles?.display_name ?? 'Unknown',
+                });
+            }
+        }
+        return chips;
+    }, [members]);
+
+    const filteredItems = useMemo(() => {
+        if (!activeFilter) return items;
+        if (activeFilter === 'rounds')
+            return items.filter((i) => i.type === 'table_night');
+        if (activeFilter.startsWith('user:')) {
+            const userId = activeFilter.slice(5);
+            return items.filter((i) => {
+                if (i.type === 'solo_share')
+                    return (i as SoloShareActivity).user_id === userId;
+                if (i.type === 'table_night')
+                    return (i as TableNightActivity).participants?.some(
+                        (p) => p.user_id === userId,
+                    );
+                return false;
+            });
+        }
+        return items;
+    }, [items, activeFilter]);
+
+    const activeRounds = useMemo(
+        () =>
+            items.filter(
+                (i) =>
+                    i.type === 'table_night' &&
+                    (i as TableNightActivity).status === 'rating',
+            ) as TableNightActivity[],
+        [items],
+    );
+
+    const timelineItems = useMemo(
+        () =>
+            filteredItems.filter(
+                (i) =>
+                    !(
+                        i.type === 'table_night' &&
+                        (i as TableNightActivity).status === 'rating'
+                    ),
+            ),
+        [filteredItems],
+    );
+
+    const feedSections = useMemo<FeedSection[]>(() => {
+        const sections: FeedSection[] = [];
+        let current: FeedSection | null = null;
+        for (const item of timelineItems) {
+            const label = getDateLabel(item.sort_date || item.created_at);
+            if (!current || current.label !== label) {
+                current = { label, items: [] };
+                sections.push(current);
+            }
+            current.items.push(item);
+        }
+        return sections;
+    }, [timelineItems]);
 
     if (tablesLoading) {
         return (
@@ -190,6 +284,16 @@ export default function TablesScreen() {
                 </Pressable>
             </View>
 
+            {/* Filter chips */}
+            {items.length > 0 && (
+                <FilterChipRow
+                    chips={filterChips}
+                    activeKey={activeFilter}
+                    onSelect={setActiveFilter}
+                    palette={palette}
+                />
+            )}
+
             {/* Feed */}
             {feedLoading ? (
                 <ActivityIndicator
@@ -226,25 +330,90 @@ export default function TablesScreen() {
                     </Text>
                 </View>
             ) : (
-                <View style={styles.feedList}>
-                    {items.map((item) => {
-                        if (item.type === 'table_night') {
-                            return (
+                <View style={{ paddingTop: Spacing.sm }}>
+                    {/* Active rounds shelf */}
+                    {activeRounds.length > 0 && (
+                        <View
+                            style={{
+                                paddingHorizontal: Spacing.lg,
+                                gap: Spacing.md,
+                                marginBottom: Spacing.lg,
+                            }}
+                        >
+                            <Text
+                                style={[
+                                    Type.label,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                IN PROGRESS
+                            </Text>
+                            {activeRounds.map((item) => (
                                 <TableNightCard
-                                    key={`tn-${item.id}`}
+                                    key={`active-${item.id}`}
                                     item={item}
                                     palette={palette}
                                 />
-                            );
-                        }
-                        return (
-                            <SoloShareCard
-                                key={`solo-${item.id}`}
-                                item={item as SoloShareActivity}
-                                palette={palette}
-                            />
-                        );
-                    })}
+                            ))}
+                        </View>
+                    )}
+
+                    {/* Date-grouped timeline */}
+                    {feedSections.length > 0
+                        ? feedSections.map((section) => (
+                              <View
+                                  key={section.label}
+                                  style={{ marginBottom: Spacing.md }}
+                              >
+                                  <DateSectionHeader
+                                      title={section.label}
+                                      palette={palette}
+                                  />
+                                  <View style={styles.feedList}>
+                                      {section.items.map((item) => {
+                                          if (item.type === 'table_night') {
+                                              return (
+                                                  <TableNightCard
+                                                      key={`tn-${item.id}`}
+                                                      item={item}
+                                                      palette={palette}
+                                                  />
+                                              );
+                                          }
+                                          return (
+                                              <SoloShareCard
+                                                  key={`solo-${item.id}`}
+                                                  item={
+                                                      item as SoloShareActivity
+                                                  }
+                                                  palette={palette}
+                                              />
+                                          );
+                                      })}
+                                  </View>
+                              </View>
+                          ))
+                        : activeFilter && (
+                              <View
+                                  style={{
+                                      padding: Spacing.xl,
+                                      alignItems: 'center',
+                                      marginTop: Spacing.lg,
+                                  }}
+                              >
+                                  <Text
+                                      style={[
+                                          Type.body,
+                                          {
+                                              color: palette.textMuted,
+                                              textAlign: 'center',
+                                          },
+                                      ]}
+                                  >
+                                      No entries match this filter.
+                                  </Text>
+                              </View>
+                          )}
                 </View>
             )}
         </ScrollView>
@@ -616,7 +785,7 @@ const styles = StyleSheet.create({
     },
     feedList: {
         paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.xl,
+        paddingTop: Spacing.sm,
         gap: Spacing.xl,
     },
 
