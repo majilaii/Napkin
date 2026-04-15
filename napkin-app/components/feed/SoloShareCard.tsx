@@ -5,6 +5,9 @@
  *  Left (~25%): tilted avatar with rounded corners + slight rotation
  *  Right (~75%): card with "{Name} tried {Restaurant}" + rating + quote
  *
+ * When entry.photo_url is present, a full-bleed hero image sits at the top
+ * of the card (matching TableNightCard's hero pattern) before the text content.
+ *
  * Used for solo_share items that HAVE a rating.
  */
 
@@ -14,6 +17,7 @@ import {
     Text,
     StyleSheet,
     Pressable,
+    Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -32,6 +36,7 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
     const router = useRouter();
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
+    const hasHero = !!item.photo_url;
 
     const handlePress = () =>
         router.push({ pathname: '/entry-detail', params: { entryId: item.id } });
@@ -76,75 +81,87 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
                     },
                 ]}
             >
-                {/* Header: "Name tried Restaurant" + rating */}
-                <View style={styles.headerRow}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={[Type.labelSmall, { color: palette.text }]}>
-                            <Text style={{ fontFamily: 'Manrope_600SemiBold' }}>
-                                {displayName}
-                            </Text>
-                            {' tried '}
-                            <Text
-                                style={{
-                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                    fontSize: 15,
-                                    color: palette.primary,
-                                }}
-                            >
-                                {restaurantName}
-                            </Text>
-                        </Text>
-                    </View>
-                    {item.rating != null && (
-                        <View style={styles.ratingBadge}>
-                            <Text
-                                style={[
-                                    styles.ratingText,
-                                    { color: palette.tertiary },
-                                ]}
-                            >
-                                {item.rating.toFixed(1)}
-                            </Text>
-                            <Text
-                                style={[
-                                    styles.starIcon,
-                                    { color: palette.tertiary },
-                                ]}
-                            >
-                                ★
+                {/* Hero image (user-uploaded photo, if present) */}
+                {hasHero ? (
+                    <Image
+                        source={{ uri: item.photo_url! }}
+                        style={styles.heroImage}
+                        resizeMode="cover"
+                    />
+                ) : null}
+
+                {/* Text content — padded separately so hero bleeds to edges */}
+                <View style={[styles.cardContent, hasHero && styles.cardContentWithHero]}>
+                    {/* Header: "Name tried Restaurant" + rating */}
+                    <View style={styles.headerRow}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[Type.labelSmall, { color: palette.text }]}>
+                                <Text style={{ fontFamily: 'Manrope_600SemiBold' }}>
+                                    {displayName}
+                                </Text>
+                                {' tried '}
+                                <Text
+                                    style={{
+                                        fontFamily: 'Newsreader_400Regular_Italic',
+                                        fontSize: 15,
+                                        color: palette.primary,
+                                    }}
+                                >
+                                    {restaurantName}
+                                </Text>
                             </Text>
                         </View>
-                    )}
+                        {item.rating != null && (
+                            <View style={styles.ratingBadge}>
+                                <Text
+                                    style={[
+                                        styles.ratingText,
+                                        { color: palette.tertiary },
+                                    ]}
+                                >
+                                    {item.rating.toFixed(1)}
+                                </Text>
+                                <Text
+                                    style={[
+                                        styles.starIcon,
+                                        { color: palette.tertiary },
+                                    ]}
+                                >
+                                    ★
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+
+                    {/* Dish tag */}
+                    {item.dish_description ? (
+                        <Text
+                            style={[
+                                styles.dishTag,
+                                {
+                                    color: palette.tertiary,
+                                    backgroundColor: palette.tertiaryFixed,
+                                },
+                            ]}
+                            numberOfLines={1}
+                        >
+                            {item.dish_description}
+                        </Text>
+                    ) : null}
+
+                    {/* Quote */}
+                    {item.content ? (
+                        <Text
+                            style={[
+                                styles.quoteText,
+                                { color: palette.textSecondary },
+                            ]}
+                            numberOfLines={2}
+                        >
+                            {'\u201C'}{item.content}{'\u201D'}
+                        </Text>
+                    ) : null}
                 </View>
-
-                {/* Dish tag */}
-                {item.dish_description ? (
-                    <Text
-                        style={[
-                            styles.dishTag,
-                            {
-                                color: palette.tertiary,
-                                backgroundColor: palette.tertiaryFixed,
-                            },
-                        ]}
-                        numberOfLines={1}
-                    >
-                        {item.dish_description}
-                    </Text>
-                ) : null}
-
-                {/* Quote */}
-                {item.content ? (
-                    <Text
-                        style={[
-                            styles.quoteText,
-                            { color: palette.textSecondary },
-                        ]}
-                        numberOfLines={2}
-                    >
-                        {'\u201C'}{item.content}{'\u201D'}
-                    </Text>
-                ) : null}
             </View>
         </Pressable>
     );
@@ -166,13 +183,23 @@ const styles = StyleSheet.create({
     textCard: {
         flex: 1,
         borderRadius: Radius.xl,
-        padding: Spacing.md + 4,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: 'transparent',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.03,
         shadowRadius: 30,
         elevation: 1,
+        overflow: 'hidden',
+    },
+    heroImage: {
+        width: '100%',
+        aspectRatio: 16 / 9,
+    },
+    cardContent: {
+        padding: Spacing.md + 4,
+    },
+    cardContentWithHero: {
+        paddingTop: Spacing.sm,
     },
     headerRow: {
         flexDirection: 'row',

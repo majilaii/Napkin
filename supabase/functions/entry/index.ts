@@ -142,6 +142,9 @@ serve(async (req) => {
                 service_rating,
                 value_rating,
 
+                // User-uploaded photo (optional, public URL from Supabase Storage)
+                photo_url,
+
                 // Table sharing (optional)
                 table_id,
                 visibility,
@@ -264,6 +267,7 @@ serve(async (req) => {
                     ...(flavor_rating != null ? { flavor_rating } : {}),
                     ...(service_rating != null ? { service_rating } : {}),
                     ...(value_rating != null ? { value_rating } : {}),
+                    ...(photo_url ? { photo_url } : {}),
                     ...(table_id ? { table_id } : {}),
                     ...(visibility ? { visibility } : {}),
                 })

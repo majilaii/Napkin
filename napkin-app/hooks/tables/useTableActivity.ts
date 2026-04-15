@@ -16,6 +16,7 @@ export interface SoloShareActivity {
     visited_at: string;
     created_at: string;
     sort_date: string;
+    photo_url: string | null;
     restaurants: {
         id: string;
         name: string;

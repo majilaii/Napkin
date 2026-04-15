@@ -14,12 +14,15 @@ import {
     Pressable,
     ActivityIndicator,
     Alert,
+    ActionSheetIOS,
+    Image,
     KeyboardAvoidingView,
     Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -30,6 +33,7 @@ import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { useStartRound } from '@/hooks/tables/useStartRound';
 import { StarRating } from '@/components/StarRating';
 import { supabase } from '@/lib/supabase';
+import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -118,7 +122,15 @@ export default function CreateEntryScreen() {
     const [notes, setNotes] = useState('');
     const [dish, setDish] = useState('');
 
-    const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0;
+    // Photo upload state
+    const [photoUri, setPhotoUri] = useState<string | null>(null);
+    const [photoPublicUrl, setPhotoPublicUrl] = useState<string | null>(null);
+    const [photoUploading, setPhotoUploading] = useState(false);
+    const [photoError, setPhotoError] = useState<string | null>(null);
+    const photoPublicUrlRef = useRef<string | null>(null);
+    const uploadGenRef = useRef(0);
+
+    const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photoUploading && !photoError;
     const isSubmitting = createEntry.isPending || startRound.isPending;
 
     // ── Debounced search ──────────────────────────────────────────────────
@@ -178,6 +190,133 @@ export default function CreateEntryScreen() {
         });
     };
 
+    // ── Photo upload ──────────────────────────────────────────────────────
+
+    // Keep ref in sync so cleanup always has the current URL
+    useEffect(() => {
+        photoPublicUrlRef.current = photoPublicUrl;
+    }, [photoPublicUrl]);
+
+    // Clean up orphaned upload if user exits without submitting
+    useEffect(() => {
+        return () => {
+            if (photoPublicUrlRef.current) {
+                removeUploadedPhoto(photoPublicUrlRef.current).catch(() => {});
+            }
+        };
+    }, []);
+
+    const uploadPhoto = async (uri: string) => {
+        if (!user?.id) return;
+        const gen = ++uploadGenRef.current;
+        setPhotoUploading(true);
+        setPhotoError(null);
+        try {
+            const url = await compressAndUpload(uri, user.id);
+            // Stale upload — user dismissed photo before this completed
+            if (gen !== uploadGenRef.current) {
+                removeUploadedPhoto(url).catch(() => {});
+                return;
+            }
+            setPhotoPublicUrl(url);
+        } catch (err) {
+            if (gen !== uploadGenRef.current) return;
+            if (err instanceof PhotoUploadError) {
+                if (err.code === 'too_large') {
+                    setPhotoError('Photo is too large. Please choose a smaller image.');
+                } else {
+                    setPhotoError('Upload failed. Tap to retry.');
+                }
+            } else {
+                setPhotoError('Upload failed. Tap to retry.');
+            }
+            setPhotoPublicUrl(null);
+        } finally {
+            if (gen === uploadGenRef.current) {
+                setPhotoUploading(false);
+            }
+        }
+    };
+
+    const handlePhotoPress = () => {
+        if (Platform.OS === 'ios') {
+            ActionSheetIOS.showActionSheetWithOptions(
+                {
+                    options: ['Cancel', 'Take Photo', 'Choose from Library'],
+                    cancelButtonIndex: 0,
+                },
+                async (buttonIndex) => {
+                    if (buttonIndex === 1) await pickFromCamera();
+                    if (buttonIndex === 2) await pickFromLibrary();
+                }
+            );
+        } else {
+            Alert.alert('Add a Photo', undefined, [
+                { text: 'Take Photo', onPress: pickFromCamera },
+                { text: 'Choose from Library', onPress: pickFromLibrary },
+                { text: 'Cancel', style: 'cancel' },
+            ]);
+        }
+    };
+
+    const pickFromCamera = async () => {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert(
+                'Camera Access Required',
+                'Please enable camera access in your device Settings to take a photo.',
+                [{ text: 'OK' }]
+            );
+            return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            quality: 1,
+        });
+        if (!result.canceled && result.assets[0]) {
+            const uri = result.assets[0].uri;
+            setPhotoUri(uri);
+            setPhotoPublicUrl(null);
+            setPhotoError(null);
+            await uploadPhoto(uri);
+        }
+    };
+
+    const pickFromLibrary = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert(
+                'Photo Library Access Required',
+                'Please enable photo library access in your device Settings to choose a photo.',
+                [{ text: 'OK' }]
+            );
+            return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 1,
+        });
+        if (!result.canceled && result.assets[0]) {
+            const uri = result.assets[0].uri;
+            setPhotoUri(uri);
+            setPhotoPublicUrl(null);
+            setPhotoError(null);
+            await uploadPhoto(uri);
+        }
+    };
+
+    const handleRemovePhoto = async () => {
+        // Invalidate any in-flight upload so its callback becomes a no-op
+        uploadGenRef.current++;
+        if (photoPublicUrl) {
+            removeUploadedPhoto(photoPublicUrl).catch(() => {});
+        }
+        setPhotoUri(null);
+        setPhotoPublicUrl(null);
+        setPhotoUploading(false);
+        setPhotoError(null);
+    };
+
     // ── Submit ────────────────────────────────────────────────────────────
 
     const handleSubmit = useCallback(async () => {
@@ -233,9 +372,13 @@ export default function CreateEntryScreen() {
                     dish_description: dish.trim() || undefined,
                     table_id: selectedTableId ?? undefined,
                     visibility: selectedTableId ? 'table' : 'private',
+                    ...(photoPublicUrl ? { photo_url: photoPublicUrl } : {}),
                     ...secondaryRatings,
                 });
             }
+            // Photo is now persisted — clear so the cleanup effect doesn't delete it
+            setPhotoPublicUrl(null);
+            photoPublicUrlRef.current = null;
             router.back();
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not save entry');
@@ -244,6 +387,7 @@ export default function CreateEntryScreen() {
         canSubmit, rating, notes, dish, selectedPlace, query,
         selectedTableId, isPersonalTable, postMode, selectedParticipantIds,
         vibeRating, flavorRating, serviceRating, valueRating,
+        photoPublicUrl,
         createEntry, startRound, router,
     ]);
 
@@ -746,6 +890,74 @@ export default function CreateEntryScreen() {
                         />
                     </View>
 
+                    {/* Photo */}
+                    <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
+                        <Text style={[Type.label, { color: palette.textSecondary }]}>
+                            Photo
+                        </Text>
+
+                        {!photoUri ? (
+                            <Pressable
+                                onPress={handlePhotoPress}
+                                style={[
+                                    styles.photoButton,
+                                    { backgroundColor: palette.surfaceContainerLow },
+                                ]}
+                            >
+                                <Ionicons name="camera-outline" size={22} color={palette.textMuted} />
+                                <Text style={[Type.bodySmall, { color: palette.textMuted, marginLeft: Spacing.sm }]}>
+                                    Add a photo
+                                </Text>
+                            </Pressable>
+                        ) : (
+                            <View style={styles.photoPreviewContainer}>
+                                <Image
+                                    source={{ uri: photoUri }}
+                                    style={[
+                                        styles.photoPreview,
+                                        { borderRadius: Radius.lg },
+                                    ]}
+                                    resizeMode="cover"
+                                />
+
+                                {/* Upload state overlay */}
+                                {photoUploading && (
+                                    <View style={[styles.photoOverlay, { borderRadius: Radius.lg }]}>
+                                        <ActivityIndicator color="#fff" />
+                                    </View>
+                                )}
+
+                                {/* Error state overlay */}
+                                {photoError && !photoUploading && (
+                                    <Pressable
+                                        onPress={() => photoUri && uploadPhoto(photoUri)}
+                                        style={[styles.photoOverlay, { borderRadius: Radius.lg, backgroundColor: 'rgba(0,0,0,0.55)' }]}
+                                    >
+                                        <Ionicons name="refresh-outline" size={28} color="#fff" />
+                                        <Text style={{ color: '#fff', fontFamily: 'Manrope_500Medium', fontSize: 11, marginTop: 4, textAlign: 'center' }}>
+                                            Tap to retry
+                                        </Text>
+                                    </Pressable>
+                                )}
+
+                                {/* Dismiss button */}
+                                <Pressable
+                                    onPress={handleRemovePhoto}
+                                    style={[styles.photoRemoveButton, { backgroundColor: palette.text }]}
+                                    hitSlop={8}
+                                >
+                                    <Ionicons name="close" size={14} color={palette.background} />
+                                </Pressable>
+                            </View>
+                        )}
+
+                        {photoError && !photoUploading && (
+                            <Text style={[Type.caption, { color: palette.error, marginTop: 2 }]}>
+                                {photoError}
+                            </Text>
+                        )}
+                    </View>
+
                     {/* Submit */}
                     <Pressable
                         disabled={!canSubmit || isSubmitting}
@@ -896,5 +1108,38 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.md,
         borderRadius: Radius.lg,
         alignItems: 'center',
+    },
+    // Photo upload
+    photoButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: Radius.lg,
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.md,
+        minHeight: 52,
+    },
+    photoPreviewContainer: {
+        position: 'relative',
+        alignSelf: 'stretch',
+    },
+    photoPreview: {
+        width: '100%',
+        aspectRatio: 16 / 9,
+    },
+    photoOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    photoRemoveButton: {
+        position: 'absolute',
+        top: Spacing.sm,
+        right: Spacing.sm,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });

@@ -46,6 +46,7 @@ interface EntryDetail {
     flavor_rating: number | null;
     service_rating: number | null;
     value_rating: number | null;
+    photo_url: string | null;
     restaurants: {
         id: string;
         name: string;
@@ -80,6 +81,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 flavor_rating,
                 service_rating,
                 value_rating,
+                photo_url,
                 restaurants (
                     id,
                     name,
@@ -112,6 +114,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 flavor_rating,
                 service_rating,
                 value_rating,
+                photo_url,
                 restaurants (
                     id,
                     name,
@@ -247,7 +250,8 @@ export default function EntryDetailScreen() {
         entry.value_rating != null;
 
     const isRoundEntry = !!entry.table_night_id;
-    const heroPhotoUrl = entry.restaurants?.photo_url ?? null;
+    const heroPhotoUrl = entry.photo_url ?? entry.restaurants?.photo_url ?? null;
+    const isUserPhoto = !!entry.photo_url;
 
     return (
         <>
@@ -288,6 +292,14 @@ export default function EntryDetailScreen() {
                                     <Text style={[Type.body, { color: '#fff' }]}>← Back</Text>
                                 </Pressable>
                             </View>
+                            {/* "User photo" caption — only shown for user-uploaded photos */}
+                            {isUserPhoto && (
+                                <View style={styles.userPhotoCaptionContainer}>
+                                    <Text style={[Type.caption, { color: 'rgba(255,255,255,0.85)' }]}>
+                                        User photo
+                                    </Text>
+                                </View>
+                            )}
                         </View>
                     ) : (
                         <View style={styles.topBar}>
@@ -573,5 +585,14 @@ const styles = StyleSheet.create({
         padding: Spacing.md,
         borderRadius: Radius.md,
         borderLeftWidth: 3,
+    },
+    userPhotoCaptionContainer: {
+        position: 'absolute',
+        bottom: Spacing.sm,
+        right: Spacing.sm,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 3,
+        borderRadius: Radius.sm,
     },
 });

@@ -84,6 +84,7 @@ serve(async (req) => {
                         visited_at,
                         created_at,
                         table_night_id,
+                        photo_url,
                         restaurants (
                             id,
                             name,
