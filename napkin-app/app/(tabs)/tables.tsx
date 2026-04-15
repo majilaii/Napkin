@@ -4,7 +4,7 @@
  * Features: table switcher, PulseDot on live banner, Table Night cards, solo share rows.
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
     View,
     Text,
@@ -13,14 +13,10 @@ import {
     RefreshControl,
     Pressable,
     ActivityIndicator,
-    Image,
-    Animated,
-    Easing,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 
-import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
@@ -31,61 +27,13 @@ import {
     type TableNightActivity,
 } from '@/hooks/tables/useTableActivity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
+import { TableNightCard } from '@/components/feed/TableNightCard';
+import { SoloShareCard } from '@/components/feed/SoloShareCard';
+import { JournalNoteCard } from '@/components/feed/JournalNoteCard';
 import { FilterChipRow, type FilterChip } from '@/components/feed/FilterChipRow';
 import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
 
 type Palette = typeof Colors.light;
-
-// ── PulseDot — animated live indicator ─────────────────────────────────────
-
-function PulseDot({ size = 8, color = '#fff' }: { size?: number; color?: string }) {
-    const pulse = useRef(new Animated.Value(1)).current;
-
-    useEffect(() => {
-        const loop = Animated.loop(
-            Animated.sequence([
-                Animated.timing(pulse, {
-                    toValue: 1.6,
-                    duration: 800,
-                    easing: Easing.inOut(Easing.ease),
-                    useNativeDriver: true,
-                }),
-                Animated.timing(pulse, {
-                    toValue: 1,
-                    duration: 800,
-                    easing: Easing.inOut(Easing.ease),
-                    useNativeDriver: true,
-                }),
-            ]),
-        );
-        loop.start();
-        return () => loop.stop();
-    }, [pulse]);
-
-    return (
-        <View style={{ width: size, height: size }}>
-            <Animated.View
-                style={{
-                    position: 'absolute',
-                    width: size,
-                    height: size,
-                    borderRadius: size / 2,
-                    backgroundColor: color,
-                    opacity: 0.3,
-                    transform: [{ scale: pulse }],
-                }}
-            />
-            <View
-                style={{
-                    width: size,
-                    height: size,
-                    borderRadius: size / 2,
-                    backgroundColor: color,
-                }}
-            />
-        </View>
-    );
-}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -380,12 +328,20 @@ export default function TablesScreen() {
                                                   />
                                               );
                                           }
+                                          const solo = item as SoloShareActivity;
+                                          if (solo.rating == null) {
+                                              return (
+                                                  <JournalNoteCard
+                                                      key={`note-${item.id}`}
+                                                      item={solo}
+                                                      palette={palette}
+                                                  />
+                                              );
+                                          }
                                           return (
                                               <SoloShareCard
                                                   key={`solo-${item.id}`}
-                                                  item={
-                                                      item as SoloShareActivity
-                                                  }
+                                                  item={solo}
                                                   palette={palette}
                                               />
                                           );
@@ -421,354 +377,6 @@ export default function TablesScreen() {
     );
 }
 
-// ── Table Night Card (revealed/closed) ─────────────────────────────────────
-
-function TableNightCard({
-    item,
-    palette,
-}: {
-    item: TableNightActivity;
-    palette: Palette;
-}) {
-    const router = useRouter();
-    const isActive = item.status === 'rating';
-    const photoUrl = item.restaurants?.photo_url ?? null;
-
-    return (
-        <Pressable
-            onPress={() =>
-                router.push({
-                    pathname: isActive ? '/table-night' : '/table-night-detail',
-                    params: { nightId: item.id },
-                })
-            }
-            style={({ pressed }) => [
-                styles.tnCard,
-                {
-                    backgroundColor: palette.surfaceContainerLow,
-                    opacity: pressed ? 0.95 : 1,
-                    overflow: 'hidden',
-                    ...(photoUrl ? { padding: 0 } : {}),
-                },
-                Shadow.subtle,
-            ]}
-        >
-            {/* Hero image (only when photo exists) */}
-            {photoUrl ? (
-                <Image
-                    source={{ uri: photoUrl }}
-                    style={{
-                        width: '100%',
-                        aspectRatio: 3 / 2,
-                        borderTopLeftRadius: Radius.xl,
-                        borderTopRightRadius: Radius.xl,
-                    }}
-                    resizeMode="cover"
-                />
-            ) : null}
-
-            {/* Card content */}
-            <View style={photoUrl ? { padding: Spacing.lg } : undefined}>
-                {/* Badge */}
-                <View style={[styles.tnBadge, { backgroundColor: isActive ? palette.tertiaryFixed : palette.primaryMuted }]}>
-                    {isActive && <PulseDot size={7} color={palette.tertiary} />}
-                    <Text style={[Type.labelSmall, { color: isActive ? palette.tertiary : palette.primary }]}>
-                        {isActive ? 'ACTIVE ROUND' : 'ROUND'}
-                    </Text>
-                </View>
-
-                {/* Restaurant + rating */}
-                <View style={styles.tnHeader}>
-                    <Text
-                        style={[
-                            Type.headlineLarge,
-                            { color: palette.text, fontSize: 24, flex: 1 },
-                        ]}
-                        numberOfLines={1}
-                    >
-                        {item.restaurants?.name ?? 'Unknown'}
-                    </Text>
-                    {item.average_rating != null && (
-                        <Text
-                            style={[
-                                Type.rating,
-                                { color: palette.tertiary, fontSize: 24 },
-                            ]}
-                        >
-                            {item.average_rating.toFixed(1)}
-                        </Text>
-                    )}
-                </View>
-
-                {/* Participants */}
-                {item.participants?.length > 0 && (
-                    <View style={styles.tnVoters}>
-                        {item.participants.map((p, i) => (
-                            <Pressable
-                                key={`${p.user_id}-${i}`}
-                                onPress={() => {
-                                    if (p.rating != null) {
-                                        router.push({
-                                            pathname: '/entry-detail',
-                                            params: { nightId: item.id, userId: p.user_id },
-                                        });
-                                    }
-                                }}
-                                style={({ pressed }) => [
-                                    styles.voterChip,
-                                    p.rating != null && { opacity: pressed ? 0.6 : 1 },
-                                ]}
-                            >
-                                <Avatar
-                                    name={p.profiles?.display_name ?? '?'}
-                                    url={null}
-                                    size={28}
-                                    palette={palette}
-                                />
-                                <Text
-                                    style={[
-                                        Type.labelSmall,
-                                        { color: palette.text, marginLeft: 6 },
-                                    ]}
-                                >
-                                    {p.profiles?.display_name ?? 'User'}
-                                </Text>
-                                {p.rating != null && (
-                                    <Text
-                                        style={[
-                                            Type.rating,
-                                            {
-                                                color: palette.tertiary,
-                                                fontSize: 14,
-                                                marginLeft: 4,
-                                            },
-                                        ]}
-                                    >
-                                        {p.rating.toFixed(1)}
-                                    </Text>
-                                )}
-                                {p.rating != null && (
-                                    <Text
-                                        style={[
-                                            Type.labelSmall,
-                                            { color: palette.textMuted, marginLeft: 'auto' },
-                                        ]}
-                                    >
-                                        →
-                                    </Text>
-                                )}
-                            </Pressable>
-                        ))}
-                    </View>
-                )}
-            </View>
-        </Pressable>
-    );
-}
-
-// ── Solo Share Card ────────────────────────────────────────────────────────
-
-function SoloShareCard({
-    item,
-    palette,
-}: {
-    item: SoloShareActivity;
-    palette: Palette;
-}) {
-    const router = useRouter();
-    const displayName = item.profiles?.display_name ?? 'Someone';
-    const restaurantName = item.restaurants?.name ?? 'somewhere';
-    const verb = item.rating != null ? 'tried' : 'noted';
-    const photoUrl = item.restaurants?.photo_url ?? null;
-
-    const handlePress = () =>
-        router.push({ pathname: '/entry-detail', params: { entryId: item.id } });
-
-    // Content shared between photo and no-photo variants
-    const textContent = (
-        <>
-            <View style={styles.soloHeader}>
-                <View style={{ flex: 1 }}>
-                    <Text style={[Type.body, { color: palette.text }]}>
-                        <Text style={{ fontFamily: 'Manrope_600SemiBold' }}>
-                            {displayName}
-                        </Text>{' '}
-                        {verb}
-                    </Text>
-                    <Text
-                        style={[
-                            Type.headlineMedium,
-                            {
-                                color: palette.text,
-                                fontSize: 20,
-                                marginTop: 2,
-                            },
-                        ]}
-                        numberOfLines={1}
-                    >
-                        {restaurantName}
-                    </Text>
-                </View>
-                {item.rating != null && (
-                    <Text
-                        style={[
-                            Type.rating,
-                            {
-                                color: palette.tertiary,
-                                fontSize: 20,
-                                marginLeft: Spacing.sm,
-                            },
-                        ]}
-                    >
-                        {item.rating.toFixed(1)}
-                    </Text>
-                )}
-            </View>
-
-            {item.dish_description ? (
-                <Text
-                    style={[
-                        Type.labelSmall,
-                        {
-                            color: palette.tertiary,
-                            backgroundColor: palette.tertiaryFixed,
-                            paddingHorizontal: 8,
-                            paddingVertical: 3,
-                            borderRadius: Radius.sm,
-                            alignSelf: 'flex-start',
-                            marginTop: Spacing.xs,
-                            overflow: 'hidden',
-                        },
-                    ]}
-                    numberOfLines={1}
-                >
-                    {item.dish_description}
-                </Text>
-            ) : null}
-
-            {item.content ? (
-                <Text
-                    style={[
-                        Type.bodySmall,
-                        {
-                            color: palette.textMuted,
-                            marginTop: Spacing.xs,
-                            lineHeight: 18,
-                        },
-                    ]}
-                    numberOfLines={2}
-                >
-                    {item.content}
-                </Text>
-            ) : null}
-        </>
-    );
-
-    // Photo variant — card with hero image on top
-    if (photoUrl) {
-        return (
-            <Pressable
-                onPress={handlePress}
-                style={({ pressed }) => [
-                    {
-                        backgroundColor: palette.surfaceContainerLow,
-                        borderRadius: Radius.xl,
-                        overflow: 'hidden',
-                        opacity: pressed ? 0.95 : 1,
-                    },
-                    Shadow.subtle,
-                ]}
-            >
-                <Image
-                    source={{ uri: photoUrl }}
-                    style={{
-                        width: '100%',
-                        aspectRatio: 3 / 2,
-                        borderTopLeftRadius: Radius.xl,
-                        borderTopRightRadius: Radius.xl,
-                    }}
-                    resizeMode="cover"
-                />
-                <View style={{ padding: Spacing.lg }}>{textContent}</View>
-            </Pressable>
-        );
-    }
-
-    // No-photo variant — original inline layout with avatar
-    return (
-        <Pressable
-            onPress={handlePress}
-            style={({ pressed }) => [
-                styles.soloCard,
-                { opacity: pressed ? 0.7 : 1 },
-            ]}
-        >
-            <Avatar
-                name={displayName}
-                url={null}
-                size={40}
-                palette={palette}
-            />
-            <View style={{ flex: 1 }}>
-                {textContent}
-            </View>
-        </Pressable>
-    );
-}
-
-// ── Avatar ─────────────────────────────────────────────────────────────────
-
-function Avatar({
-    name,
-    url,
-    size,
-    palette,
-}: {
-    name: string;
-    url: string | null;
-    size: number;
-    palette: Palette;
-}) {
-    const initials = name
-        .split(' ')
-        .map((n) => n[0])
-        .join('')
-        .slice(0, 2)
-        .toUpperCase();
-
-    const tints = [
-        palette.tertiaryFixed,
-        palette.secondaryContainer,
-        palette.primaryMuted,
-    ];
-    const tint = tints[(initials.charCodeAt(0) || 0) % tints.length];
-
-    const baseStyle = {
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: tint,
-        alignItems: 'center' as const,
-        justifyContent: 'center' as const,
-    };
-
-    if (url) return <Image source={{ uri: url }} style={baseStyle} />;
-
-    return (
-        <View style={baseStyle}>
-            <Text
-                style={{
-                    fontFamily: 'Manrope_600SemiBold',
-                    fontSize: size * 0.36,
-                    color: palette.text,
-                }}
-            >
-                {initials}
-            </Text>
-        </View>
-    );
-}
-
 // ── Styles ─────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -786,46 +394,6 @@ const styles = StyleSheet.create({
     feedList: {
         paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.sm,
-        gap: Spacing.xl,
-    },
-
-    // Table Night card
-    tnCard: {
-        borderRadius: Radius.xl,
-        padding: Spacing.lg,
-    },
-    tnBadge: {
-        alignSelf: 'flex-start',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: Spacing.sm,
-        paddingVertical: 3,
-        borderRadius: Radius.sm,
-        marginBottom: Spacing.sm,
-    },
-    tnHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    tnVoters: {
-        marginTop: Spacing.md,
-        gap: Spacing.sm,
-    },
-    voterChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-
-    // Solo share card
-    soloCard: {
-        flexDirection: 'row',
-        gap: Spacing.md,
-        alignItems: 'flex-start',
-    },
-    soloHeader: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
+        gap: Spacing.xl + Spacing.md,
     },
 });
