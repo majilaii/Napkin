@@ -98,14 +98,14 @@ serve(async (req) => {
             const { data: profiles } = userIds.length > 0
                 ? await supabase
                     .from('profiles')
-                    .select('id, display_name, avatar_url')
-                    .in('id', userIds)
+                    .select('user_id, display_name')
+                    .in('user_id', userIds)
                 : { data: [] };
 
-            const profileMap = new Map((profiles ?? []).map(p => [p.id, p]));
+            const profileMap = new Map((profiles ?? []).map(p => [p.user_id, p]));
             const entriesWithProfiles = (soloEntries ?? []).map(e => ({
                 ...e,
-                profiles: profileMap.get(e.user_id) ?? { display_name: 'User', avatar_url: null },
+                profiles: profileMap.get(e.user_id) ?? { display_name: 'User' },
             }));
 
             // Fetch entry_participants for all fetched entries
@@ -119,8 +119,7 @@ serve(async (req) => {
                         rating,
                         notes,
                         profiles:user_id (
-                            display_name,
-                            avatar_url
+                            display_name
                         )
                     `)
                     .in('entry_id', entryIds)
@@ -159,7 +158,7 @@ serve(async (req) => {
                 };
             });
 
-            // Fetch table nights for this table (revealed or closed)
+            // Fetch table nights for this table (all statuses including active rounds)
             const { data: tableNights, error: nightsError } = await supabase
                 .from('table_nights')
                 .select(`
@@ -169,6 +168,7 @@ serve(async (req) => {
                     status,
                     created_at,
                     revealed_at,
+                    is_async,
                     restaurants (
                         id,
                         name,
@@ -177,7 +177,7 @@ serve(async (req) => {
                     )
                 `)
                 .eq('table_id', tableId)
-                .in('status', ['revealed', 'closed'])
+                .in('status', ['rating', 'revealed', 'closed'])
                 .order('created_at', { ascending: false })
                 .range(offset, offset + limit - 1);
 
@@ -193,8 +193,7 @@ serve(async (req) => {
                             rating,
                             notes,
                             profiles (
-                                display_name,
-                                avatar_url
+                                display_name
                             )
                         `)
                         .eq('table_night_id', night.id);
@@ -237,8 +236,9 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('table-activity error:', error);
+        const details = error instanceof Error ? error.message : JSON.stringify(error);
         return new Response(
-            JSON.stringify({ error: 'Internal Server Error', details: String(error) }),
+            JSON.stringify({ error: 'Internal Server Error', details }),
             { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
     }

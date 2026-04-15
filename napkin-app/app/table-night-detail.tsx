@@ -97,7 +97,7 @@ export default function TableNightDetailScreen() {
                     {/* Header */}
                     <View style={styles.headerSection}>
                         <Text style={[Type.labelSmall, { color: palette.textMuted, letterSpacing: 1.5 }]}>
-                            Table Night · {date}
+                            Round · {date}
                         </Text>
                         <Text
                             style={[
@@ -111,7 +111,7 @@ export default function TableNightDetailScreen() {
                                 },
                             ]}
                         >
-                            Table Night
+                            {nightStatus.restaurants?.name ?? 'Round'}
                         </Text>
                     </View>
 
@@ -177,7 +177,7 @@ export default function TableNightDetailScreen() {
                         <SectionLabel palette={palette}>Who Said What</SectionLabel>
                         <View style={{ gap: Spacing.md }}>
                             {nightStatus.participants.map((p) => (
-                                <ParticipantRow key={p.user_id} participant={p} palette={palette} />
+                                <ParticipantRow key={p.user_id} participant={p} nightId={nightId!} palette={palette} />
                             ))}
                         </View>
                     </View>
@@ -211,11 +211,14 @@ function SectionLabel({ palette, children }: { palette: Palette; children: strin
 
 function ParticipantRow({
     participant,
+    nightId,
     palette,
 }: {
     participant: TableNightParticipant;
+    nightId: string;
     palette: Palette;
 }) {
+    const router = useRouter();
     const name = participant.profiles.display_name;
     const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2);
 
@@ -226,8 +229,18 @@ function ParticipantRow({
         participant.value_rating != null;
 
     return (
-        <View
-            style={[styles.participantCard, { backgroundColor: palette.card }, Shadow.subtle]}
+        <Pressable
+            onPress={() =>
+                router.push({
+                    pathname: '/entry-detail',
+                    params: { nightId, userId: participant.user_id },
+                })
+            }
+            style={({ pressed }) => [
+                styles.participantCard,
+                { backgroundColor: palette.card, opacity: pressed ? 0.8 : 1 },
+                Shadow.subtle,
+            ]}
         >
             {/* Top row: avatar + name + overall score */}
             <View style={styles.participantTop}>
@@ -286,7 +299,7 @@ function ParticipantRow({
                     })}
                 </View>
             )}
-        </View>
+        </Pressable>
     );
 }
 

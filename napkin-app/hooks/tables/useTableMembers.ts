@@ -1,6 +1,7 @@
 /**
  * Hook to fetch members of a specific table.
  * Used by create-entry.tsx for the participant tagging UI.
+ * Queries the DB directly instead of going through the edge function.
  */
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -17,18 +18,20 @@ export interface TableMember {
 }
 
 async function fetchTableMembers(tableId: string): Promise<TableMember[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    const { data, error } = await supabase.functions.invoke(
-        `table-management/${tableId}`,
-        {
-            method: 'GET',
-            headers: session?.access_token
-                ? { Authorization: `Bearer ${session.access_token}` }
-                : undefined,
-        }
-    );
+    const { data, error } = await supabase
+        .from('table_members')
+        .select(`
+            member_id,
+            role,
+            joined_at,
+            profiles:profiles!table_members_member_id_fkey (
+                display_name
+            )
+        `)
+        .eq('table_id', tableId);
+
     if (error) throw error;
-    return data?.data?.members ?? [];
+    return (data as unknown as TableMember[]) ?? [];
 }
 
 export function useTableMembers(tableId: string | null | undefined) {

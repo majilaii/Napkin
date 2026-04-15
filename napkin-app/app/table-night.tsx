@@ -182,12 +182,10 @@ export default function TableNightScreen() {
             await rateMutation.mutateAsync({
                 table_night_id: nightId,
                 rating: Math.round(starRating * 2) / 2,
-                category_ratings: {
-                    vibe: categories.vibe,
-                    flavor: categories.flavor,
-                    service: categories.service,
-                    value: categories.value,
-                },
+                vibe_rating: categories.vibe || undefined,
+                flavor_rating: categories.flavor || undefined,
+                service_rating: categories.service || undefined,
+                value_rating: categories.value || undefined,
             });
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not submit rating');
@@ -244,7 +242,7 @@ export default function TableNightScreen() {
         }
     }
 
-    const restaurantName = 'Table Night';
+    const restaurantName = nightStatus.restaurants?.name ?? 'Round';
 
     return (
         <>

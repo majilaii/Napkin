@@ -22,11 +22,100 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, View, Pressable, Text, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
+import { Colors, Type } from '@/constants/theme';
+import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 
 SplashScreen.preventAutoHideAsync();
+
+function BottomNavBar() {
+  const segments = useSegments();
+  const router = useRouter();
+  const scheme = useScheme() ?? 'light';
+  const palette = Colors[scheme];
+  const insets = useSafeAreaInsets();
+
+  // Only show on tab screens
+  const inTabs = segments[0] === '(tabs)';
+  if (!inTabs) return null;
+
+  // Which tab is active?
+  const activeTab = segments[1] ?? 'tables';
+
+  return (
+    <View style={[navStyles.bar, { backgroundColor: palette.surfaceContainerLow, paddingBottom: insets.bottom > 0 ? insets.bottom : 12 }]}>
+      {/* Tables tab */}
+      <Pressable
+        onPress={() => router.replace('/tables')}
+        style={navStyles.tab}
+      >
+        <Ionicons name="restaurant-outline" size={24} color={activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault} />
+        <Text style={[Type.labelSmall, { color: activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Tables</Text>
+      </Pressable>
+
+      {/* Center + button */}
+      <Pressable
+        onPress={() => router.push('/create-entry')}
+        style={navStyles.addButton}
+      >
+        <View style={[navStyles.addCircle, { backgroundColor: palette.primary }]}>
+          <Ionicons name="add" size={28} color="#fff" />
+        </View>
+      </Pressable>
+
+      {/* Settings tab */}
+      <Pressable
+        onPress={() => router.replace('/settings')}
+        style={navStyles.tab}
+      >
+        <Ionicons name="settings-outline" size={24} color={activeTab === 'settings' ? palette.tabIconSelected : palette.tabIconDefault} />
+        <Text style={[Type.labelSmall, { color: activeTab === 'settings' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Settings</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const navStyles = StyleSheet.create({
+  bar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingTop: 10,
+    borderTopWidth: 0,
+  },
+  tab: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 20,
+    flex: 1,
+  },
+  addButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -22,
+  },
+  addCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+});
 
 function RootLayoutNav() {
   const { session, isLoading } = useAuth();
@@ -47,10 +136,25 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider value={DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="auth" options={{ headerShown: false }} />
-      </Stack>
+      <View style={{ flex: 1 }}>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="auth" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="create-entry"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
+            name="table-night"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
+            name="table-night-detail"
+            options={{ headerShown: false }}
+          />
+        </Stack>
+        <BottomNavBar />
+      </View>
       <StatusBar style="auto" />
     </ThemeProvider>
   );

@@ -28,6 +28,10 @@ export interface CreateEntryInput {
     table_id?: string;
     visibility?: 'private' | 'friends' | 'table' | 'both';
     participant_ids?: string[];
+    vibe_rating?: number | null;
+    flavor_rating?: number | null;
+    service_rating?: number | null;
+    value_rating?: number | null;
 }
 
 async function createEntry(input: CreateEntryInput) {
