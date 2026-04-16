@@ -40,13 +40,23 @@ function timeAgo(dateStr: string): string {
 interface JournalNoteCardProps {
     item: SoloShareActivity;
     palette: Palette;
+    tableId?: string;
 }
 
-export function JournalNoteCard({ item, palette }: JournalNoteCardProps) {
+export function JournalNoteCard({ item, palette, tableId }: JournalNoteCardProps) {
     const router = useRouter();
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
     const ago = timeAgo(item.created_at);
+
+    const handleAuthorPress = () => {
+        if (item.user_id && tableId) {
+            router.push({
+                pathname: '/member/[userId]',
+                params: { userId: item.user_id, tableId },
+            });
+        }
+    };
 
     return (
         <Pressable
@@ -76,12 +86,17 @@ export function JournalNoteCard({ item, palette }: JournalNoteCardProps) {
 
                 {/* Header: "Julian noted  ·  2 hours ago" */}
                 <View style={styles.headerRow}>
-                    <Text style={[styles.headerName, { color: palette.text }]}>
-                        {displayName}{' '}
-                        <Text style={{ fontFamily: 'Manrope_400Regular' }}>
-                            noted
+                    <Pressable
+                        onPress={tableId ? handleAuthorPress : undefined}
+                        hitSlop={{ top: 16, bottom: 16, left: 8, right: 8 }}
+                    >
+                        <Text style={[styles.headerName, { color: palette.text }]}>
+                            {displayName}{' '}
+                            <Text style={{ fontFamily: 'Manrope_400Regular' }}>
+                                noted
+                            </Text>
                         </Text>
-                    </Text>
+                    </Pressable>
                     <Text style={[styles.timeAgo, { color: palette.textMuted }]}>
                         {ago}
                     </Text>

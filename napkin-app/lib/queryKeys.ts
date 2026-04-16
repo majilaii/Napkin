@@ -34,6 +34,11 @@ export const queryKeys = {
         photoPool: (nightId: string) => ['night-photos-pool', nightId] as const,
     },
 
+    // Members (Table-scoped member profiles)
+    members: {
+        profile: (userId: string, tableId: string) => ['members', 'profile', userId, tableId] as const,
+    },
+
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
         tableHistory: (

@@ -406,11 +406,35 @@ export default function EntryDetailScreen() {
                     {/* Header */}
                     <View style={styles.headerSection}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <InitialsAvatar name={displayName} size={36} palette={palette} />
+                            <Pressable
+                                onPress={() => {
+                                    if (entry.user_id && entry.table_id) {
+                                        router.push({
+                                            pathname: '/member/[userId]',
+                                            params: { userId: entry.user_id, tableId: entry.table_id },
+                                        });
+                                    }
+                                }}
+                                hitSlop={8}
+                            >
+                                <InitialsAvatar name={displayName} size={36} palette={palette} />
+                            </Pressable>
                             <View>
-                                <Text style={[Type.titleSmall, { color: palette.text }]}>
-                                    {displayName}
-                                </Text>
+                                <Pressable
+                                    onPress={() => {
+                                        if (entry.user_id && entry.table_id) {
+                                            router.push({
+                                                pathname: '/member/[userId]',
+                                                params: { userId: entry.user_id, tableId: entry.table_id },
+                                            });
+                                        }
+                                    }}
+                                    hitSlop={4}
+                                >
+                                    <Text style={[Type.titleSmall, { color: palette.text }]}>
+                                        {displayName}
+                                    </Text>
+                                </Pressable>
                                 <Text style={[Type.titleSmall, { color: palette.text }]}>
                                     {relativeDate}
                                 </Text>
@@ -418,6 +442,27 @@ export default function EntryDetailScreen() {
                                     {fullDate}
                                     {isRoundEntry ? ' · Round' : ''}
                                 </Text>
+                                {/* View profile link */}
+                                {entry.user_id && entry.table_id && (
+                                    <Pressable
+                                        onPress={() =>
+                                            router.push({
+                                                pathname: '/member/[userId]',
+                                                params: { userId: entry.user_id, tableId: entry.table_id! },
+                                            })
+                                        }
+                                        hitSlop={4}
+                                    >
+                                        <Text
+                                            style={[
+                                                Type.caption,
+                                                { color: palette.primary, marginTop: 2 },
+                                            ]}
+                                        >
+                                            View profile
+                                        </Text>
+                                    </Pressable>
+                                )}
                             </View>
                         </View>
 
