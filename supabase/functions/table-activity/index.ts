@@ -286,10 +286,55 @@ serve(async (req) => {
                 );
             }
 
+            // ── Caller's own reactions on fetched items ────────────────────────
+            // One query each for entries + nights; merged as `my_reactions: string[]`.
+            const entryIdsForReactions = taggedEntries.map((e: { id: string }) => e.id);
+            const nightIdsForReactions = nightsWithParticipants.map((n: { id: string }) => n.id);
+
+            const myReactionsByTarget = new Map<string, string[]>();
+            const targetKey = (targetType: string, targetId: string) =>
+                `${targetType}:${targetId}`;
+
+            if (entryIdsForReactions.length > 0) {
+                const { data: myEntryReactions } = await supabase
+                    .from('post_reactions')
+                    .select('target_id, emoji')
+                    .eq('target_type', 'entry')
+                    .eq('user_id', user.id)
+                    .in('target_id', entryIdsForReactions);
+                for (const r of (myEntryReactions ?? []) as { target_id: string; emoji: string }[]) {
+                    const k = targetKey('entry', r.target_id);
+                    const list = myReactionsByTarget.get(k) ?? [];
+                    list.push(r.emoji);
+                    myReactionsByTarget.set(k, list);
+                }
+            }
+
+            if (nightIdsForReactions.length > 0) {
+                const { data: myNightReactions } = await supabase
+                    .from('post_reactions')
+                    .select('target_id, emoji')
+                    .eq('target_type', 'table_night')
+                    .eq('user_id', user.id)
+                    .in('target_id', nightIdsForReactions);
+                for (const r of (myNightReactions ?? []) as { target_id: string; emoji: string }[]) {
+                    const k = targetKey('table_night', r.target_id);
+                    const list = myReactionsByTarget.get(k) ?? [];
+                    list.push(r.emoji);
+                    myReactionsByTarget.set(k, list);
+                }
+            }
+
             // Merge and sort by date
             const allActivity = [
-                ...nightsWithParticipants,
-                ...taggedEntries,
+                ...nightsWithParticipants.map((n: { id: string }) => ({
+                    ...n,
+                    my_reactions: myReactionsByTarget.get(targetKey('table_night', n.id)) ?? [],
+                })),
+                ...taggedEntries.map((e: { id: string }) => ({
+                    ...e,
+                    my_reactions: myReactionsByTarget.get(targetKey('entry', e.id)) ?? [],
+                })),
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             ].sort((a: any, b: any) =>
                 new Date(b.sort_date).getTime() - new Date(a.sort_date).getTime()

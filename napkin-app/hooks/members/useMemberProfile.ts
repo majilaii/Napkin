@@ -79,7 +79,21 @@ async function fetchMemberProfile(
         `member-profile?${params.toString()}`,
         { method: 'GET', headers },
     );
-    if (error) throw error;
+    if (error) {
+        // FunctionsHttpError keeps the response body on .context — surface
+        // the server-side error message instead of a generic "non-2xx".
+        const ctx = (error as { context?: Response }).context;
+        let serverMessage: string | null = null;
+        if (ctx && typeof ctx.json === 'function') {
+            try {
+                const body = await ctx.json();
+                if (body?.error) serverMessage = body.error;
+            } catch {
+                // ignore — fall through to original error
+            }
+        }
+        throw serverMessage ? new Error(serverMessage) : error;
+    }
     if ((data as any)?.error) throw new Error((data as any).error);
     return (data as { data: MemberProfileData }).data;
 }

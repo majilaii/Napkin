@@ -160,10 +160,20 @@ export default function MemberProfileScreen() {
         return (
             <>
                 <Stack.Screen options={{ headerShown: false }} />
-                <View style={[styles.center, { backgroundColor: palette.background }]}>
+                <View style={[styles.center, { backgroundColor: palette.background, padding: Spacing.lg }]}>
                     <Text style={[Type.body, { color: palette.error }]}>
                         Couldn&apos;t load this profile.
                     </Text>
+                    {error?.message ? (
+                        <Text
+                            style={[
+                                Type.bodySmall,
+                                { color: palette.textMuted, marginTop: Spacing.sm, textAlign: 'center' },
+                            ]}
+                        >
+                            {error.message}
+                        </Text>
+                    ) : null}
                     <Pressable onPress={() => router.back()} style={{ marginTop: Spacing.md }}>
                         <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
                     </Pressable>
