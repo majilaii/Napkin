@@ -187,10 +187,16 @@ export default function TableNightScreen() {
             Alert.alert('Permission needed', 'Camera access is required to take a photo.');
             return;
         }
-        const result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ['images'],
-            quality: 1,
-        });
+        let result;
+        try {
+            result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ['images'],
+                quality: 1,
+            });
+        } catch {
+            Alert.alert('Camera Unavailable', 'Camera is not available on this device. Try choosing from your photo library instead.');
+            return;
+        }
         if (!result.canceled && result.assets[0]) {
             uploadPhoto(result.assets[0].uri);
         }

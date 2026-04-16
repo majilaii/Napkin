@@ -9,7 +9,6 @@
  */
 
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
 import { decode } from 'base64-arraybuffer';
 import { supabase } from '@/lib/supabase';
 
@@ -60,6 +59,7 @@ export async function compressAndUpload(uri: string, userId: string): Promise<st
             {
                 compress: JPEG_QUALITY,
                 format: ImageManipulator.SaveFormat.JPEG,
+                base64: true,
             }
         );
     } catch (err) {
@@ -69,18 +69,14 @@ export async function compressAndUpload(uri: string, userId: string): Promise<st
         );
     }
 
-    // ── Read as base64 (reliable in React Native) ───────────────────────
-    let base64: string;
-    try {
-        base64 = await FileSystem.readAsStringAsync(compressed.uri, {
-            encoding: FileSystem.EncodingType.Base64,
-        });
-    } catch (err) {
+    if (!compressed.base64) {
         throw new PhotoUploadError(
             'compression_failed',
-            `Could not read compressed image: ${String(err)}`
+            'Compressed image did not return base64 data'
         );
     }
+
+    const base64 = compressed.base64;
 
     // ── Size guard ────────────────────────────────────────────────────────
     const byteLength = (base64.length * 3) / 4; // approximate
