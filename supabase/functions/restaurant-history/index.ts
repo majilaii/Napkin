@@ -68,9 +68,110 @@ serve(async (req) => {
         const action = url.searchParams.get('action');
         const restaurantId = url.searchParams.get('restaurant_id');
 
-        if (!restaurantId) return fail('restaurant_id is required', 400);
-
         if (req.method !== 'GET') return fail('Method not allowed', 405);
+
+        // ── Restaurant search ─────────────────────────────────────────────
+        // action=search&q=...
+        // Returns two arrays:
+        //   visitedByMyTables: restaurants your Tables have logged (with table_name, most_recent_activity_at)
+        //   onNapkin: other persisted restaurants matching the query
+        // external_id is where Google Place IDs are stored (renamed from google_place_id in 20251215134700)
+        if (action === 'search') {
+            const q = url.searchParams.get('q')?.trim();
+            if (!q || q.length < 2) return fail('q must be at least 2 characters', 400);
+
+            // Find all table_ids the user is a member of
+            const { data: memberships, error: memberErr } = await supabase
+                .from('table_members')
+                .select('table_id, tables(id, name)')
+                .eq('member_id', user.id);
+            if (memberErr) throw memberErr;
+
+            const tableIds = (memberships ?? []).map((m: any) => m.table_id as string);
+
+            // Tier 1: restaurants persisted in Napkin AND logged by user's Tables
+            // Join through entries or table_nights to find restaurants the user's tables have visited
+            let visitedRestaurants: any[] = [];
+            if (tableIds.length > 0) {
+                // Get restaurant IDs that have entries in user's tables
+                const { data: entryRestaurants, error: entryErr } = await supabase
+                    .from('entries')
+                    .select('restaurant_id, table_id, created_at, tables(name)')
+                    .in('table_id', tableIds)
+                    .not('restaurant_id', 'is', null)
+                    .order('created_at', { ascending: false });
+                if (entryErr) throw entryErr;
+
+                // Get restaurant IDs that have table_nights in user's tables
+                const { data: nightRestaurants, error: nightErr } = await supabase
+                    .from('table_nights')
+                    .select('restaurant_id, table_id, created_at, tables(name)')
+                    .in('table_id', tableIds)
+                    .eq('status', 'revealed')
+                    .not('restaurant_id', 'is', null)
+                    .order('created_at', { ascending: false });
+                if (nightErr) throw nightErr;
+
+                // Build map of restaurant_id → { table_name, most_recent_activity_at }
+                const restaurantTableMap = new Map<string, { table_name: string; most_recent_activity_at: string }>();
+                for (const e of (entryRestaurants ?? [])) {
+                    const rid = e.restaurant_id as string;
+                    const tableName = (e as any).tables?.name as string ?? 'your Table';
+                    const existing = restaurantTableMap.get(rid);
+                    if (!existing || e.created_at > existing.most_recent_activity_at) {
+                        restaurantTableMap.set(rid, { table_name: tableName, most_recent_activity_at: e.created_at });
+                    }
+                }
+                for (const n of (nightRestaurants ?? [])) {
+                    const rid = n.restaurant_id as string;
+                    const tableName = (n as any).tables?.name as string ?? 'your Table';
+                    const existing = restaurantTableMap.get(rid);
+                    if (!existing || n.created_at > existing.most_recent_activity_at) {
+                        restaurantTableMap.set(rid, { table_name: tableName, most_recent_activity_at: n.created_at });
+                    }
+                }
+
+                // Now fetch matching restaurant rows for those IDs
+                if (restaurantTableMap.size > 0) {
+                    const visitedIds = Array.from(restaurantTableMap.keys());
+                    const { data: restaurants, error: restErr } = await supabase
+                        .from('restaurants')
+                        .select('id, name, city, cuisine, photo_url, external_id')
+                        .in('id', visitedIds)
+                        .ilike('name', `%${q}%`)
+                        .limit(10);
+                    if (restErr) throw restErr;
+
+                    visitedRestaurants = (restaurants ?? []).map((r: any) => ({
+                        ...r,
+                        table_name: restaurantTableMap.get(r.id)?.table_name ?? 'your Table',
+                        most_recent_activity_at: restaurantTableMap.get(r.id)?.most_recent_activity_at ?? null,
+                    }));
+                }
+            }
+
+            // Tier 2: other persisted restaurants matching the query (not in tier 1)
+            const visitedIds = visitedRestaurants.map((r: any) => r.id as string);
+            let onNapkinQuery = supabase
+                .from('restaurants')
+                .select('id, name, city, cuisine, photo_url, external_id')
+                .ilike('name', `%${q}%`)
+                .limit(20);
+            if (visitedIds.length > 0) {
+                onNapkinQuery = onNapkinQuery.not('id', 'in', `(${visitedIds.join(',')})`);
+            }
+            const { data: onNapkin, error: onNapkinErr } = await onNapkinQuery;
+            if (onNapkinErr) throw onNapkinErr;
+
+            return json({
+                data: {
+                    visitedByMyTables: visitedRestaurants,
+                    onNapkin: (onNapkin ?? []).slice(0, 10),
+                },
+            });
+        }
+
+        if (!restaurantId) return fail('restaurant_id is required', 400);
 
         // ── Table-scoped history ──────────────────────────────────────────
         if (action === 'table_history') {

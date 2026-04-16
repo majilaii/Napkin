@@ -1,9 +1,12 @@
 /**
  * Settings tab — placeholder with sign-out (the one real thing we need day one).
+ * Also hosts the "My Wishlist" entry point.
  */
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -14,6 +17,7 @@ export default function SettingsScreen() {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const { signOut, user } = useAuth();
+    const router = useRouter();
 
     return (
         <View style={{ flex: 1, backgroundColor: palette.background, paddingTop: insets.top + Spacing.xxl, paddingHorizontal: Spacing.lg }}>
@@ -22,10 +26,33 @@ export default function SettingsScreen() {
                 {user?.email ?? 'Signed in'}
             </Text>
 
+            {/* My Wishlist */}
+            <Pressable
+                onPress={() => router.push('/wishlist')}
+                style={({ pressed }) => ({
+                    marginTop: Spacing.xl,
+                    paddingVertical: Spacing.md,
+                    paddingHorizontal: Spacing.lg,
+                    borderRadius: Radius.md,
+                    backgroundColor: palette.surfaceContainerLow,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    opacity: pressed ? 0.8 : 1,
+                })}
+            >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+                    <Ionicons name="heart-outline" size={20} color={palette.primary} />
+                    <Text style={[Type.titleSmall, { color: palette.text }]}>My Wishlist</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
+            </Pressable>
+
+            {/* Sign out */}
             <Pressable
                 onPress={signOut}
                 style={({ pressed }) => ({
-                    marginTop: Spacing.xl,
+                    marginTop: Spacing.md,
                     paddingVertical: Spacing.md,
                     paddingHorizontal: Spacing.lg,
                     borderRadius: Radius.full,

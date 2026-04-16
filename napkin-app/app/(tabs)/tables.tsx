@@ -15,6 +15,7 @@ import {
     ActivityIndicator,
     Modal,
 } from 'react-native';
+import { WishlistGrid } from '@/components/wishlist';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -33,8 +34,6 @@ import { SoloShareCard } from '@/components/feed/SoloShareCard';
 import { JournalNoteCard } from '@/components/feed/JournalNoteCard';
 import { FilterChipRow, type FilterChip } from '@/components/feed/FilterChipRow';
 import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
-
-type Palette = typeof Colors.light;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -66,6 +65,7 @@ export default function TablesScreen() {
     // Real data
     const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
+    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist'>('activity');
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const hasMultipleTables = (tables?.length ?? 0) > 1;
     const [showTablePicker, setShowTablePicker] = useState(false);
@@ -187,23 +187,10 @@ export default function TablesScreen() {
     const tableName = activeTable.name;
     const isEmpty = !feedLoading && items.length === 0;
 
-    return (
-        <View style={{ flex: 1, backgroundColor: palette.background }}>
-        <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={{
-                paddingTop: insets.top + Spacing.sm,
-                paddingBottom: 100,
-            }}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-                <RefreshControl
-                    refreshing={isRefetching}
-                    onRefresh={refetch}
-                    tintColor={palette.primary}
-                />
-            }
-        >
+    // Shared header + segmented control (rendered above both tabs)
+    // paddingTop is applied by the parent: contentContainerStyle for ScrollView, inline for wishlist
+    const headerAndControl = (
+        <>
             {/* Header */}
             <View style={styles.header}>
                 <Pressable
@@ -229,7 +216,66 @@ export default function TablesScreen() {
                 </Pressable>
             </View>
 
-            {/* Filter chips */}
+            {/* Activity | Wishlist segmented control */}
+            <View style={styles.segmentedControl}>
+                {(['activity', 'wishlist'] as const).map((tab) => {
+                    const isActive = activeTab === tab;
+                    return (
+                        <Pressable
+                            key={tab}
+                            onPress={() => setActiveTab(tab)}
+                            style={[
+                                styles.segmentButton,
+                                isActive && { backgroundColor: palette.primary },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    Type.label,
+                                    {
+                                        color: isActive ? '#fff' : palette.textSecondary,
+                                        fontSize: 10,
+                                    },
+                                ]}
+                            >
+                                {tab === 'activity' ? 'Activity' : 'Wishlist'}
+                            </Text>
+                        </Pressable>
+                    );
+                })}
+            </View>
+        </>
+    );
+
+    return (
+        <View style={{ flex: 1, backgroundColor: palette.background }}>
+            {/* Wishlist tab — FlatList owns its own scrolling, so render outside ScrollView */}
+            {activeTab === 'wishlist' ? (
+                <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
+                    {headerAndControl}
+                    {activeTable && (
+                        <WishlistGrid mode="table" tableId={activeTable.id} />
+                    )}
+                </View>
+            ) : (
+        <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{
+                paddingTop: insets.top + Spacing.sm,
+                paddingBottom: 100,
+            }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+                <RefreshControl
+                    refreshing={isRefetching}
+                    onRefresh={refetch}
+                    tintColor={palette.primary}
+                />
+            }
+        >
+            {headerAndControl}
+
+            {/* Filter chips — activity tab only */}
             {items.length > 0 && (
                 <FilterChipRow
                     chips={filterChips}
@@ -374,6 +420,7 @@ export default function TablesScreen() {
                 </View>
             )}
         </ScrollView>
+            )}
 
             {/* Table picker dropdown */}
             <Modal
@@ -471,5 +518,20 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.sm,
         gap: Spacing.xl + Spacing.md,
+    },
+    segmentedControl: {
+        flexDirection: 'row',
+        marginHorizontal: Spacing.lg,
+        marginBottom: Spacing.sm,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0,0,0,0.06)',
+        padding: 3,
+        gap: 2,
+    },
+    segmentButton: {
+        flex: 1,
+        paddingVertical: 6,
+        borderRadius: 17,
+        alignItems: 'center',
     },
 });

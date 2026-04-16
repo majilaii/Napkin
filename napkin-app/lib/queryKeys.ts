@@ -50,6 +50,18 @@ export const queryKeys = {
         byUser: (userId: string) => ['personalTable', userId] as const,
     },
 
+    // Search (restaurant search — Places + local DB)
+    search: {
+        places: (q: string) => ['search', 'places', q] as const,
+        persisted: (q: string, userId: string) => ['search', 'persisted', userId, q] as const,
+    },
+
+    // Wishlist (personal saves + derived Table overlap view)
+    wishlist: {
+        personal: (userId: string) => ['wishlist', 'personal', userId] as const,
+        table: (tableId: string) => ['wishlist', 'table', tableId] as const,
+    },
+
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
         tableHistory: (

@@ -25,8 +25,11 @@ import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 
 import { Colors, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/providers/AuthProvider';
 import { useTableRestaurantHistory, type Visit } from '@/hooks/restaurants/useRestaurantHistory';
 import { VisitListRow } from '@/components/restaurants';
+import { WishlistHeartButton } from '@/components/wishlist';
+import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 
 type Palette = typeof Colors.light;
 
@@ -35,10 +38,14 @@ export default function RestaurantScreen() {
     const palette = Colors[scheme ?? 'light'] as Palette;
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const { user } = useAuth();
     const { id, tableId } = useLocalSearchParams<{ id: string; tableId?: string }>();
 
     const { data, isLoading, error, fetchStatus } = useTableRestaurantHistory(id, tableId ?? null);
     const isActuallyLoading = isLoading && fetchStatus === 'fetching';
+
+    // Warm the wishlist cache so WishlistHeartButton's useIsWishlisted can derive saved state
+    useMyWishlist(user?.id);
 
     const handleVisitPress = (visit: Visit) => {
         if (visit.kind === 'round' && visit.table_night_id) {
@@ -63,6 +70,13 @@ export default function RestaurantScreen() {
                     <Pressable onPress={() => router.back()} hitSlop={12}>
                         <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
                     </Pressable>
+                    {id && (
+                        <WishlistHeartButton
+                            restaurantId={id}
+                            userId={user?.id}
+                            size={26}
+                        />
+                    )}
                 </View>
 
                 <ScrollView
@@ -255,6 +269,9 @@ const styles = StyleSheet.create({
     topBar: {
         paddingHorizontal: Spacing.lg,
         paddingVertical: Spacing.md,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
     },
     heroImage: {
         width: '100%',
