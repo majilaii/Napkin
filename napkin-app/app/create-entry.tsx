@@ -15,7 +15,6 @@ import {
     ActivityIndicator,
     Alert,
     ActionSheetIOS,
-    Image,
     KeyboardAvoidingView,
     Platform,
 } from 'react-native';
@@ -32,6 +31,7 @@ import { useTables } from '@/hooks/tables/useTables';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { useStartRound } from '@/hooks/tables/useStartRound';
 import { StarRating } from '@/components/StarRating';
+import { MultiPhotoRow } from '@/components/MultiPhotoRow';
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
 
@@ -939,69 +939,14 @@ export default function CreateEntryScreen() {
                             Photos
                         </Text>
 
-                        <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.photoRow}
-                        >
-                            {photos.map((slot, index) => (
-                                <View key={slot.id} style={styles.photoThumbContainer}>
-                                    <Image
-                                        source={{ uri: slot.localUri }}
-                                        style={styles.photoThumb}
-                                        resizeMode="cover"
-                                    />
-
-                                    {/* Hero label on first photo */}
-                                    {index === 0 && (
-                                        <View style={[styles.heroLabel, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
-                                            <Text style={{ color: '#fff', fontSize: 8, fontFamily: 'Manrope_600SemiBold' }}>
-                                                HERO
-                                            </Text>
-                                        </View>
-                                    )}
-
-                                    {/* Uploading overlay */}
-                                    {slot.uploading && (
-                                        <View style={styles.thumbOverlay}>
-                                            <ActivityIndicator color="#fff" size="small" />
-                                        </View>
-                                    )}
-
-                                    {/* Error overlay */}
-                                    {slot.error && !slot.uploading && (
-                                        <Pressable
-                                            onPress={() => handleRetryPhoto(slot.id)}
-                                            style={[styles.thumbOverlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]}
-                                        >
-                                            <Ionicons name="refresh-outline" size={18} color="#fff" />
-                                        </Pressable>
-                                    )}
-
-                                    {/* Dismiss button */}
-                                    <Pressable
-                                        onPress={() => handleRemovePhoto(slot.id)}
-                                        style={[styles.photoRemoveButton, { backgroundColor: palette.text }]}
-                                        hitSlop={8}
-                                    >
-                                        <Ionicons name="close" size={10} color={palette.background} />
-                                    </Pressable>
-                                </View>
-                            ))}
-
-                            {/* "+" add slot — hidden when at max */}
-                            {photos.length < MAX_PHOTOS && (
-                                <Pressable
-                                    onPress={handlePhotoPress}
-                                    style={[styles.photoAddSlot, { backgroundColor: palette.surfaceContainerLow }]}
-                                >
-                                    <Ionicons name="camera-outline" size={22} color={palette.textMuted} />
-                                    <Text style={[Type.caption, { color: palette.textMuted, marginTop: 2, fontSize: 10 }]}>
-                                        Add
-                                    </Text>
-                                </Pressable>
-                            )}
-                        </ScrollView>
+                        <MultiPhotoRow
+                            photos={photos}
+                            maxPhotos={MAX_PHOTOS}
+                            onAdd={handlePhotoPress}
+                            onRemove={handleRemovePhoto}
+                            onRetry={handleRetryPhoto}
+                            palette={palette}
+                        />
                     </View>
 
                     {/* Submit */}
@@ -1154,53 +1099,5 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.md,
         borderRadius: Radius.lg,
         alignItems: 'center',
-    },
-    // Photo upload
-    photoRow: {
-        flexDirection: 'row',
-        gap: Spacing.sm,
-        paddingRight: Spacing.sm,
-    },
-    photoThumbContainer: {
-        position: 'relative',
-        width: 80,
-        height: 80,
-    },
-    photoThumb: {
-        width: 80,
-        height: 80,
-        borderRadius: Radius.md,
-    },
-    heroLabel: {
-        position: 'absolute',
-        bottom: 4,
-        left: 4,
-        paddingHorizontal: 4,
-        paddingVertical: 2,
-        borderRadius: Radius.sm,
-    },
-    thumbOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        borderRadius: Radius.md,
-        backgroundColor: 'rgba(0,0,0,0.35)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    photoRemoveButton: {
-        position: 'absolute',
-        top: 4,
-        right: 4,
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    photoAddSlot: {
-        width: 80,
-        height: 80,
-        borderRadius: Radius.md,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
 });

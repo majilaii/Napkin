@@ -18,7 +18,6 @@ import {
     ActionSheetIOS,
     Platform,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 // eslint-disable-next-line import/no-unresolved
@@ -28,6 +27,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { MultiPhotoRow } from '@/components/MultiPhotoRow';
 import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
 import {
     useTableNightStatus,
@@ -594,61 +594,14 @@ export default function TableNightScreen() {
                                     Photos (optional)
                                 </Text>
 
-                                <ScrollView
-                                    horizontal
-                                    showsHorizontalScrollIndicator={false}
-                                    contentContainerStyle={styles.photoRow}
-                                >
-                                    {photos.map((slot, index) => (
-                                        <View key={slot.id} style={styles.photoThumbContainer}>
-                                            <Image
-                                                source={{ uri: slot.localUri }}
-                                                style={styles.photoThumb}
-                                                contentFit="cover"
-                                            />
-                                            {index === 0 && (
-                                                <View style={[styles.heroLabel, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
-                                                    <Text style={{ color: '#fff', fontSize: 8, fontFamily: 'Manrope_600SemiBold' }}>
-                                                        HERO
-                                                    </Text>
-                                                </View>
-                                            )}
-                                            {slot.uploading && (
-                                                <View style={styles.thumbOverlay}>
-                                                    <ActivityIndicator color="#fff" size="small" />
-                                                </View>
-                                            )}
-                                            {slot.error && !slot.uploading && (
-                                                <Pressable
-                                                    onPress={() => handleRetryPhoto(slot.id)}
-                                                    style={[styles.thumbOverlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]}
-                                                >
-                                                    <Text style={{ color: '#fff', fontSize: 18 }}>↺</Text>
-                                                </Pressable>
-                                            )}
-                                            <Pressable
-                                                onPress={() => handleRemovePhoto(slot.id)}
-                                                style={styles.photoDismiss}
-                                            >
-                                                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>×</Text>
-                                            </Pressable>
-                                        </View>
-                                    ))}
-                                    {photos.length < MAX_PHOTOS && (
-                                        <Pressable
-                                            onPress={handlePhotoPress}
-                                            style={[
-                                                styles.photoAddSlot,
-                                                { borderColor: palette.outlineVariant },
-                                            ]}
-                                        >
-                                            <Text style={{ fontSize: 22, marginBottom: 2 }}>📷</Text>
-                                            <Text style={[Type.bodySmall, { color: palette.textSecondary, fontSize: 11 }]}>
-                                                Add
-                                            </Text>
-                                        </Pressable>
-                                    )}
-                                </ScrollView>
+                                <MultiPhotoRow
+                                    photos={photos}
+                                    maxPhotos={MAX_PHOTOS}
+                                    onAdd={handlePhotoPress}
+                                    onRemove={handleRemovePhoto}
+                                    onRetry={handleRetryPhoto}
+                                    palette={palette}
+                                />
                             </View>
                         </View>
                     )}
@@ -934,55 +887,5 @@ const styles = StyleSheet.create({
     ctaButton: {
         height: 56, borderRadius: 9999,
         alignItems: 'center', justifyContent: 'center',
-    },
-    photoRow: {
-        flexDirection: 'row',
-        gap: Spacing.sm,
-        paddingRight: Spacing.sm,
-    },
-    photoThumbContainer: {
-        position: 'relative',
-        width: 80,
-        height: 80,
-    },
-    photoThumb: {
-        width: 80,
-        height: 80,
-        borderRadius: Radius.md,
-    },
-    heroLabel: {
-        position: 'absolute',
-        bottom: 4,
-        left: 4,
-        paddingHorizontal: 4,
-        paddingVertical: 2,
-        borderRadius: Radius.sm,
-    },
-    thumbOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        borderRadius: Radius.md,
-        backgroundColor: 'rgba(0,0,0,0.35)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    photoDismiss: {
-        position: 'absolute',
-        top: 4,
-        right: 4,
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    photoAddSlot: {
-        width: 80,
-        height: 80,
-        borderRadius: Radius.md,
-        borderWidth: 1.5,
-        borderStyle: 'dashed',
-        alignItems: 'center',
-        justifyContent: 'center',
     },
 });

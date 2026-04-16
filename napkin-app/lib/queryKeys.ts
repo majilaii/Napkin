@@ -31,5 +31,6 @@ export const queryKeys = {
         participants: (nightId: string) =>
             ['tableNight', nightId, 'participants'] as const,
         roundContext: (nightId: string) => ['roundContext', nightId] as const,
+        photoPool: (nightId: string) => ['night-photos-pool', nightId] as const,
     },
 } as const;
