@@ -4,7 +4,18 @@
 
 Napkin is a mobile app for private friend groups ("Tables") to share restaurant experiences and rate restaurants together. Think of it as a trusted supper club — your close friends post where they ate, you trust their recs, and when you dine out together you play **Table Night**: a real-time group rating reveal game.
 
-**The Table is the product.** Not solo logging, not a public feed, not a review platform. A small trusted group that shares food experiences and occasionally turns dinner into a game.
+**The Table is the product.** Not a public feed, not a review platform. A small trusted group that shares food experiences and occasionally turns dinner into a game.
+
+**Solo logging is allowed** via a per-user "personal Table" (an auto-created Table where `is_personal = true`) that acts as the user's private diary. Everything in Napkin still belongs to a Table — the personal Table is just a Table of one.
+
+**External context is allowed as a reference signal**, not as a social layer:
+- Google's rating from the Places API may be shown on a restaurant page as a secondary number.
+- An anonymized aggregate ("N Napkin Tables averaged this X.X") is a *future possibility* — do not build it until its absence is felt after real use.
+- No public feed, no cross-Table review visibility, no Napkin-wide consensus layer in v1. Ratings are scoped to the Tables you belong to.
+
+**Future escape hatch (deferred, do not design now):** if users demand broader visibility, a Table may opt-in to become public. The door exists; it stays closed for now.
+
+This decision has been re-litigated multiple times. If you find yourself pulled toward a public/universal layer, re-read this section — the answer has been the same every time.
 
 ## Current State
 

@@ -38,7 +38,8 @@ import {
 import { useTableRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
 import { PreviouslyHereBanner, DeltaChip } from '@/components/restaurants';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
-import { ReactionBar, CommentThread } from '@/components/posts';
+import { CommentThread } from '@/components/posts';
+import { FeedActionRow } from '@/components/feed';
 
 type Palette = typeof Colors.light;
 
@@ -195,7 +196,7 @@ export default function TableNightDetailScreen() {
     const queryClient = useQueryClient();
     const { width: screenWidth } = useWindowDimensions();
 
-    const { nightId } = useLocalSearchParams<{ nightId: string }>();
+    const { nightId, focus } = useLocalSearchParams<{ nightId: string; focus?: string }>();
     const { data: nightStatus, isLoading } = useTableNightStatus(nightId);
     const isRevealedOrClosed =
         nightStatus?.status === 'revealed' || nightStatus?.status === 'closed';
@@ -465,25 +466,34 @@ export default function TableNightDetailScreen() {
                         queryClient={queryClient}
                     />
 
-                    {/* Reactions + Comments — only when revealed */}
+                    {/* Action row + Replies — only when revealed */}
                     {isRevealedOrClosed && nightId && (
                         <View style={styles.section}>
-                            <SectionLabel palette={palette}>Reactions</SectionLabel>
-                            <ReactionBar
+                            <FeedActionRow
                                 targetType="table_night"
                                 targetId={nightId}
-                                reactions={interactions?.reactions ?? []}
+                                topEmojis={interactions?.counts.top_emojis ?? []}
+                                reactionCount={interactions?.counts.reactions ?? 0}
+                                commentCount={interactions?.counts.comments ?? 0}
+                                myReactions={
+                                    user
+                                        ? (interactions?.reactions ?? [])
+                                              .filter((r) => r.user_id === user.id)
+                                              .map((r) => r.emoji)
+                                        : []
+                                }
+                                palette={palette}
+                                detailPathname="/table-night-detail"
+                                detailParams={{ nightId }}
+                                tableId={nightStatus?.table_id ?? undefined}
                             />
-                        </View>
-                    )}
-
-                    {isRevealedOrClosed && nightId && (
-                        <View style={styles.section}>
+                            <View style={{ height: Spacing.lg }} />
                             <SectionLabel palette={palette}>Replies</SectionLabel>
                             <CommentThread
                                 targetType="table_night"
                                 targetId={nightId}
                                 comments={interactions?.comments ?? []}
+                                autoFocusComposer={focus === 'reply'}
                             />
                         </View>
                     )}

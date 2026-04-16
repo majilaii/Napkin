@@ -1,4 +1,5 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { parsePayload, clamp, type SearchPayload } from './utils.ts';
 
@@ -11,6 +12,30 @@ serve(async req => {
     }
 
     try {
+        // ── Auth gate ──────────────────────────────────────────────────────
+        const authHeader = req.headers.get('Authorization');
+        if (!authHeader) {
+            return new Response(
+                JSON.stringify({ error: 'Missing Authorization header' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+            );
+        }
+
+        const token = authHeader.replace('Bearer ', '');
+        const supabase = createClient(
+            Deno.env.get('SUPABASE_URL') ?? '',
+            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+        );
+
+        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+        if (userError || !user) {
+            return new Response(
+                JSON.stringify({ error: 'Unauthorized' }),
+                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+            );
+        }
+
+        // ── API key check ──────────────────────────────────────────────────
         if (!GOOGLE_PLACES_API_KEY) {
             return new Response(
                 JSON.stringify({ error: 'GOOGLE_PLACES_API_KEY is not configured' }),
@@ -36,7 +61,6 @@ serve(async req => {
         const requestBody: any = {
             textQuery: query,
             maxResultCount: clamp(payload.limit ?? 5, 1, 20),
-            // See: https://developers.google.com/maps/documentation/places/web-service/text-search
         };
 
         // Add location bias if coordinates provided
@@ -47,17 +71,23 @@ serve(async req => {
                         latitude: payload.latitude,
                         longitude: payload.longitude,
                     },
-                    radius: payload.radius ?? 5000, // Default 5km radius
+                    radius: payload.radius ?? 5000,
                 },
             };
         }
 
+        // Extended field mask to include rating, price, and address components
         const fieldMask = [
             'places.id',
             'places.displayName',
             'places.formattedAddress',
+            'places.addressComponents',
             'places.location',
             'places.types',
+            'places.primaryType',
+            'places.rating',
+            'places.userRatingCount',
+            'places.priceLevel',
             'places.websiteUri',
             'places.googleMapsUri',
             'places.photos',
@@ -94,22 +124,56 @@ serve(async req => {
             );
         }
 
-        // Transform to match existing frontend interface
-        const sanitized = (responseBody?.places ?? []).map((place: any) => ({
-            id: place.id, // Google Place ID
-            name: place.displayName?.text ?? null,
-            formattedAddress: place.formattedAddress ?? null,
-            locality: null, // Google doesn't separate these in basic response
-            region: null,
-            country: null,
-            latitude: place.location?.latitude ?? null,
-            longitude: place.location?.longitude ?? null,
-            categories: place.types ?? [],
-            distance: null, // Google doesn't return distance in text search
-            website: place.websiteUri ?? null,
-            link: place.googleMapsUri ?? null,
-            photoReference: place.photos?.[0]?.name ?? null,
-        }));
+        // Transform to normalized shape for Napkin clients
+        const sanitized = (responseBody?.places ?? []).map((place: any) => {
+            // Extract city and country from addressComponents
+            let city: string | null = null;
+            let country: string | null = null;
+            if (Array.isArray(place.addressComponents)) {
+                for (const component of place.addressComponents) {
+                    const types: string[] = component.types ?? [];
+                    if (types.includes('locality') || types.includes('postal_town')) {
+                        city = component.longText ?? component.shortText ?? null;
+                    }
+                    if (types.includes('country')) {
+                        country = component.longText ?? component.shortText ?? null;
+                    }
+                }
+            }
+
+            // Map Google price level enum to integer (1-4)
+            const priceLevelMap: Record<string, number> = {
+                PRICE_LEVEL_FREE: 0,
+                PRICE_LEVEL_INEXPENSIVE: 1,
+                PRICE_LEVEL_MODERATE: 2,
+                PRICE_LEVEL_EXPENSIVE: 3,
+                PRICE_LEVEL_VERY_EXPENSIVE: 4,
+            };
+            const priceLevel = place.priceLevel
+                ? (priceLevelMap[place.priceLevel] ?? null)
+                : null;
+
+            // Derive cuisine from primaryType (best available signal)
+            const cuisine: string | null = place.primaryType ?? null;
+
+            return {
+                id: place.id, // Google Place ID (= external_id in our schema)
+                name: place.displayName?.text ?? null,
+                formattedAddress: place.formattedAddress ?? null,
+                city,
+                country,
+                latitude: place.location?.latitude ?? null,
+                longitude: place.location?.longitude ?? null,
+                categories: place.types ?? [],
+                cuisine,
+                googleRating: place.rating ?? null,
+                googleRatingCount: place.userRatingCount ?? null,
+                priceLevel,
+                photoReference: place.photos?.[0]?.name ?? null,
+                website: place.websiteUri ?? null,
+                link: place.googleMapsUri ?? null,
+            };
+        });
 
         return new Response(JSON.stringify({ data: sanitized }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },

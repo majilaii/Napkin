@@ -23,7 +23,7 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { type TableNightActivity } from '@/hooks/tables/useTableActivity';
 import { Avatar } from './Avatar';
 import { PulseDot } from './PulseDot';
-import { InteractionPill } from './InteractionPill';
+import { FeedActionRow } from './FeedActionRow';
 
 type Palette = typeof Colors.light;
 
@@ -246,13 +246,19 @@ export function TableNightCard({ item, palette, tableId }: TableNightCardProps) 
                         </View>
                     )}
 
-                    {/* Interaction pill */}
-                    {((item.reaction_count ?? 0) >= 1 || (item.comment_count ?? 0) >= 1) && (
-                        <InteractionPill
+                    {/* Action row — only after reveal (reactions locked during live round) */}
+                    {!isActive && (
+                        <FeedActionRow
+                            targetType="table_night"
+                            targetId={item.id}
                             topEmojis={item.top_emojis ?? []}
-                            commentCount={item.comment_count ?? 0}
                             reactionCount={item.reaction_count ?? 0}
-                            textColor={palette.textMuted}
+                            commentCount={item.comment_count ?? 0}
+                            myReactions={item.my_reactions ?? []}
+                            palette={palette}
+                            detailPathname="/table-night-detail"
+                            detailParams={{ nightId: item.id }}
+                            tableId={tableId}
                         />
                     )}
                 </View>

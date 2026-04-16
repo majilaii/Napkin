@@ -25,7 +25,8 @@ import { useUserRestaurantHistory } from '@/hooks/restaurants/useRestaurantHisto
 import { PreviouslyHereBanner } from '@/components/restaurants';
 import { useAuth } from '@/providers/AuthProvider';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
-import { ReactionBar, CommentThread } from '@/components/posts';
+import { CommentThread } from '@/components/posts';
+import { FeedActionRow } from '@/components/feed';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -233,10 +234,11 @@ export default function EntryDetailScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const { entryId, nightId, userId } = useLocalSearchParams<{
+    const { entryId, nightId, userId, focus } = useLocalSearchParams<{
         entryId?: string;
         nightId?: string;
         userId?: string;
+        focus?: string;
     }>();
     const { data: entry, isLoading, error } = useEntryDetail(entryId, nightId, userId);
     // Round context for banner — enabled only once we know the entry's table_night_id
@@ -679,23 +681,28 @@ export default function EntryDetailScreen() {
                         </View>
                     ) : null}
 
-                    {/* Reactions */}
+                    {/* Action row + Replies */}
                     {entry.id && (
                         <View style={styles.section}>
-                            <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
-                                Reactions
-                            </Text>
-                            <ReactionBar
+                            <FeedActionRow
                                 targetType="entry"
                                 targetId={entry.id}
-                                reactions={interactions?.reactions ?? []}
+                                topEmojis={interactions?.counts.top_emojis ?? []}
+                                reactionCount={interactions?.counts.reactions ?? 0}
+                                commentCount={interactions?.counts.comments ?? 0}
+                                myReactions={
+                                    viewer
+                                        ? (interactions?.reactions ?? [])
+                                              .filter((r) => r.user_id === viewer.id)
+                                              .map((r) => r.emoji)
+                                        : []
+                                }
+                                palette={palette}
+                                detailPathname="/entry-detail"
+                                detailParams={{ entryId: entry.id }}
+                                tableId={entry.table_id ?? undefined}
                             />
-                        </View>
-                    )}
-
-                    {/* Replies */}
-                    {entry.id && (
-                        <View style={styles.section}>
+                            <View style={{ height: Spacing.lg }} />
                             <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
                                 Replies
                             </Text>
@@ -703,6 +710,7 @@ export default function EntryDetailScreen() {
                                 targetType="entry"
                                 targetId={entry.id}
                                 comments={interactions?.comments ?? []}
+                                autoFocusComposer={focus === 'reply'}
                             />
                         </View>
                     )}

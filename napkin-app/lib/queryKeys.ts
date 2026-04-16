@@ -45,6 +45,11 @@ export const queryKeys = {
             ['postInteractions', targetType, targetId] as const,
     },
 
+    // Personal Table (diary table auto-created on signup)
+    personalTable: {
+        byUser: (userId: string) => ['personalTable', userId] as const,
+    },
+
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
         tableHistory: (

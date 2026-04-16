@@ -18,7 +18,7 @@ import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
-import { InteractionPill } from './InteractionPill';
+import { FeedActionRow } from './FeedActionRow';
 
 type Palette = typeof Colors.light;
 
@@ -156,15 +156,19 @@ export function JournalNoteCard({ item, palette, tableId }: JournalNoteCardProps
                         </View>
                     )}
 
-                    {/* Interaction pill */}
-                    {((item.reaction_count ?? 0) >= 1 || (item.comment_count ?? 0) >= 1) && (
-                        <InteractionPill
-                            topEmojis={item.top_emojis ?? []}
-                            commentCount={item.comment_count ?? 0}
-                            reactionCount={item.reaction_count ?? 0}
-                            textColor={palette.textMuted}
-                        />
-                    )}
+                    {/* Action row — like / reply / summary */}
+                    <FeedActionRow
+                        targetType="entry"
+                        targetId={item.id}
+                        topEmojis={item.top_emojis ?? []}
+                        reactionCount={item.reaction_count ?? 0}
+                        commentCount={item.comment_count ?? 0}
+                        myReactions={item.my_reactions ?? []}
+                        palette={palette}
+                        detailPathname="/entry-detail"
+                        detailParams={{ entryId: item.id }}
+                        tableId={tableId}
+                    />
                 </View>
             </View>
         </Pressable>

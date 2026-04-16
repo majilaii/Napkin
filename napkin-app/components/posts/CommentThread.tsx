@@ -7,7 +7,7 @@
  * - 2000 char limit; counter shows once user passes 1900
  * - Optimistic send via useAddComment
  */
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -26,12 +26,14 @@ interface CommentThreadProps {
     targetType: TargetType;
     targetId: string;
     comments: Comment[];
+    /** When true, focus the composer on mount (used when opened via "Reply" tap). */
+    autoFocusComposer?: boolean;
 }
 
 const MAX_CHARS = 2000;
 const COUNTER_THRESHOLD = 1900;
 
-export function CommentThread({ targetType, targetId, comments }: CommentThreadProps) {
+export function CommentThread({ targetType, targetId, comments, autoFocusComposer }: CommentThreadProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const addComment = useAddComment();
@@ -52,6 +54,13 @@ export function CommentThread({ targetType, targetId, comments }: CommentThreadP
         if (!failed.client_nonce) return;
         discardFailed({ targetType, targetId, clientNonce: failed.client_nonce });
     };
+
+    useEffect(() => {
+        if (autoFocusComposer) {
+            const t = setTimeout(() => inputRef.current?.focus(), 250);
+            return () => clearTimeout(t);
+        }
+    }, [autoFocusComposer]);
 
     const trimmed = body.trim();
     const canSend = trimmed.length >= 1 && !addComment.isPending;
