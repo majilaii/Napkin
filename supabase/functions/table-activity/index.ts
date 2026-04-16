@@ -85,6 +85,9 @@ serve(async (req) => {
                         created_at,
                         table_night_id,
                         photo_url,
+                        reaction_count,
+                        comment_count,
+                        top_emojis,
                         restaurants (
                             id,
                             name,
@@ -225,6 +228,9 @@ serve(async (req) => {
                         created_at,
                         revealed_at,
                         is_async,
+                        reaction_count,
+                        comment_count,
+                        top_emojis,
                         restaurants (
                             id,
                             name,

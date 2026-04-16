@@ -35,7 +35,8 @@ export default function RestaurantScreen() {
     const router = useRouter();
     const { id, tableId } = useLocalSearchParams<{ id: string; tableId?: string }>();
 
-    const { data, isLoading, error } = useTableRestaurantHistory(id, tableId ?? null);
+    const { data, isLoading, error, fetchStatus } = useTableRestaurantHistory(id, tableId ?? null);
+    const isActuallyLoading = isLoading && fetchStatus === 'fetching';
 
     const handleVisitPress = (visit: Visit) => {
         if (visit.kind === 'round' && visit.table_night_id) {
@@ -159,7 +160,7 @@ export default function RestaurantScreen() {
                     )}
 
                     {/* Loading / error states */}
-                    {isLoading && (
+                    {isActuallyLoading && (
                         <View style={{ paddingVertical: Spacing.xl, alignItems: 'center' }}>
                             <ActivityIndicator color={palette.primary} />
                         </View>
@@ -173,7 +174,7 @@ export default function RestaurantScreen() {
                     )}
 
                     {/* Visits list */}
-                    {!isLoading && data && (
+                    {!isActuallyLoading && data && (
                         <View style={styles.section}>
                             <Text
                                 style={[

@@ -23,6 +23,7 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { type TableNightActivity } from '@/hooks/tables/useTableActivity';
 import { Avatar } from './Avatar';
 import { PulseDot } from './PulseDot';
+import { InteractionPill } from './InteractionPill';
 
 type Palette = typeof Colors.light;
 
@@ -243,6 +244,16 @@ export function TableNightCard({ item, palette, tableId }: TableNightCardProps) 
                                 {'\u201D'}
                             </Text>
                         </View>
+                    )}
+
+                    {/* Interaction pill */}
+                    {((item.reaction_count ?? 0) >= 1 || (item.comment_count ?? 0) >= 1) && (
+                        <InteractionPill
+                            topEmojis={item.top_emojis ?? []}
+                            commentCount={item.comment_count ?? 0}
+                            reactionCount={item.reaction_count ?? 0}
+                            textColor={palette.textMuted}
+                        />
                     )}
                 </View>
             </View>

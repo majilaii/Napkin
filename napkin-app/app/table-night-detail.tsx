@@ -37,6 +37,8 @@ import {
 } from '@/hooks/tables/useTableNight';
 import { useTableRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
 import { PreviouslyHereBanner, DeltaChip } from '@/components/restaurants';
+import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
+import { ReactionBar, CommentThread } from '@/components/posts';
 
 type Palette = typeof Colors.light;
 
@@ -197,6 +199,16 @@ export default function TableNightDetailScreen() {
     const { data: nightStatus, isLoading } = useTableNightStatus(nightId);
     const isRevealedOrClosed =
         nightStatus?.status === 'revealed' || nightStatus?.status === 'closed';
+
+    // Post interactions — only fetch + subscribe after reveal
+    const { data: interactions } = usePostInteractions(
+        isRevealedOrClosed ? 'table_night' : null,
+        isRevealedOrClosed ? nightId : null,
+    );
+    usePostInteractionsRealtime({
+        targetType: isRevealedOrClosed ? 'table_night' : null,
+        targetId: isRevealedOrClosed ? nightId : null,
+    });
     const { data: participantPhotoUrls } = useNightEntryPhotos(
         isRevealedOrClosed ? nightId : null
     );
@@ -452,6 +464,29 @@ export default function TableNightDetailScreen() {
                         onPhotoPress={setLightboxPhoto}
                         queryClient={queryClient}
                     />
+
+                    {/* Reactions + Comments — only when revealed */}
+                    {isRevealedOrClosed && nightId && (
+                        <View style={styles.section}>
+                            <SectionLabel palette={palette}>Reactions</SectionLabel>
+                            <ReactionBar
+                                targetType="table_night"
+                                targetId={nightId}
+                                reactions={interactions?.reactions ?? []}
+                            />
+                        </View>
+                    )}
+
+                    {isRevealedOrClosed && nightId && (
+                        <View style={styles.section}>
+                            <SectionLabel palette={palette}>Replies</SectionLabel>
+                            <CommentThread
+                                targetType="table_night"
+                                targetId={nightId}
+                                comments={interactions?.comments ?? []}
+                            />
+                        </View>
+                    )}
 
                     {/* Footer */}
                     <View style={styles.section}>

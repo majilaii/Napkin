@@ -39,6 +39,12 @@ export const queryKeys = {
         profile: (userId: string, tableId: string) => ['members', 'profile', userId, tableId] as const,
     },
 
+    // Post Interactions (reactions + comments on table_nights and entries)
+    postInteractions: {
+        all: (targetType: string, targetId: string) =>
+            ['postInteractions', targetType, targetId] as const,
+    },
+
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
         tableHistory: (
