@@ -41,12 +41,14 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@types/react@~19.2.10",
         "npm:agent-base@^7.1.4",
         "npm:bin-links@6",
         "npm:chownr@3",
         "npm:cmd-shim@8",
         "npm:data-uri-to-buffer@^4.0.1",
         "npm:debug@^4.4.3",
+        "npm:expo@^55.0.14",
         "npm:fetch-blob@^3.2.0",
         "npm:formdata-polyfill@^4.0.10",
         "npm:https-proxy-agent@^7.0.6",
@@ -63,6 +65,7 @@
         "npm:signal-exit@^4.1.0",
         "npm:supabase@^2.58.5",
         "npm:tar@^7.5.2",
+        "npm:typescript@~5.9.2",
         "npm:web-streams-polyfill@^3.3.3",
         "npm:write-file-atomic@7",
         "npm:yallist@5"
