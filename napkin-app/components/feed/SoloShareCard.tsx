@@ -25,15 +25,17 @@ import { useRouter } from 'expo-router';
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { Avatar } from './Avatar';
+import { InteractionPill } from './InteractionPill';
 
 type Palette = typeof Colors.light;
 
 interface SoloShareCardProps {
     item: SoloShareActivity;
     palette: Palette;
+    tableId?: string;
 }
 
-export function SoloShareCard({ item, palette }: SoloShareCardProps) {
+export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
     const router = useRouter();
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
@@ -42,6 +44,15 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
 
     const handlePress = () =>
         router.push({ pathname: '/entry-detail', params: { entryId: item.id } });
+
+    const handleAuthorPress = () => {
+        if (item.user_id && tableId) {
+            router.push({
+                pathname: '/member/[userId]',
+                params: { userId: item.user_id, tableId },
+            });
+        }
+    };
 
     return (
         <Pressable
@@ -53,14 +64,16 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
                 opacity: pressed ? 0.8 : 1,
             })}
         >
-            {/* Left: Tilted avatar */}
-            <View
-                style={[
+            {/* Left: Tilted avatar — tappable to member profile */}
+            <Pressable
+                onPress={tableId ? handleAuthorPress : undefined}
+                style={({ pressed }) => [
                     styles.avatarFrame,
                     {
                         backgroundColor: palette.secondaryContainer,
                         transform: [{ rotate: '-3deg' }],
                         shadowColor: palette.text,
+                        opacity: pressed && tableId ? 0.75 : 1,
                     },
                 ]}
             >
@@ -70,7 +83,7 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
                     size={56}
                     palette={palette}
                 />
-            </View>
+            </Pressable>
 
             {/* Right: Text card */}
             <View
@@ -171,6 +184,16 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
                             {'\u201C'}{item.content}{'\u201D'}
                         </Text>
                     ) : null}
+
+                    {/* Interaction pill */}
+                    {((item.reaction_count ?? 0) >= 1 || (item.comment_count ?? 0) >= 1) && (
+                        <InteractionPill
+                            topEmojis={item.top_emojis ?? []}
+                            commentCount={item.comment_count ?? 0}
+                            reactionCount={item.reaction_count ?? 0}
+                            textColor={palette.textMuted}
+                        />
+                    )}
                 </View>
             </View>
         </Pressable>

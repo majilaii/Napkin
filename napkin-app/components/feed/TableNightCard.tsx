@@ -23,6 +23,7 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { type TableNightActivity } from '@/hooks/tables/useTableActivity';
 import { Avatar } from './Avatar';
 import { PulseDot } from './PulseDot';
+import { InteractionPill } from './InteractionPill';
 
 type Palette = typeof Colors.light;
 
@@ -35,11 +36,12 @@ function formatShortDate(dateStr: string | null): string {
 interface TableNightCardProps {
     item: TableNightActivity;
     palette: Palette;
+    tableId?: string;
 }
 
 const MAX_VISIBLE_AVATARS = 3;
 
-export function TableNightCard({ item, palette }: TableNightCardProps) {
+export function TableNightCard({ item, palette, tableId }: TableNightCardProps) {
     const router = useRouter();
     const isActive = item.status === 'rating';
     const photoUrl = item.restaurants?.photo_url ?? null;
@@ -158,8 +160,18 @@ export function TableNightCard({ item, palette }: TableNightCardProps) {
                     {visibleParticipants.length > 0 && (
                         <View style={styles.avatarRow}>
                             {visibleParticipants.map((p, i) => (
-                                <View
+                                <Pressable
                                     key={p.user_id}
+                                    onPress={
+                                        tableId
+                                            ? () =>
+                                                  router.push({
+                                                      pathname: '/member/[userId]',
+                                                      params: { userId: p.user_id, tableId },
+                                                  })
+                                            : undefined
+                                    }
+                                    hitSlop={6}
                                     style={[
                                         styles.avatarWrapper,
                                         {
@@ -175,7 +187,7 @@ export function TableNightCard({ item, palette }: TableNightCardProps) {
                                         size={32}
                                         palette={palette}
                                     />
-                                </View>
+                                </Pressable>
                             ))}
                             {overflowCount > 0 && (
                                 <View
@@ -232,6 +244,16 @@ export function TableNightCard({ item, palette }: TableNightCardProps) {
                                 {'\u201D'}
                             </Text>
                         </View>
+                    )}
+
+                    {/* Interaction pill */}
+                    {((item.reaction_count ?? 0) >= 1 || (item.comment_count ?? 0) >= 1) && (
+                        <InteractionPill
+                            topEmojis={item.top_emojis ?? []}
+                            commentCount={item.comment_count ?? 0}
+                            reactionCount={item.reaction_count ?? 0}
+                            textColor={palette.textMuted}
+                        />
                     )}
                 </View>
             </View>

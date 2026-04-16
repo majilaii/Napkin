@@ -24,6 +24,8 @@ import { useRoundContext } from '@/hooks/tables/useTableNight';
 import { useUserRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
 import { PreviouslyHereBanner } from '@/components/restaurants';
 import { useAuth } from '@/providers/AuthProvider';
+import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
+import { ReactionBar, CommentThread } from '@/components/posts';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -239,6 +241,16 @@ export default function EntryDetailScreen() {
     const { data: entry, isLoading, error } = useEntryDetail(entryId, nightId, userId);
     // Round context for banner — enabled only once we know the entry's table_night_id
     const { data: roundContext } = useRoundContext(entry?.table_night_id ?? null);
+
+    // Post interactions — available immediately on entries (no reveal gate)
+    const { data: interactions } = usePostInteractions(
+        entry?.id ? 'entry' : null,
+        entry?.id ?? null,
+    );
+    usePostInteractionsRealtime({
+        targetType: entry?.id ? 'entry' : null,
+        targetId: entry?.id ?? null,
+    });
     // entry_photos for carousel (resolved after entry loads)
     const { data: entryPhotoUrls } = useEntryPhotos(entry?.id);
     // Viewer's personal history at this restaurant (cross-Table, excludes this entry)
@@ -406,11 +418,35 @@ export default function EntryDetailScreen() {
                     {/* Header */}
                     <View style={styles.headerSection}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <InitialsAvatar name={displayName} size={36} palette={palette} />
+                            <Pressable
+                                onPress={() => {
+                                    if (entry.user_id && entry.table_id) {
+                                        router.push({
+                                            pathname: '/member/[userId]',
+                                            params: { userId: entry.user_id, tableId: entry.table_id },
+                                        });
+                                    }
+                                }}
+                                hitSlop={8}
+                            >
+                                <InitialsAvatar name={displayName} size={36} palette={palette} />
+                            </Pressable>
                             <View>
-                                <Text style={[Type.titleSmall, { color: palette.text }]}>
-                                    {displayName}
-                                </Text>
+                                <Pressable
+                                    onPress={() => {
+                                        if (entry.user_id && entry.table_id) {
+                                            router.push({
+                                                pathname: '/member/[userId]',
+                                                params: { userId: entry.user_id, tableId: entry.table_id },
+                                            });
+                                        }
+                                    }}
+                                    hitSlop={4}
+                                >
+                                    <Text style={[Type.titleSmall, { color: palette.text }]}>
+                                        {displayName}
+                                    </Text>
+                                </Pressable>
                                 <Text style={[Type.titleSmall, { color: palette.text }]}>
                                     {relativeDate}
                                 </Text>
@@ -418,6 +454,27 @@ export default function EntryDetailScreen() {
                                     {fullDate}
                                     {isRoundEntry ? ' · Round' : ''}
                                 </Text>
+                                {/* View profile link */}
+                                {entry.user_id && entry.table_id && (
+                                    <Pressable
+                                        onPress={() =>
+                                            router.push({
+                                                pathname: '/member/[userId]',
+                                                params: { userId: entry.user_id, tableId: entry.table_id! },
+                                            })
+                                        }
+                                        hitSlop={4}
+                                    >
+                                        <Text
+                                            style={[
+                                                Type.caption,
+                                                { color: palette.primary, marginTop: 2 },
+                                            ]}
+                                        >
+                                            View profile
+                                        </Text>
+                                    </Pressable>
+                                )}
                             </View>
                         </View>
 
@@ -621,6 +678,34 @@ export default function EntryDetailScreen() {
                             </View>
                         </View>
                     ) : null}
+
+                    {/* Reactions */}
+                    {entry.id && (
+                        <View style={styles.section}>
+                            <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
+                                Reactions
+                            </Text>
+                            <ReactionBar
+                                targetType="entry"
+                                targetId={entry.id}
+                                reactions={interactions?.reactions ?? []}
+                            />
+                        </View>
+                    )}
+
+                    {/* Replies */}
+                    {entry.id && (
+                        <View style={styles.section}>
+                            <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
+                                Replies
+                            </Text>
+                            <CommentThread
+                                targetType="entry"
+                                targetId={entry.id}
+                                comments={interactions?.comments ?? []}
+                            />
+                        </View>
+                    )}
                 </ScrollView>
             </View>
         </>

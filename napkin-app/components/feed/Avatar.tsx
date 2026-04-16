@@ -1,10 +1,13 @@
 /**
  * Avatar — initials-based circle avatar with deterministic tint.
  * Extracted from tables.tsx for reuse across feed components.
+ *
+ * Optional `onPress` prop: wraps the visual in a Pressable with
+ * a 44x44pt minimum tap target (hitSlop). When omitted, renders as a View.
  */
 
 import React from 'react';
-import { View, Text, Image } from 'react-native';
+import { View, Text, Image, Pressable } from 'react-native';
 import { Colors } from '@/constants/theme';
 
 type Palette = typeof Colors.light;
@@ -14,9 +17,10 @@ interface AvatarProps {
     url: string | null;
     size: number;
     palette: Palette;
+    onPress?: () => void;
 }
 
-export function Avatar({ name, url, size, palette }: AvatarProps) {
+export function Avatar({ name, url, size, palette, onPress }: AvatarProps) {
     const initials = name
         .split(' ')
         .map((n) => n[0])
@@ -40,9 +44,12 @@ export function Avatar({ name, url, size, palette }: AvatarProps) {
         justifyContent: 'center' as const,
     };
 
-    if (url) return <Image source={{ uri: url }} style={baseStyle} />;
+    // Ensure tap target is at least 44x44pt via hitSlop
+    const hitSlop = size < 44 ? Math.ceil((44 - size) / 2) : 0;
 
-    return (
+    const visual = url ? (
+        <Image source={{ uri: url }} style={baseStyle} />
+    ) : (
         <View style={baseStyle}>
             <Text
                 style={{
@@ -55,4 +62,18 @@ export function Avatar({ name, url, size, palette }: AvatarProps) {
             </Text>
         </View>
     );
+
+    if (onPress) {
+        return (
+            <Pressable
+                onPress={onPress}
+                hitSlop={hitSlop}
+                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+            >
+                {visual}
+            </Pressable>
+        );
+    }
+
+    return visual;
 }

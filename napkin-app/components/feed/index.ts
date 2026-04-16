@@ -10,3 +10,4 @@ export { FilterChipRow, type FilterChip } from './FilterChipRow';
 export { DateSectionHeader } from './DateSectionHeader';
 export { CompactEntryRow } from './CompactEntryRow';
 export { ActiveRoundsShelf } from './ActiveRoundsShelf';
+export { InteractionPill } from './InteractionPill';

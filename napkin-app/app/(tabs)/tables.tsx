@@ -301,6 +301,7 @@ export default function TablesScreen() {
                                     key={`active-${item.id}`}
                                     item={item}
                                     palette={palette}
+                                    tableId={activeTable?.id}
                                 />
                             ))}
                         </View>
@@ -325,6 +326,7 @@ export default function TablesScreen() {
                                                       key={`tn-${item.id}`}
                                                       item={item}
                                                       palette={palette}
+                                                      tableId={activeTable?.id}
                                                   />
                                               );
                                           }
@@ -335,6 +337,7 @@ export default function TablesScreen() {
                                                       key={`note-${item.id}`}
                                                       item={solo}
                                                       palette={palette}
+                                                      tableId={activeTable?.id}
                                                   />
                                               );
                                           }
@@ -343,6 +346,7 @@ export default function TablesScreen() {
                                                   key={`solo-${item.id}`}
                                                   item={solo}
                                                   palette={palette}
+                                                  tableId={activeTable?.id}
                                               />
                                           );
                                       })}

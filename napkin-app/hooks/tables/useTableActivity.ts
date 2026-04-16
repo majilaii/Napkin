@@ -18,6 +18,9 @@ export interface SoloShareActivity {
     sort_date: string;
     photo_url: string | null;
     photo_count?: number;
+    reaction_count?: number;
+    comment_count?: number;
+    top_emojis?: Array<{ emoji: string; count: number; last_reacted_at: string }>;
     restaurants: {
         id: string;
         name: string;
@@ -41,6 +44,9 @@ export interface TableNightActivity {
     is_async: boolean;
     sort_date: string;
     average_rating: number | null;
+    reaction_count?: number;
+    comment_count?: number;
+    top_emojis?: Array<{ emoji: string; count: number; last_reacted_at: string }>;
     restaurants: {
         id: string;
         name: string;

@@ -37,6 +37,8 @@ import {
 } from '@/hooks/tables/useTableNight';
 import { useTableRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
 import { PreviouslyHereBanner, DeltaChip } from '@/components/restaurants';
+import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
+import { ReactionBar, CommentThread } from '@/components/posts';
 
 type Palette = typeof Colors.light;
 
@@ -197,6 +199,16 @@ export default function TableNightDetailScreen() {
     const { data: nightStatus, isLoading } = useTableNightStatus(nightId);
     const isRevealedOrClosed =
         nightStatus?.status === 'revealed' || nightStatus?.status === 'closed';
+
+    // Post interactions — only fetch + subscribe after reveal
+    const { data: interactions } = usePostInteractions(
+        isRevealedOrClosed ? 'table_night' : null,
+        isRevealedOrClosed ? nightId : null,
+    );
+    usePostInteractionsRealtime({
+        targetType: isRevealedOrClosed ? 'table_night' : null,
+        targetId: isRevealedOrClosed ? nightId : null,
+    });
     const { data: participantPhotoUrls } = useNightEntryPhotos(
         isRevealedOrClosed ? nightId : null
     );
@@ -431,6 +443,8 @@ export default function TableNightDetailScreen() {
                                     key={p.user_id}
                                     participant={p}
                                     nightId={nightId!}
+                                    tableId={nightStatus.table_id}
+                                    canTapProfile={isRevealedOrClosed}
                                     palette={palette}
                                     photoUrls={participantPhotoUrls?.[p.user_id] ?? []}
                                 />
@@ -450,6 +464,29 @@ export default function TableNightDetailScreen() {
                         onPhotoPress={setLightboxPhoto}
                         queryClient={queryClient}
                     />
+
+                    {/* Reactions + Comments — only when revealed */}
+                    {isRevealedOrClosed && nightId && (
+                        <View style={styles.section}>
+                            <SectionLabel palette={palette}>Reactions</SectionLabel>
+                            <ReactionBar
+                                targetType="table_night"
+                                targetId={nightId}
+                                reactions={interactions?.reactions ?? []}
+                            />
+                        </View>
+                    )}
+
+                    {isRevealedOrClosed && nightId && (
+                        <View style={styles.section}>
+                            <SectionLabel palette={palette}>Replies</SectionLabel>
+                            <CommentThread
+                                targetType="table_night"
+                                targetId={nightId}
+                                comments={interactions?.comments ?? []}
+                            />
+                        </View>
+                    )}
 
                     {/* Footer */}
                     <View style={styles.section}>
@@ -794,17 +831,30 @@ function SummarySentence({
 function ParticipantRow({
     participant,
     nightId,
+    tableId,
+    canTapProfile,
     palette,
     photoUrls,
 }: {
     participant: TableNightParticipant;
     nightId: string;
+    tableId: string;
+    canTapProfile: boolean;
     palette: Palette;
     photoUrls: string[];
 }) {
     const router = useRouter();
     const name = participant.profiles.display_name;
     const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2);
+
+    const handleProfilePress = () => {
+        if (canTapProfile && tableId) {
+            router.push({
+                pathname: '/member/[userId]',
+                params: { userId: participant.user_id, tableId },
+            });
+        }
+    };
 
     // Waiting state: participant hasn't submitted yet
     const isWaiting = participant.rating === null && !participant.ready;
@@ -864,15 +914,19 @@ function ParticipantRow({
         >
             {/* Top row: avatar + name + overall score */}
             <View style={styles.participantTop}>
-                <View
+                <Pressable
+                    onPress={canTapProfile ? handleProfilePress : undefined}
+                    hitSlop={canTapProfile ? 8 : 0}
                     style={[styles.participantAvatar, { backgroundColor: palette.secondaryContainer }]}
                 >
                     <Text style={{ fontSize: 12, fontFamily: 'Manrope_700Bold', color: palette.text }}>
                         {initials}
                     </Text>
-                </View>
+                </Pressable>
                 <View style={{ flex: 1, gap: Spacing.xs }}>
-                    <Text style={[Type.titleSmall, { color: palette.text }]}>{name}</Text>
+                    <Pressable onPress={canTapProfile ? handleProfilePress : undefined} hitSlop={4}>
+                        <Text style={[Type.titleSmall, { color: palette.text }]}>{name}</Text>
+                    </Pressable>
                     {/* Dish chip */}
                     {participant.dish_description ? (
                         <View
