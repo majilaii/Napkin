@@ -269,10 +269,16 @@ export default function CreateEntryScreen() {
             );
             return;
         }
-        const result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ['images'],
-            quality: 1,
-        });
+        let result;
+        try {
+            result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ['images'],
+                quality: 1,
+            });
+        } catch {
+            Alert.alert('Camera Unavailable', 'Camera is not available on this device. Try choosing from your photo library instead.');
+            return;
+        }
         if (!result.canceled && result.assets[0]) {
             const uri = result.assets[0].uri;
             setPhotoUri(uri);
