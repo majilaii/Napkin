@@ -22,6 +22,7 @@ export interface StartRoundInput {
     notes?: string;
     dish_description?: string;
     photo_url?: string;
+    photo_urls?: string[];
     vibe_rating?: number | null;
     flavor_rating?: number | null;
     service_rating?: number | null;
@@ -42,6 +43,7 @@ async function startRound(input: StartRoundInput) {
             notes: input.notes,
             dish_description: input.dish_description,
             photo_url: input.photo_url,
+            photo_urls: input.photo_urls,
             vibe_rating: input.vibe_rating,
             flavor_rating: input.flavor_rating,
             service_rating: input.service_rating,

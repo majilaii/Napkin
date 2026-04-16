@@ -141,6 +141,20 @@ serve(async (req) => {
                         .in('entry_id', entryIds)
                     : { data: [] };
 
+                // Fetch entry_photos counts for all fetched entries
+                const { data: entryPhotos } = entryIds.length > 0
+                    ? await supabase
+                        .from('entry_photos')
+                        .select('entry_id')
+                        .in('entry_id', entryIds)
+                    : { data: [] };
+
+                // Build a count map: entry_id -> number of photos
+                const photoCountMap = new Map<string, number>();
+                for (const ep of (entryPhotos ?? []) as { entry_id: string }[]) {
+                    photoCountMap.set(ep.entry_id, (photoCountMap.get(ep.entry_id) ?? 0) + 1);
+                }
+
                 // Group participants by entry_id
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const participantsByEntry = new Map<string, any[]>();
@@ -155,6 +169,7 @@ serve(async (req) => {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 taggedEntries = (entriesWithProfiles as any[]).map((entry) => {
                     const participants = participantsByEntry.get(entry.id) ?? [];
+                    const photoCount = photoCountMap.get(entry.id) ?? 0;
                     if (participants.length > 1) {
                         const ratings = participants
                             .filter((p: { rating: number | null }) => p.rating !== null)
@@ -168,12 +183,14 @@ serve(async (req) => {
                             participants,
                             average_rating: average,
                             sort_date: entry.visited_at || entry.created_at,
+                            photo_count: photoCount,
                         };
                     }
                     return {
                         ...entry,
                         type: 'solo_share' as const,
                         sort_date: entry.visited_at || entry.created_at,
+                        photo_count: photoCount,
                     };
                 });
             }

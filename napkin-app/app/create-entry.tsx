@@ -39,6 +39,17 @@ import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/
 
 type PostMode = 'solo' | 'round';
 
+interface PhotoSlot {
+    id: string;
+    localUri: string;
+    publicUrl: string | null;
+    uploading: boolean;
+    error: string | null;
+    uploadGen: number;
+}
+
+const MAX_PHOTOS = 6;
+
 interface PlaceResult {
     id: string;
     name: string;
@@ -122,15 +133,11 @@ export default function CreateEntryScreen() {
     const [notes, setNotes] = useState('');
     const [dish, setDish] = useState('');
 
-    // Photo upload state
-    const [photoUri, setPhotoUri] = useState<string | null>(null);
-    const [photoPublicUrl, setPhotoPublicUrl] = useState<string | null>(null);
-    const [photoUploading, setPhotoUploading] = useState(false);
-    const [photoError, setPhotoError] = useState<string | null>(null);
-    const photoPublicUrlRef = useRef<string | null>(null);
-    const uploadGenRef = useRef(0);
+    // Multi-photo upload state
+    const [photos, setPhotos] = useState<PhotoSlot[]>([]);
+    const uploadGenRefs = useRef(new Map<string, number>());
 
-    const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photoUploading;
+    const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photos.some(p => p.uploading);
     const isSubmitting = createEntry.isPending || startRound.isPending;
 
     // ── Debounced search ──────────────────────────────────────────────────
@@ -192,51 +199,96 @@ export default function CreateEntryScreen() {
 
     // ── Photo upload ──────────────────────────────────────────────────────
 
-    // Keep ref in sync so cleanup always has the current URL
+    // Keep a ref to current photos for cleanup — avoids stale closure in unmount effect
+    const photosRef = useRef(photos);
     useEffect(() => {
-        photoPublicUrlRef.current = photoPublicUrl;
-    }, [photoPublicUrl]);
+        photosRef.current = photos;
+    }, [photos]);
 
-    // Clean up orphaned upload if user exits without submitting
+    // Clean up orphaned uploads if user exits without submitting
     useEffect(() => {
         return () => {
-            if (photoPublicUrlRef.current) {
-                removeUploadedPhoto(photoPublicUrlRef.current).catch(() => {});
+            for (const slot of photosRef.current) {
+                if (slot.publicUrl) {
+                    removeUploadedPhoto(slot.publicUrl).catch(() => {});
+                }
             }
         };
     }, []);
 
-    const uploadPhoto = async (uri: string) => {
+    const startUploadForSlot = useCallback(async (slotId: string, uri: string) => {
         if (!user?.id) return;
-        const gen = ++uploadGenRef.current;
-        setPhotoUploading(true);
-        setPhotoError(null);
+        // Increment gen for this slot
+        const gen = (uploadGenRefs.current.get(slotId) ?? 0) + 1;
+        uploadGenRefs.current.set(slotId, gen);
+
+        setPhotos(prev => prev.map(s => s.id === slotId
+            ? { ...s, uploading: true, error: null }
+            : s
+        ));
+
         try {
             const url = await compressAndUpload(uri, user.id);
-            // Stale upload — user dismissed photo before this completed
-            if (gen !== uploadGenRef.current) {
+            // Check if still current (slot not removed, gen not incremented)
+            if (uploadGenRefs.current.get(slotId) !== gen) {
                 removeUploadedPhoto(url).catch(() => {});
                 return;
             }
-            setPhotoPublicUrl(url);
+            setPhotos(prev => prev.map(s => s.id === slotId
+                ? { ...s, publicUrl: url, uploading: false, uploadGen: gen }
+                : s
+            ));
         } catch (err) {
-            if (gen !== uploadGenRef.current) return;
-            if (err instanceof PhotoUploadError) {
-                if (err.code === 'too_large') {
-                    setPhotoError('Photo is too large. Please choose a smaller image.');
-                } else {
-                    setPhotoError('Upload failed. Tap to retry.');
-                }
-            } else {
-                setPhotoError('Upload failed. Tap to retry.');
+            if (uploadGenRefs.current.get(slotId) !== gen) return;
+            let errorMsg = 'Upload failed. Tap to retry.';
+            if (err instanceof PhotoUploadError && err.code === 'too_large') {
+                errorMsg = 'Photo is too large. Please choose a smaller image.';
             }
-            setPhotoPublicUrl(null);
-        } finally {
-            if (gen === uploadGenRef.current) {
-                setPhotoUploading(false);
-            }
+            setPhotos(prev => prev.map(s => s.id === slotId
+                ? { ...s, uploading: false, error: errorMsg }
+                : s
+            ));
         }
-    };
+    }, [user?.id]);
+
+    const addPhotoSlot = useCallback((uri: string) => {
+        setPhotos(prev => {
+            if (prev.length >= MAX_PHOTOS) return prev;
+            const slotId = `photo-${Date.now()}-${Math.random()}`;
+            const newSlot: PhotoSlot = {
+                id: slotId,
+                localUri: uri,
+                publicUrl: null,
+                uploading: true,
+                error: null,
+                uploadGen: 0,
+            };
+            // Kick off upload asynchronously
+            setTimeout(() => startUploadForSlot(slotId, uri), 0);
+            return [...prev, newSlot];
+        });
+    }, [startUploadForSlot]);
+
+    const handleRemovePhoto = useCallback((slotId: string) => {
+        // Invalidate in-flight upload for this slot
+        const currentGen = uploadGenRefs.current.get(slotId) ?? 0;
+        uploadGenRefs.current.set(slotId, currentGen + 1);
+
+        setPhotos(prev => {
+            const slot = prev.find(s => s.id === slotId);
+            if (slot?.publicUrl) {
+                removeUploadedPhoto(slot.publicUrl).catch(() => {});
+            }
+            return prev.filter(s => s.id !== slotId);
+        });
+    }, []);
+
+    const handleRetryPhoto = useCallback((slotId: string) => {
+        const slot = photos.find(s => s.id === slotId);
+        if (slot) {
+            startUploadForSlot(slotId, slot.localUri);
+        }
+    }, [photos, startUploadForSlot]);
 
     const handlePhotoPress = () => {
         if (Platform.OS === 'ios') {
@@ -280,11 +332,7 @@ export default function CreateEntryScreen() {
             return;
         }
         if (!result.canceled && result.assets[0]) {
-            const uri = result.assets[0].uri;
-            setPhotoUri(uri);
-            setPhotoPublicUrl(null);
-            setPhotoError(null);
-            await uploadPhoto(uri);
+            addPhotoSlot(result.assets[0].uri);
         }
     };
 
@@ -303,24 +351,8 @@ export default function CreateEntryScreen() {
             quality: 1,
         });
         if (!result.canceled && result.assets[0]) {
-            const uri = result.assets[0].uri;
-            setPhotoUri(uri);
-            setPhotoPublicUrl(null);
-            setPhotoError(null);
-            await uploadPhoto(uri);
+            addPhotoSlot(result.assets[0].uri);
         }
-    };
-
-    const handleRemovePhoto = async () => {
-        // Invalidate any in-flight upload so its callback becomes a no-op
-        uploadGenRef.current++;
-        if (photoPublicUrl) {
-            removeUploadedPhoto(photoPublicUrl).catch(() => {});
-        }
-        setPhotoUri(null);
-        setPhotoPublicUrl(null);
-        setPhotoUploading(false);
-        setPhotoError(null);
     };
 
     // ── Submit ────────────────────────────────────────────────────────────
@@ -357,6 +389,11 @@ export default function CreateEntryScreen() {
 
         const ratingValue = Math.round(rating * 2) / 2;
 
+        // Build ordered photo URLs from uploaded slots
+        const photoUrls = photos
+            .filter(p => p.publicUrl !== null)
+            .map(p => p.publicUrl as string);
+
         try {
             if (!isPersonalTable && postMode === 'round') {
                 // Start a Round
@@ -367,7 +404,7 @@ export default function CreateEntryScreen() {
                     rating: ratingValue,
                     notes: notes.trim() || undefined,
                     dish_description: dish.trim() || undefined,
-                    ...(photoPublicUrl ? { photo_url: photoPublicUrl } : {}),
+                    ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
                     ...secondaryRatings,
                 });
             } else {
@@ -379,13 +416,12 @@ export default function CreateEntryScreen() {
                     dish_description: dish.trim() || undefined,
                     table_id: selectedTableId ?? undefined,
                     visibility: selectedTableId ? 'table' : 'private',
-                    ...(photoPublicUrl ? { photo_url: photoPublicUrl } : {}),
+                    ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
                     ...secondaryRatings,
                 });
             }
-            // Photo is now persisted — clear so the cleanup effect doesn't delete it
-            setPhotoPublicUrl(null);
-            photoPublicUrlRef.current = null;
+            // Photos are now persisted — clear so cleanup effect doesn't delete them
+            setPhotos([]);
             router.back();
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not save entry');
@@ -394,7 +430,7 @@ export default function CreateEntryScreen() {
         canSubmit, rating, notes, dish, selectedPlace, query,
         selectedTableId, isPersonalTable, postMode, selectedParticipantIds,
         vibeRating, flavorRating, serviceRating, valueRating,
-        photoPublicUrl,
+        photos,
         createEntry, startRound, router,
     ]);
 
@@ -897,72 +933,75 @@ export default function CreateEntryScreen() {
                         />
                     </View>
 
-                    {/* Photo */}
+                    {/* Photos */}
                     <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
                         <Text style={[Type.label, { color: palette.textSecondary }]}>
-                            Photo
+                            Photos
                         </Text>
 
-                        {!photoUri ? (
-                            <Pressable
-                                onPress={handlePhotoPress}
-                                style={[
-                                    styles.photoButton,
-                                    { backgroundColor: palette.surfaceContainerLow },
-                                ]}
-                            >
-                                <Ionicons name="camera-outline" size={22} color={palette.textMuted} />
-                                <Text style={[Type.bodySmall, { color: palette.textMuted, marginLeft: Spacing.sm }]}>
-                                    Add a photo
-                                </Text>
-                            </Pressable>
-                        ) : (
-                            <View style={styles.photoPreviewContainer}>
-                                <Image
-                                    source={{ uri: photoUri }}
-                                    style={[
-                                        styles.photoPreview,
-                                        { borderRadius: Radius.lg },
-                                    ]}
-                                    resizeMode="cover"
-                                />
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.photoRow}
+                        >
+                            {photos.map((slot, index) => (
+                                <View key={slot.id} style={styles.photoThumbContainer}>
+                                    <Image
+                                        source={{ uri: slot.localUri }}
+                                        style={styles.photoThumb}
+                                        resizeMode="cover"
+                                    />
 
-                                {/* Upload state overlay */}
-                                {photoUploading && (
-                                    <View style={[styles.photoOverlay, { borderRadius: Radius.lg }]}>
-                                        <ActivityIndicator color="#fff" />
-                                    </View>
-                                )}
+                                    {/* Hero label on first photo */}
+                                    {index === 0 && (
+                                        <View style={[styles.heroLabel, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
+                                            <Text style={{ color: '#fff', fontSize: 8, fontFamily: 'Manrope_600SemiBold' }}>
+                                                HERO
+                                            </Text>
+                                        </View>
+                                    )}
 
-                                {/* Error state overlay */}
-                                {photoError && !photoUploading && (
+                                    {/* Uploading overlay */}
+                                    {slot.uploading && (
+                                        <View style={styles.thumbOverlay}>
+                                            <ActivityIndicator color="#fff" size="small" />
+                                        </View>
+                                    )}
+
+                                    {/* Error overlay */}
+                                    {slot.error && !slot.uploading && (
+                                        <Pressable
+                                            onPress={() => handleRetryPhoto(slot.id)}
+                                            style={[styles.thumbOverlay, { backgroundColor: 'rgba(0,0,0,0.6)' }]}
+                                        >
+                                            <Ionicons name="refresh-outline" size={18} color="#fff" />
+                                        </Pressable>
+                                    )}
+
+                                    {/* Dismiss button */}
                                     <Pressable
-                                        onPress={() => photoUri && uploadPhoto(photoUri)}
-                                        style={[styles.photoOverlay, { borderRadius: Radius.lg, backgroundColor: 'rgba(0,0,0,0.55)' }]}
+                                        onPress={() => handleRemovePhoto(slot.id)}
+                                        style={[styles.photoRemoveButton, { backgroundColor: palette.text }]}
+                                        hitSlop={8}
                                     >
-                                        <Ionicons name="refresh-outline" size={28} color="#fff" />
-                                        <Text style={{ color: '#fff', fontFamily: 'Manrope_500Medium', fontSize: 11, marginTop: 4, textAlign: 'center' }}>
-                                            Tap to retry
-                                        </Text>
+                                        <Ionicons name="close" size={10} color={palette.background} />
                                     </Pressable>
-                                )}
+                                </View>
+                            ))}
 
-                                {/* Dismiss button */}
+                            {/* "+" add slot — hidden when at max */}
+                            {photos.length < MAX_PHOTOS && (
                                 <Pressable
-                                    onPress={handleRemovePhoto}
-                                    style={[styles.photoRemoveButton, { backgroundColor: palette.text }]}
-                                    hitSlop={8}
+                                    onPress={handlePhotoPress}
+                                    style={[styles.photoAddSlot, { backgroundColor: palette.surfaceContainerLow }]}
                                 >
-                                    <Ionicons name="close" size={14} color={palette.background} />
+                                    <Ionicons name="camera-outline" size={22} color={palette.textMuted} />
+                                    <Text style={[Type.caption, { color: palette.textMuted, marginTop: 2, fontSize: 10 }]}>
+                                        Add
+                                    </Text>
                                 </Pressable>
-                            </View>
-                        )}
-
-                        {photoError && !photoUploading && (
-                            <Text style={[Type.caption, { color: palette.error, marginTop: 2 }]}>
-                                {photoError}
-                            </Text>
-                        )}
+                            )}
+                        </ScrollView>
                     </View>
 
                     {/* Submit */}
@@ -1117,35 +1156,50 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     // Photo upload
-    photoButton: {
+    photoRow: {
         flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
+        gap: Spacing.sm,
+        paddingRight: Spacing.sm,
     },
-    photoPreviewContainer: {
+    photoThumbContainer: {
         position: 'relative',
-        alignSelf: 'stretch',
+        width: 80,
+        height: 80,
     },
-    photoPreview: {
-        width: '100%',
-        aspectRatio: 16 / 9,
+    photoThumb: {
+        width: 80,
+        height: 80,
+        borderRadius: Radius.md,
     },
-    photoOverlay: {
+    heroLabel: {
+        position: 'absolute',
+        bottom: 4,
+        left: 4,
+        paddingHorizontal: 4,
+        paddingVertical: 2,
+        borderRadius: Radius.sm,
+    },
+    thumbOverlay: {
         ...StyleSheet.absoluteFillObject,
+        borderRadius: Radius.md,
         backgroundColor: 'rgba(0,0,0,0.35)',
         alignItems: 'center',
         justifyContent: 'center',
     },
     photoRemoveButton: {
         position: 'absolute',
-        top: Spacing.sm,
-        right: Spacing.sm,
-        width: 24,
-        height: 24,
-        borderRadius: 12,
+        top: 4,
+        right: 4,
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    photoAddSlot: {
+        width: 80,
+        height: 80,
+        borderRadius: Radius.md,
         alignItems: 'center',
         justifyContent: 'center',
     },

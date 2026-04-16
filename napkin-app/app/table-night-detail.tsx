@@ -14,9 +14,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { supabase } from '@/lib/supabase';
 import {
     useTableNightStatus,
     type TableNightParticipant,
@@ -31,6 +33,49 @@ const CATEGORY_LABELS = [
     { key: 'value_rating' as const, label: 'Value', short: '$' },
 ];
 
+// ── Entry photos per participant ───────────────────────────────────────────
+
+async function fetchNightEntryPhotos(nightId: string): Promise<Record<string, string[]>> {
+    // Fetch all entries for this night
+    const { data: entries } = await supabase
+        .from('entries')
+        .select('id, user_id')
+        .eq('table_night_id', nightId);
+
+    if (!entries || entries.length === 0) return {};
+
+    const entryIds = entries.map((e: { id: string }) => e.id);
+
+    // Fetch all photos for these entries
+    const { data: photos } = await supabase
+        .from('entry_photos')
+        .select('entry_id, photo_url, sort_order')
+        .in('entry_id', entryIds)
+        .order('sort_order', { ascending: true });
+
+    // Build a map: user_id -> [photo_url, ...]
+    const entryToUser = new Map(
+        entries.map((e: { id: string; user_id: string }) => [e.id, e.user_id])
+    );
+    const userPhotos: Record<string, string[]> = {};
+    for (const photo of (photos ?? []) as { entry_id: string; photo_url: string }[]) {
+        const userId = entryToUser.get(photo.entry_id);
+        if (!userId) continue;
+        if (!userPhotos[userId]) userPhotos[userId] = [];
+        userPhotos[userId].push(photo.photo_url);
+    }
+    return userPhotos;
+}
+
+function useNightEntryPhotos(nightId: string | null | undefined) {
+    return useQuery({
+        queryKey: ['night-entry-photos', nightId],
+        queryFn: () => fetchNightEntryPhotos(nightId!),
+        enabled: !!nightId,
+        staleTime: 1000 * 60 * 5,
+    });
+}
+
 // ── Screen ─────────────────────────────────────────────────────────────────
 
 export default function TableNightDetailScreen() {
@@ -41,6 +86,9 @@ export default function TableNightDetailScreen() {
 
     const { nightId } = useLocalSearchParams<{ nightId: string }>();
     const { data: nightStatus, isLoading } = useTableNightStatus(nightId);
+    const { data: participantPhotoUrls } = useNightEntryPhotos(
+        nightStatus?.status === 'revealed' ? nightId : null
+    );
 
     if (isLoading || !nightStatus) {
         return (
@@ -211,7 +259,13 @@ export default function TableNightDetailScreen() {
                         <SectionLabel palette={palette}>Who Said What</SectionLabel>
                         <View style={{ gap: Spacing.md }}>
                             {nightStatus.participants.map((p) => (
-                                <ParticipantRow key={p.user_id} participant={p} nightId={nightId!} palette={palette} />
+                                <ParticipantRow
+                                    key={p.user_id}
+                                    participant={p}
+                                    nightId={nightId!}
+                                    palette={palette}
+                                    photoUrls={participantPhotoUrls?.[p.user_id] ?? []}
+                                />
                             ))}
                         </View>
                     </View>
@@ -286,10 +340,12 @@ function ParticipantRow({
     participant,
     nightId,
     palette,
+    photoUrls,
 }: {
     participant: TableNightParticipant;
     nightId: string;
     palette: Palette;
+    photoUrls: string[];
 }) {
     const router = useRouter();
     const name = participant.profiles.display_name;
@@ -421,6 +477,27 @@ function ParticipantRow({
                     })}
                 </View>
             )}
+
+            {/* Photo thumbnail strip */}
+            {photoUrls.length > 0 && (
+                <View style={styles.photoStrip}>
+                    {photoUrls.slice(0, 4).map((url, i) => (
+                        <Image
+                            key={i}
+                            source={{ uri: url }}
+                            style={styles.photoStripThumb}
+                            resizeMode="cover"
+                        />
+                    ))}
+                    {photoUrls.length > 4 && (
+                        <View style={[styles.photoStripThumb, styles.photoStripOverflow, { backgroundColor: palette.surfaceContainerHigh }]}>
+                            <Text style={[Type.caption, { color: palette.textSecondary }]}>
+                                +{photoUrls.length - 4}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+            )}
         </Pressable>
     );
 }
@@ -478,5 +555,20 @@ const styles = StyleSheet.create({
         paddingVertical: 3,
         borderRadius: Radius.sm,
         alignSelf: 'flex-start',
+    },
+    photoStrip: {
+        flexDirection: 'row',
+        gap: Spacing.xs,
+        marginTop: Spacing.sm,
+        marginLeft: 44 + Spacing.md, // offset past avatar
+    },
+    photoStripThumb: {
+        width: 48,
+        height: 48,
+        borderRadius: Radius.sm,
+    },
+    photoStripOverflow: {
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });

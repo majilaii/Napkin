@@ -181,6 +181,7 @@ serve(async (req) => {
                     notes,
                     dish_description,
                     photo_url,
+                    photo_urls,
                     vibe_rating,
                     flavor_rating,
                     service_rating,
@@ -237,8 +238,12 @@ serve(async (req) => {
 
                 if (hostPartError) throw hostPartError;
 
+                // Derive hero photo URL for host entry
+                const startPhotoUrlsArray: string[] = Array.isArray(photo_urls) ? photo_urls : [];
+                const startHeroPhotoUrl = photo_url || startPhotoUrlsArray[0] || null;
+
                 // Create host's journal entry
-                const { error: entryError } = await supabase
+                const { data: hostEntry, error: entryError } = await supabase
                     .from('entries')
                     .insert({
                         user_id: user.id,
@@ -249,14 +254,31 @@ serve(async (req) => {
                         content: notes?.trim() || null,
                         dish_description: dish_description?.trim() || null,
                         visibility: 'table',
-                        ...(photo_url ? { photo_url } : {}),
+                        ...(startHeroPhotoUrl ? { photo_url: startHeroPhotoUrl } : {}),
                         ...(isValidRating(vibe_rating) ? { vibe_rating } : {}),
                         ...(isValidRating(flavor_rating) ? { flavor_rating } : {}),
                         ...(isValidRating(service_rating) ? { service_rating } : {}),
                         ...(isValidRating(value_rating) ? { value_rating } : {}),
-                    });
+                    })
+                    .select('id')
+                    .single();
 
                 if (entryError) throw entryError;
+
+                // Bulk-insert entry_photos for host (non-fatal)
+                if (hostEntry && startPhotoUrlsArray.length > 0) {
+                    const hostPhotoRows = startPhotoUrlsArray.map((url: string, idx: number) => ({
+                        entry_id: hostEntry.id,
+                        photo_url: url,
+                        sort_order: idx,
+                    }));
+                    const { error: hostPhotosError } = await supabase
+                        .from('entry_photos')
+                        .insert(hostPhotoRows);
+                    if (hostPhotosError) {
+                        console.error('entry_photos insert error for host (non-fatal):', hostPhotosError);
+                    }
+                }
 
                 // Create empty participant rows for attendees
                 const attendeeIds: string[] = Array.isArray(participant_ids)
@@ -341,6 +363,7 @@ serve(async (req) => {
                     notes,
                     dish_description,
                     photo_url,
+                    photo_urls,
                     vibe_rating,
                     flavor_rating,
                     service_rating,
@@ -391,7 +414,11 @@ serve(async (req) => {
                     .single();
 
                 if (night) {
-                    const { error: entryError } = await supabase
+                    // Derive hero photo URL for attendee entry
+                    const ratePhotoUrlsArray: string[] = Array.isArray(photo_urls) ? photo_urls : [];
+                    const rateHeroPhotoUrl = photo_url || ratePhotoUrlsArray[0] || null;
+
+                    const { data: attendeeEntry, error: entryError } = await supabase
                         .from('entries')
                         .insert({
                             user_id: user.id,
@@ -402,15 +429,32 @@ serve(async (req) => {
                             content: notes?.trim() || null,
                             dish_description: dish_description?.trim() || null,
                             visibility: 'table',
-                            ...(photo_url ? { photo_url } : {}),
+                            ...(rateHeroPhotoUrl ? { photo_url: rateHeroPhotoUrl } : {}),
                             ...(isValidRating(vibe_rating) ? { vibe_rating } : {}),
                             ...(isValidRating(flavor_rating) ? { flavor_rating } : {}),
                             ...(isValidRating(service_rating) ? { service_rating } : {}),
                             ...(isValidRating(value_rating) ? { value_rating } : {}),
-                        });
+                        })
+                        .select('id')
+                        .single();
 
                     if (entryError) {
                         console.error('Failed to create journal entry for participant:', entryError);
+                    }
+
+                    // Bulk-insert entry_photos for attendee (non-fatal)
+                    if (attendeeEntry && ratePhotoUrlsArray.length > 0) {
+                        const attendeePhotoRows = ratePhotoUrlsArray.map((url: string, idx: number) => ({
+                            entry_id: attendeeEntry.id,
+                            photo_url: url,
+                            sort_order: idx,
+                        }));
+                        const { error: attendeePhotosError } = await supabase
+                            .from('entry_photos')
+                            .insert(attendeePhotoRows);
+                        if (attendeePhotosError) {
+                            console.error('entry_photos insert error for attendee (non-fatal):', attendeePhotosError);
+                        }
                     }
                 }
 
