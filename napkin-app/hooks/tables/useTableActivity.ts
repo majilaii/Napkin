@@ -21,6 +21,7 @@ export interface SoloShareActivity {
     reaction_count?: number;
     comment_count?: number;
     top_emojis?: Array<{ emoji: string; count: number; last_reacted_at: string }>;
+    my_reactions?: string[];
     restaurants: {
         id: string;
         name: string;
@@ -47,6 +48,7 @@ export interface TableNightActivity {
     reaction_count?: number;
     comment_count?: number;
     top_emojis?: Array<{ emoji: string; count: number; last_reacted_at: string }>;
+    my_reactions?: string[];
     restaurants: {
         id: string;
         name: string;

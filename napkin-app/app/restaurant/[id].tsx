@@ -20,6 +20,7 @@ import {
     View,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 
 import { Colors, Shadow, Spacing, Type } from '@/constants/theme';
@@ -33,6 +34,7 @@ export default function RestaurantScreen() {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
     const router = useRouter();
+    const insets = useSafeAreaInsets();
     const { id, tableId } = useLocalSearchParams<{ id: string; tableId?: string }>();
 
     const { data, isLoading, error, fetchStatus } = useTableRestaurantHistory(id, tableId ?? null);
@@ -57,8 +59,8 @@ export default function RestaurantScreen() {
             <Stack.Screen options={{ headerShown: false }} />
             <View style={[styles.container, { backgroundColor: palette.background }]}>
                 {/* Top bar */}
-                <View style={[styles.topBar, { paddingTop: Spacing.xl }]}>
-                    <Pressable onPress={() => router.back()}>
+                <View style={[styles.topBar, { paddingTop: insets.top + Spacing.sm }]}>
+                    <Pressable onPress={() => router.back()} hitSlop={12}>
                         <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
                     </Pressable>
                 </View>
@@ -170,6 +172,16 @@ export default function RestaurantScreen() {
                             <Text style={[Type.body, { color: palette.error }]}>
                                 Could not load restaurant history.
                             </Text>
+                            {error.message ? (
+                                <Text
+                                    style={[
+                                        Type.bodySmall,
+                                        { color: palette.textMuted, marginTop: Spacing.xs },
+                                    ]}
+                                >
+                                    {error.message}
+                                </Text>
+                            ) : null}
                         </View>
                     )}
 

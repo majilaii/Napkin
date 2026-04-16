@@ -26,6 +26,19 @@ async function getAuthHeaders() {
         : undefined;
 }
 
+async function unwrapInvokeError(error: unknown): Promise<Error> {
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') {
+        try {
+            const body = await ctx.json();
+            if (body?.error) return new Error(body.error);
+        } catch {
+            // ignore — fall through
+        }
+    }
+    return error instanceof Error ? error : new Error(String(error));
+}
+
 export type Visit = {
     kind: 'round' | 'solo';
     id: string;
@@ -77,7 +90,7 @@ async function fetchTableHistory(
         `restaurant-history?${params.toString()}`,
         { method: 'GET', headers },
     );
-    if (error) throw error;
+    if (error) throw await unwrapInvokeError(error);
     if ((data as any)?.error) throw new Error((data as any).error);
     return (data as { data: TableRestaurantHistory }).data;
 }
@@ -97,7 +110,7 @@ async function fetchUserHistory(
         `restaurant-history?${params.toString()}`,
         { method: 'GET', headers },
     );
-    if (error) throw error;
+    if (error) throw await unwrapInvokeError(error);
     if ((data as any)?.error) throw new Error((data as any).error);
     return (data as { data: UserRestaurantHistory }).data;
 }

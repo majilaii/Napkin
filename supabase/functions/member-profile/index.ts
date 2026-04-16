@@ -153,7 +153,7 @@ serve(async (req) => {
         // ── 4. Fetch target profile ────────────────────────────────────────
         const { data: profileRow, error: profileErr } = await supabase
             .from('profiles')
-            .select('display_name, avatar_url')
+            .select('display_name')
             .eq('user_id', targetUserId)
             .maybeSingle();
         if (profileErr) throw profileErr;
@@ -161,7 +161,7 @@ serve(async (req) => {
         const profile: MemberProfile = {
             user_id: targetUserId,
             display_name: profileRow?.display_name ?? 'Unknown',
-            avatar_url: profileRow?.avatar_url ?? null,
+            avatar_url: null,
             joined_at: targetMembership?.joined_at ?? null,
         };
 
@@ -327,7 +327,12 @@ serve(async (req) => {
             },
         });
     } catch (err) {
-        console.error('member-profile error:', err);
-        return json({ error: 'Internal Server Error', details: String(err) }, 500);
+        const details = err instanceof Error
+            ? err.message
+            : typeof err === 'object' && err !== null
+                ? JSON.stringify(err)
+                : String(err);
+        console.error('member-profile error:', details);
+        return json({ error: 'Internal Server Error', details }, 500);
     }
 });
