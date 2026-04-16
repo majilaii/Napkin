@@ -130,7 +130,7 @@ export default function CreateEntryScreen() {
     const photoPublicUrlRef = useRef<string | null>(null);
     const uploadGenRef = useRef(0);
 
-    const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photoUploading && !photoError;
+    const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photoUploading;
     const isSubmitting = createEntry.isPending || startRound.isPending;
 
     // ── Debounced search ──────────────────────────────────────────────────
@@ -361,6 +361,7 @@ export default function CreateEntryScreen() {
                     rating: ratingValue,
                     notes: notes.trim() || undefined,
                     dish_description: dish.trim() || undefined,
+                    ...(photoPublicUrl ? { photo_url: photoPublicUrl } : {}),
                     ...secondaryRatings,
                 });
             } else {
