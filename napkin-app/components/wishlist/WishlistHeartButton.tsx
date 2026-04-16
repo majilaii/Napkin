@@ -88,10 +88,11 @@ export function WishlistHeartButton({
                 },
             });
         } else {
-            // Removing from wishlist — need the restaurant_id
-            const rid = restaurantId;
+            // Removing from wishlist — need the restaurant_id.
+            // For a ghost restaurant we may have just resolved one via the add mutation.
+            const rid = restaurantId ?? addMutation.data?.restaurant_id;
             if (!rid) {
-                // Ghost restaurant that was never saved — nothing to remove
+                // Truly nothing to remove (no prior add in this session)
                 setOptimisticSaved(!nextSaved);
                 return;
             }

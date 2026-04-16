@@ -60,6 +60,8 @@ export const queryKeys = {
     wishlist: {
         personal: (userId: string) => ['wishlist', 'personal', userId] as const,
         table: (tableId: string) => ['wishlist', 'table', tableId] as const,
+        check: (userId: string, restaurantId: string) =>
+            ['wishlist', 'check', userId, restaurantId] as const,
     },
 
     // Restaurants (accumulated Table + user memory per venue)

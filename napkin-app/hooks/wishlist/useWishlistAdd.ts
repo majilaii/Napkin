@@ -62,11 +62,17 @@ export function useWishlistAdd(userId: string | null | undefined) {
 
     return useMutation({
         mutationFn: addToWishlist,
-        onSuccess: () => {
+        onSuccess: (item) => {
             if (userId) {
                 queryClient.invalidateQueries({
                     queryKey: queryKeys.wishlist.personal(userId),
                 });
+                if (item?.restaurant_id) {
+                    queryClient.setQueryData(
+                        queryKeys.wishlist.check(userId, item.restaurant_id),
+                        true,
+                    );
+                }
             }
             // Invalidate all table wishlist caches — we don't enumerate Tables here
             queryClient.invalidateQueries({

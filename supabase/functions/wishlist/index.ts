@@ -86,21 +86,48 @@ serve(async (req) => {
                 );
             }
 
+            // Idempotent: if a row already exists, return it untouched (do not overwrite note).
+            const { data: existing, error: existingErr } = await supabase
+                .from('wishlist_items')
+                .select('id, user_id, restaurant_id, note, created_at')
+                .eq('user_id', user.id)
+                .eq('restaurant_id', restaurantId)
+                .maybeSingle();
+            if (existingErr) throw existingErr;
+            if (existing) {
+                return jsonResponse({ data: existing });
+            }
+
             const { data, error } = await supabase
                 .from('wishlist_items')
-                .upsert(
-                    {
-                        user_id: user.id,
-                        restaurant_id: restaurantId,
-                        note: body.note ?? null,
-                    },
-                    { onConflict: 'user_id,restaurant_id', ignoreDuplicates: false },
-                )
+                .insert({
+                    user_id: user.id,
+                    restaurant_id: restaurantId,
+                    note: body.note ?? null,
+                })
                 .select('id, user_id, restaurant_id, note, created_at')
                 .single();
 
             if (error) throw error;
             return jsonResponse({ data });
+        }
+
+        // ── check ────────────────────────────────────────────────────────
+        if (action === 'check') {
+            const { restaurant_id } = body;
+            if (!restaurant_id) {
+                return jsonResponse({ error: 'restaurant_id is required' }, 400);
+            }
+
+            const { data, error } = await supabase
+                .from('wishlist_items')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('restaurant_id', restaurant_id)
+                .maybeSingle();
+
+            if (error) throw error;
+            return jsonResponse({ data: { wishlisted: !!data } });
         }
 
         // ── remove ───────────────────────────────────────────────────────
@@ -217,7 +244,7 @@ serve(async (req) => {
                         price_level,
                         external_id
                     ),
-                    profile:profiles!inner (
+                    profile:profiles (
                         display_name,
                         avatar_url
                     )

@@ -1,26 +1,38 @@
 /**
- * Derived selector: returns true if a given restaurant_id appears in the user's
- * personal wishlist (as loaded by useMyWishlist).
+ * Returns true if the given restaurant is in the user's personal wishlist.
  *
- * Relies on useMyWishlist being warm in the cache. The heart button's parent
- * (restaurant page) should ensure useMyWishlist is called to warm the cache.
- * Returns false when the query is uninitialized — a safe default.
+ * Queries the server directly (cache-independent), so it stays correct for
+ * users with more than one page of saves where useMyWishlist hasn't loaded
+ * the matching item yet.
  */
-import { useMemo } from 'react';
-import { useMyWishlist } from './useMyWishlist';
-import type { PersonalWishlistItem } from './useMyWishlist';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
+import { queryKeys } from '@/lib/queryKeys';
+
+async function checkWishlisted(restaurantId: string): Promise<boolean> {
+    const { data: { session } } = await supabase.auth.getSession();
+    const { data, error } = await supabase.functions.invoke('wishlist', {
+        body: { action: 'check', restaurant_id: restaurantId },
+        headers: session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : undefined,
+    });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    return !!data?.data?.wishlisted;
+}
 
 export function useIsWishlisted(
     restaurantId: string | null | undefined,
     userId: string | null | undefined,
 ): boolean {
-    const { data } = useMyWishlist(userId);
-
-    return useMemo(() => {
-        if (!restaurantId || !data) return false;
-        const allItems: PersonalWishlistItem[] = data.pages.flatMap(
-            (p) => p.data,
-        );
-        return allItems.some((item) => item.restaurant.id === restaurantId);
-    }, [data, restaurantId]);
+    const { data } = useQuery({
+        queryKey: restaurantId && userId
+            ? queryKeys.wishlist.check(userId, restaurantId)
+            : ['wishlist', 'check', 'disabled'],
+        queryFn: () => checkWishlisted(restaurantId!),
+        enabled: !!restaurantId && !!userId,
+        staleTime: 1000 * 60 * 5,
+    });
+    return !!data;
 }

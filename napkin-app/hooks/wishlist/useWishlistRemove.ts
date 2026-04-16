@@ -24,11 +24,15 @@ export function useWishlistRemove(userId: string | null | undefined) {
 
     return useMutation({
         mutationFn: removeFromWishlist,
-        onSuccess: () => {
+        onSuccess: (_void, restaurantId) => {
             if (userId) {
                 queryClient.invalidateQueries({
                     queryKey: queryKeys.wishlist.personal(userId),
                 });
+                queryClient.setQueryData(
+                    queryKeys.wishlist.check(userId, restaurantId),
+                    false,
+                );
             }
             queryClient.invalidateQueries({
                 queryKey: ['wishlist', 'table'],
