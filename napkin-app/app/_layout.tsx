@@ -27,6 +27,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
+import { ToastProvider } from '@/providers/ToastProvider';
 import { Colors, Type } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 
@@ -192,7 +193,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <RootLayoutNav />
+          <ToastProvider>
+            <RootLayoutNav />
+          </ToastProvider>
         </AuthProvider>
       </QueryClientProvider>
     </GestureHandlerRootView>
