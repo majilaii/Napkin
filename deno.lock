@@ -48,6 +48,8 @@
         "npm:cmd-shim@8",
         "npm:data-uri-to-buffer@^4.0.1",
         "npm:debug@^4.4.3",
+        "npm:eslint-config-expo@55.0",
+        "npm:eslint@9",
         "npm:expo@^55.0.14",
         "npm:fetch-blob@^3.2.0",
         "npm:formdata-polyfill@^4.0.10",

@@ -33,4 +33,24 @@ export const queryKeys = {
         roundContext: (nightId: string) => ['roundContext', nightId] as const,
         photoPool: (nightId: string) => ['night-photos-pool', nightId] as const,
     },
+
+    // Restaurants (accumulated Table + user memory per venue)
+    restaurants: {
+        tableHistory: (
+            restaurantId: string,
+            tableId: string,
+            excludeNightId?: string,
+        ) =>
+            excludeNightId
+                ? ['restaurantHistory', 'table', restaurantId, tableId, excludeNightId] as const
+                : ['restaurantHistory', 'table', restaurantId, tableId] as const,
+        userHistory: (
+            restaurantId: string,
+            userId: string,
+            excludeEntryId?: string,
+        ) =>
+            excludeEntryId
+                ? ['restaurantHistory', 'user', restaurantId, userId, excludeEntryId] as const
+                : ['restaurantHistory', 'user', restaurantId, userId] as const,
+    },
 } as const;

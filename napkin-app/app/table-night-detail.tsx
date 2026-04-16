@@ -35,6 +35,8 @@ import {
     useTableNightStatus,
     type TableNightParticipant,
 } from '@/hooks/tables/useTableNight';
+import { useTableRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
+import { PreviouslyHereBanner, DeltaChip } from '@/components/restaurants';
 
 type Palette = typeof Colors.light;
 
@@ -203,6 +205,15 @@ export default function TableNightDetailScreen() {
     );
     const { data: myEntryId = null } = useMyEntryId(nightId, user?.id, isRevealedOrClosed);
 
+    // Restaurant history (excluding this round). Powers the "Previously here"
+    // banner + delta chip. Only meaningful once nightStatus has loaded.
+    const { data: restaurantHistory } = useTableRestaurantHistory(
+        nightStatus?.restaurant_id ?? null,
+        nightStatus?.table_id ?? null,
+        nightStatus?.id,
+    );
+    const previousGroupAvg = restaurantHistory?.last_visit?.rating ?? null;
+
     // Lightbox state
     const [lightboxPhoto, setLightboxPhoto] = useState<PoolPhoto | null>(null);
 
@@ -299,21 +310,58 @@ export default function TableNightDetailScreen() {
                         <Text style={[Type.labelSmall, { color: palette.textMuted, letterSpacing: 1.5 }]}>
                             Round · {date}
                         </Text>
-                        <Text
-                            style={[
-                                Type.displayLarge,
-                                {
-                                    color: palette.text,
-                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                    fontSize: 38,
-                                    lineHeight: 42,
-                                    marginTop: Spacing.xs,
-                                },
-                            ]}
+                        <Pressable
+                            onPress={() => {
+                                if (nightStatus.restaurant_id) {
+                                    router.push({
+                                        pathname: '/restaurant/[id]',
+                                        params: {
+                                            id: nightStatus.restaurant_id,
+                                            tableId: nightStatus.table_id,
+                                        },
+                                    });
+                                }
+                            }}
+                            disabled={!nightStatus.restaurant_id}
                         >
-                            {nightStatus.restaurants?.name ?? 'Round'}
-                        </Text>
+                            <Text
+                                style={[
+                                    Type.displayLarge,
+                                    {
+                                        color: palette.text,
+                                        fontFamily: 'Newsreader_400Regular_Italic',
+                                        fontSize: 38,
+                                        lineHeight: 42,
+                                        marginTop: Spacing.xs,
+                                    },
+                                ]}
+                            >
+                                {nightStatus.restaurants?.name ?? 'Round'}
+                            </Text>
+                        </Pressable>
                     </View>
+
+                    {/* Previously here — table-scoped memory, excludes this round */}
+                    {restaurantHistory && restaurantHistory.visit_count > 0 && (
+                        <PreviouslyHereBanner
+                            voice="table"
+                            visitCount={restaurantHistory.visit_count}
+                            lastRating={restaurantHistory.last_visit?.rating ?? null}
+                            lastDate={restaurantHistory.last_visit?.date ?? null}
+                            onPress={
+                                nightStatus.restaurant_id
+                                    ? () =>
+                                          router.push({
+                                              pathname: '/restaurant/[id]',
+                                              params: {
+                                                  id: nightStatus.restaurant_id!,
+                                                  tableId: nightStatus.table_id,
+                                              },
+                                          })
+                                    : undefined
+                            }
+                        />
+                    )}
 
                     {/* Overall Rating + Summary Sentence */}
                     {overallAvg != null && (
@@ -337,6 +385,7 @@ export default function TableNightDetailScreen() {
                                     Final Average
                                 </Text>
                             </View>
+                            <DeltaChip current={overallAvg} previous={previousGroupAvg} />
                             <SummarySentence overallAvg={overallAvg} categoryAvgs={categoryAvgs} palette={palette} />
                         </View>
                     )}

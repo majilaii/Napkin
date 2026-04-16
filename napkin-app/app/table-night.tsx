@@ -3,7 +3,7 @@
  * Independent star rating + separate category sliders (vibe/flavor/service/value).
  * Wired to real Supabase data via hooks.
  */
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useReducer } from 'react';
 import {
     View,
     Text,
@@ -38,6 +38,9 @@ import {
     type TableNightParticipant,
 } from '@/hooks/tables/useTableNight';
 import { useTableNightRealtime } from '@/hooks/tables/useTableNightRealtime';
+import { usePresence } from '@/hooks/tables/usePresence';
+import { PresenceRow } from '@/components/table-night/PresenceRow';
+import { ActivityToast, type Toast } from '@/components/table-night/ActivityToast';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HERO_HEIGHT = 420;
@@ -78,6 +81,31 @@ function getDescriptor(key: string, value: number): string {
 }
 
 type Palette = typeof Colors.light;
+
+// ── Toast Reducer ─────────────────────────────────────────────────────────
+
+type ToastAction =
+    | { type: 'ADD_TOAST'; message: string }
+    | { type: 'DISMISS_TOAST'; id: string };
+
+function toastReducer(state: Toast[], action: ToastAction): Toast[] {
+    switch (action.type) {
+        case 'ADD_TOAST': {
+            const newToast: Toast = {
+                id: `toast-${Date.now()}-${Math.random()}`,
+                message: action.message,
+                timestamp: Date.now(),
+            };
+            const next = [...state, newToast];
+            // Max 2 visible — drop oldest if needed
+            return next.length > 2 ? next.slice(-2) : next;
+        }
+        case 'DISMISS_TOAST':
+            return state.filter((t) => t.id !== action.id);
+        default:
+            return state;
+    }
+}
 
 // ── Pulsing Dot ────────────────────────────────────────────────────────────
 
@@ -148,10 +176,42 @@ export default function TableNightScreen() {
     const revealMutation = useRevealTableNight();
     const joinMutation = useJoinTableNight();
 
-    // Realtime
+    // Toast state
+    const [toasts, dispatchToast] = useReducer(toastReducer, []);
+    const handleDismissToast = useCallback((id: string) => {
+        dispatchToast({ type: 'DISMISS_TOAST', id });
+    }, []);
+
+    // Presence
+    const { presenceState, updateStatus } = usePresence({
+        nightId,
+        userId: user?.id,
+        displayName: user?.user_metadata?.display_name as string | undefined,
+    });
+
+    // Realtime — detect participant ready transitions for toasts
+    const handleParticipantChange = useCallback(
+        (payload: any) => {
+            if (
+                payload?.new?.ready === true &&
+                payload?.old?.ready === false &&
+                payload?.new?.user_id !== user?.id
+            ) {
+                // Find participant name from current status data
+                const name =
+                    nightStatus?.participants.find(
+                        (p) => p.user_id === payload.new.user_id
+                    )?.profiles.display_name ?? 'Someone';
+                dispatchToast({ type: 'ADD_TOAST', message: `${name} locked in` });
+            }
+        },
+        [user?.id, nightStatus?.participants]
+    );
+
     useTableNightRealtime({
         nightId,
         onReveal: () => {},
+        onParticipantChange: handleParticipantChange,
     });
 
     // Independent overall star rating
@@ -168,10 +228,12 @@ export default function TableNightScreen() {
     const updateCategory = (key: string, value: number) => {
         const snapped = Math.round(value * 2) / 2;
         setCategories((prev) => ({ ...prev, [key]: snapped }));
+        updateStatus('rating');
     };
 
     const updateStar = (value: number) => {
         setStarRating(Math.round(value * 2) / 2);
+        updateStatus('rating');
     };
 
     // ── Photo state (multi-photo) ─────────────────────────────────────────
@@ -204,6 +266,7 @@ export default function TableNightScreen() {
             ? { ...s, uploading: true, error: false }
             : s
         ));
+        updateStatus('uploading');
 
         try {
             const url = await compressAndUpload(uri, user.id);
@@ -215,14 +278,16 @@ export default function TableNightScreen() {
                 ? { ...s, publicUrl: url, uploading: false, uploadGen: gen }
                 : s
             ));
+            updateStatus('viewing');
         } catch {
             if (uploadGenRefs.current.get(slotId) !== gen) return;
             setPhotos(prev => prev.map(s => s.id === slotId
                 ? { ...s, uploading: false, error: true }
                 : s
             ));
+            updateStatus('viewing');
         }
-    }, [user?.id]);
+    }, [user?.id, updateStatus]);
 
     const addPhotoSlot = useCallback((uri: string) => {
         setPhotos(prev => {
@@ -357,10 +422,11 @@ export default function TableNightScreen() {
 
         try {
             await readyMutation.mutateAsync({ table_night_id: nightId });
+            updateStatus('ready');
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not lock in');
         }
-    }, [nightId, isParticipant, starRating, categories, photos, joinMutation, rateMutation, readyMutation]);
+    }, [nightId, isParticipant, starRating, categories, photos, joinMutation, rateMutation, readyMutation, updateStatus]);
 
     const handleReveal = useCallback(async () => {
         if (!nightId) return;
@@ -411,6 +477,11 @@ export default function TableNightScreen() {
         <>
             <Stack.Screen options={{ headerShown: false }} />
             <View style={{ flex: 1, backgroundColor: palette.background }}>
+                <ActivityToast
+                    toasts={toasts}
+                    onDismiss={handleDismissToast}
+                    palette={palette}
+                />
                 <ScrollView
                     contentContainerStyle={{ paddingBottom: insets.bottom + 120 }}
                     showsVerticalScrollIndicator={false}
@@ -467,6 +538,17 @@ export default function TableNightScreen() {
                             </View>
                         </View>
                     </View>
+
+                    {/* Presence Row — only during voting phase */}
+                    {!isRevealed && nightStatus.participants.length > 0 && (
+                        <View style={{ paddingHorizontal: Spacing.lg, marginTop: Spacing.md }}>
+                            <PresenceRow
+                                participants={nightStatus.participants}
+                                presenceState={presenceState}
+                                palette={palette}
+                            />
+                        </View>
+                    )}
 
                     {/* Voting Slip — only if not revealed and not yet ready */}
                     {!isRevealed && !isReady && (
@@ -608,7 +690,7 @@ export default function TableNightScreen() {
 
                     {/* Locked-in message */}
                     {!isRevealed && isReady && (
-                        <View style={{ paddingHorizontal: Spacing.lg, marginTop: -40 }}>
+                        <View style={{ paddingHorizontal: Spacing.lg, marginTop: Spacing.lg }}>
                             <View
                                 style={[
                                     styles.votingCard,

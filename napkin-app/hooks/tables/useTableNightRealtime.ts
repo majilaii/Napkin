@@ -3,7 +3,7 @@
  * Listens to table_nights and table_night_participants via Supabase Realtime,
  * and invalidates React Query cache on changes.
  */
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
@@ -11,10 +11,17 @@ import { queryKeys } from '@/lib/queryKeys';
 interface UseTableNightRealtimeOptions {
     nightId: string | null | undefined;
     onReveal?: () => void;
+    onParticipantChange?: (payload: any) => void;
 }
 
-export function useTableNightRealtime({ nightId, onReveal }: UseTableNightRealtimeOptions) {
+export function useTableNightRealtime({ nightId, onReveal, onParticipantChange }: UseTableNightRealtimeOptions) {
     const queryClient = useQueryClient();
+
+    // Store callbacks in refs so the effect doesn't re-run when they change
+    const onRevealRef = useRef(onReveal);
+    onRevealRef.current = onReveal;
+    const onParticipantChangeRef = useRef(onParticipantChange);
+    onParticipantChangeRef.current = onParticipantChange;
 
     useEffect(() => {
         if (!nightId) return;
@@ -29,7 +36,8 @@ export function useTableNightRealtime({ nightId, onReveal }: UseTableNightRealti
                     table: 'table_night_participants',
                     filter: `table_night_id=eq.${nightId}`,
                 },
-                () => {
+                (payload) => {
+                    onParticipantChangeRef.current?.(payload);
                     queryClient.invalidateQueries({
                         queryKey: queryKeys.tableNight.status(nightId),
                     });
@@ -45,7 +53,7 @@ export function useTableNightRealtime({ nightId, onReveal }: UseTableNightRealti
                 },
                 (payload) => {
                     if (payload.new.status === 'revealed') {
-                        onReveal?.();
+                        onRevealRef.current?.();
                     }
                     queryClient.invalidateQueries({
                         queryKey: queryKeys.tableNight.status(nightId),
@@ -57,5 +65,5 @@ export function useTableNightRealtime({ nightId, onReveal }: UseTableNightRealti
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [nightId, queryClient, onReveal]);
+    }, [nightId, queryClient]);
 }

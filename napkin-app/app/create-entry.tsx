@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -140,6 +141,17 @@ export default function CreateEntryScreen() {
     const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photos.some(p => p.uploading);
     const isSubmitting = createEntry.isPending || startRound.isPending;
 
+    // ── Device location for search bias ──────────────────────────────────
+    const [deviceLocation, setDeviceLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+    useEffect(() => {
+        (async () => {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') return;
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            setDeviceLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+        })();
+    }, []);
+
     // ── Debounced search ──────────────────────────────────────────────────
 
     useEffect(() => {
@@ -158,7 +170,11 @@ export default function CreateEntryScreen() {
         try {
             const { data: { session } } = await supabase.auth.getSession();
             const { data, error } = await supabase.functions.invoke('places-search', {
-                body: { query: q, limit: 5 },
+                body: {
+                    query: q,
+                    limit: 5,
+                    ...(deviceLocation && { latitude: deviceLocation.latitude, longitude: deviceLocation.longitude }),
+                },
                 headers: session?.access_token
                     ? { Authorization: `Bearer ${session.access_token}` }
                     : undefined,

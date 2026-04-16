@@ -21,6 +21,9 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import { StarRating } from '@/components/StarRating';
 import { useRoundContext } from '@/hooks/tables/useTableNight';
+import { useUserRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
+import { PreviouslyHereBanner } from '@/components/restaurants';
+import { useAuth } from '@/providers/AuthProvider';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -42,6 +45,7 @@ interface EntryDetail {
     dish_description: string | null;
     visited_at: string;
     created_at: string;
+    table_id: string | null;
     table_night_id: string | null;
     visibility: string;
     vibe_rating: number | null;
@@ -77,6 +81,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 dish_description,
                 visited_at,
                 created_at,
+                table_id,
                 table_night_id,
                 visibility,
                 vibe_rating,
@@ -110,6 +115,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 dish_description,
                 visited_at,
                 created_at,
+                table_id,
                 table_night_id,
                 visibility,
                 vibe_rating,
@@ -235,6 +241,13 @@ export default function EntryDetailScreen() {
     const { data: roundContext } = useRoundContext(entry?.table_night_id ?? null);
     // entry_photos for carousel (resolved after entry loads)
     const { data: entryPhotoUrls } = useEntryPhotos(entry?.id);
+    // Viewer's personal history at this restaurant (cross-Table, excludes this entry)
+    const { user: viewer } = useAuth();
+    const { data: userHistory } = useUserRestaurantHistory(
+        entry?.restaurant_id ?? null,
+        viewer?.id ?? null,
+        entry?.id,
+    );
     // Photo carousel index
     const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
@@ -408,27 +421,64 @@ export default function EntryDetailScreen() {
                             </View>
                         </View>
 
-                        <Text
-                            style={[
-                                Type.displayLarge,
-                                {
-                                    color: palette.text,
-                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                    fontSize: 38,
-                                    lineHeight: 44,
-                                    marginTop: Spacing.lg,
-                                },
-                            ]}
+                        <Pressable
+                            onPress={() => {
+                                if (entry.restaurant_id) {
+                                    router.push({
+                                        pathname: '/restaurant/[id]',
+                                        params: {
+                                            id: entry.restaurant_id,
+                                            ...(entry.table_id ? { tableId: entry.table_id } : {}),
+                                        },
+                                    });
+                                }
+                            }}
+                            disabled={!entry.restaurant_id}
                         >
-                            {restaurantName}
-                        </Text>
-
-                        {entry.restaurants?.address ? (
-                            <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 4 }]}>
-                                {entry.restaurants.address}
+                            <Text
+                                style={[
+                                    Type.displayLarge,
+                                    {
+                                        color: palette.text,
+                                        fontFamily: 'Newsreader_400Regular_Italic',
+                                        fontSize: 38,
+                                        lineHeight: 44,
+                                        marginTop: Spacing.lg,
+                                    },
+                                ]}
+                            >
+                                {restaurantName}
                             </Text>
-                        ) : null}
+
+                            {entry.restaurants?.address ? (
+                                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 4 }]}>
+                                    {entry.restaurants.address}
+                                </Text>
+                            ) : null}
+                        </Pressable>
                     </View>
+
+                    {/* Previously here — viewer's cross-Table personal history */}
+                    {userHistory && userHistory.visit_count > 0 && (
+                        <PreviouslyHereBanner
+                            voice="user"
+                            visitCount={userHistory.visit_count}
+                            lastRating={userHistory.last_visit?.rating ?? null}
+                            lastDate={userHistory.last_visit?.date ?? null}
+                            onPress={
+                                entry.restaurant_id
+                                    ? () =>
+                                          router.push({
+                                              pathname: '/restaurant/[id]',
+                                              params: {
+                                                  id: entry.restaurant_id!,
+                                                  ...(entry.table_id ? { tableId: entry.table_id } : {}),
+                                              },
+                                          })
+                                    : undefined
+                            }
+                        />
+                    )}
 
                     {/* Round Context Banner */}
                     {isRoundEntry && roundContext && (
