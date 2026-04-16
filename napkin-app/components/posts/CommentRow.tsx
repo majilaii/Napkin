@@ -25,6 +25,8 @@ interface CommentRowProps {
     comment: Comment;
     targetType: TargetType;
     targetId: string;
+    onRetry?: () => void;
+    onDiscard?: () => void;
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -40,7 +42,7 @@ function formatRelativeTime(dateStr: string): string {
     return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
-export function CommentRow({ comment, targetType, targetId }: CommentRowProps) {
+export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }: CommentRowProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const { user } = useAuth();
@@ -58,7 +60,9 @@ export function CommentRow({ comment, targetType, targetId }: CommentRowProps) {
     const name = comment.profiles?.display_name ?? 'Someone';
     const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
 
-    const timeLabel = comment.pending
+    const timeLabel = comment.failed
+        ? "Couldn't send"
+        : comment.pending
         ? 'Sending…'
         : formatRelativeTime(comment.created_at);
 
@@ -205,18 +209,62 @@ export function CommentRow({ comment, targetType, targetId }: CommentRowProps) {
                         </View>
                     </View>
                 ) : (
-                    <Text
-                        style={[
-                            Type.body,
-                            {
-                                color: comment.pending ? palette.textMuted : palette.text,
-                                marginTop: 2,
-                                lineHeight: 20,
-                            },
-                        ]}
-                    >
-                        {comment.body}
-                    </Text>
+                    <>
+                        <Text
+                            style={[
+                                Type.body,
+                                {
+                                    color:
+                                        comment.pending || comment.failed
+                                            ? palette.textMuted
+                                            : palette.text,
+                                    marginTop: 2,
+                                    lineHeight: 20,
+                                },
+                            ]}
+                        >
+                            {comment.body}
+                        </Text>
+                        {comment.failed && (
+                            <View style={styles.failedActions}>
+                                {onRetry && (
+                                    <Pressable
+                                        onPress={onRetry}
+                                        hitSlop={8}
+                                        accessibilityLabel="Retry sending reply"
+                                    >
+                                        <Text
+                                            style={[
+                                                Type.bodySmall,
+                                                {
+                                                    color: palette.primary,
+                                                    fontFamily: 'Manrope_700Bold',
+                                                },
+                                            ]}
+                                        >
+                                            Retry
+                                        </Text>
+                                    </Pressable>
+                                )}
+                                {onDiscard && (
+                                    <Pressable
+                                        onPress={onDiscard}
+                                        hitSlop={8}
+                                        accessibilityLabel="Discard failed reply"
+                                    >
+                                        <Text
+                                            style={[
+                                                Type.bodySmall,
+                                                { color: palette.textSecondary },
+                                            ]}
+                                        >
+                                            Discard
+                                        </Text>
+                                    </Pressable>
+                                )}
+                            </View>
+                        )}
+                    </>
                 )}
             </View>
         </View>
@@ -271,5 +319,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'flex-end',
         gap: Spacing.md,
+    },
+    failedActions: {
+        flexDirection: 'row',
+        gap: Spacing.md,
+        marginTop: Spacing.xs,
     },
 });

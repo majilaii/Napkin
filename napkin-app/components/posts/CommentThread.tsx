@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAddComment } from '@/hooks/posts/usePostInteractions';
+import { useAddComment, useDiscardFailedComment } from '@/hooks/posts/usePostInteractions';
 import type { Comment, TargetType } from '@/hooks/posts/usePostInteractions';
 import { CommentRow } from './CommentRow';
 
@@ -35,8 +35,23 @@ export function CommentThread({ targetType, targetId, comments }: CommentThreadP
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const addComment = useAddComment();
+    const discardFailed = useDiscardFailedComment();
     const [body, setBody] = useState('');
     const inputRef = useRef<TextInput>(null);
+
+    const handleRetry = (failed: Comment) => {
+        const nonce = failed.client_nonce;
+        if (!nonce) return;
+        // Drop the failed row, then re-send with the same nonce so any
+        // late-arriving server response still reconciles correctly.
+        discardFailed({ targetType, targetId, clientNonce: nonce });
+        addComment.mutate({ targetType, targetId, body: failed.body, clientNonce: nonce });
+    };
+
+    const handleDiscard = (failed: Comment) => {
+        if (!failed.client_nonce) return;
+        discardFailed({ targetType, targetId, clientNonce: failed.client_nonce });
+    };
 
     const trimmed = body.trim();
     const canSend = trimmed.length >= 1 && !addComment.isPending;
@@ -77,6 +92,12 @@ export function CommentThread({ targetType, targetId, comments }: CommentThreadP
                             comment={comment}
                             targetType={targetType}
                             targetId={targetId}
+                            onRetry={
+                                comment.failed ? () => handleRetry(comment) : undefined
+                            }
+                            onDiscard={
+                                comment.failed ? () => handleDiscard(comment) : undefined
+                            }
                         />
                     ))}
                 </View>

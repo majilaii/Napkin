@@ -7,6 +7,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { useToast } from '@/providers/ToastProvider';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,8 @@ export interface Comment {
     profiles: CommentProfile | null;
     /** Present on optimistic rows only — removed once the server row lands */
     pending?: boolean;
+    /** Set on optimistic rows whose send failed — UI shows retry/discard */
+    failed?: boolean;
     /** Client-generated nonce for optimistic reconciliation */
     client_nonce?: string;
 }
@@ -108,6 +111,7 @@ interface ToggleReactionInput {
 
 export function useToggleReaction() {
     const queryClient = useQueryClient();
+    const toast = useToast();
 
     return useMutation({
         mutationFn: async ({ targetType, targetId, emoji }: ToggleReactionInput) => {
@@ -167,6 +171,7 @@ export function useToggleReaction() {
                     context.previous
                 );
             }
+            toast.show("Couldn't react. Try again.");
         },
 
         onSuccess: (_data, { targetType, targetId }) => {
@@ -240,12 +245,29 @@ export function useAddComment() {
             return { previous };
         },
 
-        onError: (_err, { targetType, targetId }, context) => {
-            if (context?.previous) {
-                queryClient.setQueryData(
-                    queryKeys.postInteractions.all(targetType, targetId),
-                    context.previous
+        onError: (_err, { targetType, targetId, clientNonce }, context) => {
+            const key = queryKeys.postInteractions.all(targetType, targetId);
+            const current = queryClient.getQueryData<PostInteractionsData>(key);
+
+            // Keep the optimistic row visible but mark it as failed so the UI
+            // can render Retry / Discard. Decrement the comment count so the
+            // failed row doesn't inflate the feed-card pill.
+            if (current && clientNonce) {
+                const next = current.comments.map((c) =>
+                    c.client_nonce === clientNonce
+                        ? { ...c, pending: false, failed: true }
+                        : c
                 );
+                queryClient.setQueryData<PostInteractionsData>(key, {
+                    ...current,
+                    comments: next,
+                    counts: {
+                        ...current.counts,
+                        comments: Math.max(0, current.counts.comments - 1),
+                    },
+                });
+            } else if (context?.previous) {
+                queryClient.setQueryData(key, context.previous);
             }
         },
 
@@ -370,4 +392,28 @@ export function useDeleteComment() {
             });
         },
     });
+}
+
+// ── Helper: discard a failed optimistic comment ──────────────────────────────
+
+/** Remove a failed optimistic comment from the cache (no server call). */
+export function useDiscardFailedComment() {
+    const queryClient = useQueryClient();
+    return ({
+        targetType,
+        targetId,
+        clientNonce,
+    }: {
+        targetType: TargetType;
+        targetId: string;
+        clientNonce: string;
+    }) => {
+        const key = queryKeys.postInteractions.all(targetType, targetId);
+        const current = queryClient.getQueryData<PostInteractionsData>(key);
+        if (!current) return;
+        queryClient.setQueryData<PostInteractionsData>(key, {
+            ...current,
+            comments: current.comments.filter((c) => c.client_nonce !== clientNonce),
+        });
+    };
 }

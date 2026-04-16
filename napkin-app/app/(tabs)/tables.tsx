@@ -13,6 +13,7 @@ import {
     RefreshControl,
     Pressable,
     ActivityIndicator,
+    Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -67,11 +68,7 @@ export default function TablesScreen() {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const hasMultipleTables = (tables?.length ?? 0) > 1;
-
-    const cycleTable = () => {
-        if (!tables || tables.length <= 1) return;
-        setSelectedIndex((i) => (i + 1) % tables.length);
-    };
+    const [showTablePicker, setShowTablePicker] = useState(false);
 
     const {
         data: activityData,
@@ -210,7 +207,7 @@ export default function TablesScreen() {
             {/* Header */}
             <View style={styles.header}>
                 <Pressable
-                    onPress={cycleTable}
+                    onPress={() => hasMultipleTables && setShowTablePicker(true)}
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
                 >
                     <Text
@@ -377,6 +374,81 @@ export default function TablesScreen() {
                 </View>
             )}
         </ScrollView>
+
+            {/* Table picker dropdown */}
+            <Modal
+                visible={showTablePicker}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowTablePicker(false)}
+            >
+                <Pressable
+                    style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start' }}
+                    onPress={() => setShowTablePicker(false)}
+                >
+                    <View
+                        style={{
+                            marginTop: insets.top + 60,
+                            marginHorizontal: Spacing.lg,
+                            backgroundColor: palette.surfaceContainerLow,
+                            borderRadius: 16,
+                            paddingVertical: Spacing.sm,
+                            shadowColor: '#000',
+                            shadowOffset: { width: 0, height: 4 },
+                            shadowOpacity: 0.15,
+                            shadowRadius: 12,
+                            elevation: 8,
+                        }}
+                    >
+                        {tables?.map((t, i) => {
+                            const tbl = t.tables;
+                            if (!tbl) return null;
+                            const isActive = i === selectedIndex;
+                            return (
+                                <Pressable
+                                    key={tbl.id}
+                                    onPress={() => {
+                                        setSelectedIndex(i);
+                                        setShowTablePicker(false);
+                                    }}
+                                    style={({ pressed }) => ({
+                                        paddingHorizontal: Spacing.lg,
+                                        paddingVertical: Spacing.md,
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        backgroundColor: isActive ? palette.primaryMuted : 'transparent',
+                                        opacity: pressed ? 0.7 : 1,
+                                    })}
+                                >
+                                    <View>
+                                        <Text
+                                            style={[
+                                                Type.titleSmall,
+                                                {
+                                                    color: isActive ? palette.primary : palette.text,
+                                                    fontFamily: 'Newsreader_400Regular_Italic',
+                                                    fontSize: 18,
+                                                },
+                                            ]}
+                                        >
+                                            {tbl.name}
+                                        </Text>
+                                        {tbl.is_personal && (
+                                            <Text style={[Type.caption, { color: palette.textMuted }]}>
+                                                Personal journal
+                                            </Text>
+                                        )}
+                                    </View>
+                                    {isActive && (
+                                        <Text style={{ color: palette.primary, fontSize: 16 }}>✓</Text>
+                                    )}
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+                </Pressable>
+            </Modal>
         </View>
     );
 }
