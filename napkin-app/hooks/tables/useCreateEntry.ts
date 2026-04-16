@@ -34,6 +34,7 @@ export interface CreateEntryInput {
     service_rating?: number | null;
     value_rating?: number | null;
     photo_url?: string;
+    photo_urls?: string[];
 }
 
 async function createEntry(input: CreateEntryInput) {

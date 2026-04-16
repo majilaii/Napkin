@@ -19,6 +19,7 @@ import {
     Pressable,
     Image,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
@@ -37,6 +38,7 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
     const hasHero = !!item.photo_url;
+    const photoCount = item.photo_count ?? 0;
 
     const handlePress = () =>
         router.push({ pathname: '/entry-detail', params: { entryId: item.id } });
@@ -83,11 +85,19 @@ export function SoloShareCard({ item, palette }: SoloShareCardProps) {
             >
                 {/* Hero image (user-uploaded photo, if present) */}
                 {hasHero ? (
-                    <Image
-                        source={{ uri: item.photo_url! }}
-                        style={styles.heroImage}
-                        resizeMode="cover"
-                    />
+                    <View style={{ position: 'relative' }}>
+                        <Image
+                            source={{ uri: item.photo_url! }}
+                            style={styles.heroImage}
+                            resizeMode="cover"
+                        />
+                        {photoCount >= 2 && (
+                            <View style={[styles.photoCountBadge, { backgroundColor: 'rgba(255,255,255,0.82)' }]}>
+                                <Ionicons name="copy-outline" size={10} color="#1c1c19" />
+                                <Text style={styles.photoCountText}>{photoCount}</Text>
+                            </View>
+                        )}
+                    </View>
                 ) : null}
 
                 {/* Text content — padded separately so hero bleeds to edges */}
@@ -194,6 +204,27 @@ const styles = StyleSheet.create({
     heroImage: {
         width: '100%',
         aspectRatio: 16 / 9,
+    },
+    photoCountBadge: {
+        position: 'absolute',
+        bottom: 6,
+        right: 6,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+        borderRadius: 4,
+        shadowColor: '#1c1c19',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    photoCountText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        color: '#1c1c19',
     },
     cardContent: {
         padding: Spacing.md + 4,

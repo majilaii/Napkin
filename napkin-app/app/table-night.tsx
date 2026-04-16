@@ -3,7 +3,7 @@
  * Independent star rating + separate category sliders (vibe/flavor/service/value).
  * Wired to real Supabase data via hooks.
  */
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useReducer } from 'react';
 import {
     View,
     Text,
@@ -18,15 +18,16 @@ import {
     ActionSheetIOS,
     Platform,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+// eslint-disable-next-line import/no-unresolved
 import Slider from '@react-native-community/slider';
 import * as ImagePicker from 'expo-image-picker';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { MultiPhotoRow } from '@/components/MultiPhotoRow';
 import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
 import {
     useTableNightStatus,
@@ -37,9 +38,25 @@ import {
     type TableNightParticipant,
 } from '@/hooks/tables/useTableNight';
 import { useTableNightRealtime } from '@/hooks/tables/useTableNightRealtime';
+import { usePresence } from '@/hooks/tables/usePresence';
+import { PresenceRow } from '@/components/table-night/PresenceRow';
+import { ActivityToast, type Toast } from '@/components/table-night/ActivityToast';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HERO_HEIGHT = 420;
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+interface PhotoSlot {
+    id: string;
+    localUri: string;
+    publicUrl: string | null;
+    uploading: boolean;
+    error: boolean;
+    uploadGen: number;
+}
+
+const MAX_PHOTOS = 6;
 
 // ── Slider categories ──────────────────────────────────────────────────────
 
@@ -64,6 +81,31 @@ function getDescriptor(key: string, value: number): string {
 }
 
 type Palette = typeof Colors.light;
+
+// ── Toast Reducer ─────────────────────────────────────────────────────────
+
+type ToastAction =
+    | { type: 'ADD_TOAST'; message: string }
+    | { type: 'DISMISS_TOAST'; id: string };
+
+function toastReducer(state: Toast[], action: ToastAction): Toast[] {
+    switch (action.type) {
+        case 'ADD_TOAST': {
+            const newToast: Toast = {
+                id: `toast-${Date.now()}-${Math.random()}`,
+                message: action.message,
+                timestamp: Date.now(),
+            };
+            const next = [...state, newToast];
+            // Max 2 visible — drop oldest if needed
+            return next.length > 2 ? next.slice(-2) : next;
+        }
+        case 'DISMISS_TOAST':
+            return state.filter((t) => t.id !== action.id);
+        default:
+            return state;
+    }
+}
 
 // ── Pulsing Dot ────────────────────────────────────────────────────────────
 
@@ -134,10 +176,42 @@ export default function TableNightScreen() {
     const revealMutation = useRevealTableNight();
     const joinMutation = useJoinTableNight();
 
-    // Realtime
+    // Toast state
+    const [toasts, dispatchToast] = useReducer(toastReducer, []);
+    const handleDismissToast = useCallback((id: string) => {
+        dispatchToast({ type: 'DISMISS_TOAST', id });
+    }, []);
+
+    // Presence
+    const { presenceState, updateStatus } = usePresence({
+        nightId,
+        userId: user?.id,
+        displayName: user?.user_metadata?.display_name as string | undefined,
+    });
+
+    // Realtime — detect participant ready transitions for toasts
+    const handleParticipantChange = useCallback(
+        (payload: any) => {
+            if (
+                payload?.new?.ready === true &&
+                payload?.old?.ready === false &&
+                payload?.new?.user_id !== user?.id
+            ) {
+                // Find participant name from current status data
+                const name =
+                    nightStatus?.participants.find(
+                        (p) => p.user_id === payload.new.user_id
+                    )?.profiles.display_name ?? 'Someone';
+                dispatchToast({ type: 'ADD_TOAST', message: `${name} locked in` });
+            }
+        },
+        [user?.id, nightStatus?.participants]
+    );
+
     useTableNightRealtime({
         nightId,
         onReveal: () => {},
+        onParticipantChange: handleParticipantChange,
     });
 
     // Independent overall star rating
@@ -154,32 +228,101 @@ export default function TableNightScreen() {
     const updateCategory = (key: string, value: number) => {
         const snapped = Math.round(value * 2) / 2;
         setCategories((prev) => ({ ...prev, [key]: snapped }));
+        updateStatus('rating');
     };
 
     const updateStar = (value: number) => {
         setStarRating(Math.round(value * 2) / 2);
+        updateStatus('rating');
     };
 
-    // ── Photo state ───────────────────────────────────────────────────────
-    const [photoUri, setPhotoUri] = useState<string | null>(null);
-    const [photoPublicUrl, setPhotoPublicUrl] = useState<string | null>(null);
-    const [photoUploading, setPhotoUploading] = useState(false);
-    const [photoError, setPhotoError] = useState(false);
+    // ── Photo state (multi-photo) ─────────────────────────────────────────
+    const [photos, setPhotos] = useState<PhotoSlot[]>([]);
+    const uploadGenRefs = useRef(new Map<string, number>());
 
-    const uploadPhoto = useCallback(async (uri: string) => {
+    // Keep ref in sync for cleanup on unmount
+    const photosRef = useRef(photos);
+    useEffect(() => {
+        photosRef.current = photos;
+    }, [photos]);
+
+    // Clean up orphaned uploads if user exits without submitting
+    useEffect(() => {
+        return () => {
+            for (const slot of photosRef.current) {
+                if (slot.publicUrl) {
+                    removeUploadedPhoto(slot.publicUrl).catch(() => {});
+                }
+            }
+        };
+    }, []);
+
+    const startUploadForSlot = useCallback(async (slotId: string, uri: string) => {
         if (!user?.id) return;
-        setPhotoUri(uri);
-        setPhotoUploading(true);
-        setPhotoError(false);
+        const gen = (uploadGenRefs.current.get(slotId) ?? 0) + 1;
+        uploadGenRefs.current.set(slotId, gen);
+
+        setPhotos(prev => prev.map(s => s.id === slotId
+            ? { ...s, uploading: true, error: false }
+            : s
+        ));
+        updateStatus('uploading');
+
         try {
-            const publicUrl = await compressAndUpload(uri, user.id);
-            setPhotoPublicUrl(publicUrl);
+            const url = await compressAndUpload(uri, user.id);
+            if (uploadGenRefs.current.get(slotId) !== gen) {
+                removeUploadedPhoto(url).catch(() => {});
+                return;
+            }
+            setPhotos(prev => prev.map(s => s.id === slotId
+                ? { ...s, publicUrl: url, uploading: false, uploadGen: gen }
+                : s
+            ));
+            updateStatus('viewing');
         } catch {
-            setPhotoError(true);
-        } finally {
-            setPhotoUploading(false);
+            if (uploadGenRefs.current.get(slotId) !== gen) return;
+            setPhotos(prev => prev.map(s => s.id === slotId
+                ? { ...s, uploading: false, error: true }
+                : s
+            ));
+            updateStatus('viewing');
         }
-    }, [user?.id]);
+    }, [user?.id, updateStatus]);
+
+    const addPhotoSlot = useCallback((uri: string) => {
+        setPhotos(prev => {
+            if (prev.length >= MAX_PHOTOS) return prev;
+            const slotId = `photo-${Date.now()}-${Math.random()}`;
+            setTimeout(() => startUploadForSlot(slotId, uri), 0);
+            return [...prev, {
+                id: slotId,
+                localUri: uri,
+                publicUrl: null,
+                uploading: true,
+                error: false,
+                uploadGen: 0,
+            }];
+        });
+    }, [startUploadForSlot]);
+
+    const handleRemovePhoto = useCallback((slotId: string) => {
+        const currentGen = uploadGenRefs.current.get(slotId) ?? 0;
+        uploadGenRefs.current.set(slotId, currentGen + 1);
+        setPhotos(prev => {
+            const slot = prev.find(s => s.id === slotId);
+            if (slot?.publicUrl) {
+                removeUploadedPhoto(slot.publicUrl).catch(() => {});
+            }
+            return prev.filter(s => s.id !== slotId);
+        });
+    }, []);
+
+    const handleRetryPhoto = useCallback((slotId: string) => {
+        const slot = photos.find(s => s.id === slotId);
+        if (slot) {
+            startUploadForSlot(slotId, slot.localUri);
+        }
+    }, [photos, startUploadForSlot]);
 
     const pickFromCamera = useCallback(async () => {
         const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -198,9 +341,9 @@ export default function TableNightScreen() {
             return;
         }
         if (!result.canceled && result.assets[0]) {
-            uploadPhoto(result.assets[0].uri);
+            addPhotoSlot(result.assets[0].uri);
         }
-    }, [uploadPhoto]);
+    }, [addPhotoSlot]);
 
     const pickFromLibrary = useCallback(async () => {
         const result = await ImagePicker.launchImageLibraryAsync({
@@ -208,9 +351,9 @@ export default function TableNightScreen() {
             quality: 1,
         });
         if (!result.canceled && result.assets[0]) {
-            uploadPhoto(result.assets[0].uri);
+            addPhotoSlot(result.assets[0].uri);
         }
-    }, [uploadPhoto]);
+    }, [addPhotoSlot]);
 
     const handlePhotoPress = useCallback(() => {
         if (Platform.OS === 'ios') {
@@ -232,15 +375,6 @@ export default function TableNightScreen() {
             ]);
         }
     }, [pickFromCamera, pickFromLibrary]);
-
-    const dismissPhoto = useCallback(async () => {
-        if (photoPublicUrl) {
-            removeUploadedPhoto(photoPublicUrl).catch(() => {});
-        }
-        setPhotoUri(null);
-        setPhotoPublicUrl(null);
-        setPhotoError(false);
-    }, [photoPublicUrl]);
 
     // Derived state
     const myParticipant = nightStatus?.participants.find(
@@ -265,16 +399,22 @@ export default function TableNightScreen() {
             }
         }
 
+        const photoUrls = photos
+            .filter(p => p.publicUrl !== null)
+            .map(p => p.publicUrl as string);
+
         try {
             await rateMutation.mutateAsync({
                 table_night_id: nightId,
                 rating: Math.round(starRating * 2) / 2,
-                photo_url: photoPublicUrl ?? undefined,
+                ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
                 vibe_rating: categories.vibe || undefined,
                 flavor_rating: categories.flavor || undefined,
                 service_rating: categories.service || undefined,
                 value_rating: categories.value || undefined,
             });
+            // Photos are now persisted — clear so unmount cleanup won't delete them
+            setPhotos([]);
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not submit rating');
             return;
@@ -282,10 +422,11 @@ export default function TableNightScreen() {
 
         try {
             await readyMutation.mutateAsync({ table_night_id: nightId });
+            updateStatus('ready');
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not lock in');
         }
-    }, [nightId, isParticipant, starRating, categories, joinMutation, rateMutation, readyMutation]);
+    }, [nightId, isParticipant, starRating, categories, photos, joinMutation, rateMutation, readyMutation, updateStatus]);
 
     const handleReveal = useCallback(async () => {
         if (!nightId) return;
@@ -336,6 +477,11 @@ export default function TableNightScreen() {
         <>
             <Stack.Screen options={{ headerShown: false }} />
             <View style={{ flex: 1, backgroundColor: palette.background }}>
+                <ActivityToast
+                    toasts={toasts}
+                    onDismiss={handleDismissToast}
+                    palette={palette}
+                />
                 <ScrollView
                     contentContainerStyle={{ paddingBottom: insets.bottom + 120 }}
                     showsVerticalScrollIndicator={false}
@@ -392,6 +538,17 @@ export default function TableNightScreen() {
                             </View>
                         </View>
                     </View>
+
+                    {/* Presence Row — only during voting phase */}
+                    {!isRevealed && nightStatus.participants.length > 0 && (
+                        <View style={{ paddingHorizontal: Spacing.lg, marginTop: Spacing.md }}>
+                            <PresenceRow
+                                participants={nightStatus.participants}
+                                presenceState={presenceState}
+                                palette={palette}
+                            />
+                        </View>
+                    )}
 
                     {/* Voting Slip — only if not revealed and not yet ready */}
                     {!isRevealed && !isReady && (
@@ -516,59 +673,24 @@ export default function TableNightScreen() {
                                         { color: palette.textMuted, marginBottom: Spacing.sm },
                                     ]}
                                 >
-                                    Photo (optional)
+                                    Photos (optional)
                                 </Text>
 
-                                {!photoUri ? (
-                                    <Pressable
-                                        onPress={handlePhotoPress}
-                                        style={[
-                                            styles.photoPlaceholder,
-                                            { borderColor: palette.outlineVariant },
-                                        ]}
-                                    >
-                                        <Text style={{ fontSize: 28, marginBottom: 4 }}>📷</Text>
-                                        <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
-                                            Add a photo
-                                        </Text>
-                                    </Pressable>
-                                ) : (
-                                    <View style={styles.photoPreviewContainer}>
-                                        <Image
-                                            source={{ uri: photoUri }}
-                                            style={styles.photoPreview}
-                                            contentFit="cover"
-                                        />
-                                        {photoUploading && (
-                                            <View style={styles.photoOverlay}>
-                                                <ActivityIndicator color="#fff" />
-                                            </View>
-                                        )}
-                                        {photoError && (
-                                            <View style={styles.photoOverlay}>
-                                                <Text style={{ color: '#fff', fontSize: 14 }}>Upload failed</Text>
-                                                <Pressable onPress={() => uploadPhoto(photoUri)}>
-                                                    <Text style={{ color: '#fff', fontSize: 13, marginTop: 4, textDecorationLine: 'underline' }}>
-                                                        Retry
-                                                    </Text>
-                                                </Pressable>
-                                            </View>
-                                        )}
-                                        <Pressable
-                                            onPress={dismissPhoto}
-                                            style={styles.photoDismiss}
-                                        >
-                                            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>×</Text>
-                                        </Pressable>
-                                    </View>
-                                )}
+                                <MultiPhotoRow
+                                    photos={photos}
+                                    maxPhotos={MAX_PHOTOS}
+                                    onAdd={handlePhotoPress}
+                                    onRemove={handleRemovePhoto}
+                                    onRetry={handleRetryPhoto}
+                                    palette={palette}
+                                />
                             </View>
                         </View>
                     )}
 
                     {/* Locked-in message */}
                     {!isRevealed && isReady && (
-                        <View style={{ paddingHorizontal: Spacing.lg, marginTop: -40 }}>
+                        <View style={{ paddingHorizontal: Spacing.lg, marginTop: Spacing.lg }}>
                             <View
                                 style={[
                                     styles.votingCard,
@@ -847,40 +969,5 @@ const styles = StyleSheet.create({
     ctaButton: {
         height: 56, borderRadius: 9999,
         alignItems: 'center', justifyContent: 'center',
-    },
-    photoPlaceholder: {
-        borderWidth: 1.5,
-        borderStyle: 'dashed',
-        borderRadius: Radius.lg,
-        paddingVertical: Spacing.lg,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    photoPreviewContainer: {
-        position: 'relative',
-        borderRadius: Radius.lg,
-        overflow: 'hidden',
-    },
-    photoPreview: {
-        width: '100%',
-        height: 180,
-        borderRadius: Radius.lg,
-    },
-    photoOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    photoDismiss: {
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        alignItems: 'center',
-        justifyContent: 'center',
     },
 });

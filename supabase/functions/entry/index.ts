@@ -142,8 +142,9 @@ serve(async (req) => {
                 service_rating,
                 value_rating,
 
-                // User-uploaded photo (optional, public URL from Supabase Storage)
+                // User-uploaded photo(s) (optional, public URLs from Supabase Storage)
                 photo_url,
+                photo_urls,
 
                 // Table sharing (optional)
                 table_id,
@@ -249,6 +250,10 @@ serve(async (req) => {
                 }
             }
 
+            // Derive hero photo URL: explicit photo_url takes priority, then first of photo_urls
+            const photoUrlsArray: string[] = Array.isArray(photo_urls) ? photo_urls : [];
+            const heroPhotoUrl = photo_url || photoUrlsArray[0] || null;
+
             // Create entry
             const { data: entryData, error: entryError } = await supabase
                 .from('entries')
@@ -267,7 +272,7 @@ serve(async (req) => {
                     ...(flavor_rating != null ? { flavor_rating } : {}),
                     ...(service_rating != null ? { service_rating } : {}),
                     ...(value_rating != null ? { value_rating } : {}),
-                    ...(photo_url ? { photo_url } : {}),
+                    ...(heroPhotoUrl ? { photo_url: heroPhotoUrl } : {}),
                     ...(table_id ? { table_id } : {}),
                     ...(visibility ? { visibility } : {}),
                 })
@@ -277,6 +282,21 @@ serve(async (req) => {
             if (entryError) {
                 console.error('Entry insert error:', entryError);
                 throw entryError;
+            }
+
+            // Bulk-insert entry_photos if photo_urls provided (non-fatal if it fails)
+            if (photoUrlsArray.length > 0) {
+                const photoRows = photoUrlsArray.map((url: string, idx: number) => ({
+                    entry_id: entryData.id,
+                    photo_url: url,
+                    sort_order: idx,
+                }));
+                const { error: photosError } = await supabase
+                    .from('entry_photos')
+                    .insert(photoRows);
+                if (photosError) {
+                    console.error('entry_photos insert error (non-fatal):', photosError);
+                }
             }
 
             // If it's a restaurant entry, update user_restaurant_status

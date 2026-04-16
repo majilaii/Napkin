@@ -2,7 +2,7 @@
  * Entry Detail — full view of a single entry (solo share or round take).
  * Shows restaurant, overall rating, secondary ratings, notes, dish, date.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -11,16 +11,21 @@ import {
     Pressable,
     ActivityIndicator,
     Image,
+    Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import { StarRating } from '@/components/StarRating';
 import { useRoundContext } from '@/hooks/tables/useTableNight';
+import { useUserRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
+import { PreviouslyHereBanner } from '@/components/restaurants';
+import { useAuth } from '@/providers/AuthProvider';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type Palette = typeof Colors.light;
 
@@ -40,6 +45,7 @@ interface EntryDetail {
     dish_description: string | null;
     visited_at: string;
     created_at: string;
+    table_id: string | null;
     table_night_id: string | null;
     visibility: string;
     vibe_rating: number | null;
@@ -75,6 +81,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 dish_description,
                 visited_at,
                 created_at,
+                table_id,
                 table_night_id,
                 visibility,
                 vibe_rating,
@@ -108,6 +115,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 dish_description,
                 visited_at,
                 created_at,
+                table_id,
                 table_night_id,
                 visibility,
                 vibe_rating,
@@ -195,6 +203,26 @@ function useEntryDetail(entryId?: string, nightId?: string, userId?: string) {
     });
 }
 
+async function fetchEntryPhotos(entryId: string): Promise<string[]> {
+    const { data, error } = await supabase
+        .from('entry_photos')
+        .select('photo_url')
+        .eq('entry_id', entryId)
+        .order('sort_order', { ascending: true });
+
+    if (error) throw error;
+    return (data ?? []).map((row: { photo_url: string }) => row.photo_url);
+}
+
+function useEntryPhotos(entryId?: string) {
+    return useQuery({
+        queryKey: ['entry-photos', entryId],
+        queryFn: () => fetchEntryPhotos(entryId!),
+        enabled: !!entryId,
+        staleTime: 1000 * 60 * 5,
+    });
+}
+
 // ── Screen ─────────────────────────────────────────────────────────────────
 
 export default function EntryDetailScreen() {
@@ -211,6 +239,17 @@ export default function EntryDetailScreen() {
     const { data: entry, isLoading, error } = useEntryDetail(entryId, nightId, userId);
     // Round context for banner — enabled only once we know the entry's table_night_id
     const { data: roundContext } = useRoundContext(entry?.table_night_id ?? null);
+    // entry_photos for carousel (resolved after entry loads)
+    const { data: entryPhotoUrls } = useEntryPhotos(entry?.id);
+    // Viewer's personal history at this restaurant (cross-Table, excludes this entry)
+    const { user: viewer } = useAuth();
+    const { data: userHistory } = useUserRestaurantHistory(
+        entry?.restaurant_id ?? null,
+        viewer?.id ?? null,
+        entry?.id,
+    );
+    // Photo carousel index
+    const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
     if (isLoading || !entry) {
         return (
@@ -250,8 +289,19 @@ export default function EntryDetailScreen() {
         entry.value_rating != null;
 
     const isRoundEntry = !!entry.table_night_id;
-    const heroPhotoUrl = entry.photo_url ?? entry.restaurants?.photo_url ?? null;
-    const isUserPhoto = !!entry.photo_url;
+
+    // Build allPhotos with backward compat fallback:
+    // Use entry_photos if available, otherwise fall back to entry.photo_url
+    const allPhotos: string[] = entryPhotoUrls && entryPhotoUrls.length > 0
+        ? entryPhotoUrls
+        : entry.photo_url
+            ? [entry.photo_url]
+            : [];
+
+    // For non-user photos (restaurants), use restaurant photo if no user photos
+    const hasUserPhotos = allPhotos.length > 0;
+    const heroDisplayUrl = hasUserPhotos ? allPhotos[0] : entry.restaurants?.photo_url ?? null;
+    const hasHeroDisplay = !!heroDisplayUrl;
 
     return (
         <>
@@ -260,18 +310,62 @@ export default function EntryDetailScreen() {
                 <ScrollView
                     contentContainerStyle={{
                         paddingBottom: insets.bottom + 40,
-                        paddingTop: heroPhotoUrl ? 0 : insets.top + Spacing.md,
+                        paddingTop: hasHeroDisplay ? 0 : insets.top + Spacing.md,
                     }}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Hero image with scrim overlay */}
-                    {heroPhotoUrl ? (
+                    {/* Hero image / carousel */}
+                    {hasHeroDisplay ? (
                         <View>
-                            <Image
-                                source={{ uri: heroPhotoUrl }}
-                                style={{ width: '100%', aspectRatio: 16 / 9 }}
-                                resizeMode="cover"
-                            />
+                            {hasUserPhotos && allPhotos.length > 1 ? (
+                                // Multi-photo carousel
+                                <View>
+                                    <ScrollView
+                                        horizontal
+                                        pagingEnabled
+                                        showsHorizontalScrollIndicator={false}
+                                        style={{ width: SCREEN_WIDTH }}
+                                        onMomentumScrollEnd={(e) => {
+                                            const idx = Math.round(
+                                                e.nativeEvent.contentOffset.x / SCREEN_WIDTH
+                                            );
+                                            setActivePhotoIndex(idx);
+                                        }}
+                                    >
+                                        {allPhotos.map((url, i) => (
+                                            <Image
+                                                key={i}
+                                                source={{ uri: url }}
+                                                style={{ width: SCREEN_WIDTH, aspectRatio: 16 / 9 }}
+                                                resizeMode="cover"
+                                            />
+                                        ))}
+                                    </ScrollView>
+                                    {/* Page dots */}
+                                    <View style={styles.pageDots}>
+                                        {allPhotos.map((_, i) => (
+                                            <View
+                                                key={i}
+                                                style={[
+                                                    styles.pageDot,
+                                                    {
+                                                        backgroundColor: i === activePhotoIndex
+                                                            ? palette.tertiary
+                                                            : `${palette.textMuted}4D`,
+                                                    },
+                                                ]}
+                                            />
+                                        ))}
+                                    </View>
+                                </View>
+                            ) : (
+                                // Single hero image
+                                <Image
+                                    source={{ uri: heroDisplayUrl! }}
+                                    style={{ width: '100%', aspectRatio: 16 / 9 }}
+                                    resizeMode="cover"
+                                />
+                            )}
                             <View
                                 style={{
                                     position: 'absolute',
@@ -292,8 +386,8 @@ export default function EntryDetailScreen() {
                                     <Text style={[Type.body, { color: '#fff' }]}>← Back</Text>
                                 </Pressable>
                             </View>
-                            {/* "User photo" caption — only shown for user-uploaded photos */}
-                            {isUserPhoto && (
+                            {/* "User photo" caption — only shown for user-uploaded single photos */}
+                            {hasUserPhotos && allPhotos.length === 1 && (
                                 <View style={styles.userPhotoCaptionContainer}>
                                     <Text style={[Type.caption, { color: 'rgba(255,255,255,0.85)' }]}>
                                         User photo
@@ -327,27 +421,64 @@ export default function EntryDetailScreen() {
                             </View>
                         </View>
 
-                        <Text
-                            style={[
-                                Type.displayLarge,
-                                {
-                                    color: palette.text,
-                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                    fontSize: 38,
-                                    lineHeight: 44,
-                                    marginTop: Spacing.lg,
-                                },
-                            ]}
+                        <Pressable
+                            onPress={() => {
+                                if (entry.restaurant_id) {
+                                    router.push({
+                                        pathname: '/restaurant/[id]',
+                                        params: {
+                                            id: entry.restaurant_id,
+                                            ...(entry.table_id ? { tableId: entry.table_id } : {}),
+                                        },
+                                    });
+                                }
+                            }}
+                            disabled={!entry.restaurant_id}
                         >
-                            {restaurantName}
-                        </Text>
-
-                        {entry.restaurants?.address ? (
-                            <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 4 }]}>
-                                {entry.restaurants.address}
+                            <Text
+                                style={[
+                                    Type.displayLarge,
+                                    {
+                                        color: palette.text,
+                                        fontFamily: 'Newsreader_400Regular_Italic',
+                                        fontSize: 38,
+                                        lineHeight: 44,
+                                        marginTop: Spacing.lg,
+                                    },
+                                ]}
+                            >
+                                {restaurantName}
                             </Text>
-                        ) : null}
+
+                            {entry.restaurants?.address ? (
+                                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 4 }]}>
+                                    {entry.restaurants.address}
+                                </Text>
+                            ) : null}
+                        </Pressable>
                     </View>
+
+                    {/* Previously here — viewer's cross-Table personal history */}
+                    {userHistory && userHistory.visit_count > 0 && (
+                        <PreviouslyHereBanner
+                            voice="user"
+                            visitCount={userHistory.visit_count}
+                            lastRating={userHistory.last_visit?.rating ?? null}
+                            lastDate={userHistory.last_visit?.date ?? null}
+                            onPress={
+                                entry.restaurant_id
+                                    ? () =>
+                                          router.push({
+                                              pathname: '/restaurant/[id]',
+                                              params: {
+                                                  id: entry.restaurant_id!,
+                                                  ...(entry.table_id ? { tableId: entry.table_id } : {}),
+                                              },
+                                          })
+                                    : undefined
+                            }
+                        />
+                    )}
 
                     {/* Round Context Banner */}
                     {isRoundEntry && roundContext && (
@@ -594,5 +725,20 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.sm,
         paddingVertical: 3,
         borderRadius: Radius.sm,
+    },
+    pageDots: {
+        position: 'absolute',
+        bottom: Spacing.sm,
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    pageDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
     },
 });

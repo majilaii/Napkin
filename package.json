@@ -1,6 +1,8 @@
 {
   "devDependencies": {
     "@types/react": "~19.2.10",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~55.0.0",
     "husky": "^9.1.7",
     "supabase": "^2.58.5",
     "typescript": "~5.9.2"
