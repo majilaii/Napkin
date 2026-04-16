@@ -9,6 +9,8 @@
  */
 
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system';
+import { decode } from 'base64-arraybuffer';
 import { supabase } from '@/lib/supabase';
 
 const BUCKET = 'entry-photos';
@@ -67,11 +69,12 @@ export async function compressAndUpload(uri: string, userId: string): Promise<st
         );
     }
 
-    // ── Fetch as blob ─────────────────────────────────────────────────────
-    let blob: Blob;
+    // ── Read as base64 (reliable in React Native) ───────────────────────
+    let base64: string;
     try {
-        const response = await fetch(compressed.uri);
-        blob = await response.blob();
+        base64 = await FileSystem.readAsStringAsync(compressed.uri, {
+            encoding: FileSystem.EncodingType.Base64,
+        });
     } catch (err) {
         throw new PhotoUploadError(
             'compression_failed',
@@ -80,19 +83,21 @@ export async function compressAndUpload(uri: string, userId: string): Promise<st
     }
 
     // ── Size guard ────────────────────────────────────────────────────────
-    if (blob.size > MAX_BYTES_POST_COMPRESSION) {
+    const byteLength = (base64.length * 3) / 4; // approximate
+    if (byteLength > MAX_BYTES_POST_COMPRESSION) {
         throw new PhotoUploadError(
             'too_large',
-            `Photo is too large after compression (${(blob.size / (1024 * 1024)).toFixed(1)} MB). Max is 5 MB.`
+            `Photo is too large after compression (${(byteLength / (1024 * 1024)).toFixed(1)} MB). Max is 5 MB.`
         );
     }
 
     // ── Upload ────────────────────────────────────────────────────────────
     const filename = `${userId}/${Date.now()}.jpg`;
+    const arrayBuffer = decode(base64);
 
     const { error: uploadError } = await supabase.storage
         .from(BUCKET)
-        .upload(filename, blob, {
+        .upload(filename, arrayBuffer, {
             contentType: 'image/jpeg',
             upsert: false,
         });

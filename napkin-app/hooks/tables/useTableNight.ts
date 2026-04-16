@@ -147,6 +147,7 @@ export function useRateTableNight() {
             rating: number;
             notes?: string;
             dish_description?: string;
+            photo_url?: string;
             vibe_rating?: number | null;
             flavor_rating?: number | null;
             service_rating?: number | null;

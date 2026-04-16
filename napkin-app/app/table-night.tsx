@@ -15,14 +15,19 @@ import {
     Alert,
     Animated,
     Easing,
+    ActionSheetIOS,
+    Platform,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import Slider from '@react-native-community/slider';
+import * as ImagePicker from 'expo-image-picker';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
 import {
     useTableNightStatus,
     useRateTableNight,
@@ -155,6 +160,82 @@ export default function TableNightScreen() {
         setStarRating(Math.round(value * 2) / 2);
     };
 
+    // ── Photo state ───────────────────────────────────────────────────────
+    const [photoUri, setPhotoUri] = useState<string | null>(null);
+    const [photoPublicUrl, setPhotoPublicUrl] = useState<string | null>(null);
+    const [photoUploading, setPhotoUploading] = useState(false);
+    const [photoError, setPhotoError] = useState(false);
+
+    const uploadPhoto = useCallback(async (uri: string) => {
+        if (!user?.id) return;
+        setPhotoUri(uri);
+        setPhotoUploading(true);
+        setPhotoError(false);
+        try {
+            const publicUrl = await compressAndUpload(uri, user.id);
+            setPhotoPublicUrl(publicUrl);
+        } catch {
+            setPhotoError(true);
+        } finally {
+            setPhotoUploading(false);
+        }
+    }, [user?.id]);
+
+    const pickFromCamera = useCallback(async () => {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+            Alert.alert('Permission needed', 'Camera access is required to take a photo.');
+            return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            quality: 1,
+        });
+        if (!result.canceled && result.assets[0]) {
+            uploadPhoto(result.assets[0].uri);
+        }
+    }, [uploadPhoto]);
+
+    const pickFromLibrary = useCallback(async () => {
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 1,
+        });
+        if (!result.canceled && result.assets[0]) {
+            uploadPhoto(result.assets[0].uri);
+        }
+    }, [uploadPhoto]);
+
+    const handlePhotoPress = useCallback(() => {
+        if (Platform.OS === 'ios') {
+            ActionSheetIOS.showActionSheetWithOptions(
+                {
+                    options: ['Cancel', 'Take Photo', 'Choose from Library'],
+                    cancelButtonIndex: 0,
+                },
+                (buttonIndex) => {
+                    if (buttonIndex === 1) pickFromCamera();
+                    if (buttonIndex === 2) pickFromLibrary();
+                }
+            );
+        } else {
+            Alert.alert('Add Photo', '', [
+                { text: 'Take Photo', onPress: pickFromCamera },
+                { text: 'Choose from Library', onPress: pickFromLibrary },
+                { text: 'Cancel', style: 'cancel' },
+            ]);
+        }
+    }, [pickFromCamera, pickFromLibrary]);
+
+    const dismissPhoto = useCallback(async () => {
+        if (photoPublicUrl) {
+            removeUploadedPhoto(photoPublicUrl).catch(() => {});
+        }
+        setPhotoUri(null);
+        setPhotoPublicUrl(null);
+        setPhotoError(false);
+    }, [photoPublicUrl]);
+
     // Derived state
     const myParticipant = nightStatus?.participants.find(
         (p) => p.user_id === user?.id
@@ -182,6 +263,7 @@ export default function TableNightScreen() {
             await rateMutation.mutateAsync({
                 table_night_id: nightId,
                 rating: Math.round(starRating * 2) / 2,
+                photo_url: photoPublicUrl ?? undefined,
                 vibe_rating: categories.vibe || undefined,
                 flavor_rating: categories.flavor || undefined,
                 service_rating: categories.service || undefined,
@@ -417,6 +499,63 @@ export default function TableNightScreen() {
                                         />
                                     </View>
                                 ))}
+
+                                {/* ── Photo Section ──────────────────────── */}
+                                <View
+                                    style={[styles.divider, { backgroundColor: palette.outlineVariant + '30' }]}
+                                />
+                                <Text
+                                    style={[
+                                        Type.label,
+                                        { color: palette.textMuted, marginBottom: Spacing.sm },
+                                    ]}
+                                >
+                                    Photo (optional)
+                                </Text>
+
+                                {!photoUri ? (
+                                    <Pressable
+                                        onPress={handlePhotoPress}
+                                        style={[
+                                            styles.photoPlaceholder,
+                                            { borderColor: palette.outlineVariant },
+                                        ]}
+                                    >
+                                        <Text style={{ fontSize: 28, marginBottom: 4 }}>📷</Text>
+                                        <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
+                                            Add a photo
+                                        </Text>
+                                    </Pressable>
+                                ) : (
+                                    <View style={styles.photoPreviewContainer}>
+                                        <Image
+                                            source={{ uri: photoUri }}
+                                            style={styles.photoPreview}
+                                            contentFit="cover"
+                                        />
+                                        {photoUploading && (
+                                            <View style={styles.photoOverlay}>
+                                                <ActivityIndicator color="#fff" />
+                                            </View>
+                                        )}
+                                        {photoError && (
+                                            <View style={styles.photoOverlay}>
+                                                <Text style={{ color: '#fff', fontSize: 14 }}>Upload failed</Text>
+                                                <Pressable onPress={() => uploadPhoto(photoUri)}>
+                                                    <Text style={{ color: '#fff', fontSize: 13, marginTop: 4, textDecorationLine: 'underline' }}>
+                                                        Retry
+                                                    </Text>
+                                                </Pressable>
+                                            </View>
+                                        )}
+                                        <Pressable
+                                            onPress={dismissPhoto}
+                                            style={styles.photoDismiss}
+                                        >
+                                            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>×</Text>
+                                        </Pressable>
+                                    </View>
+                                )}
                             </View>
                         </View>
                     )}
@@ -702,5 +841,40 @@ const styles = StyleSheet.create({
     ctaButton: {
         height: 56, borderRadius: 9999,
         alignItems: 'center', justifyContent: 'center',
+    },
+    photoPlaceholder: {
+        borderWidth: 1.5,
+        borderStyle: 'dashed',
+        borderRadius: Radius.lg,
+        paddingVertical: Spacing.lg,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    photoPreviewContainer: {
+        position: 'relative',
+        borderRadius: Radius.lg,
+        overflow: 'hidden',
+    },
+    photoPreview: {
+        width: '100%',
+        height: 180,
+        borderRadius: Radius.lg,
+    },
+    photoOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    photoDismiss: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });
