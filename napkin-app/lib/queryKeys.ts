@@ -82,5 +82,9 @@ export const queryKeys = {
             excludeEntryId
                 ? ['restaurantHistory', 'user', restaurantId, userId, excludeEntryId] as const
                 : ['restaurantHistory', 'user', restaurantId, userId] as const,
+        page: (restaurantId: string, tableId?: string) =>
+            tableId
+                ? ['restaurantPage', restaurantId, tableId] as const
+                : ['restaurantPage', restaurantId] as const,
     },
 } as const;

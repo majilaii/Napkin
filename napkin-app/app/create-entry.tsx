@@ -70,7 +70,17 @@ export default function CreateEntryScreen() {
     const router = useRouter();
     const { user } = useAuth();
 
-    const { tableId: tableIdParam } = useLocalSearchParams<{ tableId: string }>();
+    const {
+        tableId: tableIdParam,
+        restaurantId: restaurantIdParam,
+        placePayload: placePayloadParam,
+        mode: modeParam,
+    } = useLocalSearchParams<{
+        tableId?: string;
+        restaurantId?: string;
+        placePayload?: string;
+        mode?: 'solo' | 'round';
+    }>();
 
     // Tables data
     const { data: tableMemberships } = useTables(user?.id);
@@ -96,7 +106,7 @@ export default function CreateEntryScreen() {
     const isPersonalTable = selectedTable?.is_personal === true;
 
     // Mode picker (group tables only)
-    const [postMode, setPostMode] = useState<PostMode>('solo');
+    const [postMode, setPostMode] = useState<PostMode>(modeParam === 'round' ? 'round' : 'solo');
 
     // Reset mode when switching to personal table
     useEffect(() => {
@@ -117,12 +127,83 @@ export default function CreateEntryScreen() {
     const createEntry = useCreateEntry(user?.id, selectedTableId);
     const startRound = useStartRound(user?.id, selectedTableId);
 
+    // ── Prefill from route params ─────────────────────────────────────────────
+    // Parse placePayload (ghost arrivals from the restaurant page) into a PlaceResult
+    const prefillPlace = React.useMemo<PlaceResult | null>(() => {
+        if (placePayloadParam) {
+            try {
+                const p = JSON.parse(placePayloadParam);
+                return {
+                    id: p.id ?? p.external_id ?? p.placeId ?? '',
+                    name: p.name ?? '',
+                    formattedAddress: p.formattedAddress ?? p.address ?? null,
+                    latitude: p.latitude ?? null,
+                    longitude: p.longitude ?? null,
+                    categories: p.categories ?? [],
+                    photoReference: p.photoReference ?? null,
+                };
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    }, [placePayloadParam]);
+
     // Search state
-    const [query, setQuery] = useState('');
+    const [query, setQuery] = useState(prefillPlace?.name ?? '');
     const [results, setResults] = useState<PlaceResult[]>([]);
     const [searching, setSearching] = useState(false);
-    const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
+    const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(prefillPlace);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // When prefillPlace resolves (from parsed param on first render), ensure it's selected
+    useEffect(() => {
+        if (prefillPlace && !selectedPlace) {
+            setSelectedPlace(prefillPlace);
+            setQuery(prefillPlace.name);
+        }
+    }, [prefillPlace]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Fetch restaurant by Napkin UUID when restaurantId param is present but no placePayload
+    useEffect(() => {
+        if (!restaurantIdParam || prefillPlace) return;
+        (async () => {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                const { data, error } = await supabase.functions.invoke(
+                    `restaurant-history?action=page&restaurant_id=${encodeURIComponent(restaurantIdParam)}`,
+                    {
+                        headers: session?.access_token
+                            ? { Authorization: `Bearer ${session.access_token}` }
+                            : undefined,
+                    },
+                );
+                const r = (!error && data?.data?.restaurant) ? data.data.restaurant : null;
+                const place: PlaceResult = {
+                    id: r?.external_id ?? restaurantIdParam,
+                    name: r?.name ?? '',
+                    formattedAddress: r?.address ?? null,
+                    latitude: null,
+                    longitude: null,
+                    categories: r?.cuisine ? [r.cuisine] : [],
+                    photoReference: null,
+                };
+                setSelectedPlace(place);
+                setQuery(place.name);
+            } catch {
+                // Best-effort: at minimum the id is known; submit will still work
+                setSelectedPlace({
+                    id: restaurantIdParam,
+                    name: '',
+                    formattedAddress: null,
+                    latitude: null,
+                    longitude: null,
+                    categories: [],
+                    photoReference: null,
+                });
+            }
+        })();
+    }, [restaurantIdParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Impression form state
     const [rating, setRating] = useState(0);
@@ -556,7 +637,7 @@ export default function CreateEntryScreen() {
                                         placeholderTextColor={palette.textMuted}
                                         value={query}
                                         onChangeText={setQuery}
-                                        autoFocus
+                                        autoFocus={!restaurantIdParam && !placePayloadParam}
                                     />
                                     {searching && (
                                         <ActivityIndicator

@@ -30,6 +30,39 @@ type Visit = {
     user_display_names: string[]; // participants (rounds) or single author (solo)
     entry_id?: string; // for solos — convenient for navigation
     table_night_id?: string; // for rounds
+    // Extended fields for action=page
+    user_id?: string;
+    avatar_url?: string | null;
+    note?: string | null;
+};
+
+type WhosBeenEntry = {
+    user_id: string;
+    display_name: string;
+    avatar_url: string | null;
+    personal_average: number;
+    visit_count: number;
+};
+
+type RestaurantPageData = {
+    restaurant: {
+        id: string;
+        name: string;
+        address: string | null;
+        city: string | null;
+        country: string | null;
+        cuisine: string | null;
+        price_level: number | null;
+        photo_url: string | null;
+        google_rating: number | null;
+        google_rating_count: number | null;
+        external_id: string | null;
+    } | null;
+    personal: { average: number | null; visit_count: number };
+    table_chip: { table_id: string; table_name: string; average: number; visit_count: number } | null;
+    whos_been: WhosBeenEntry[];
+    visits: Visit[];
+    visit_count: number;
 };
 
 function json(body: unknown, status = 200): Response {
@@ -342,6 +375,262 @@ serve(async (req) => {
                     user_average: userAverage,
                     last_visit: visits[0] ?? null,
                 },
+            });
+        }
+
+        // ── Full restaurant page data (aggregated) ─────────────────────────
+        if (action === 'page') {
+            const tableIdParam = url.searchParams.get('table_id');
+
+            // Resolve restaurant — UUID takes precedence; fall back to external_id
+            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            const isUuid = uuidPattern.test(restaurantId);
+
+            let restaurantRow: RestaurantPageData['restaurant'] = null;
+            if (isUuid) {
+                const { data, error } = await supabase
+                    .from('restaurants')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id')
+                    .eq('id', restaurantId)
+                    .maybeSingle();
+                if (error) throw error;
+                restaurantRow = data ?? null;
+            } else {
+                // Treat as external_id (Google Place ID)
+                const { data, error } = await supabase
+                    .from('restaurants')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id')
+                    .eq('external_id', restaurantId)
+                    .maybeSingle();
+                if (error) throw error;
+                restaurantRow = data ?? null;
+            }
+
+            // If restaurant not found, return empty page data
+            if (!restaurantRow) {
+                return json({
+                    data: {
+                        restaurant: null,
+                        personal: { average: null, visit_count: 0 },
+                        table_chip: null,
+                        whos_been: [],
+                        visits: [],
+                        visit_count: 0,
+                    } as RestaurantPageData,
+                });
+            }
+
+            const resolvedRestaurantId = restaurantRow.id;
+
+            // Find all table_ids the user is a member of
+            const { data: memberships, error: memberErr } = await supabase
+                .from('table_members')
+                .select('table_id, tables(id, name, is_personal)')
+                .eq('member_id', user.id);
+            if (memberErr) throw memberErr;
+
+            const memberTableIds = (memberships ?? []).map((m: any) => m.table_id as string);
+
+            // ── Personal average (viewer's own entries across all Tables) ──
+            let personalAverage: number | null = null;
+            let personalVisitCount = 0;
+            if (memberTableIds.length > 0) {
+                const { data: personalEntries, error: personalErr } = await supabase
+                    .from('entries')
+                    .select('id, rating')
+                    .eq('user_id', user.id)
+                    .eq('restaurant_id', resolvedRestaurantId)
+                    .not('rating', 'is', null);
+                if (personalErr) throw personalErr;
+
+                const rated = (personalEntries ?? []).filter((e: any) => e.rating != null);
+                personalVisitCount = rated.length;
+                if (rated.length > 0) {
+                    personalAverage = rated.reduce((sum: number, e: any) => sum + e.rating, 0) / rated.length;
+                }
+            }
+
+            // ── Table chip — most recent visit's Table, biased by tableId param ──
+            let tableChip: RestaurantPageData['table_chip'] = null;
+            if (memberTableIds.length > 0) {
+                // Candidate tables: either the biased table (if user is member) or all member tables
+                let candidateTableIds = memberTableIds;
+                if (tableIdParam && memberTableIds.includes(tableIdParam)) {
+                    candidateTableIds = [tableIdParam];
+                }
+
+                // Get all entries for this restaurant in user's tables to find most-recent table
+                const { data: tableEntries, error: tableEntriesErr } = await supabase
+                    .from('entries')
+                    .select('id, rating, table_id, visited_at, created_at, tables(id, name)')
+                    .in('table_id', candidateTableIds)
+                    .eq('restaurant_id', resolvedRestaurantId)
+                    .not('rating', 'is', null)
+                    .order('visited_at', { ascending: false });
+                if (tableEntriesErr) throw tableEntriesErr;
+
+                if ((tableEntries ?? []).length > 0) {
+                    // Use the most recent visit's table as the chip
+                    const mostRecentEntry = (tableEntries as any[])[0];
+                    const chipTableId = mostRecentEntry.table_id as string;
+                    const chipTableName = mostRecentEntry.tables?.name as string ?? 'Table';
+
+                    // Compute average and count for that table
+                    const chipEntries = (tableEntries as any[]).filter(e => e.table_id === chipTableId);
+                    const chipAvg = chipEntries.reduce((sum: number, e: any) => sum + e.rating, 0) / chipEntries.length;
+
+                    tableChip = {
+                        table_id: chipTableId,
+                        table_name: chipTableName,
+                        average: chipAvg,
+                        visit_count: chipEntries.length,
+                    };
+                }
+            }
+
+            // ── Shared-Table members (users the viewer shares a Table with) ──
+            // Get all user_ids in any of the viewer's Tables, excluding the viewer
+            let sharedUserIds: string[] = [];
+            if (memberTableIds.length > 0) {
+                const { data: sharedMembers, error: sharedErr } = await supabase
+                    .from('table_members')
+                    .select('member_id')
+                    .in('table_id', memberTableIds)
+                    .neq('member_id', user.id);
+                if (sharedErr) throw sharedErr;
+                sharedUserIds = [...new Set((sharedMembers ?? []).map((m: any) => m.member_id as string))];
+            }
+
+            // ── Who's been — shared users who have logged this restaurant ──
+            let whosBeen: WhosBeenEntry[] = [];
+            if (sharedUserIds.length > 0) {
+                const { data: sharedEntries, error: sharedEntriesErr } = await supabase
+                    .from('entries')
+                    .select('user_id, rating, profiles(display_name, avatar_url)')
+                    .in('user_id', sharedUserIds)
+                    .eq('restaurant_id', resolvedRestaurantId)
+                    .not('rating', 'is', null);
+                if (sharedEntriesErr) throw sharedEntriesErr;
+
+                // Group by user_id, compute personal avg
+                const byUser = new Map<string, { display_name: string; avatar_url: string | null; ratings: number[] }>();
+                for (const e of (sharedEntries ?? []) as any[]) {
+                    const uid = e.user_id as string;
+                    if (!byUser.has(uid)) {
+                        byUser.set(uid, {
+                            display_name: e.profiles?.display_name ?? 'Member',
+                            avatar_url: e.profiles?.avatar_url ?? null,
+                            ratings: [],
+                        });
+                    }
+                    if (e.rating != null) {
+                        byUser.get(uid)!.ratings.push(e.rating as number);
+                    }
+                }
+
+                whosBeen = Array.from(byUser.entries()).map(([uid, info]) => ({
+                    user_id: uid,
+                    display_name: info.display_name,
+                    avatar_url: info.avatar_url,
+                    personal_average: info.ratings.reduce((a, b) => a + b, 0) / info.ratings.length,
+                    visit_count: info.ratings.length,
+                }));
+            }
+
+            // ── Visits feed — viewer's own + shared users' entries ──
+            const allVisibleUserIds = [user.id, ...sharedUserIds];
+            const visitsRaw: Visit[] = [];
+
+            if (memberTableIds.length > 0) {
+                // Solo entries
+                const { data: feedEntries, error: feedEntriesErr } = await supabase
+                    .from('entries')
+                    .select('id, user_id, rating, visited_at, created_at, notes, table_night_id, profiles(display_name, avatar_url)')
+                    .in('user_id', allVisibleUserIds)
+                    .eq('restaurant_id', resolvedRestaurantId)
+                    .is('table_night_id', null)
+                    .not('rating', 'is', null)
+                    .order('visited_at', { ascending: false });
+                if (feedEntriesErr) throw feedEntriesErr;
+
+                for (const e of (feedEntries ?? []) as any[]) {
+                    visitsRaw.push({
+                        kind: 'solo',
+                        id: e.id,
+                        entry_id: e.id,
+                        user_id: e.user_id,
+                        avatar_url: e.profiles?.avatar_url ?? null,
+                        rating: e.rating,
+                        date: e.visited_at ?? e.created_at,
+                        user_display_names: e.profiles?.display_name ? [e.profiles.display_name] : [],
+                        note: e.notes ?? null,
+                    });
+                }
+
+                // Rounds (revealed table nights at this restaurant in user's tables)
+                const { data: feedNights, error: feedNightsErr } = await supabase
+                    .from('table_nights')
+                    .select(`
+                        id,
+                        host_user_id,
+                        revealed_at,
+                        created_at,
+                        table_night_participants(
+                            user_id,
+                            rating,
+                            notes,
+                            profiles(display_name, avatar_url)
+                        )
+                    `)
+                    .in('table_id', memberTableIds)
+                    .eq('restaurant_id', resolvedRestaurantId)
+                    .eq('status', 'revealed');
+                if (feedNightsErr) throw feedNightsErr;
+
+                for (const night of (feedNights ?? []) as any[]) {
+                    const participants = (night.table_night_participants ?? []) as any[];
+                    // Only include this round if at least one visible participant is involved
+                    const visibleParticipants = participants.filter((p: any) =>
+                        allVisibleUserIds.includes(p.user_id)
+                    );
+                    if (visibleParticipants.length === 0) continue;
+
+                    const ratings = participants
+                        .map((p: any) => p.rating)
+                        .filter((r: any) => r != null) as number[];
+                    const avg = ratings.length > 0
+                        ? ratings.reduce((a, b) => a + b, 0) / ratings.length
+                        : null;
+                    const names = participants
+                        .map((p: any) => p.profiles?.display_name)
+                        .filter(Boolean) as string[];
+
+                    visitsRaw.push({
+                        kind: 'round',
+                        id: night.id,
+                        table_night_id: night.id,
+                        user_id: night.host_user_id,
+                        avatar_url: null,
+                        rating: avg,
+                        date: night.revealed_at ?? night.created_at,
+                        user_display_names: names,
+                        note: null,
+                    });
+                }
+            }
+
+            // Sort visits by date desc
+            visitsRaw.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
+            return json({
+                data: {
+                    restaurant: restaurantRow,
+                    personal: { average: personalAverage, visit_count: personalVisitCount },
+                    table_chip: tableChip,
+                    whos_been: whosBeen,
+                    visits: visitsRaw,
+                    visit_count: visitsRaw.length,
+                } as RestaurantPageData,
             });
         }
 

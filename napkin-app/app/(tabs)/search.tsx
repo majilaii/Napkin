@@ -163,10 +163,14 @@ export default function SearchScreen() {
     const handleResultPress = useCallback(
         (item: SearchResultRowType) => {
             if (item.tier === 'morePlaces' && item.placeId) {
-                // Ghost: navigate with placeId param (TICKET-016 ghost shape)
+                // Ghost: navigate with placeId param and full payload for instant hero render
                 router.push({
                     pathname: '/restaurant/[id]',
-                    params: { id: item.placeId, placeId: item.placeId },
+                    params: {
+                        id: item.placeId,
+                        placeId: item.placeId,
+                        placePayload: JSON.stringify(item),
+                    },
                 });
             } else if (item.id) {
                 // Persisted: navigate with Napkin DB id
