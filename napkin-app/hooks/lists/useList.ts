@@ -44,6 +44,10 @@ export interface ListDetail {
 export interface OwnerProfile {
     display_name: string | null;
     avatar_url: string | null;
+    /** Added in TICKET-020: drives author-line tap-through on list detail */
+    username: string | null;
+    /** Added in TICKET-020: 'public' → author line is tappable; 'private' → plain text */
+    account_privacy: 'public' | 'private';
 }
 
 export interface ListDetailData {

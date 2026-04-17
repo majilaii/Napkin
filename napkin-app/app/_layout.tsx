@@ -68,13 +68,13 @@ function BottomNavBar() {
         </View>
       </Pressable>
 
-      {/* Settings tab */}
+      {/* Profile tab */}
       <Pressable
-        onPress={() => router.replace('/settings')}
+        onPress={() => router.replace('/profile')}
         style={navStyles.tab}
       >
-        <Ionicons name="settings-outline" size={24} color={activeTab === 'settings' ? palette.tabIconSelected : palette.tabIconDefault} />
-        <Text style={[Type.labelSmall, { color: activeTab === 'settings' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Settings</Text>
+        <Ionicons name="person-circle-outline" size={24} color={activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault} />
+        <Text style={[Type.labelSmall, { color: activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Profile</Text>
       </Pressable>
     </View>
   );
@@ -168,6 +168,14 @@ function RootLayoutNav() {
           <Stack.Screen
             name="list/new"
             options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
+            name="u/[identifier]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="settings"
+            options={{ headerShown: false }}
           />
         </Stack>
         <BottomNavBar />

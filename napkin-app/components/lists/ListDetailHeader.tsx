@@ -8,10 +8,12 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import type { ListDetail, OwnerProfile } from '@/hooks/lists/useList';
 
@@ -29,6 +31,8 @@ export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEd
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
     const { show: showToast } = useToast();
+    const router = useRouter();
+    const { user } = useAuth();
 
     const handleShare = async () => {
         const url = `diningjournalapp://list/${list.id}`;
@@ -54,15 +58,41 @@ export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEd
                 </Text>
             ) : null}
 
-            {/* Author row */}
-            <View style={[styles.authorRow, { marginTop: Spacing.md }]}>
-                <View style={[styles.avatar, { backgroundColor: palette.surfaceContainerHigh }]}>
-                    <Ionicons name="person" size={14} color={palette.textMuted} />
-                </View>
-                <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
-                    {ownerProfile.display_name ?? 'Unknown'}
-                </Text>
-            </View>
+            {/* Author row — tappable when public or self (TICKET-020) */}
+            {(() => {
+                // When viewer is the owner, always route to /u/[currentUserId] (uuid)
+                // When target is public, route to /u/[username]
+                // Otherwise: plain text
+                const authorIdentifier = isOwner
+                    ? user?.id
+                    : ownerProfile.account_privacy === 'public' && ownerProfile.username
+                        ? ownerProfile.username
+                        : null;
+                const isTappable = !!authorIdentifier;
+
+                const content = (
+                    <View style={[styles.authorRow, { marginTop: Spacing.md }]}>
+                        <View style={[styles.avatar, { backgroundColor: palette.surfaceContainerHigh }]}>
+                            <Ionicons name="person" size={14} color={palette.textMuted} />
+                        </View>
+                        <Text style={[Type.bodySmall, { color: isTappable ? palette.primary : palette.textMuted }]}>
+                            {ownerProfile.display_name ?? 'Unknown'}
+                        </Text>
+                    </View>
+                );
+
+                if (isTappable) {
+                    return (
+                        <Pressable
+                            onPress={() => router.push(`/u/${authorIdentifier}`)}
+                            hitSlop={8}
+                        >
+                            {content}
+                        </Pressable>
+                    );
+                }
+                return content;
+            })()}
 
             {/* Badges row */}
             <View style={[styles.badgesRow, { marginTop: Spacing.sm }]}>

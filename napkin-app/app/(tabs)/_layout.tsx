@@ -7,10 +7,14 @@ import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 /**
- * Three-tab nav: Tables | (+) Log | Settings
+ * Five-tab nav: Tables | Search | (+) Log | [journal hidden] | Profile
  *
  * The centre "Log" tab is a terracotta circle that opens the create-entry
  * modal instead of navigating to a tab screen.
+ *
+ * "friends" tab is removed (TICKET-020).
+ * "settings" tab is removed; settings is now reached via gear icon on Profile.
+ * "profile" tab is added in the fifth position.
  */
 export default function TabsLayout() {
     const scheme = useColorScheme() ?? 'light';
@@ -33,10 +37,6 @@ export default function TabsLayout() {
             {/* Hidden — file exists but not a visible tab */}
             <Tabs.Screen
                 name="journal"
-                options={{ href: null }}
-            />
-            <Tabs.Screen
-                name="friends"
                 options={{ href: null }}
             />
 
@@ -86,11 +86,11 @@ export default function TabsLayout() {
                 }}
             />
             <Tabs.Screen
-                name="settings"
+                name="profile"
                 options={{
-                    title: 'Settings',
+                    title: 'Profile',
                     tabBarIcon: ({ color, size }) => (
-                        <Ionicons name="settings-outline" size={size} color={color} />
+                        <Ionicons name="person-circle-outline" size={size} color={color} />
                     ),
                 }}
             />

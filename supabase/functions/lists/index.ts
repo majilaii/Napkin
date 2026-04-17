@@ -358,10 +358,10 @@ serve(async (req) => {
                 .order(orderCol, { ascending: orderAsc });
             if (entriesErr) throw entriesErr;
 
-            // Owner profile
+            // Owner profile — username and account_privacy added for TICKET-020 list-detail author tap
             const { data: ownerProfile } = await supabase
                 .from('profiles')
-                .select('display_name, avatar_url')
+                .select('display_name, avatar_url, username, account_privacy')
                 .eq('user_id', list.owner_id)
                 .maybeSingle();
 
@@ -369,7 +369,12 @@ serve(async (req) => {
                 data: {
                     list,
                     entries: entries ?? [],
-                    owner_profile: ownerProfile ?? { display_name: null, avatar_url: null },
+                    owner_profile: ownerProfile ?? {
+                        display_name: null,
+                        avatar_url: null,
+                        username: null,
+                        account_privacy: 'private',
+                    },
                 },
             });
         }
