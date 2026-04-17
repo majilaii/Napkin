@@ -37,6 +37,7 @@ import {
 } from '@/hooks/tables/useTableNight';
 import { useTableRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
 import { PreviouslyHereBanner, DeltaChip } from '@/components/restaurants';
+import { OnTheTableList } from '@/components/table-night';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
 import { CommentThread } from '@/components/posts';
 import { FeedActionRow } from '@/components/feed';
@@ -432,6 +433,17 @@ export default function TableNightDetailScreen() {
                                         )
                                 )}
                             </View>
+                        </View>
+                    )}
+
+                    {/* On the Table — menu-card module (revealed/closed only) */}
+                    {isRevealedOrClosed && (
+                        <View style={styles.section}>
+                            <OnTheTableList
+                                participants={nightStatus.participants}
+                                nightId={nightId!}
+                                palette={palette}
+                            />
                         </View>
                     )}
 
@@ -937,19 +949,6 @@ function ParticipantRow({
                     <Pressable onPress={canTapProfile ? handleProfilePress : undefined} hitSlop={4}>
                         <Text style={[Type.titleSmall, { color: palette.text }]}>{name}</Text>
                     </Pressable>
-                    {/* Dish chip */}
-                    {participant.dish_description ? (
-                        <View
-                            style={[
-                                styles.dishChip,
-                                { backgroundColor: palette.tertiaryFixed },
-                            ]}
-                        >
-                            <Text style={[Type.bodySmall, { color: palette.tertiary }]}>
-                                {participant.dish_description}
-                            </Text>
-                        </View>
-                    ) : null}
                     {participant.notes ? (
                         <Text
                             style={[
@@ -1068,12 +1067,6 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         borderRadius: Radius.sm,
         gap: 2,
-    },
-    dishChip: {
-        paddingHorizontal: Spacing.sm,
-        paddingVertical: 3,
-        borderRadius: Radius.sm,
-        alignSelf: 'flex-start',
     },
     photoStrip: {
         flexDirection: 'row',

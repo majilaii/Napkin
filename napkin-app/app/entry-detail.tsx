@@ -944,6 +944,63 @@ export default function EntryDetailScreen() {
                                 </Text>
                             ) : null}
                         </Pressable>
+
+                        {/* Dish subheader — inline edit mode or view mode */}
+                        {isEditingDish ? (
+                            <View style={{ marginTop: Spacing.sm }}>
+                                <TextInput
+                                    style={[
+                                        styles.inlineTextInput,
+                                        { backgroundColor: palette.surfaceContainerLow, color: palette.text },
+                                    ]}
+                                    value={localDish}
+                                    onChangeText={setLocalDish}
+                                    placeholder="e.g. Spicy rigatoni, negroni"
+                                    placeholderTextColor={palette.textMuted}
+                                    autoFocus
+                                    onBlur={handleDishSave}
+                                />
+                                {updateEntry.isPending && (
+                                    <ActivityIndicator size="small" color={palette.textMuted} style={{ marginTop: Spacing.xs }} />
+                                )}
+                                {dishError && (
+                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>{dishError}</Text>
+                                )}
+                                <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm }}>
+                                    <Pressable onPress={handleDishCancel}>
+                                        <Text style={[Type.caption, { color: palette.textSecondary }]}>Cancel</Text>
+                                    </Pressable>
+                                    <Pressable onPress={handleDishSave} disabled={updateEntry.isPending}>
+                                        <Text style={[Type.caption, { color: palette.primary }]}>Save</Text>
+                                    </Pressable>
+                                </View>
+                            </View>
+                        ) : entry.dish_description ? (
+                            <Pressable
+                                onPress={isOwnEntry ? handleDishEditStart : undefined}
+                                disabled={!isOwnEntry}
+                                style={{ flexDirection: 'row', alignItems: 'center', marginTop: Spacing.xs }}
+                            >
+                                <Text style={[Type.headlineItalic, { color: palette.textSecondary }]}>
+                                    {'\u2014'} {entry.dish_description}
+                                </Text>
+                                {isOwnEntry && (
+                                    <Ionicons
+                                        name="pencil-outline"
+                                        size={12}
+                                        color={palette.textSecondary}
+                                        style={{ marginLeft: Spacing.xs }}
+                                    />
+                                )}
+                            </Pressable>
+                        ) : isOwnEntry ? (
+                            <Pressable onPress={handleDishEditStart} style={{ marginTop: Spacing.sm }}>
+                                <View style={[styles.mutedRow, { backgroundColor: palette.surfaceContainerLow }]}>
+                                    <Ionicons name="restaurant-outline" size={16} color={palette.textMuted} />
+                                    <Text style={[Type.body, { color: palette.textMuted }]}>Add a dish</Text>
+                                </View>
+                            </Pressable>
+                        ) : null}
                     </View>
 
                     {/* Previously here — viewer's cross-Table personal history */}
@@ -1153,66 +1210,6 @@ export default function EntryDetailScreen() {
                         ) : null}
                     </View>
 
-                    {/* Dish */}
-                    <View style={styles.section}>
-                        <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
-                            Dish
-                        </Text>
-                        {isEditingDish ? (
-                            <View>
-                                <TextInput
-                                    style={[
-                                        styles.inlineTextInput,
-                                        { backgroundColor: palette.surfaceContainerLow, color: palette.text },
-                                    ]}
-                                    value={localDish}
-                                    onChangeText={setLocalDish}
-                                    placeholder="e.g. Spicy rigatoni, negroni"
-                                    placeholderTextColor={palette.textMuted}
-                                    autoFocus
-                                    onBlur={handleDishSave}
-                                />
-                                {updateEntry.isPending && (
-                                    <ActivityIndicator size="small" color={palette.textMuted} style={{ marginTop: Spacing.xs }} />
-                                )}
-                                {dishError && (
-                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>{dishError}</Text>
-                                )}
-                                <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm }}>
-                                    <Pressable onPress={handleDishCancel}>
-                                        <Text style={[Type.caption, { color: palette.textSecondary }]}>Cancel</Text>
-                                    </Pressable>
-                                    <Pressable onPress={handleDishSave} disabled={updateEntry.isPending}>
-                                        <Text style={[Type.caption, { color: palette.primary }]}>Save</Text>
-                                    </Pressable>
-                                </View>
-                            </View>
-                        ) : entry.dish_description ? (
-                            <Pressable onPress={isOwnEntry ? handleDishEditStart : undefined} disabled={!isOwnEntry}>
-                                <View
-                                    style={[
-                                        styles.dishChip,
-                                        { backgroundColor: palette.tertiaryFixed },
-                                    ]}
-                                >
-                                    <Text style={[Type.body, { color: palette.tertiary }]}>
-                                        {entry.dish_description}
-                                    </Text>
-                                    {isOwnEntry && (
-                                        <Ionicons name="pencil-outline" size={12} color={palette.tertiary} style={{ marginLeft: Spacing.xs }} />
-                                    )}
-                                </View>
-                            </Pressable>
-                        ) : isOwnEntry ? (
-                            <Pressable onPress={handleDishEditStart}>
-                                <View style={[styles.mutedRow, { backgroundColor: palette.surfaceContainerLow }]}>
-                                    <Ionicons name="restaurant-outline" size={16} color={palette.textMuted} />
-                                    <Text style={[Type.body, { color: palette.textMuted }]}>Add a dish</Text>
-                                </View>
-                            </Pressable>
-                        ) : null}
-                    </View>
-
                     {/* Notes */}
                     <View style={styles.section}>
                         <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
@@ -1398,14 +1395,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: Spacing.md,
         borderRadius: Radius.lg,
-    },
-    dishChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        borderRadius: Radius.sm,
-        alignSelf: 'flex-start',
     },
     roundBanner: {
         marginHorizontal: Spacing.lg,
