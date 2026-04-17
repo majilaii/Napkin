@@ -64,6 +64,14 @@ export const queryKeys = {
             ['wishlist', 'check', userId, restaurantId] as const,
     },
 
+    // Lists (curated, themed, shareable — TICKET-018)
+    lists: {
+        mine: (userId: string) => ['lists', 'mine', userId] as const,
+        detail: (listId: string) => ['lists', 'detail', listId] as const,
+        containing: (userId: string, restaurantId: string) =>
+            ['lists', 'containing', userId, restaurantId] as const,
+    },
+
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
         tableHistory: (

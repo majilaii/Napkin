@@ -1,0 +1,66 @@
+/**
+ * Mutation hook: create a new list.
+ * Optionally adds an initial restaurant in the same server call.
+ */
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
+import { queryKeys } from '@/lib/queryKeys';
+import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
+
+export interface CreateListInput {
+    title: string;
+    description?: string;
+    ranked?: boolean;
+    privacy?: 'public' | 'private';
+    /** UUID of an already-persisted restaurant to add as the initial entry */
+    initial_restaurant_id?: string;
+    /** Places ghost payload — server will upsert it then add as initial entry */
+    initial_restaurant?: RestaurantPayload;
+    initial_note?: string;
+}
+
+export interface CreatedList {
+    id: string;
+    owner_id: string;
+    title: string;
+    description: string | null;
+    ranked: boolean;
+    privacy: 'public' | 'private';
+    created_at: string;
+    updated_at: string;
+}
+
+async function createList(input: CreateListInput): Promise<CreatedList> {
+    const { data: { session } } = await supabase.auth.getSession();
+
+    const { data, error } = await supabase.functions.invoke('lists', {
+        body: { action: 'create', ...input },
+        headers: session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : undefined,
+    });
+
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    return data?.data;
+}
+
+export function useCreateList(userId: string | null | undefined) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: createList,
+        onSuccess: (list, variables) => {
+            if (userId) {
+                queryClient.invalidateQueries({ queryKey: queryKeys.lists.mine(userId) });
+                // If we added an initial restaurant, also refresh the containing cache
+                const initialRestaurantId = variables.initial_restaurant_id;
+                if (initialRestaurantId) {
+                    queryClient.invalidateQueries({
+                        queryKey: queryKeys.lists.containing(userId, initialRestaurantId),
+                    });
+                }
+            }
+        },
+    });
+}

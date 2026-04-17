@@ -153,6 +153,22 @@ function RootLayoutNav() {
             name="table-night-detail"
             options={{ headerShown: false }}
           />
+          <Stack.Screen
+            name="lists"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="list/[id]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="list/[id]/edit"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
+            name="list/new"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
         </Stack>
         <BottomNavBar />
       </View>

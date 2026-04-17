@@ -48,6 +48,28 @@ export default function SettingsScreen() {
                 <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
             </Pressable>
 
+            {/* My Lists */}
+            <Pressable
+                onPress={() => router.push('/lists')}
+                style={({ pressed }) => ({
+                    marginTop: Spacing.md,
+                    paddingVertical: Spacing.md,
+                    paddingHorizontal: Spacing.lg,
+                    borderRadius: Radius.md,
+                    backgroundColor: palette.surfaceContainerLow,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    opacity: pressed ? 0.8 : 1,
+                })}
+            >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+                    <Ionicons name="list-outline" size={20} color={palette.primary} />
+                    <Text style={[Type.titleSmall, { color: palette.text }]}>My Lists</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
+            </Pressable>
+
             {/* Sign out */}
             <Pressable
                 onPress={signOut}

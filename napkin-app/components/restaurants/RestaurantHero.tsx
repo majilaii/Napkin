@@ -12,6 +12,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { WishlistHeartButton } from '@/components/wishlist';
+import { AddToListButton } from '@/components/lists';
 import type { RestaurantPageRestaurant } from '@/hooks/restaurants/useRestaurantPage';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
@@ -62,8 +63,15 @@ export function RestaurantHero({
                     />
                     {/* Scrim for heart legibility */}
                     <View style={styles.scrim} />
-                    {/* Heart — overlaid top-right */}
+                    {/* Heart + List button — overlaid top-right */}
                     <View style={styles.heartOverlay}>
+                        <AddToListButton
+                            restaurantId={isGhost ? undefined : restaurant.id}
+                            restaurantPayload={isGhost ? restaurantPayloadForGhost : undefined}
+                            restaurantName={restaurant.name}
+                            userId={userId}
+                            size={24}
+                        />
                         <WishlistHeartButton
                             restaurantId={isGhost ? undefined : restaurant.id}
                             restaurant={isGhost ? restaurantPayloadForGhost : undefined}
@@ -75,7 +83,14 @@ export function RestaurantHero({
             ) : (
                 /* No photo — heart sits in a bar above the name text */
                 <View style={[styles.noPhotoBar, { backgroundColor: palette.surfaceContainerLow }]}>
-                    <View style={styles.heartNoPhoto}>
+                    <View style={[styles.heartNoPhoto, { flexDirection: 'row', gap: 12 }]}>
+                        <AddToListButton
+                            restaurantId={isGhost ? undefined : restaurant.id}
+                            restaurantPayload={isGhost ? restaurantPayloadForGhost : undefined}
+                            restaurantName={restaurant.name}
+                            userId={userId}
+                            size={24}
+                        />
                         <WishlistHeartButton
                             restaurantId={isGhost ? undefined : restaurant.id}
                             restaurant={isGhost ? restaurantPayloadForGhost : undefined}
@@ -143,6 +158,9 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(252,249,244,0.85)',
         borderRadius: Radius.full,
         padding: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
     },
     noPhotoBar: {
         height: 56,
