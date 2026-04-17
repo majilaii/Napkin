@@ -13,9 +13,11 @@
  * `placeId`     — present for ghost arrivals; tells the screen to treat id as external_id
  * `placePayload` — JSON-stringified Places result row from search (for immediate hero render)
  */
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     ActivityIndicator,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -29,6 +31,7 @@ import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
+import { queryKeys } from '@/lib/queryKeys';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import {
     useRestaurantPage,
@@ -43,6 +46,7 @@ import {
     LogVisitSheet,
     VisitListRow,
 } from '@/components/restaurants';
+import { FastLogSheet } from '@/components/logging';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 import type { Visit } from '@/hooks/restaurants/useRestaurantHistory';
 
@@ -160,6 +164,18 @@ export default function RestaurantScreen() {
 
     // ── Log visit sheet state ─────────────────────────────────────────────────
     const [showLogSheet, setShowLogSheet] = useState(false);
+    const [showFastLogSheet, setShowFastLogSheet] = useState(false);
+    // Defer opening FastLogSheet until LogVisitSheet finishes dismissing (iOS flicker guard)
+    const [pendingFastLog, setPendingFastLog] = useState(false);
+
+    const qc = useQueryClient();
+
+    // After fast-log submit, invalidate restaurant page so hero numbers refresh
+    const handleFastLogSubmitted = useCallback((_entryId: string) => {
+        if (restaurantId) {
+            qc.invalidateQueries({ queryKey: queryKeys.restaurants.page(restaurantId, tableId ?? undefined) });
+        }
+    }, [qc, restaurantId, tableId]);
 
     // Build navigation params for create-entry, carrying the restaurant context.
     // We always pass placePayload when we have a restaurant object in hand — this avoids
@@ -195,11 +211,23 @@ export default function RestaurantScreen() {
     }, [pageData?.restaurant, ghostRestaurant, isGhost, restaurantId, placePayload]);
 
     const handleSoloLog = () => {
-        setShowLogSheet(false);
-        router.push({
-            pathname: '/create-entry',
-            params: { ...createEntryParams, mode: 'solo' },
-        });
+        // iOS: Modal.onDismiss is supported — defer open until LogVisitSheet
+        //      finishes dismissing to avoid two-modal flicker.
+        // Android: onDismiss is not implemented on Modal; swap in-place.
+        if (Platform.OS === 'ios') {
+            setPendingFastLog(true);
+            setShowLogSheet(false);
+        } else {
+            setShowLogSheet(false);
+            setShowFastLogSheet(true);
+        }
+    };
+
+    const handleLogSheetDismiss = () => {
+        if (pendingFastLog) {
+            setPendingFastLog(false);
+            setShowFastLogSheet(true);
+        }
     };
 
     const handleStartRound = () => {
@@ -361,14 +389,45 @@ export default function RestaurantScreen() {
                     )}
                 </ScrollView>
 
-                {/* Log visit sheet */}
+                {/* Log visit sheet — choose between solo and round */}
                 {restaurant && (
                     <LogVisitSheet
                         visible={showLogSheet}
                         onClose={() => setShowLogSheet(false)}
+                        onDismiss={handleLogSheetDismiss}
                         onSoloLog={handleSoloLog}
                         onStartRound={handleStartRound}
                         showRoundOption={hasSocialTable}
+                    />
+                )}
+
+                {/* Fast log sheet — solo log bottom sheet with restaurant locked */}
+                {restaurant && (
+                    <FastLogSheet
+                        visible={showFastLogSheet}
+                        onClose={() => setShowFastLogSheet(false)}
+                        restaurant={{
+                            id: pageData?.restaurant?.id ?? undefined,
+                            external_id: restaurant.external_id ?? undefined,
+                            name: restaurant.name,
+                            placePayload: parsedPlacePayload ?? (() => {
+                                const r = pageData?.restaurant ?? ghostRestaurant;
+                                if (!r) return undefined;
+                                return {
+                                    id: r.external_id ?? '',
+                                    name: r.name,
+                                    formattedAddress: r.address,
+                                    city: r.city,
+                                    country: r.country,
+                                    cuisine: r.cuisine,
+                                    priceLevel: r.price_level,
+                                    googleRating: r.google_rating,
+                                    googleRatingCount: r.google_rating_count,
+                                };
+                            })(),
+                        }}
+                        initialTableId={tableId}
+                        onSubmitted={handleFastLogSubmitted}
                     />
                 )}
             </View>

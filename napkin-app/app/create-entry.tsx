@@ -75,11 +75,13 @@ export default function CreateEntryScreen() {
         restaurantId: restaurantIdParam,
         placePayload: placePayloadParam,
         mode: modeParam,
+        rating: ratingParam,
     } = useLocalSearchParams<{
         tableId?: string;
         restaurantId?: string;
         placePayload?: string;
         mode?: 'solo' | 'round';
+        rating?: string;
     }>();
 
     // Tables data
@@ -205,8 +207,8 @@ export default function CreateEntryScreen() {
         })();
     }, [restaurantIdParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Impression form state
-    const [rating, setRating] = useState(0);
+    // Impression form state — seed rating from fast-log "Add details" path
+    const [rating, setRating] = useState(Number(ratingParam) || 0);
     const [vibeRating, setVibeRating] = useState(0);
     const [flavorRating, setFlavorRating] = useState(0);
     const [serviceRating, setServiceRating] = useState(0);

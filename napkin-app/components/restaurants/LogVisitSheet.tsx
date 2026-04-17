@@ -28,6 +28,8 @@ type Palette = typeof Colors.light;
 interface Props {
     visible: boolean;
     onClose: () => void;
+    /** Fires after the sheet finishes dismissing (iOS only). Use this to chain follow-up sheets. */
+    onDismiss?: () => void;
     onSoloLog: () => void;
     onStartRound: () => void;
     showRoundOption: boolean;
@@ -36,6 +38,7 @@ interface Props {
 export function LogVisitSheet({
     visible,
     onClose,
+    onDismiss,
     onSoloLog,
     onStartRound,
     showRoundOption,
@@ -50,6 +53,7 @@ export function LogVisitSheet({
             transparent
             animationType="slide"
             onRequestClose={onClose}
+            onDismiss={onDismiss}
         >
             {/* Backdrop tap to dismiss */}
             <TouchableWithoutFeedback onPress={onClose}>

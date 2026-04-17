@@ -80,7 +80,7 @@ export default function TabsLayout() {
                     tabBarButton: ({ ref: _ref, ...props }) => (
                         <Pressable
                             {...props}
-                            onPress={() => router.push('/create-entry')}
+                            onPress={() => router.push('/fast-log')}
                         />
                     ),
                 }}
