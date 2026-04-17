@@ -15,6 +15,8 @@ export const queryKeys = {
             filters && (filters.filterType || filters.filterUserId)
                 ? ['tableActivity', tableId, filters] as const
                 : ['tableActivity', tableId] as const,
+        lastSeen: (tableId: string, userId: string) =>
+            ['tableLastSeen', tableId, userId] as const,
     },
 
     // Entries (individual meal logs)
@@ -70,6 +72,11 @@ export const queryKeys = {
         detail: (listId: string) => ['lists', 'detail', listId] as const,
         containing: (userId: string, restaurantId: string) =>
             ['lists', 'containing', userId, restaurantId] as const,
+    },
+
+    // Users (public / merged profile surface — TICKET-020)
+    users: {
+        profile: (identifier: string) => ['users', 'profile', identifier] as const,
     },
 
     // Restaurants (accumulated Table + user memory per venue)

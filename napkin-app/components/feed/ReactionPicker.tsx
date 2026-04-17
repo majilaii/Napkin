@@ -11,6 +11,7 @@ import {
     Modal,
     Pressable,
     StyleSheet,
+    Dimensions,
 } from 'react-native';
 import Animated, {
     useSharedValue,
@@ -21,6 +22,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Colors, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export const REACTION_EMOJIS = ['🔥', '😋', '❤️', '💯', '👀'] as const;
 
@@ -39,7 +42,9 @@ export function ReactionPicker({ visible, anchor, onPick, onClose }: ReactionPic
 
     // Popover sits above the anchor; left-aligned to it but clamped to screen edges.
     const POPOVER_WIDTH = 260;
-    const left = Math.max(12, Math.min(anchor.x - 20, 9999));
+    const EDGE_MARGIN = 12;
+    const maxLeft = SCREEN_WIDTH - POPOVER_WIDTH - EDGE_MARGIN;
+    const left = Math.max(EDGE_MARGIN, Math.min(anchor.x - 20, maxLeft));
     const top = Math.max(60, anchor.y - 58);
 
     return (

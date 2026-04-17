@@ -4,7 +4,7 @@
  * Features: table switcher, PulseDot on live banner, Table Night cards, solo share rows.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
     View,
     Text,
@@ -17,11 +17,13 @@ import {
 } from 'react-native';
 import { WishlistGrid } from '@/components/wishlist';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
+import { useLastSeenAt, useMarkSeen } from '@/hooks/tables/useLastSeenAt';
 import {
     useTableActivity,
     type ActivityItem,
@@ -69,6 +71,23 @@ export default function TablesScreen() {
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const hasMultipleTables = (tables?.length ?? 0) > 1;
     const [showTablePicker, setShowTablePicker] = useState(false);
+
+    // Unseen dot system (TICKET-010)
+    const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
+    const markSeen = useMarkSeen();
+
+    // Fire mark_seen when the tab gains focus or activeTable changes.
+    // The 30s debounce in useMarkSeen collapses rapid tab-switches.
+    // markSeen.mutate is intentionally omitted from deps — it's stable across
+    // renders (React Query memoizes it) and we only want to re-fire on table switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useFocusEffect(
+        useCallback(() => {
+            if (activeTable?.id) {
+                markSeen.mutate({ tableId: activeTable.id });
+            }
+        }, [activeTable?.id])
+    );
 
     const {
         data: activityData,
@@ -345,6 +364,7 @@ export default function TablesScreen() {
                                     item={item}
                                     palette={palette}
                                     tableId={activeTable?.id}
+                                    lastSeenAt={lastSeenAt ?? null}
                                 />
                             ))}
                         </View>
@@ -370,6 +390,7 @@ export default function TablesScreen() {
                                                       item={item}
                                                       palette={palette}
                                                       tableId={activeTable?.id}
+                                                      lastSeenAt={lastSeenAt ?? null}
                                                   />
                                               );
                                           }
@@ -381,6 +402,7 @@ export default function TablesScreen() {
                                                       item={solo}
                                                       palette={palette}
                                                       tableId={activeTable?.id}
+                                                      lastSeenAt={lastSeenAt ?? null}
                                                   />
                                               );
                                           }
@@ -390,6 +412,7 @@ export default function TablesScreen() {
                                                   item={solo}
                                                   palette={palette}
                                                   tableId={activeTable?.id}
+                                                  lastSeenAt={lastSeenAt ?? null}
                                               />
                                           );
                                       })}

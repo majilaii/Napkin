@@ -40,7 +40,82 @@ serve(async (req) => {
         }
 
         const url = new URL(req.url);
+        const action = url.searchParams.get('action');
         const tableId = url.pathname.split('/').pop();
+
+        // GET ?action=last_seen&table_id=X — return the caller's last_seen_at for a table
+        if (req.method === 'GET' && action === 'last_seen') {
+            const targetTableId = url.searchParams.get('table_id');
+            if (!targetTableId) {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { data: membership, error: memberError } = await supabase
+                .from('table_members')
+                .select('last_seen_at')
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id)
+                .single();
+
+            if (memberError) {
+                // Not a member of this table
+                return new Response(
+                    JSON.stringify({ error: 'Not a member of this table' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            return new Response(
+                JSON.stringify({ data: { last_seen_at: membership.last_seen_at ?? null } }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=mark_seen — write last_seen_at = now() for caller in a table
+        if (req.method === 'POST' && action === 'mark_seen') {
+            const body = await req.json();
+            const { table_id: targetTableId } = body;
+
+            if (!targetTableId || typeof targetTableId !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Verify membership before writing
+            const { data: membership, error: memberCheckError } = await supabase
+                .from('table_members')
+                .select('member_id')
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id)
+                .single();
+
+            if (memberCheckError || !membership) {
+                return new Response(
+                    JSON.stringify({ error: 'Not a member of this table' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { data: updated, error: updateError } = await supabase
+                .from('table_members')
+                .update({ last_seen_at: new Date().toISOString() })
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id)
+                .select('last_seen_at')
+                .single();
+
+            if (updateError) throw updateError;
+
+            return new Response(
+                JSON.stringify({ data: { last_seen_at: updated.last_seen_at } }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
 
         // GET - List user's tables
         // By default, personal tables are excluded so the Tables tab only shows

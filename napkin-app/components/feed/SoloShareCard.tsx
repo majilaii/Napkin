@@ -9,23 +9,36 @@
  * of the card (matching TableNightCard's hero pattern) before the text content.
  *
  * Used for solo_share items that HAVE a rating.
+ *
+ * TICKET-010 additions:
+ *  - Card-level long-press (500ms) → ReactionPicker anchored top-right
+ *  - Quote blurb: extracted highlight from item.content (em-dash prefix)
+ *  - Relative time label in header row
+ *  - Unseen dot (top-right of card) when item.sort_date > lastSeenAt
  */
 
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     Pressable,
     Image,
+    findNodeHandle,
+    UIManager,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
+import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
+import { extractHighlight, formatRelativeTime } from '@/lib/textHighlight';
 import { Avatar } from './Avatar';
 import { FeedActionRow } from './FeedActionRow';
+import { ReactionPicker } from './ReactionPicker';
 
 type Palette = typeof Colors.light;
 
@@ -33,14 +46,33 @@ interface SoloShareCardProps {
     item: SoloShareActivity;
     palette: Palette;
     tableId?: string;
+    lastSeenAt?: string | null;
 }
 
-export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
+export function SoloShareCard({ item, palette, tableId, lastSeenAt }: SoloShareCardProps) {
     const router = useRouter();
+    const toggleReaction = useToggleReaction();
+    const queryClient = useQueryClient();
+
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
     const hasHero = !!item.photo_url;
     const photoCount = item.photo_count ?? 0;
+
+    // Unseen dot: render when lastSeenAt is null (never seen) or item is newer
+    const isUnseen =
+        !lastSeenAt ||
+        (!!item.sort_date && item.sort_date > lastSeenAt);
+
+    // Relative time (< 24h only; null means the DateSectionHeader labels it)
+    const relativeTime = item.sort_date ? formatRelativeTime(item.sort_date) : null;
+
+    // Quote blurb — extracted highlight from content
+    const highlight = extractHighlight(item.content);
+
+    // Card-level long-press picker anchor
+    const cardRef = useRef<View>(null);
+    const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
 
     const handlePress = () =>
         router.push({ pathname: '/entry-detail', params: { entryId: item.id } });
@@ -54,9 +86,38 @@ export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
         }
     };
 
+    const handleLongPress = () => {
+        const handle = findNodeHandle(cardRef.current);
+        if (handle == null) return;
+        Haptics.selectionAsync().catch(() => undefined);
+        UIManager.measureInWindow(handle, (x, y, width) => {
+            // Anchor near the top-right corner of the card
+            setPickerAnchor({ x: x + width - 40, y: y + 12 });
+        });
+    };
+
+    const handlePickEmoji = (emoji: string) => {
+        setPickerAnchor(null);
+        toggleReaction.mutate(
+            { targetType: 'entry', targetId: item.id, emoji },
+            {
+                onSuccess: () => {
+                    if (tableId) {
+                        queryClient.invalidateQueries({
+                            queryKey: ['tableActivity', tableId],
+                            exact: false,
+                        });
+                    }
+                },
+            },
+        );
+    };
+
     return (
         <Pressable
             onPress={handlePress}
+            onLongPress={handleLongPress}
+            delayLongPress={500}
             style={({ pressed }) => ({
                 flexDirection: 'row',
                 gap: Spacing.md,
@@ -87,6 +148,7 @@ export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
 
             {/* Right: Text card */}
             <View
+                ref={cardRef}
                 style={[
                     styles.textCard,
                     {
@@ -96,6 +158,15 @@ export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
                     },
                 ]}
             >
+                {/* Unseen dot — top-right of card, absolute */}
+                {isUnseen && (
+                    <View
+                        style={[styles.unseenDot, { backgroundColor: palette.primary }]}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                    />
+                )}
+
                 {/* Hero image (user-uploaded photo, if present) */}
                 {hasHero ? (
                     <View style={{ position: 'relative' }}>
@@ -115,7 +186,7 @@ export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
 
                 {/* Text content — padded separately so hero bleeds to edges */}
                 <View style={[styles.cardContent, hasHero && styles.cardContentWithHero]}>
-                    {/* Header: "Name tried Restaurant" + rating */}
+                    {/* Header: "Name tried Restaurant" + rating + relative time */}
                     <View style={styles.headerRow}>
                         <View style={{ flex: 1 }}>
                             <Text style={[Type.labelSmall, { color: palette.text }]}>
@@ -134,26 +205,34 @@ export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
                                 </Text>
                             </Text>
                         </View>
-                        {item.rating != null && (
-                            <View style={styles.ratingBadge}>
-                                <Text
-                                    style={[
-                                        styles.ratingText,
-                                        { color: palette.tertiary },
-                                    ]}
-                                >
-                                    {item.rating.toFixed(1)}
+
+                        <View style={styles.headerRight}>
+                            {relativeTime ? (
+                                <Text style={[Type.caption, { color: palette.textMuted }]}>
+                                    {relativeTime}
                                 </Text>
-                                <Text
-                                    style={[
-                                        styles.starIcon,
-                                        { color: palette.tertiary },
-                                    ]}
-                                >
-                                    ★
-                                </Text>
-                            </View>
-                        )}
+                            ) : null}
+                            {item.rating != null && (
+                                <View style={styles.ratingBadge}>
+                                    <Text
+                                        style={[
+                                            styles.ratingText,
+                                            { color: palette.tertiary },
+                                        ]}
+                                    >
+                                        {item.rating.toFixed(1)}
+                                    </Text>
+                                    <Text
+                                        style={[
+                                            styles.starIcon,
+                                            { color: palette.tertiary },
+                                        ]}
+                                    >
+                                        ★
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
                     </View>
 
                     {/* Dish tag */}
@@ -172,16 +251,15 @@ export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
                         </Text>
                     ) : null}
 
-                    {/* Quote */}
-                    {item.content ? (
+                    {/* Quote blurb — extracted highlight with em-dash prefix */}
+                    {highlight ? (
                         <Text
-                            style={[
-                                styles.quoteText,
-                                { color: palette.textSecondary },
-                            ]}
-                            numberOfLines={2}
+                            style={[styles.quoteBlurb, { color: palette.textSecondary }]}
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
                         >
-                            {'\u201C'}{item.content}{'\u201D'}
+                            <Text style={{ color: palette.primary }}>{'— '}</Text>
+                            {highlight}
                         </Text>
                     ) : null}
 
@@ -200,6 +278,14 @@ export function SoloShareCard({ item, palette, tableId }: SoloShareCardProps) {
                     />
                 </View>
             </View>
+
+            {/* Card-level ReactionPicker (fires from card long-press) */}
+            <ReactionPicker
+                visible={!!pickerAnchor}
+                anchor={pickerAnchor}
+                onPick={handlePickEmoji}
+                onClose={() => setPickerAnchor(null)}
+            />
         </Pressable>
     );
 }
@@ -227,6 +313,15 @@ const styles = StyleSheet.create({
         shadowRadius: 30,
         elevation: 1,
         overflow: 'hidden',
+    },
+    unseenDot: {
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        zIndex: 10,
     },
     heroImage: {
         width: '100%',
@@ -265,11 +360,17 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         marginBottom: 4,
     },
+    headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        marginLeft: Spacing.sm,
+        flexShrink: 0,
+    },
     ratingBadge: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 2,
-        marginLeft: Spacing.sm,
     },
     ratingText: {
         fontFamily: 'Newsreader_700Bold',
@@ -292,11 +393,10 @@ const styles = StyleSheet.create({
         marginTop: Spacing.xs,
         overflow: 'hidden',
     },
-    quoteText: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
-        lineHeight: 18,
-        fontStyle: 'italic',
+    quoteBlurb: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15,
+        lineHeight: 20,
         marginTop: Spacing.xs + 2,
     },
 });
