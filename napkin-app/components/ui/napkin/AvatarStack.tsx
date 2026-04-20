@@ -16,7 +16,7 @@ interface Props {
     max?: number;
     /** Avatar diameter. Default 22 */
     size?: number;
-    /** Overlap in px (amount each avatar overlaps the previous). Default 6 */
+    /** Overlap in px (amount each avatar overlaps the previous). Default 8 */
     overlap?: number;
     /** Border color — usually matches screen background. Default palette.background */
     borderColor?: string;
@@ -27,7 +27,7 @@ export function AvatarStack({
     urls,
     max = 3,
     size = 22,
-    overlap = 6,
+    overlap = 8,
     borderColor,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';

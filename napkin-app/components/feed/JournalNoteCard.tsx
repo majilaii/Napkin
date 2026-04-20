@@ -18,11 +18,10 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { Colors, Radius, Shadow } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { extractHighlight, formatRelativeTime } from '@/lib/textHighlight';
-import { Avatar } from './Avatar';
 import { FeedActionRow } from './FeedActionRow';
 import { ReactionPicker } from './ReactionPicker';
 
@@ -98,14 +97,9 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
         >
             <View
                 ref={cardRef}
-                style={[
-                    styles.card,
-                    {
-                        backgroundColor: palette.surfaceNote,
-                        borderColor: palette.dividerSoft,
-                    },
-                ]}
+                style={[styles.timeline, { borderLeftColor: palette.ruleWarmNib }]}
             >
+                <View style={[styles.timelineDot, { backgroundColor: palette.secondary }]} />
                 {isUnseen && (
                     <View
                         style={[styles.unseenDot, { backgroundColor: palette.primary }]}
@@ -115,28 +109,12 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
                 )}
 
                 <View style={styles.headerRow}>
-                    <Pressable
-                        onPress={tableId ? handleAuthorPress : undefined}
-                        hitSlop={6}
-                    >
-                        <Avatar
-                            name={displayName}
-                            url={null}
-                            size={24}
-                            palette={palette}
-                        />
-                    </Pressable>
                     <Text
-                        style={[styles.attribution, { color: palette.textSecondary }]}
+                        style={[styles.attribution, { color: palette.text }]}
                         numberOfLines={1}
                     >
-                        <Text style={[styles.who, { color: palette.text }]}>
-                            {displayName}
-                        </Text>
-                        {' noted '}
-                        <Text style={[styles.place, { color: palette.text }]}>
-                            {restaurantName}
-                        </Text>
+                        <Text style={styles.who}>{displayName}</Text>
+                        <Text style={{ color: palette.textSecondary }}>{' noted'}</Text>
                     </Text>
                     {relativeTime ? (
                         <Text style={[styles.time, { color: palette.textMuted }]}>
@@ -145,11 +123,22 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
                     ) : null}
                 </View>
 
-                {item.dish_description ? (
-                    <Text style={[styles.sub, { color: palette.textMuted }]} numberOfLines={1}>
-                        {item.dish_description}
+                <Pressable
+                    onPress={tableId ? handleAuthorPress : undefined}
+                    style={[styles.panel, { backgroundColor: palette.surfaceJournalLow }]}
+                >
+                    <Text
+                        style={[styles.place, { color: palette.secondary }]}
+                        numberOfLines={2}
+                    >
+                        {restaurantName}
                     </Text>
-                ) : null}
+                    {item.dish_description ? (
+                        <Text style={[styles.sub, { color: palette.textMuted }]} numberOfLines={1}>
+                            {item.dish_description}
+                        </Text>
+                    ) : null}
+                </Pressable>
 
                 {highlight ? (
                     <Text
@@ -187,12 +176,18 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
 }
 
 const styles = StyleSheet.create({
-    card: {
-        padding: 16,
-        paddingVertical: 14,
-        borderRadius: Radius.md - 2,
-        borderWidth: 1,
-        ...Shadow.note,
+    timeline: {
+        paddingLeft: 22,
+        borderLeftWidth: 2,
+        position: 'relative',
+    },
+    timelineDot: {
+        position: 'absolute',
+        left: -5,
+        top: 10,
+        width: 8,
+        height: 8,
+        borderRadius: 4,
     },
     unseenDot: {
         position: 'absolute',
@@ -206,41 +201,48 @@ const styles = StyleSheet.create({
     headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
-        marginBottom: 8,
+        gap: 8,
+        marginBottom: 10,
     },
     attribution: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
+        fontSize: 13,
         flex: 1,
         minWidth: 0,
     },
     who: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontWeight: '600',
-    },
-    place: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
+        fontFamily: 'Manrope_700Bold',
+        fontWeight: '700',
     },
     time: {
-        fontFamily: 'Manrope_400Regular',
+        fontFamily: 'Manrope_500Medium',
         fontSize: 10,
         flexShrink: 0,
     },
+    panel: {
+        borderRadius: 20,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+    },
+    place: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 20,
+        lineHeight: 26,
+    },
     sub: {
-        fontFamily: 'Manrope_600SemiBold',
+        fontFamily: 'Manrope_500Medium',
         fontSize: 10,
         letterSpacing: 0.3,
         textTransform: 'uppercase',
-        marginBottom: 6,
+        marginTop: 6,
     },
     prose: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 13,
         lineHeight: 20,
+        marginTop: 10,
     },
     actionRow: {
-        marginTop: 10,
+        marginTop: 12,
     },
 });
