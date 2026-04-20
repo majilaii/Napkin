@@ -34,6 +34,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import { StarRating } from '@/components/StarRating';
 import { MultiPhotoRow } from '@/components/MultiPhotoRow';
+import { FieldUnderline, Label } from '@/components/ui';
 import { useRoundContext } from '@/hooks/tables/useTableNight';
 import { useUserRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
 import { PreviouslyHereBanner } from '@/components/restaurants';
@@ -948,15 +949,12 @@ export default function EntryDetailScreen() {
                         {/* Dish subheader — inline edit mode or view mode */}
                         {isEditingDish ? (
                             <View style={{ marginTop: Spacing.sm }}>
-                                <TextInput
-                                    style={[
-                                        styles.inlineTextInput,
-                                        { backgroundColor: palette.surfaceContainerLow, color: palette.text },
-                                    ]}
+                                <FieldUnderline
                                     value={localDish}
                                     onChangeText={setLocalDish}
-                                    placeholder="e.g. Spicy rigatoni, negroni"
-                                    placeholderTextColor={palette.textMuted}
+                                    placeholder="e.g. spicy rigatoni, negroni"
+                                    fontVariant="sans"
+                                    size="body"
                                     autoFocus
                                     onBlur={handleDishSave}
                                 />
@@ -1138,9 +1136,7 @@ export default function EntryDetailScreen() {
                     {/* Category Breakdown */}
                     <View style={styles.section}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.md }}>
-                            <Text style={[Type.label, { color: palette.textSecondary }]}>
-                                Breakdown
-                            </Text>
+                            <Label>Break it down</Label>
                             {isOwnEntry && hasCategoryRatings && !isEditingBreakdown && (
                                 <Pressable onPress={handleBreakdownEditStart} hitSlop={8}>
                                     <Text style={[Type.caption, { color: palette.primary }]}>Edit</Text>
@@ -1159,7 +1155,17 @@ export default function EntryDetailScreen() {
                                 <View style={{ gap: Spacing.md }}>
                                     {CATEGORY_LABELS.map(({ key, label }) => (
                                         <View key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md }}>
-                                            <Text style={[Type.bodySmall, { color: palette.text, width: 60 }]}>{label}</Text>
+                                            <Text
+                                                style={[
+                                                    Type.labelSmall,
+                                                    {
+                                                        color: palette.textSecondary,
+                                                        width: 72,
+                                                    },
+                                                ]}
+                                            >
+                                                {label.toUpperCase()}
+                                            </Text>
                                             <StarRating
                                                 value={localBreakdown[key] ?? 0}
                                                 size={22}
@@ -1212,23 +1218,25 @@ export default function EntryDetailScreen() {
 
                     {/* Notes */}
                     <View style={styles.section}>
-                        <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
-                            Notes
-                        </Text>
+                        <Label style={{ marginBottom: Spacing.sm }}>Notes</Label>
                         {isEditingNote ? (
                             <View>
                                 <TextInput
-                                    style={[
-                                        styles.inlineTextArea,
-                                        { backgroundColor: palette.surfaceContainerLow, color: palette.text },
-                                    ]}
+                                    style={{
+                                        fontFamily: 'Newsreader_400Regular',
+                                        fontSize: 18,
+                                        lineHeight: 28,
+                                        color: palette.text,
+                                        minHeight: 120,
+                                        padding: 0,
+                                        textAlignVertical: 'top',
+                                    }}
                                     value={localNote}
                                     onChangeText={setLocalNote}
-                                    placeholder="How was it? Any highlights?"
+                                    placeholder="Start writing…"
                                     placeholderTextColor={palette.textMuted}
                                     multiline
                                     numberOfLines={4}
-                                    textAlignVertical="top"
                                     autoFocus
                                 />
                                 {noteSaving && (
@@ -1248,29 +1256,21 @@ export default function EntryDetailScreen() {
                             </View>
                         ) : entry.content ? (
                             <Pressable onPress={isOwnEntry ? handleNoteEditStart : undefined} disabled={!isOwnEntry}>
-                                <View
-                                    style={[
-                                        styles.quoteCard,
-                                        {
-                                            backgroundColor: palette.surfaceContainerLow,
-                                            borderLeftColor: palette.tertiaryFixed,
-                                        },
-                                    ]}
+                                <Text
+                                    style={{
+                                        fontFamily: 'Newsreader_400Regular',
+                                        fontSize: 18,
+                                        lineHeight: 28,
+                                        color: palette.text,
+                                    }}
                                 >
-                                    <Text
-                                        style={[
-                                            Type.body,
-                                            { color: palette.text, fontStyle: 'italic', lineHeight: 24 },
-                                        ]}
-                                    >
-                                        &ldquo;{entry.content}&rdquo;
+                                    {entry.content}
+                                </Text>
+                                {isOwnEntry && (
+                                    <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.sm }]}>
+                                        Tap to edit
                                     </Text>
-                                    {isOwnEntry && (
-                                        <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.xs }]}>
-                                            Tap to edit
-                                        </Text>
-                                    )}
-                                </View>
+                                )}
                             </Pressable>
                         ) : isOwnEntry ? (
                             <Pressable onPress={handleNoteEditStart}>
@@ -1304,9 +1304,7 @@ export default function EntryDetailScreen() {
                                 tableId={entry.table_id ?? undefined}
                             />
                             <View style={{ height: Spacing.lg }} />
-                            <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
-                                Replies
-                            </Text>
+                            <Label style={{ marginBottom: Spacing.sm }}>Replies</Label>
                             <CommentThread
                                 targetType="entry"
                                 targetId={entry.id}

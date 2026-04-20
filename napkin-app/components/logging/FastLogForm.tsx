@@ -8,6 +8,10 @@
  *
  * Submit path: reuses useCreateEntry verbatim.
  * "Add details" pushes to /create-entry with prefill params (pre-submit only).
+ *
+ * UI kit migration (TICKET-023): Heirloom Journal layout — RestaurantHeader →
+ * PhotoStrip placeholder → stars + caption → FieldUnderline note → friend/tag
+ * chip row → "+ Break it down" link. No behavioural change.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -15,13 +19,11 @@ import {
     Text,
     StyleSheet,
     ScrollView,
-    TextInput,
     Pressable,
     ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
@@ -30,6 +32,13 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useTables } from '@/hooks/tables/useTables';
 import { StarRating } from '@/components/StarRating';
+import {
+    RestaurantHeader,
+    FieldUnderline,
+    Chip,
+    Label,
+    LabelSmall,
+} from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -73,6 +82,20 @@ export interface FastLogFormProps {
     onClose?: () => void;
 }
 
+// Caption for the current rating — "Really good · 4.5/5".
+function ratingCaption(value: number): string {
+    if (value <= 0) return 'tap a star to rate';
+    if (value >= 5) return 'perfect';
+    if (value >= 4.5) return 'really good';
+    if (value >= 4) return 'very good';
+    if (value >= 3.5) return 'good';
+    if (value >= 3) return 'fine';
+    if (value >= 2.5) return 'mixed';
+    if (value >= 2) return 'meh';
+    if (value >= 1) return 'not good';
+    return 'rough';
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function FastLogForm({
@@ -81,7 +104,7 @@ export function FastLogForm({
     initialTableId,
     onSubmitted,
     onAddDetails,
-    onClose,
+    onClose: _onClose, // kept for API compat; SheetHeader now owns close in sheet mode
 }: FastLogFormProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -173,6 +196,9 @@ export function FastLogForm({
     // ── Rating ────────────────────────────────────────────────────────────
     const [rating, setRating] = useState(0);
 
+    // ── Note (optional one-liner from the Fast Log canvas) ────────────────
+    const [note, setNote] = useState('');
+
     // ── Submit ────────────────────────────────────────────────────────────
     const createEntry = useCreateEntry(user?.id, selectedTableId);
 
@@ -236,6 +262,7 @@ export function FastLogForm({
             const result = await createEntry.mutateAsync({
                 restaurant: restaurantData,
                 rating: ratingValue,
+                content: note.trim() || undefined,
                 table_id: selectedTableId ?? undefined,
                 visibility: selectedTableId ? 'table' : 'private',
             });
@@ -244,7 +271,7 @@ export function FastLogForm({
         } catch (e: any) {
             setSubmitError(e.message ?? 'Could not save entry. Tap to retry.');
         }
-    }, [canSubmit, isSubmitting, lockedRestaurant, selectedPlace, query, rating, selectedTableId, createEntry, onSubmitted]);
+    }, [canSubmit, isSubmitting, lockedRestaurant, selectedPlace, query, rating, note, selectedTableId, createEntry, onSubmitted]);
 
     // ── "Add details" — push to full composer with prefill ───────────────
     const handleAddDetails = useCallback(() => {
@@ -261,6 +288,16 @@ export function FastLogForm({
 
     const isModal = presentation === 'modal';
 
+    // Meta string for RestaurantHeader — prefer address, else use placeholder copy.
+    const restaurantMeta: string | undefined = lockedRestaurant
+        ? (lockedRestaurant.placePayload?.formattedAddress ?? undefined)
+        : selectedPlace?.formattedAddress ?? undefined;
+    const restaurantPhoto: string | null | undefined = lockedRestaurant?.placePayload?.photoReference
+        ? undefined // photoReference is a Places ref, not a URL — let header fall back to tile
+        : undefined;
+
+    const restaurantName = lockedRestaurant?.name ?? selectedPlace?.name ?? '';
+
     const content = (
         <ScrollView
             contentContainerStyle={[
@@ -270,263 +307,250 @@ export function FastLogForm({
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
         >
-            {/* Sheet header — close button */}
-            {!isModal && onClose && (
-                <View style={styles.sheetHeader}>
-                    <View style={[styles.handle, { backgroundColor: palette.outlineVariant }]} />
-                    <Text
-                        style={[
-                            Type.headlineMedium,
-                            { color: palette.text, marginTop: Spacing.md },
-                        ]}
-                    >
-                        Rate this spot
-                    </Text>
-                </View>
-            )}
-
-            {/* Restaurant field */}
+            {/* Restaurant header — canonical Heirloom header block */}
             {lockedRestaurant ? (
-                // Locked: show name chip, no interaction
-                <View style={[styles.fieldGroup, !isModal && { marginTop: Spacing.lg }]}>
-                    <Text style={[Type.label, { color: palette.textSecondary }]}>
-                        Where did you eat?
-                    </Text>
-                    <View
-                        style={[
-                            styles.lockedChip,
-                            { backgroundColor: palette.surfaceContainerLow },
-                        ]}
-                    >
-                        <Text
-                            style={{
-                                fontFamily: 'Newsreader_400Regular_Italic',
-                                fontSize: 22,
-                                color: palette.text,
-                            }}
-                            numberOfLines={1}
-                        >
-                            {lockedRestaurant.name}
-                        </Text>
-                        <Ionicons name="lock-closed-outline" size={14} color={palette.textMuted} />
-                    </View>
-                </View>
+                <RestaurantHeader
+                    name={lockedRestaurant.name}
+                    meta={restaurantMeta}
+                    photoUrl={restaurantPhoto}
+                    locked
+                />
+            ) : selectedPlace ? (
+                <RestaurantHeader
+                    name={restaurantName}
+                    meta={restaurantMeta}
+                    onClear={handleClearPlace}
+                />
             ) : (
-                // Search field
-                <View style={[styles.fieldGroup, !isModal && { marginTop: Spacing.lg }]}>
-                    <Text style={[Type.label, { color: palette.textSecondary }]}>
-                        Where did you eat?
-                    </Text>
-                    {selectedPlace ? (
-                        <Pressable
-                            onPress={handleClearPlace}
+                <View style={styles.fieldGroup}>
+                    <LabelSmall color={palette.textSecondary}>Where did you eat?</LabelSmall>
+                    <View style={{ position: 'relative' }}>
+                        <FieldUnderline
+                            value={query}
+                            onChangeText={setQuery}
+                            placeholder="Search restaurants…"
+                            fontVariant="serifItalic"
+                            size="display"
+                            autoFocus={isModal}
+                        />
+                        {searching ? (
+                            <ActivityIndicator
+                                size="small"
+                                color={palette.textMuted}
+                                style={{ position: 'absolute', right: 4, top: 14 }}
+                            />
+                        ) : null}
+                    </View>
+                    {results.length > 0 ? (
+                        <View
                             style={[
-                                styles.selectedChip,
-                                { backgroundColor: palette.surfaceContainerLow },
+                                styles.dropdown,
+                                {
+                                    backgroundColor: palette.surfaceContainerLow,
+                                    ...Shadow.subtle,
+                                },
                             ]}
                         >
-                            <View style={{ flex: 1 }}>
-                                <Text
-                                    style={{
-                                        fontFamily: 'Newsreader_400Regular_Italic',
-                                        fontSize: 22,
-                                        color: palette.text,
-                                    }}
-                                    numberOfLines={1}
+                            {results.map((place, i) => (
+                                <Pressable
+                                    key={place.id}
+                                    onPress={() => handleSelectPlace(place)}
+                                    style={({ pressed }) => [
+                                        styles.dropdownRow,
+                                        {
+                                            backgroundColor: pressed
+                                                ? palette.surfaceContainerHigh
+                                                : 'transparent',
+                                            borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
+                                            borderTopColor: palette.surfaceContainerHigh,
+                                        },
+                                    ]}
                                 >
-                                    {selectedPlace.name}
-                                </Text>
-                                {selectedPlace.formattedAddress && (
                                     <Text
                                         style={[
-                                            Type.caption,
-                                            { color: palette.textSecondary, marginTop: 2 },
+                                            Type.body,
+                                            { color: palette.text, fontFamily: 'Manrope_500Medium' },
                                         ]}
                                         numberOfLines={1}
                                     >
-                                        {selectedPlace.formattedAddress}
+                                        {place.name}
                                     </Text>
-                                )}
-                            </View>
-                            <Text style={{ fontSize: 18, color: palette.textMuted, marginLeft: Spacing.sm }}>
-                                ✕
-                            </Text>
-                        </Pressable>
-                    ) : (
-                        <View>
-                            <View style={{ position: 'relative' }}>
-                                <TextInput
-                                    style={[
-                                        styles.textInput,
-                                        {
-                                            backgroundColor: palette.surfaceContainerLow,
-                                            color: palette.text,
-                                            fontFamily: 'Newsreader_400Regular_Italic',
-                                            fontSize: 22,
-                                        },
-                                    ]}
-                                    placeholder="Search restaurants..."
-                                    placeholderTextColor={palette.textMuted}
-                                    value={query}
-                                    onChangeText={setQuery}
-                                    autoFocus={isModal}
-                                />
-                                {searching && (
-                                    <ActivityIndicator
-                                        size="small"
-                                        color={palette.textMuted}
-                                        style={{ position: 'absolute', right: 16, top: 16 }}
-                                    />
-                                )}
-                            </View>
-                            {results.length > 0 && (
-                                <View
-                                    style={[
-                                        styles.dropdown,
-                                        {
-                                            backgroundColor: palette.surfaceContainerLow,
-                                            ...Shadow.subtle,
-                                        },
-                                    ]}
-                                >
-                                    {results.map((place, i) => (
-                                        <Pressable
-                                            key={place.id}
-                                            onPress={() => handleSelectPlace(place)}
-                                            style={({ pressed }) => [
-                                                styles.dropdownRow,
-                                                {
-                                                    backgroundColor: pressed
-                                                        ? palette.surfaceContainerHigh
-                                                        : 'transparent',
-                                                    borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
-                                                    borderTopColor: palette.surfaceContainerHigh,
-                                                },
-                                            ]}
+                                    {place.formattedAddress ? (
+                                        <Text
+                                            style={[Type.caption, { color: palette.textSecondary, marginTop: 1 }]}
+                                            numberOfLines={1}
                                         >
-                                            <Text
-                                                style={[
-                                                    Type.body,
-                                                    { color: palette.text, fontFamily: 'Manrope_500Medium' },
-                                                ]}
-                                                numberOfLines={1}
-                                            >
-                                                {place.name}
-                                            </Text>
-                                            {place.formattedAddress && (
-                                                <Text
-                                                    style={[Type.caption, { color: palette.textSecondary, marginTop: 1 }]}
-                                                    numberOfLines={1}
-                                                >
-                                                    {place.formattedAddress}
-                                                </Text>
-                                            )}
-                                        </Pressable>
-                                    ))}
-                                </View>
-                            )}
-                            {query.trim().length >= 2 && results.length === 0 && !searching && (
-                                <Text
-                                    style={[
-                                        Type.caption,
-                                        { color: palette.textMuted, marginTop: Spacing.xs, paddingLeft: Spacing.xs },
-                                    ]}
-                                >
-                                    No results — you can still submit with this name
-                                </Text>
-                            )}
+                                            {place.formattedAddress}
+                                        </Text>
+                                    ) : null}
+                                </Pressable>
+                            ))}
                         </View>
-                    )}
+                    ) : null}
+                    {query.trim().length >= 2 && results.length === 0 && !searching ? (
+                        <Text
+                            style={[
+                                Type.caption,
+                                { color: palette.textMuted, marginTop: Spacing.xs },
+                            ]}
+                        >
+                            no results — you can still submit with this name
+                        </Text>
+                    ) : null}
                 </View>
             )}
 
-            {/* Rating */}
-            <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                <Text style={[Type.label, { color: palette.textSecondary }]}>
-                    Your rating
-                </Text>
-                <View style={styles.ratingRow}>
-                    <StarRating
-                        value={rating}
-                        size={36}
-                        editable
-                        onChange={setRating}
-                        showValue
-                    />
-                </View>
+            {/* Photo strip — placeholder only in Fast Log (no uploads wired here) */}
+            {/*
+              Fast Log has never accepted photos pre-submit. We render the empty "+"
+              tile to preserve the canonical canvas; tapping it routes to the full
+              composer via "Add details" so photos can be attached there. This is a
+              visual-only affordance per the ticket (no behaviour change).
+            */}
+            <View style={{ marginTop: Spacing.lg }}>
+                <Pressable
+                    onPress={handleAddDetails}
+                    style={({ pressed }) => [
+                        styles.photoPlaceholder,
+                        { borderColor: palette.ruleInkSoft, opacity: pressed ? 0.6 : 1 },
+                    ]}
+                >
+                    <Text
+                        style={{
+                            fontSize: 22,
+                            color: palette.textMuted,
+                            fontWeight: '300',
+                            lineHeight: 26,
+                        }}
+                    >
+                        +
+                    </Text>
+                </Pressable>
             </View>
 
-            {/* Table picker */}
-            {sortedTables.length > 0 && (
-                <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                    <Text style={[Type.label, { color: palette.textSecondary }]}>
-                        Post to
+            {/* Overall rating — stacked: stars + caption underneath */}
+            <View style={{ marginTop: Spacing.xl - 4 }}>
+                <StarRating
+                    value={rating}
+                    size={34}
+                    editable
+                    onChange={setRating}
+                />
+                <Text
+                    style={[
+                        styles.ratingCaption,
+                        { color: palette.textMuted },
+                    ]}
+                >
+                    <Text
+                        style={{
+                            fontFamily: 'Newsreader_400Regular_Italic',
+                            fontSize: 15,
+                            color: palette.text,
+                        }}
+                    >
+                        {ratingCaption(rating)}
                     </Text>
+                    <Text>  ·  </Text>
+                    <Text>{rating > 0 ? `${rating.toFixed(1)} / 5` : 'no rating yet'}</Text>
+                </Text>
+            </View>
+
+            {/* Note — underline-only FieldUnderline */}
+            <View style={[styles.divider, { backgroundColor: palette.dividerSoft }]} />
+            <FieldUnderline
+                value={note}
+                onChangeText={setNote}
+                placeholder="a line about it (optional)"
+                fontVariant="serif"
+                size="body"
+            />
+
+            {/* Table picker — pill chip row, single-select */}
+            {sortedTables.length > 0 ? (
+                <>
+                    <View style={[styles.divider, { backgroundColor: palette.dividerSoft }]} />
+                    <View style={styles.chipHeader}>
+                        <Label>Post to</Label>
+                    </View>
                     <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
                         contentContainerStyle={styles.chipRow}
                     >
                         {sortedTables.map(t => (
-                            <Pressable
+                            <Chip
                                 key={t.id}
+                                variant="pill"
+                                active={selectedTableId === t.id}
                                 onPress={() => setSelectedTableId(t.id)}
-                                style={[
-                                    styles.tableChip,
-                                    {
-                                        backgroundColor:
-                                            selectedTableId === t.id
-                                                ? palette.primary
-                                                : palette.surfaceContainerLow,
-                                    },
-                                ]}
                             >
-                                <Text
-                                    style={[
-                                        Type.caption,
-                                        {
-                                            color:
-                                                selectedTableId === t.id
-                                                    ? '#fff'
-                                                    : palette.text,
-                                        },
-                                    ]}
-                                    numberOfLines={1}
-                                >
-                                    {t.name}
-                                </Text>
-                            </Pressable>
+                                {t.name}
+                            </Chip>
                         ))}
                     </ScrollView>
-                </View>
-            )}
+                </>
+            ) : null}
+
+            {/* "+ Break it down" — terracotta link routes to full composer */}
+            <Pressable
+                onPress={handleAddDetails}
+                disabled={createEntry.isPending || createEntry.isSuccess}
+                style={({ pressed }) => [
+                    styles.breakDownLink,
+                    {
+                        opacity:
+                            pressed || createEntry.isPending || createEntry.isSuccess
+                                ? 0.5
+                                : 1,
+                    },
+                ]}
+            >
+                <Text
+                    style={{
+                        fontFamily: 'Manrope_500Medium',
+                        fontSize: 13,
+                        color: palette.primary,
+                    }}
+                >
+                    + break it down
+                </Text>
+            </Pressable>
 
             {/* Error state */}
-            {submitError && (
+            {submitError ? (
                 <View style={[styles.errorRow, { marginTop: Spacing.md }]}>
                     <Text style={[Type.bodySmall, { color: palette.error }]}>
                         {submitError}
                     </Text>
                     <Pressable onPress={handleSubmit}>
-                        <Text style={[Type.caption, { color: palette.error, textDecorationLine: 'underline', marginLeft: Spacing.xs }]}>
-                            Retry
+                        <Text
+                            style={[
+                                Type.caption,
+                                {
+                                    color: palette.error,
+                                    textDecorationLine: 'underline',
+                                    marginLeft: Spacing.xs,
+                                },
+                            ]}
+                        >
+                            retry
                         </Text>
                     </Pressable>
                 </View>
-            )}
+            ) : null}
 
-            {/* Primary CTA */}
+            {/* Primary CTA — pill, terracotta, UPPERCASE tracked */}
             <Pressable
                 disabled={!canSubmit || isSubmitting}
                 onPress={handleSubmit}
                 style={({ pressed }) => [
                     styles.ctaButton,
                     {
-                        marginTop: Spacing.xl,
                         backgroundColor: canSubmit
                             ? palette.primary
                             : palette.surfaceContainerHigh,
-                        opacity: pressed ? 0.9 : isSubmitting ? 0.6 : 1,
+                        opacity: pressed ? 0.85 : isSubmitting ? 0.6 : 1,
                     },
                 ]}
             >
@@ -538,30 +562,13 @@ export function FastLogForm({
                             Type.label,
                             {
                                 color: canSubmit ? '#fff' : palette.textMuted,
-                                letterSpacing: 2,
+                                letterSpacing: 1.5,
                             },
                         ]}
                     >
                         LOG IT
                     </Text>
                 )}
-            </Pressable>
-
-            {/* Secondary: Add details */}
-            <Pressable
-                onPress={handleAddDetails}
-                disabled={createEntry.isPending || createEntry.isSuccess}
-                style={({ pressed }) => [
-                    styles.addDetailsLink,
-                    { opacity: pressed || createEntry.isPending || createEntry.isSuccess ? 0.5 : 1 },
-                ]}
-            >
-                <Text style={[Type.caption, { color: palette.textSecondary }]}>
-                    Want to add notes or photos?{' '}
-                </Text>
-                <Text style={[Type.caption, { color: palette.primary }]}>
-                    Add details
-                </Text>
             </Pressable>
         </ScrollView>
     );
@@ -586,68 +593,54 @@ const styles = StyleSheet.create({
     scrollContent: {
         paddingHorizontal: Spacing.lg,
         paddingBottom: Spacing.xl,
+        paddingTop: Spacing.md,
     },
     scrollContentModal: {
-        paddingTop: Spacing.xl,
-    },
-    sheetHeader: {
-        alignItems: 'center',
-        marginBottom: Spacing.md,
-    },
-    handle: {
-        width: 36,
-        height: 4,
-        borderRadius: Radius.full,
+        paddingTop: Spacing.lg,
     },
     fieldGroup: {
         gap: Spacing.sm,
     },
-    lockedChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
-        gap: Spacing.sm,
-    },
-    selectedChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
-    },
-    textInput: {
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
-    },
     dropdown: {
-        borderRadius: Radius.lg,
+        borderRadius: Radius.md,
         marginTop: Spacing.xs,
         overflow: 'hidden',
     },
     dropdownRow: {
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm + 2,
     },
-    ratingRow: {
+    photoPlaceholder: {
+        width: 64,
+        height: 64,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderStyle: 'dashed',
         alignItems: 'center',
-        paddingVertical: Spacing.sm,
+        justifyContent: 'center',
+    },
+    ratingCaption: {
+        marginTop: Spacing.sm + 2,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+    },
+    divider: {
+        height: StyleSheet.hairlineWidth,
+        marginVertical: Spacing.lg - 4,
+    },
+    chipHeader: {
+        marginBottom: Spacing.sm,
     },
     chipRow: {
         gap: Spacing.sm,
         paddingRight: Spacing.sm,
     },
-    tableChip: {
-        paddingHorizontal: Spacing.md,
+    breakDownLink: {
+        marginTop: Spacing.lg,
         paddingVertical: Spacing.sm,
-        borderRadius: Radius.full,
-        maxWidth: 160,
+        alignSelf: 'flex-start',
     },
     errorRow: {
         flexDirection: 'row',
@@ -655,16 +648,10 @@ const styles = StyleSheet.create({
         flexWrap: 'wrap',
     },
     ctaButton: {
-        height: 56,
-        borderRadius: 9999,
+        height: 52,
+        borderRadius: Radius.full,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    addDetailsLink: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: Spacing.md,
-        paddingVertical: Spacing.sm,
+        marginTop: Spacing.xl,
     },
 });

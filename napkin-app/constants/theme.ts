@@ -53,6 +53,7 @@ export const Colors = {
     outlineVariant: '#ddc0ba',
     divider: 'rgba(221, 192, 186, 0.15)', // warm rule (pale rose)
     dividerSoft: 'rgba(221, 192, 186, 0.30)', // softer variant (feed row dividers)
+    ruleInkSoft: 'rgba(138, 114, 108, 0.25)', // field underline resting (warm taupe)
     overlay: 'rgba(28, 28, 25, 0.4)',
     border: 'rgba(221, 192, 186, 0.15)',   // alias for compat
   },
@@ -89,6 +90,7 @@ export const Colors = {
     outlineVariant: '#56423d',
     divider: 'rgba(86, 66, 61, 0.3)',
     dividerSoft: 'rgba(86, 66, 61, 0.45)',
+    ruleInkSoft: 'rgba(160, 152, 136, 0.3)', // field underline resting (dark parity)
     overlay: 'rgba(0, 0, 0, 0.6)',
     border: 'rgba(86, 66, 61, 0.3)',
   },
