@@ -7,23 +7,36 @@
  *  3. Large italic Newsreader restaurant name
  *  4. Row: overlapping stacked avatars  |  amber rating chip
  *  5. Quote block (first participant note) with decorative quote marks
+ *
+ * TICKET-010 additions:
+ *  - Card-level long-press (500ms) → ReactionPicker; disabled when status === 'rating'
+ *  - Unseen dot (top-right of card); hidden when status === 'rating'
+ *  - Relative time appended to label when < 24h (e.g. "GROUP ENTRY · 14 DEC · 2H AGO")
+ *  NOTE: Quote extraction does NOT run on TableNightCard (Rounds have multiple authors).
  */
 
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     Pressable,
     Image,
+    findNodeHandle,
+    UIManager,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { type TableNightActivity } from '@/hooks/tables/useTableActivity';
+import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
+import { formatRelativeTime } from '@/lib/textHighlight';
 import { Avatar } from './Avatar';
 import { PulseDot } from './PulseDot';
-import { InteractionPill } from './InteractionPill';
+import { FeedActionRow } from './FeedActionRow';
+import { ReactionPicker } from './ReactionPicker';
 
 type Palette = typeof Colors.light;
 
@@ -37,23 +50,76 @@ interface TableNightCardProps {
     item: TableNightActivity;
     palette: Palette;
     tableId?: string;
+    lastSeenAt?: string | null;
 }
 
 const MAX_VISIBLE_AVATARS = 3;
 
-export function TableNightCard({ item, palette, tableId }: TableNightCardProps) {
+export function TableNightCard({ item, palette, tableId, lastSeenAt }: TableNightCardProps) {
     const router = useRouter();
+    const toggleReaction = useToggleReaction();
+    const queryClient = useQueryClient();
+
     const isActive = item.status === 'rating';
     const photoUrl = item.restaurants?.photo_url ?? null;
     const restaurantName = item.restaurants?.name ?? 'Unknown';
     const restaurantInitial = restaurantName[0].toUpperCase();
-    const dateLabel = formatShortDate(item.revealed_at ?? item.created_at);
 
-    // First participant note for the quote block
+    const sortDate = item.revealed_at ?? item.created_at;
+    const dateLabel = formatShortDate(sortDate);
+
+    // Relative time — null for ≥ 24h. Only appended when non-null (< 24h).
+    const relativeTime = sortDate ? formatRelativeTime(sortDate) : null;
+
+    // Label: "LIVE ROUND" | "ROUND · 14 DEC" | "ROUND · 14 DEC · 2H AGO"
+    // Canvas: top-left chip overlay reads "ROUND · Sat 29 Mar" or "LIVE ROUND"
+    const labelText = isActive
+        ? 'LIVE ROUND'
+        : relativeTime
+        ? `ROUND \u00B7 ${dateLabel.toUpperCase()} \u00B7 ${relativeTime.toUpperCase()}`
+        : `ROUND \u00B7 ${dateLabel.toUpperCase()}`;
+
+    // Unseen dot: hidden on live rounds (already have PulseDot + LIVE ROUND label)
+    const isUnseen =
+        !isActive &&
+        (!lastSeenAt || (!!sortDate && sortDate > lastSeenAt));
+
+    // First participant note for the quote block (unchanged — no extraction on rounds)
     const firstNote = item.participants?.find((p) => p.notes)?.notes ?? null;
 
     const visibleParticipants = item.participants?.slice(0, MAX_VISIBLE_AVATARS) ?? [];
     const overflowCount = Math.max(0, (item.participants?.length ?? 0) - MAX_VISIBLE_AVATARS);
+
+    // Card-level long-press picker anchor
+    const cardRef = useRef<View>(null);
+    const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+
+    const handleLongPress = () => {
+        if (isActive) return; // Reactions locked during live round
+        const handle = findNodeHandle(cardRef.current);
+        if (handle == null) return;
+        Haptics.selectionAsync().catch(() => undefined);
+        UIManager.measureInWindow(handle, (x, y, width) => {
+            setPickerAnchor({ x: x + width - 40, y: y + 12 });
+        });
+    };
+
+    const handlePickEmoji = (emoji: string) => {
+        setPickerAnchor(null);
+        toggleReaction.mutate(
+            { targetType: 'table_night', targetId: item.id, emoji },
+            {
+                onSuccess: () => {
+                    if (tableId) {
+                        queryClient.invalidateQueries({
+                            queryKey: ['tableActivity', tableId],
+                            exact: false,
+                        });
+                    }
+                },
+            },
+        );
+    };
 
     return (
         <Pressable
@@ -63,25 +129,30 @@ export function TableNightCard({ item, palette, tableId }: TableNightCardProps) 
                     params: { nightId: item.id },
                 })
             }
+            onLongPress={handleLongPress}
+            delayLongPress={500}
             style={({ pressed }) => ({
                 opacity: pressed ? 0.95 : 1,
             })}
         >
-            {/* Label */}
-            <View style={styles.labelRow}>
-                {isActive && <PulseDot size={7} color={palette.primary} />}
-                <Text
-                    style={[
-                        styles.labelText,
-                        { color: isActive ? palette.primary : palette.textSecondary },
-                    ]}
-                >
-                    {isActive ? 'LIVE ROUND' : `GROUP ENTRY \u00B7 ${dateLabel.toUpperCase()}`}
-                </Text>
-            </View>
+            {/* Label — only when no hero photo (canvas puts chip on hero image) */}
+            {!photoUrl && (
+                <View style={styles.labelRow}>
+                    {isActive && <PulseDot size={7} color={palette.primary} />}
+                    <Text
+                        style={[
+                            styles.labelText,
+                            { color: isActive ? palette.primary : palette.textSecondary },
+                        ]}
+                    >
+                        {labelText}
+                    </Text>
+                </View>
+            )}
 
             {/* Card container */}
             <View
+                ref={cardRef}
                 style={[
                     styles.card,
                     {
@@ -90,13 +161,47 @@ export function TableNightCard({ item, palette, tableId }: TableNightCardProps) 
                     },
                 ]}
             >
+                {/* Unseen dot — top-right of card (hidden during live rounds) */}
+                {isUnseen && (
+                    <View
+                        style={[styles.unseenDot, { backgroundColor: palette.primary }]}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                    />
+                )}
+
                 {/* Hero image or fallback */}
                 {photoUrl ? (
-                    <Image
-                        source={{ uri: photoUrl }}
-                        style={styles.heroImage}
-                        resizeMode="cover"
-                    />
+                    <View style={{ position: 'relative' }}>
+                        <Image
+                            source={{ uri: photoUrl }}
+                            style={styles.heroImage}
+                            resizeMode="cover"
+                        />
+                        {/* Canvas-style chip overlay — top-left corner */}
+                        <View
+                            style={[
+                                styles.heroChip,
+                                {
+                                    backgroundColor: isActive
+                                        ? palette.tertiaryFixed
+                                        : 'rgba(28,28,25,0.55)',
+                                },
+                            ]}
+                        >
+                            {isActive && (
+                                <PulseDot size={6} color={palette.tertiary} />
+                            )}
+                            <Text
+                                style={[
+                                    styles.heroChipText,
+                                    { color: isActive ? palette.tertiary : '#fff' },
+                                ]}
+                            >
+                                {isActive ? 'LIVE ROUND' : `ROUND \u00B7 ${dateLabel.toUpperCase()}`}
+                            </Text>
+                        </View>
+                    </View>
                 ) : (
                     <View
                         style={[
@@ -214,7 +319,7 @@ export function TableNightCard({ item, palette, tableId }: TableNightCardProps) 
                         </View>
                     )}
 
-                    {/* Quote block */}
+                    {/* Quote block — first participant note, no extraction (multiple authors) */}
                     {firstNote && (
                         <View style={styles.quoteBlock}>
                             <Text
@@ -246,17 +351,31 @@ export function TableNightCard({ item, palette, tableId }: TableNightCardProps) 
                         </View>
                     )}
 
-                    {/* Interaction pill */}
-                    {((item.reaction_count ?? 0) >= 1 || (item.comment_count ?? 0) >= 1) && (
-                        <InteractionPill
+                    {/* Action row — only after reveal (reactions locked during live round) */}
+                    {!isActive && (
+                        <FeedActionRow
+                            targetType="table_night"
+                            targetId={item.id}
                             topEmojis={item.top_emojis ?? []}
-                            commentCount={item.comment_count ?? 0}
                             reactionCount={item.reaction_count ?? 0}
-                            textColor={palette.textMuted}
+                            commentCount={item.comment_count ?? 0}
+                            myReactions={item.my_reactions ?? []}
+                            palette={palette}
+                            detailPathname="/table-night-detail"
+                            detailParams={{ nightId: item.id }}
+                            tableId={tableId}
                         />
                     )}
                 </View>
             </View>
+
+            {/* Card-level ReactionPicker */}
+            <ReactionPicker
+                visible={!!pickerAnchor}
+                anchor={pickerAnchor}
+                onPick={handlePickEmoji}
+                onClose={() => setPickerAnchor(null)}
+            />
         </Pressable>
     );
 }
@@ -281,9 +400,34 @@ const styles = StyleSheet.create({
         shadowRadius: 30,
         elevation: 3,
     },
+    unseenDot: {
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        zIndex: 10,
+    },
     heroImage: {
         width: '100%',
         height: 220,
+    },
+    heroChip: {
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 6,
+    },
+    heroChipText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+        letterSpacing: 1.2,
     },
     heroFallback: {
         width: '100%',

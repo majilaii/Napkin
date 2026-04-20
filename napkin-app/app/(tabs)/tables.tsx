@@ -1,10 +1,15 @@
 /**
  * Tables tab — activity feed for the active table.
  * Real data via useTables + useTableActivity hooks.
- * Features: table switcher, PulseDot on live banner, Table Night cards, solo share rows.
+ * Features: TableHeader masthead, TableSwitcherSheet (bottom sheet),
+ * EmptyChairInvitation slab for solo-only users, FoundedHero for brand-new tables,
+ * PulseDot on live banner, Table Night cards, solo share rows.
+ *
+ * TICKET-024: visual reskin to Heirloom UI kit. Hooks, state, and filter
+ * logic are unchanged.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
     View,
     Text,
@@ -13,14 +18,17 @@ import {
     RefreshControl,
     Pressable,
     ActivityIndicator,
-    Modal,
+    Alert,
 } from 'react-native';
+import { WishlistGrid } from '@/components/wishlist';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
+import { useLastSeenAt, useMarkSeen } from '@/hooks/tables/useLastSeenAt';
 import {
     useTableActivity,
     type ActivityItem,
@@ -33,8 +41,12 @@ import { SoloShareCard } from '@/components/feed/SoloShareCard';
 import { JournalNoteCard } from '@/components/feed/JournalNoteCard';
 import { FilterChipRow, type FilterChip } from '@/components/feed/FilterChipRow';
 import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
-
-type Palette = typeof Colors.light;
+import {
+    TableHeader,
+    EmptyChairInvitation,
+    FoundedHero,
+    TableSwitcherSheet,
+} from '@/components/tables';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -66,9 +78,28 @@ export default function TablesScreen() {
     // Real data
     const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
+    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist'>('activity');
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const hasMultipleTables = (tables?.length ?? 0) > 1;
     const [showTablePicker, setShowTablePicker] = useState(false);
+    const [invitationDismissed, setInvitationDismissed] = useState(false);
+
+    // Unseen dot system (TICKET-010)
+    const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
+    const markSeen = useMarkSeen();
+
+    // Fire mark_seen when the tab gains focus or activeTable changes.
+    // The 30s debounce in useMarkSeen collapses rapid tab-switches.
+    // markSeen.mutate is intentionally omitted from deps — it's stable across
+    // renders (React Query memoizes it) and we only want to re-fire on table switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useFocusEffect(
+        useCallback(() => {
+            if (activeTable?.id) {
+                markSeen.mutate({ tableId: activeTable.id });
+            }
+        }, [activeTable?.id])
+    );
 
     const {
         data: activityData,
@@ -154,6 +185,21 @@ export default function TablesScreen() {
         return sections;
     }, [timelineItems]);
 
+    // Member names for avatar stack in TableHeader (must be before early returns)
+    const memberNames = useMemo(
+        () => members?.map((m) => m.profiles?.display_name ?? '?') ?? [],
+        [members],
+    );
+
+    // Table IDs that have a live round — used by the switcher sheet (must be before early returns)
+    const liveRoundTableIds = useMemo(() => {
+        const ids = new Set<string>();
+        if (activeTable?.id && activeRounds.length > 0) {
+            ids.add(activeTable.id);
+        }
+        return ids;
+    }, [activeTable?.id, activeRounds.length]);
+
     if (tablesLoading) {
         return (
             <View style={[styles.center, { backgroundColor: palette.background }]}>
@@ -187,268 +233,277 @@ export default function TablesScreen() {
     const tableName = activeTable.name;
     const isEmpty = !feedLoading && items.length === 0;
 
-    return (
-        <View style={{ flex: 1, backgroundColor: palette.background }}>
-        <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={{
-                paddingTop: insets.top + Spacing.sm,
-                paddingBottom: 100,
-            }}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-                <RefreshControl
-                    refreshing={isRefetching}
-                    onRefresh={refetch}
-                    tintColor={palette.primary}
-                />
-            }
-        >
-            {/* Header */}
-            <View style={styles.header}>
-                <Pressable
-                    onPress={() => hasMultipleTables && setShowTablePicker(true)}
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-                >
-                    <Text
-                        style={[
-                            Type.headlineLarge,
-                            {
-                                color: palette.text,
-                                fontFamily: 'Newsreader_400Regular_Italic',
-                                fontSize: 28,
-                            },
-                        ]}
-                        numberOfLines={1}
-                    >
-                        {tableName}
-                    </Text>
-                    {hasMultipleTables && (
-                        <Text style={{ color: palette.textMuted, fontSize: 14 }}>▾</Text>
-                    )}
-                </Pressable>
-            </View>
+    // Solo-only: user's only table is their personal journal
+    const isSoloOnly =
+        (tables?.length ?? 0) === 1 && (tables?.[0]?.tables?.is_personal ?? false);
 
-            {/* Filter chips */}
-            {items.length > 0 && (
-                <FilterChipRow
-                    chips={filterChips}
-                    activeKey={activeFilter}
-                    onSelect={setActiveFilter}
-                    palette={palette}
-                />
-            )}
+    // Brand-new non-personal table with no entries yet
+    const isFoundedEmpty =
+        !activeTable.is_personal && isEmpty && !feedLoading;
 
-            {/* Feed */}
-            {feedLoading ? (
-                <ActivityIndicator
-                    color={palette.primary}
-                    style={{ marginTop: Spacing.xxl }}
-                />
-            ) : isEmpty ? (
-                <View
-                    style={{
-                        padding: Spacing.xl,
-                        alignItems: 'center',
-                        marginTop: Spacing.xxl,
-                    }}
-                >
-                    <Text
-                        style={[
-                            Type.headlineMedium,
-                            { color: palette.text, textAlign: 'center' },
-                        ]}
-                    >
-                        Nothing here yet
-                    </Text>
-                    <Text
-                        style={[
-                            Type.body,
-                            {
-                                color: palette.textSecondary,
-                                textAlign: 'center',
-                                marginTop: Spacing.sm,
-                            },
-                        ]}
-                    >
-                        Log a meal or start a Table Night to get the conversation going.
-                    </Text>
-                </View>
-            ) : (
-                <View style={{ paddingTop: Spacing.sm }}>
-                    {/* Active rounds shelf */}
-                    {activeRounds.length > 0 && (
-                        <View
-                            style={{
-                                paddingHorizontal: Spacing.lg,
-                                gap: Spacing.md,
-                                marginBottom: Spacing.lg,
-                            }}
+    // Shared header + segmented control (rendered above both tabs)
+    const headerAndControl = (
+        <>
+            {/* TableHeader masthead — replaces old inline header block */}
+            <TableHeader
+                tableName={tableName}
+                isPersonal={activeTable.is_personal ?? false}
+                memberCount={members?.length ?? 0}
+                memberNames={memberNames}
+                hasMultipleTables={hasMultipleTables}
+                onSwitcherPress={() => setShowTablePicker(true)}
+                palette={palette}
+            />
+
+            {/* Activity | Wishlist segmented control */}
+            <View style={styles.segmentedControl}>
+                {(['activity', 'wishlist'] as const).map((tab) => {
+                    const isActive = activeTab === tab;
+                    return (
+                        <Pressable
+                            key={tab}
+                            onPress={() => setActiveTab(tab)}
+                            style={[
+                                styles.segmentButton,
+                                isActive && { backgroundColor: palette.primary },
+                            ]}
                         >
                             <Text
                                 style={[
                                     Type.label,
-                                    { color: palette.textMuted },
+                                    {
+                                        color: isActive ? '#fff' : palette.textSecondary,
+                                        fontSize: 10,
+                                    },
                                 ]}
                             >
-                                IN PROGRESS
+                                {tab === 'activity' ? 'Activity' : 'Wishlist'}
                             </Text>
-                            {activeRounds.map((item) => (
-                                <TableNightCard
-                                    key={`active-${item.id}`}
-                                    item={item}
-                                    palette={palette}
-                                    tableId={activeTable?.id}
-                                />
-                            ))}
-                        </View>
+                        </Pressable>
+                    );
+                })}
+            </View>
+        </>
+    );
+
+    return (
+        <View style={{ flex: 1, backgroundColor: palette.background }}>
+            {/* Wishlist tab — FlatList owns its own scrolling, so render outside ScrollView */}
+            {activeTab === 'wishlist' ? (
+                <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
+                    {headerAndControl}
+                    {activeTable && (
+                        <WishlistGrid mode="table" tableId={activeTable.id} />
+                    )}
+                </View>
+            ) : (
+                <ScrollView
+                    style={{ flex: 1 }}
+                    contentContainerStyle={{
+                        paddingTop: insets.top + Spacing.sm,
+                        paddingBottom: 100,
+                    }}
+                    showsVerticalScrollIndicator={false}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={isRefetching}
+                            onRefresh={refetch}
+                            tintColor={palette.primary}
+                        />
+                    }
+                >
+                    {headerAndControl}
+
+                    {/* Empty-chair invitation — solo users only, dismissable */}
+                    {isSoloOnly && !invitationDismissed && (
+                        <EmptyChairInvitation
+                            palette={palette}
+                            onGatherPress={() =>
+                                Alert.alert(
+                                    'Coming soon',
+                                    'Gathering a table will be available in a future update.',
+                                )
+                            }
+                            onDismiss={() => setInvitationDismissed(true)}
+                        />
                     )}
 
-                    {/* Date-grouped timeline */}
-                    {feedSections.length > 0
-                        ? feedSections.map((section) => (
-                              <View
-                                  key={section.label}
-                                  style={{ marginBottom: Spacing.md }}
-                              >
-                                  <DateSectionHeader
-                                      title={section.label}
-                                      palette={palette}
-                                  />
-                                  <View style={styles.feedList}>
-                                      {section.items.map((item) => {
-                                          if (item.type === 'table_night') {
-                                              return (
-                                                  <TableNightCard
-                                                      key={`tn-${item.id}`}
-                                                      item={item}
-                                                      palette={palette}
-                                                      tableId={activeTable?.id}
-                                                  />
-                                              );
-                                          }
-                                          const solo = item as SoloShareActivity;
-                                          if (solo.rating == null) {
-                                              return (
-                                                  <JournalNoteCard
-                                                      key={`note-${item.id}`}
-                                                      item={solo}
-                                                      palette={palette}
-                                                      tableId={activeTable?.id}
-                                                  />
-                                              );
-                                          }
-                                          return (
-                                              <SoloShareCard
-                                                  key={`solo-${item.id}`}
-                                                  item={solo}
-                                                  palette={palette}
-                                                  tableId={activeTable?.id}
-                                              />
-                                          );
-                                      })}
-                                  </View>
-                              </View>
-                          ))
-                        : activeFilter && (
-                              <View
-                                  style={{
-                                      padding: Spacing.xl,
-                                      alignItems: 'center',
-                                      marginTop: Spacing.lg,
-                                  }}
-                              >
-                                  <Text
-                                      style={[
-                                          Type.body,
-                                          {
-                                              color: palette.textMuted,
-                                              textAlign: 'center',
-                                          },
-                                      ]}
-                                  >
-                                      No entries match this filter.
-                                  </Text>
-                              </View>
-                          )}
-                </View>
-            )}
-        </ScrollView>
+                    {/* Filter chips — activity tab only, when there are items */}
+                    {items.length > 0 && (
+                        <FilterChipRow
+                            chips={filterChips}
+                            activeKey={activeFilter}
+                            onSelect={setActiveFilter}
+                            palette={palette}
+                        />
+                    )}
 
-            {/* Table picker dropdown */}
-            <Modal
-                visible={showTablePicker}
-                transparent
-                animationType="fade"
-                onRequestClose={() => setShowTablePicker(false)}
-            >
-                <Pressable
-                    style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start' }}
-                    onPress={() => setShowTablePicker(false)}
-                >
-                    <View
-                        style={{
-                            marginTop: insets.top + 60,
-                            marginHorizontal: Spacing.lg,
-                            backgroundColor: palette.surfaceContainerLow,
-                            borderRadius: 16,
-                            paddingVertical: Spacing.sm,
-                            shadowColor: '#000',
-                            shadowOffset: { width: 0, height: 4 },
-                            shadowOpacity: 0.15,
-                            shadowRadius: 12,
-                            elevation: 8,
-                        }}
-                    >
-                        {tables?.map((t, i) => {
-                            const tbl = t.tables;
-                            if (!tbl) return null;
-                            const isActive = i === selectedIndex;
-                            return (
-                                <Pressable
-                                    key={tbl.id}
-                                    onPress={() => {
-                                        setSelectedIndex(i);
-                                        setShowTablePicker(false);
-                                    }}
-                                    style={({ pressed }) => ({
+                    {/* Feed */}
+                    {feedLoading ? (
+                        <ActivityIndicator
+                            color={palette.primary}
+                            style={{ marginTop: Spacing.xxl }}
+                        />
+                    ) : isFoundedEmpty ? (
+                        /* Brand-new non-personal table — founding moment */
+                        <FoundedHero
+                            tableName={tableName}
+                            foundedAt={activeTable.created_at}
+                            palette={palette}
+                        />
+                    ) : isEmpty && !isSoloOnly ? (
+                        /* Empty personal table (or named table after filtering) */
+                        <View
+                            style={{
+                                padding: Spacing.xl,
+                                alignItems: 'center',
+                                marginTop: Spacing.xxl,
+                            }}
+                        >
+                            <Text
+                                style={[
+                                    Type.headlineMedium,
+                                    { color: palette.text, textAlign: 'center' },
+                                ]}
+                            >
+                                Nothing here yet
+                            </Text>
+                            <Text
+                                style={[
+                                    Type.body,
+                                    {
+                                        color: palette.textSecondary,
+                                        textAlign: 'center',
+                                        marginTop: Spacing.sm,
+                                    },
+                                ]}
+                            >
+                                Log a meal or start a Table Night to get the conversation going.
+                            </Text>
+                        </View>
+                    ) : (
+                        <View style={{ paddingTop: Spacing.sm }}>
+                            {/* Active rounds shelf */}
+                            {activeRounds.length > 0 && (
+                                <View
+                                    style={{
                                         paddingHorizontal: Spacing.lg,
-                                        paddingVertical: Spacing.md,
-                                        flexDirection: 'row',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        backgroundColor: isActive ? palette.primaryMuted : 'transparent',
-                                        opacity: pressed ? 0.7 : 1,
-                                    })}
+                                        gap: Spacing.md,
+                                        marginBottom: Spacing.lg,
+                                    }}
                                 >
-                                    <View>
-                                        <Text
-                                            style={[
-                                                Type.titleSmall,
-                                                {
-                                                    color: isActive ? palette.primary : palette.text,
-                                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                                    fontSize: 18,
-                                                },
-                                            ]}
-                                        >
-                                            {tbl.name}
-                                        </Text>
-                                        {tbl.is_personal && (
-                                            <Text style={[Type.caption, { color: palette.textMuted }]}>
-                                                Personal journal
-                                            </Text>
-                                        )}
-                                    </View>
-                                    {isActive && (
-                                        <Text style={{ color: palette.primary, fontSize: 16 }}>✓</Text>
-                                    )}
-                                </Pressable>
-                            );
-                        })}
-                    </View>
-                </Pressable>
-            </Modal>
+                                    <Text
+                                        style={[
+                                            Type.label,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        IN PROGRESS
+                                    </Text>
+                                    {activeRounds.map((item) => (
+                                        <TableNightCard
+                                            key={`active-${item.id}`}
+                                            item={item}
+                                            palette={palette}
+                                            tableId={activeTable?.id}
+                                            lastSeenAt={lastSeenAt ?? null}
+                                        />
+                                    ))}
+                                </View>
+                            )}
+
+                            {/* Date-grouped timeline */}
+                            {feedSections.length > 0
+                                ? feedSections.map((section) => (
+                                      <View
+                                          key={section.label}
+                                          style={{ marginBottom: Spacing.md }}
+                                      >
+                                          <DateSectionHeader
+                                              title={section.label}
+                                              palette={palette}
+                                          />
+                                          <View style={styles.feedList}>
+                                              {section.items.map((item) => {
+                                                  if (item.type === 'table_night') {
+                                                      return (
+                                                          <TableNightCard
+                                                              key={`tn-${item.id}`}
+                                                              item={item}
+                                                              palette={palette}
+                                                              tableId={activeTable?.id}
+                                                              lastSeenAt={lastSeenAt ?? null}
+                                                          />
+                                                      );
+                                                  }
+                                                  const solo = item as SoloShareActivity;
+                                                  if (solo.rating == null) {
+                                                      return (
+                                                          <JournalNoteCard
+                                                              key={`note-${item.id}`}
+                                                              item={solo}
+                                                              palette={palette}
+                                                              tableId={activeTable?.id}
+                                                              lastSeenAt={lastSeenAt ?? null}
+                                                          />
+                                                      );
+                                                  }
+                                                  return (
+                                                      <SoloShareCard
+                                                          key={`solo-${item.id}`}
+                                                          item={solo}
+                                                          palette={palette}
+                                                          tableId={activeTable?.id}
+                                                          lastSeenAt={lastSeenAt ?? null}
+                                                      />
+                                                  );
+                                              })}
+                                          </View>
+                                      </View>
+                                  ))
+                                : activeFilter && (
+                                      <View
+                                          style={{
+                                              padding: Spacing.xl,
+                                              alignItems: 'center',
+                                              marginTop: Spacing.lg,
+                                          }}
+                                      >
+                                          <Text
+                                              style={[
+                                                  Type.body,
+                                                  {
+                                                      color: palette.textMuted,
+                                                      textAlign: 'center',
+                                                  },
+                                              ]}
+                                          >
+                                              No entries match this filter.
+                                          </Text>
+                                      </View>
+                                  )}
+                        </View>
+                    )}
+                </ScrollView>
+            )}
+
+            {/* Table switcher — bottom sheet replacing old top-dropdown Modal */}
+            <TableSwitcherSheet
+                tables={tables ?? []}
+                selectedIndex={selectedIndex}
+                onSelect={setSelectedIndex}
+                visible={showTablePicker}
+                onClose={() => setShowTablePicker(false)}
+                palette={palette}
+                liveRoundTableIds={liveRoundTableIds}
+                onGatherNew={() => {
+                    setShowTablePicker(false);
+                    Alert.alert(
+                        'Coming soon',
+                        'Gathering a table will be available in a future update.',
+                    );
+                }}
+            />
         </View>
     );
 }
@@ -462,14 +517,24 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingHorizontal: Spacing.xl,
     },
-    header: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.lg,
-        paddingBottom: Spacing.md,
-    },
     feedList: {
         paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.sm,
         gap: Spacing.xl + Spacing.md,
+    },
+    segmentedControl: {
+        flexDirection: 'row',
+        marginHorizontal: Spacing.lg,
+        marginBottom: Spacing.sm,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0,0,0,0.06)',
+        padding: 3,
+        gap: 2,
+    },
+    segmentButton: {
+        flex: 1,
+        paddingVertical: 6,
+        borderRadius: 17,
+        alignItems: 'center',
     },
 });

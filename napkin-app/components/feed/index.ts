@@ -10,4 +10,15 @@ export { FilterChipRow, type FilterChip } from './FilterChipRow';
 export { DateSectionHeader } from './DateSectionHeader';
 export { CompactEntryRow } from './CompactEntryRow';
 export { ActiveRoundsShelf } from './ActiveRoundsShelf';
-export { InteractionPill } from './InteractionPill';
+export { FeedActionRow } from './FeedActionRow';
+export { ReactionPicker } from './ReactionPicker';
+
+// Feed tab (cross-Table chronological feed)
+export { FeedHeader } from './FeedHeader';
+export { ScopePills, type FeedScope } from './ScopePills';
+export { TrendingRail } from './TrendingRail';
+export { FeedDateHeader } from './FeedDateHeader';
+export { FriendLogCard } from './FriendLogCard';
+export { FastLogRow } from './FastLogRow';
+export { FeedTerminus } from './FeedTerminus';
+export { InlineStars } from './InlineStars';

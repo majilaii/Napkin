@@ -45,10 +45,19 @@ function BottomNavBar() {
   if (!inTabs) return null;
 
   // Which tab is active?
-  const activeTab = segments[1] ?? 'tables';
+  const activeTab = segments[1] ?? 'feed';
 
   return (
     <View style={[navStyles.bar, { backgroundColor: palette.surfaceContainerLow, paddingBottom: insets.bottom > 0 ? insets.bottom : 12 }]}>
+      {/* Feed tab */}
+      <Pressable
+        onPress={() => router.replace('/feed')}
+        style={navStyles.tab}
+      >
+        <Ionicons name="home-outline" size={24} color={activeTab === 'feed' ? palette.tabIconSelected : palette.tabIconDefault} />
+        <Text style={[Type.labelSmall, { color: activeTab === 'feed' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Feed</Text>
+      </Pressable>
+
       {/* Tables tab */}
       <Pressable
         onPress={() => router.replace('/tables')}
@@ -58,9 +67,18 @@ function BottomNavBar() {
         <Text style={[Type.labelSmall, { color: activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Tables</Text>
       </Pressable>
 
+      {/* Search tab */}
+      <Pressable
+        onPress={() => router.replace('/search')}
+        style={navStyles.tab}
+      >
+        <Ionicons name="search-outline" size={24} color={activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault} />
+        <Text style={[Type.labelSmall, { color: activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Search</Text>
+      </Pressable>
+
       {/* Center + button */}
       <Pressable
-        onPress={() => router.push('/create-entry')}
+        onPress={() => router.push('/fast-log')}
         style={navStyles.addButton}
       >
         <View style={[navStyles.addCircle, { backgroundColor: palette.primary }]}>
@@ -68,13 +86,13 @@ function BottomNavBar() {
         </View>
       </Pressable>
 
-      {/* Settings tab */}
+      {/* Profile tab */}
       <Pressable
-        onPress={() => router.replace('/settings')}
+        onPress={() => router.replace('/profile')}
         style={navStyles.tab}
       >
-        <Ionicons name="settings-outline" size={24} color={activeTab === 'settings' ? palette.tabIconSelected : palette.tabIconDefault} />
-        <Text style={[Type.labelSmall, { color: activeTab === 'settings' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Settings</Text>
+        <Ionicons name="person-circle-outline" size={24} color={activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault} />
+        <Text style={[Type.labelSmall, { color: activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Profile</Text>
       </Pressable>
     </View>
   );
@@ -131,7 +149,7 @@ function RootLayoutNav() {
     if (!session && !inAuthGroup) {
       router.replace('/auth');
     } else if (session && inAuthGroup) {
-      router.replace('/tables');
+      router.replace('/feed');
     }
   }, [session, isLoading, segments, router]);
 
@@ -146,11 +164,60 @@ function RootLayoutNav() {
             options={{ presentation: 'modal', headerShown: false }}
           />
           <Stack.Screen
+            name="fast-log"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
             name="table-night"
             options={{ presentation: 'modal', headerShown: false }}
           />
           <Stack.Screen
             name="table-night-detail"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="restaurant/[id]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="lists"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="list/[id]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="list/[id]/edit"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
+            name="list/new"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
+            name="u/[identifier]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="settings"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="wishlist"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="entry-detail"
+            options={{ headerShown: false }}
+          />
+          {/* TICKET-025 */}
+          <Stack.Screen
+            name="diary"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="regulars"
             options={{ headerShown: false }}
           />
         </Stack>
@@ -183,7 +250,7 @@ export default function RootLayout() {
 
   if (!fontsLoaded) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fcf9f4' }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fdf6ec' }}>
         <ActivityIndicator size="small" color="#a03f28" />
       </View>
     );

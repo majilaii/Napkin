@@ -59,4 +59,4 @@ supabase/.branches/
 .kanban/
 
 # Accidental nested local Supabase workspace inside app
-napkin-app/supabase/
+napkin-app/supabase/scripts/

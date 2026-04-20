@@ -1,6 +1,656 @@
+/**
+ * User Profile Edge Function — TICKET-020 / TICKET-025
+ *
+ * One aggregated endpoint for the merged /u/[identifier] profile screen.
+ * Replaces the original stub (which had a dead value_profiles join).
+ *
+ * All actions are POST with body `{ action: "...", ... }`.
+ *
+ * Read actions:
+ *   profile         — full merged profile payload, privacy-gated;
+ *                     now includes top_four (auto-derived) + regulars_preview
+ *   diary           — paginated chronological entry list (cursor on visited_at)
+ *   regulars        — full list of ≥3-visit restaurants, sorted by visit_count desc
+ *   check_username  — uniqueness check for a candidate username
+ *
+ * Write actions:
+ *   update_profile         — display_name, bio, avatar_url (partial update)
+ *   update_username        — standalone username update (after first flip)
+ *   update_privacy         — account_privacy flip; atomic with username on first public flip
+ *   update_reply_permission — allow_public_replies boolean
+ *
+ * Privacy model:
+ *   viewer_target_relationship is computed server-side BEFORE any palate data
+ *   is fetched. 'none' returns { error: 'not_found' } with no further DB reads.
+ *
+ * Identifier resolution:
+ *   UUID regex match → look up by user_id
+ *   else             → case-insensitive username lookup
+ */
+
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+type ViewerRelationship =
+    | 'self'
+    | 'tables_in_common'
+    | 'public_only'
+    | 'public_and_tables'
+    | 'none';
+
+type ProfileRow = {
+    user_id: string;
+    username: string | null;
+    display_name: string;
+    bio: string | null;
+    avatar_url: string | null;
+    account_privacy: 'private' | 'public';
+    allow_public_replies: boolean;
+};
+
+type Stats = {
+    total_logs: number;
+    total_restaurants: number;
+    average_rating: number | null;
+};
+
+type ListSummary = {
+    id: string;
+    title: string;
+    entry_count: number;
+    ranked: boolean;
+    privacy: 'public' | 'private';
+    updated_at: string;
+    cover_photo_url: string | null;
+};
+
+type RestaurantTile = {
+    id: string;
+    name: string;
+    city: string | null;
+    photo_url: string | null;
+};
+
+type TablePreview = {
+    table_id: string;
+    table_name: string;
+    avg: number | null;
+    visit_count: number;
+    last_entry_at: string | null;
+    last_entry_restaurant_name: string | null;
+    last_entry_rating: number | null;
+};
+
+// TICKET-025: Top 4 auto-derived pick
+type TopPick = {
+    restaurant_id: string;
+    name: string;
+    city: string | null;
+    photo_url: string | null;
+    max_rating: number;
+    visit_count: number;
+    last_visited_at: string | null;
+};
+
+// TICKET-025: Regulars summary (≥3 visits)
+type RegularSummary = {
+    restaurant_id: string;
+    name: string;
+    city: string | null;
+    photo_url: string | null;
+    visit_count: number;
+    avg_rating: number | null;
+    last_visited_at: string | null;
+};
+
+// TICKET-025: Single diary row
+type DiaryRow = {
+    entry_id: string;
+    restaurant_id: string;
+    restaurant_name: string;
+    city: string | null;
+    photo_url: string | null;
+    rating: number | null;
+    notes: string | null;
+    visited_at: string | null;
+    created_at: string;
+};
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+}
+
+function fail(message: string, status = 400): Response {
+    return json({ error: message }, status);
+}
+
+function notFound(): Response {
+    return json({ error: 'not_found' }, 404);
+}
+
+/**
+ * Compute viewer ↔ target relationship.
+ * Must be called BEFORE any Palate data fetching.
+ */
+function computeRelationship(
+    callerId: string,
+    targetPrivacy: 'private' | 'public',
+    sharedTableIds: string[],
+): ViewerRelationship {
+    const hasSharedTables = sharedTableIds.length > 0;
+
+    if (targetPrivacy === 'public' && hasSharedTables) return 'public_and_tables';
+    if (targetPrivacy === 'public') return 'public_only';
+    if (hasSharedTables) return 'tables_in_common';
+    return 'none';
+}
+
+/**
+ * Resolve a profile row from an identifier.
+ * UUID → lookup by user_id; else → case-insensitive username lookup.
+ * Returns null if not found.
+ */
+async function resolveProfile(
+    supabase: any,
+    identifier: string,
+): Promise<ProfileRow | null> {
+    const isUuid = UUID_REGEX.test(identifier);
+    const { data, error } = isUuid
+        ? await supabase
+            .from('profiles')
+            .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+            .eq('user_id', identifier)
+            .maybeSingle()
+        : await supabase
+            .from('profiles')
+            .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+            .ilike('username', identifier)
+            .maybeSingle();
+
+    if (error) throw error;
+    return data ?? null;
+}
+
+/**
+ * Fetch shared table IDs between caller and target.
+ */
+async function fetchSharedTableIds(
+    supabase: any,
+    callerId: string,
+    targetId: string,
+): Promise<string[]> {
+    // Self-join: find tables where BOTH caller and target are members
+    const { data: callerMemberships, error } = await supabase
+        .from('table_members')
+        .select('table_id')
+        .eq('member_id', callerId);
+    if (error) throw error;
+
+    const callerTableIds = (callerMemberships ?? []).map((m: any) => m.table_id as string);
+    if (callerTableIds.length === 0) return [];
+
+    const { data: targetMemberships, error: targetErr } = await supabase
+        .from('table_members')
+        .select('table_id')
+        .eq('member_id', targetId)
+        .in('table_id', callerTableIds);
+    if (targetErr) throw targetErr;
+
+    return (targetMemberships ?? []).map((m: any) => m.table_id as string);
+}
+
+/**
+ * Fetch all caller's table IDs (for self view — "Your Tables" section).
+ */
+async function fetchAllCallerTableIds(
+    supabase: any,
+    callerId: string,
+): Promise<string[]> {
+    const { data, error } = await supabase
+        .from('table_members')
+        .select('table_id')
+        .eq('member_id', callerId);
+    if (error) throw error;
+    return (data ?? []).map((m: any) => m.table_id as string);
+}
+
+/**
+ * Compute Palate stats for the target user.
+ * Deliberately does NOT select table_id — enforces "no Table identity in payload".
+ */
+async function fetchStats(supabase: any, targetId: string): Promise<Stats> {
+    const { data: entries, error } = await supabase
+        .from('entries')
+        .select('id, restaurant_id, rating')
+        .eq('user_id', targetId)
+        .neq('visibility', 'private')
+        .not('rating', 'is', null);
+    if (error) throw error;
+
+    const rows = (entries ?? []) as Array<{ id: string; restaurant_id: string | null; rating: number | null }>;
+    const totalLogs = rows.length;
+    const uniqueRestaurants = new Set(rows.map((r) => r.restaurant_id).filter(Boolean));
+    const totalRestaurants = uniqueRestaurants.size;
+
+    const ratedRows = rows.filter((r) => r.rating != null);
+    const averageRating =
+        ratedRows.length > 0
+            ? ratedRows.reduce((sum, r) => sum + (r.rating as number), 0) / ratedRows.length
+            : null;
+
+    return { total_logs: totalLogs, total_restaurants: totalRestaurants, average_rating: averageRating };
+}
+
+/**
+ * Fetch the target's public lists with entry counts.
+ */
+async function fetchPublicLists(supabase: any, targetId: string): Promise<ListSummary[]> {
+    const { data: lists, error } = await supabase
+        .from('lists')
+        .select('id, title, ranked, privacy, updated_at')
+        .eq('owner_id', targetId)
+        .eq('privacy', 'public')
+        .order('updated_at', { ascending: false });
+    if (error) throw error;
+
+    const enriched: ListSummary[] = [];
+    for (const list of (lists ?? []) as any[]) {
+        const { count } = await supabase
+            .from('list_entries')
+            .select('id', { count: 'exact', head: true })
+            .eq('list_id', list.id);
+
+        // Cover: first entry's restaurant photo
+        const orderCol = list.ranked ? 'position' : 'created_at';
+        const { data: firstEntry } = await supabase
+            .from('list_entries')
+            .select('restaurant:restaurants(photo_url)')
+            .eq('list_id', list.id)
+            .order(orderCol, { ascending: !!list.ranked })
+            .limit(1)
+            .maybeSingle();
+
+        enriched.push({
+            id: list.id,
+            title: list.title,
+            entry_count: count ?? 0,
+            ranked: list.ranked,
+            privacy: list.privacy,
+            updated_at: list.updated_at,
+            cover_photo_url: (firstEntry?.restaurant as any)?.photo_url ?? null,
+        });
+    }
+    return enriched;
+}
+
+/**
+ * Fetch recently-logged restaurant tiles (deduped by restaurant_id, up to 12).
+ * Query up to 200 entries, then JS-side reduce to 12 unique restaurants.
+ */
+async function fetchRecentlyLogged(supabase: any, targetId: string): Promise<RestaurantTile[]> {
+    const { data: entries, error } = await supabase
+        .from('entries')
+        .select('restaurant_id, visited_at, created_at')
+        .eq('user_id', targetId)
+        .neq('visibility', 'private')
+        .not('restaurant_id', 'is', null)
+        .not('rating', 'is', null)
+        .order('visited_at', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(200);
+    if (error) throw error;
+
+    // Deduplicate — keep first occurrence (most recent) per restaurant_id
+    const seen = new Set<string>();
+    const restaurantIds: string[] = [];
+    for (const e of (entries ?? []) as any[]) {
+        const rid = e.restaurant_id as string;
+        if (!seen.has(rid)) {
+            seen.add(rid);
+            restaurantIds.push(rid);
+        }
+        if (restaurantIds.length >= 12) break;
+    }
+
+    if (restaurantIds.length === 0) return [];
+
+    const { data: restaurants, error: restErr } = await supabase
+        .from('restaurants')
+        .select('id, name, city, photo_url')
+        .in('id', restaurantIds);
+    if (restErr) throw restErr;
+
+    // Return in insertion order (most-recent first)
+    const byId = new Map((restaurants ?? []).map((r: any) => [r.id as string, r]));
+    return restaurantIds
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .map((r: any): RestaurantTile => ({
+            id: r.id,
+            name: r.name,
+            city: r.city ?? null,
+            photo_url: r.photo_url ?? null,
+        }));
+}
+
+/**
+ * Fetch preview cards for a list of table IDs, showing the target user's
+ * activity at each table. Used for both "Tables in common" (target's stats
+ * at the shared tables) and "Your Tables" (self view — own stats).
+ */
+async function fetchTablePreviews(
+    supabase: any,
+    subjectId: string,
+    tableIds: string[],
+    callerContext: 'self' | 'other',
+): Promise<TablePreview[]> {
+    if (tableIds.length === 0) return [];
+
+    // Fetch table names
+    const { data: tables, error: tableErr } = await supabase
+        .from('tables')
+        .select('id, name')
+        .in('id', tableIds);
+    if (tableErr) throw tableErr;
+
+    const tableNameMap = new Map<string, string>((tables ?? []).map((t: any) => [t.id as string, t.name as string]));
+
+    const previews: TablePreview[] = [];
+
+    for (const tableId of tableIds) {
+        // Fetch all non-private entries by subject in this table for stats
+        const { data: entryRows, error: entryErr } = await supabase
+            .from('entries')
+            .select('id, rating, visited_at, created_at, restaurant_id, restaurants(name)')
+            .eq('user_id', subjectId)
+            .eq('table_id', tableId)
+            .neq('visibility', 'private')
+            .not('rating', 'is', null)
+            .order('visited_at', { ascending: false })
+            .order('created_at', { ascending: false });
+        if (entryErr) throw entryErr;
+
+        const rows = (entryRows ?? []) as Array<{
+            id: string;
+            rating: number | null;
+            visited_at: string | null;
+            created_at: string;
+            restaurant_id: string | null;
+            restaurants: { name: string } | null;
+        }>;
+
+        const ratedRows = rows.filter((r) => r.rating != null);
+        const avg =
+            ratedRows.length > 0
+                ? ratedRows.reduce((sum, r) => sum + (r.rating as number), 0) / ratedRows.length
+                : null;
+
+        const mostRecent = rows[0] ?? null;
+        const lastRestaurant = mostRecent?.restaurants;
+        const lastRestaurantName = Array.isArray(lastRestaurant)
+            ? lastRestaurant[0]?.name ?? null
+            : lastRestaurant?.name ?? null;
+
+        previews.push({
+            table_id: tableId,
+            table_name: tableNameMap.get(tableId) || 'Table',
+            avg,
+            visit_count: ratedRows.length,
+            last_entry_at: mostRecent ? (mostRecent.visited_at ?? mostRecent.created_at) : null,
+            last_entry_restaurant_name: lastRestaurantName,
+            last_entry_rating: mostRecent?.rating ?? null,
+        });
+    }
+
+    // Sort: non-self → by last_entry_at DESC; self → same
+    previews.sort((a, b) => {
+        if (!a.last_entry_at && !b.last_entry_at) return 0;
+        if (!a.last_entry_at) return 1;
+        if (!b.last_entry_at) return -1;
+        return a.last_entry_at < b.last_entry_at ? 1 : -1;
+    });
+
+    return previews;
+}
+
+// ── TICKET-025: New helper functions ──────────────────────────────────────
+
+/**
+ * Derive the user's Top 4 restaurants.
+ * Algorithm: group entries by restaurant_id, take max rating per group,
+ * require rating >= 4.0, order by max_rating desc, visit_count desc,
+ * last_visited_at desc. Limit 4.
+ */
+async function fetchTopFour(supabase: any, userId: string, includePrivate: boolean): Promise<TopPick[]> {
+    let query = supabase
+        .from('entries')
+        .select('restaurant_id, rating, visited_at, created_at')
+        .eq('user_id', userId)
+        .not('restaurant_id', 'is', null)
+        .not('rating', 'is', null);
+    if (!includePrivate) query = query.neq('visibility', 'private');
+    const { data: entries, error } = await query;
+    if (error) throw error;
+
+    const rows = (entries ?? []) as Array<{
+        restaurant_id: string;
+        rating: number;
+        visited_at: string | null;
+        created_at: string;
+    }>;
+
+    // Group by restaurant_id
+    const grouped = new Map<string, { maxRating: number; count: number; lastVisit: string | null }>();
+    for (const row of rows) {
+        const rid = row.restaurant_id;
+        const existing = grouped.get(rid);
+        const ts = row.visited_at ?? row.created_at;
+        if (!existing) {
+            grouped.set(rid, { maxRating: row.rating, count: 1, lastVisit: ts });
+        } else {
+            grouped.set(rid, {
+                maxRating: Math.max(existing.maxRating, row.rating),
+                count: existing.count + 1,
+                lastVisit: existing.lastVisit && existing.lastVisit > ts ? existing.lastVisit : ts,
+            });
+        }
+    }
+
+    // Filter rating >= 4.0 and sort
+    const qualified = [...grouped.entries()]
+        .filter(([, v]) => v.maxRating >= 4.0)
+        .sort(([, a], [, b]) => {
+            if (b.maxRating !== a.maxRating) return b.maxRating - a.maxRating;
+            if (b.count !== a.count) return b.count - a.count;
+            const aLast = a.lastVisit ?? '';
+            const bLast = b.lastVisit ?? '';
+            return bLast < aLast ? -1 : bLast > aLast ? 1 : 0;
+        })
+        .slice(0, 4);
+
+    if (qualified.length === 0) return [];
+
+    const restaurantIds = qualified.map(([id]) => id);
+    const { data: restaurants, error: restErr } = await supabase
+        .from('restaurants')
+        .select('id, name, city, photo_url')
+        .in('id', restaurantIds);
+    if (restErr) throw restErr;
+
+    const byId = new Map((restaurants ?? []).map((r: any) => [r.id as string, r]));
+    const result: TopPick[] = [];
+    for (const [rid, stats] of qualified) {
+        const r = byId.get(rid);
+        if (!r) continue;
+        result.push({
+            restaurant_id: rid,
+            name: r.name,
+            city: r.city ?? null,
+            photo_url: r.photo_url ?? null,
+            max_rating: stats.maxRating,
+            visit_count: stats.count,
+            last_visited_at: stats.lastVisit,
+        });
+    }
+    return result;
+}
+
+/**
+ * Derive the user's Regulars (≥3 visits), sorted by visit_count desc.
+ * Returns up to `limit` rows (default 8 for preview, 200 for full list).
+ */
+async function fetchRegulars(supabase: any, userId: string, includePrivate: boolean, limit = 8): Promise<RegularSummary[]> {
+    let query = supabase
+        .from('entries')
+        .select('restaurant_id, rating, visited_at, created_at')
+        .eq('user_id', userId)
+        .not('restaurant_id', 'is', null);
+    if (!includePrivate) query = query.neq('visibility', 'private');
+    const { data: entries, error } = await query;
+    if (error) throw error;
+
+    const rows = (entries ?? []) as Array<{
+        restaurant_id: string;
+        rating: number | null;
+        visited_at: string | null;
+        created_at: string;
+    }>;
+
+    // Group by restaurant_id
+    const grouped = new Map<string, {
+        count: number;
+        ratingSum: number;
+        ratingCount: number;
+        lastVisit: string | null;
+    }>();
+    for (const row of rows) {
+        const rid = row.restaurant_id;
+        const ts = row.visited_at ?? row.created_at;
+        const existing = grouped.get(rid);
+        if (!existing) {
+            grouped.set(rid, {
+                count: 1,
+                ratingSum: row.rating ?? 0,
+                ratingCount: row.rating != null ? 1 : 0,
+                lastVisit: ts,
+            });
+        } else {
+            grouped.set(rid, {
+                count: existing.count + 1,
+                ratingSum: existing.ratingSum + (row.rating ?? 0),
+                ratingCount: existing.ratingCount + (row.rating != null ? 1 : 0),
+                lastVisit: existing.lastVisit && existing.lastVisit > ts ? existing.lastVisit : ts,
+            });
+        }
+    }
+
+    // Filter ≥3 visits and sort by count desc
+    const qualified = [...grouped.entries()]
+        .filter(([, v]) => v.count >= 3)
+        .sort(([, a], [, b]) => b.count - a.count)
+        .slice(0, limit);
+
+    if (qualified.length === 0) return [];
+
+    const restaurantIds = qualified.map(([id]) => id);
+    const { data: restaurants, error: restErr } = await supabase
+        .from('restaurants')
+        .select('id, name, city, photo_url')
+        .in('id', restaurantIds);
+    if (restErr) throw restErr;
+
+    const byId = new Map((restaurants ?? []).map((r: any) => [r.id as string, r]));
+    const result: RegularSummary[] = [];
+    for (const [rid, stats] of qualified) {
+        const r = byId.get(rid);
+        if (!r) continue;
+        result.push({
+            restaurant_id: rid,
+            name: r.name,
+            city: r.city ?? null,
+            photo_url: r.photo_url ?? null,
+            visit_count: stats.count,
+            avg_rating: stats.ratingCount > 0 ? stats.ratingSum / stats.ratingCount : null,
+            last_visited_at: stats.lastVisit,
+        });
+    }
+    return result;
+}
+
+/**
+ * Fetch paginated diary rows for a user.
+ * Ordered by visited_at desc, created_at desc.
+ * cursor: ISO timestamp for keyset pagination (before this timestamp).
+ */
+async function fetchDiary(
+    supabase: any,
+    userId: string,
+    cursor: string | null,
+    includePrivate: boolean,
+    pageSize = 40,
+): Promise<{ rows: DiaryRow[]; nextCursor: string | null }> {
+    let query = supabase
+        .from('entries')
+        .select('id, restaurant_id, rating, notes, visited_at, created_at, restaurants(id, name, city, photo_url)')
+        .eq('user_id', userId)
+        .not('restaurant_id', 'is', null)
+        .order('visited_at', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(pageSize + 1);
+
+    if (!includePrivate) query = query.neq('visibility', 'private');
+    if (cursor) {
+        query = query.lt('visited_at', cursor);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const rawRows = (data ?? []) as Array<{
+        id: string;
+        restaurant_id: string;
+        rating: number | null;
+        notes: string | null;
+        visited_at: string | null;
+        created_at: string;
+        restaurants: { id: string; name: string; city: string | null; photo_url: string | null } | null;
+    }>;
+
+    const hasMore = rawRows.length > pageSize;
+    const rows = rawRows.slice(0, pageSize).map((row): DiaryRow => {
+        const rest = Array.isArray(row.restaurants) ? row.restaurants[0] : row.restaurants;
+        return {
+            entry_id: row.id,
+            restaurant_id: row.restaurant_id,
+            restaurant_name: rest?.name ?? 'Unknown',
+            city: rest?.city ?? null,
+            photo_url: rest?.photo_url ?? null,
+            rating: row.rating,
+            notes: row.notes,
+            visited_at: row.visited_at,
+            created_at: row.created_at,
+        };
+    });
+
+    const lastRow = rows[rows.length - 1];
+    const nextCursor = hasMore && lastRow ? (lastRow.visited_at ?? lastRow.created_at) : null;
+
+    return { rows, nextCursor };
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -8,54 +658,374 @@ serve(async (req) => {
     }
 
     try {
-        const supabaseClient = createClient(
-            Deno.env.get('SUPABASE_URL') ?? '',
-            Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-            { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
-        );
+        const authHeader = req.headers.get('Authorization');
+        if (!authHeader) return fail('Missing Authorization header', 401);
 
-        const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+        const token = authHeader.replace('Bearer ', '');
+        const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-        if (userError || !user) {
-            return new Response(
-                JSON.stringify({ error: 'Unauthorized' }),
-                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
+        // Service-role client — bypasses RLS; auth validated manually
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+        if (userError || !user) return fail('Unauthorized', 401);
+
+        if (req.method !== 'POST') return fail('Method not allowed', 405);
+
+        const body = await req.json();
+        const { action } = body;
+
+        // ── profile (read) ────────────────────────────────────────────────
+        if (action === 'profile') {
+            const { identifier } = body;
+            if (!identifier || typeof identifier !== 'string') {
+                return fail('identifier is required', 400);
+            }
+
+            // 1. Resolve target profile
+            const targetProfile = await resolveProfile(supabase, identifier);
+
+            // If target doesn't exist, always return not_found (no existence leak)
+            if (!targetProfile) return notFound();
+
+            const callerId = user.id;
+            const targetId = targetProfile.user_id;
+            const isSelf = callerId === targetId;
+
+            if (isSelf) {
+                // Self: return everything, even if private
+                const [stats, publicLists, recentlyLogged, allTableIds, topFour, regularsPreview] = await Promise.all([
+                    fetchStats(supabase, targetId),
+                    fetchPublicLists(supabase, targetId),
+                    fetchRecentlyLogged(supabase, targetId),
+                    fetchAllCallerTableIds(supabase, callerId),
+                    fetchTopFour(supabase, targetId, true),
+                    fetchRegulars(supabase, targetId, true, 8),
+                ]);
+
+                const tablePreviews = await fetchTablePreviews(supabase, targetId, allTableIds, 'self');
+
+                return json({
+                    data: {
+                        profile: targetProfile,
+                        stats,
+                        public_lists: publicLists,
+                        recently_logged: recentlyLogged,
+                        tables_in_common: tablePreviews,
+                        top_four: topFour,
+                        regulars_preview: regularsPreview,
+                        is_self: true,
+                        viewer_target_relationship: 'self' as ViewerRelationship,
+                    },
+                });
+            }
+
+            // 2. Compute relationship BEFORE any palate DB reads
+            const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
+            const relationship = computeRelationship(callerId, targetProfile.account_privacy, sharedTableIds);
+
+            // 3. 'none' → return not_found, stop here
+            if (relationship === 'none') return notFound();
+
+            // 4. 'tables_in_common' only — no palate access
+            if (relationship === 'tables_in_common') {
+                const tablePreviews = await fetchTablePreviews(supabase, targetId, sharedTableIds, 'other');
+                return json({
+                    data: {
+                        profile: targetProfile,
+                        stats: null,
+                        public_lists: null,
+                        recently_logged: null,
+                        tables_in_common: tablePreviews,
+                        top_four: [],
+                        regulars_preview: [],
+                        is_self: false,
+                        viewer_target_relationship: relationship,
+                    },
+                });
+            }
+
+            // 5. public_only or public_and_tables — fetch palate + top4 + regulars
+            const [stats, publicLists, recentlyLogged, topFour, regularsPreview] = await Promise.all([
+                fetchStats(supabase, targetId),
+                fetchPublicLists(supabase, targetId),
+                fetchRecentlyLogged(supabase, targetId),
+                fetchTopFour(supabase, targetId, false),
+                fetchRegulars(supabase, targetId, false, 8),
+            ]);
+
+            let tablePreviews: TablePreview[] = [];
+            if (relationship === 'public_and_tables') {
+                tablePreviews = await fetchTablePreviews(supabase, targetId, sharedTableIds, 'other');
+            }
+
+            return json({
+                data: {
+                    profile: targetProfile,
+                    stats,
+                    public_lists: publicLists,
+                    recently_logged: recentlyLogged,
+                    tables_in_common: tablePreviews,
+                    top_four: topFour,
+                    regulars_preview: regularsPreview,
+                    is_self: false,
+                    viewer_target_relationship: relationship,
+                },
+            });
         }
 
-        if (req.method === 'GET') {
-            console.log('user-profile GET called for user:', user.id);
-            const { data, error } = await supabaseClient
+        // ── diary (read, paginated) ───────────────────────────────────────
+        if (action === 'diary') {
+            const { identifier, cursor } = body;
+            if (!identifier || typeof identifier !== 'string') {
+                return fail('identifier is required', 400);
+            }
+
+            const targetProfile = await resolveProfile(supabase, identifier);
+            if (!targetProfile) return notFound();
+
+            const callerId = user.id;
+            const targetId = targetProfile.user_id;
+            const isSelf = callerId === targetId;
+
+            // For non-self: only accessible if profile is public
+            if (!isSelf) {
+                if (targetProfile.account_privacy !== 'public') return notFound();
+            }
+
+            const cursorStr = typeof cursor === 'string' ? cursor : null;
+            const { rows, nextCursor } = await fetchDiary(supabase, targetId, cursorStr, isSelf, 40);
+
+            // Year totals for the year summary band (current year only)
+            const currentYear = new Date().getFullYear().toString();
+            let yearQuery = supabase
+                .from('entries')
+                .select('id, restaurant_id, rating, notes, visited_at')
+                .eq('user_id', targetId)
+                .gte('visited_at', `${currentYear}-01-01`)
+                .lt('visited_at', `${parseInt(currentYear) + 1}-01-01`);
+            if (!isSelf) yearQuery = yearQuery.neq('visibility', 'private');
+            const { data: yearStats, error: yearErr } = await yearQuery;
+            if (yearErr) throw yearErr;
+
+            const yearRows = (yearStats ?? []) as Array<{
+                id: string;
+                restaurant_id: string | null;
+                rating: number | null;
+                notes: string | null;
+            }>;
+            const yearLogs = yearRows.length;
+            const uniqueYearRestaurants = new Set(yearRows.map((r) => r.restaurant_id).filter(Boolean));
+            const yearPlaces = uniqueYearRestaurants.size;
+            const yearRated = yearRows.filter((r) => r.rating != null);
+            const yearAvg = yearRated.length > 0
+                ? yearRated.reduce((s, r) => s + (r.rating as number), 0) / yearRated.length
+                : null;
+            const yearReviews = yearRows.filter((r) => r.notes && r.notes.trim().length > 0).length;
+
+            return json({
+                data: {
+                    rows,
+                    nextCursor,
+                    yearSummary: {
+                        year: parseInt(currentYear),
+                        logs: yearLogs,
+                        places: yearPlaces,
+                        avgRating: yearAvg,
+                        reviews: yearReviews,
+                    },
+                },
+            });
+        }
+
+        // ── regulars (read, full list) ────────────────────────────────────
+        if (action === 'regulars') {
+            const { identifier } = body;
+            if (!identifier || typeof identifier !== 'string') {
+                return fail('identifier is required', 400);
+            }
+
+            const targetProfile = await resolveProfile(supabase, identifier);
+            if (!targetProfile) return notFound();
+
+            const callerId = user.id;
+            const targetId = targetProfile.user_id;
+            const isSelf = callerId === targetId;
+
+            if (!isSelf && targetProfile.account_privacy !== 'public') return notFound();
+
+            const regulars = await fetchRegulars(supabase, targetId, isSelf, 200);
+            return json({ data: { regulars } });
+        }
+
+        // ── check_username ────────────────────────────────────────────────
+        if (action === 'check_username') {
+            const { username } = body;
+            if (!username || typeof username !== 'string') {
+                return fail('username is required', 400);
+            }
+
+            // Validate format first
+            const usernameFormat = /^[a-z][a-z0-9_]{2,23}$/;
+            if (!usernameFormat.test(username)) {
+                return json({ data: { available: false, reason: 'invalid_format' } });
+            }
+
+            // Case-insensitive check
+            const { data: existing, error } = await supabase
                 .from('profiles')
-                .select(`
-                    *,
-                    value_profiles(*)
-                `)
+                .select('user_id')
+                .ilike('username', username)
+                .neq('user_id', user.id) // exclude self (allow re-setting same username)
+                .maybeSingle();
+            if (error) throw error;
+
+            return json({ data: { available: !existing } });
+        }
+
+        // ── update_profile ────────────────────────────────────────────────
+        if (action === 'update_profile') {
+            const updates: Record<string, unknown> = {};
+
+            if (typeof body.display_name === 'string') {
+                const name = body.display_name.trim();
+                if (!name || name.length > 80) return fail('display_name must be 1–80 chars', 400);
+                updates.display_name = name;
+            }
+            if (body.bio !== undefined) {
+                updates.bio = body.bio ? String(body.bio).slice(0, 160) : null;
+            }
+            if (body.avatar_url !== undefined) {
+                updates.avatar_url = body.avatar_url ? String(body.avatar_url) : null;
+            }
+
+            if (Object.keys(updates).length === 0) {
+                return fail('No updatable fields provided', 400);
+            }
+
+            const { data: updated, error } = await supabase
+                .from('profiles')
+                .update(updates)
+                .eq('user_id', user.id)
+                .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+                .single();
+            if (error) throw error;
+
+            return json({ data: updated });
+        }
+
+        // ── update_username ───────────────────────────────────────────────
+        if (action === 'update_username') {
+            const { username } = body;
+            if (!username || typeof username !== 'string') {
+                return fail('username is required', 400);
+            }
+
+            const usernameFormat = /^[a-z][a-z0-9_]{2,23}$/;
+            if (!usernameFormat.test(username)) {
+                return fail('Invalid username format', 400);
+            }
+
+            // Check uniqueness (case-insensitive)
+            const { data: existing, error: checkErr } = await supabase
+                .from('profiles')
+                .select('user_id')
+                .ilike('username', username)
+                .neq('user_id', user.id)
+                .maybeSingle();
+            if (checkErr) throw checkErr;
+            if (existing) return fail('Username already taken', 409);
+
+            const { data: updated, error } = await supabase
+                .from('profiles')
+                .update({ username })
+                .eq('user_id', user.id)
+                .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+                .single();
+            if (error) throw error;
+
+            return json({ data: updated });
+        }
+
+        // ── update_privacy ────────────────────────────────────────────────
+        if (action === 'update_privacy') {
+            const { account_privacy, username } = body;
+            if (account_privacy !== 'private' && account_privacy !== 'public') {
+                return fail('account_privacy must be "private" or "public"', 400);
+            }
+
+            // Fetch current profile to check null-username guard
+            const { data: currentProfile, error: fetchErr } = await supabase
+                .from('profiles')
+                .select('account_privacy, username')
                 .eq('user_id', user.id)
                 .single();
+            if (fetchErr) throw fetchErr;
 
-            if (error) {
-                console.error('user-profile GET error:', error);
-                throw error;
+            const updates: Record<string, unknown> = { account_privacy };
+
+            if (account_privacy === 'public') {
+                // Atomic first-flip: if going public with no username, require username in same call
+                if (!currentProfile.username && !username) {
+                    return fail('username is required when making profile public for the first time', 400);
+                }
+                if (username) {
+                    const usernameFormat = /^[a-z][a-z0-9_]{2,23}$/;
+                    if (!usernameFormat.test(username)) {
+                        return fail('Invalid username format', 400);
+                    }
+                    // Uniqueness check
+                    const { data: existing, error: checkErr } = await supabase
+                        .from('profiles')
+                        .select('user_id')
+                        .ilike('username', username)
+                        .neq('user_id', user.id)
+                        .maybeSingle();
+                    if (checkErr) throw checkErr;
+                    if (existing) return fail('Username already taken', 409);
+                    updates.username = username;
+                }
             }
-            console.log('user-profile GET success, found:', !!data);
 
-            return new Response(
-                JSON.stringify(data),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
+            const { data: updated, error } = await supabase
+                .from('profiles')
+                .update(updates)
+                .eq('user_id', user.id)
+                .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+                .single();
+            if (error) throw error;
+
+            return json({ data: updated });
         }
 
-        return new Response(
-            JSON.stringify({ error: 'Method not allowed' }),
-            { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        // ── update_reply_permission ───────────────────────────────────────
+        if (action === 'update_reply_permission') {
+            const { allow_public_replies } = body;
+            if (typeof allow_public_replies !== 'boolean') {
+                return fail('allow_public_replies must be a boolean', 400);
+            }
 
-    } catch (error) {
-        console.error(error);
-        return new Response(
-            JSON.stringify({ error: 'Internal Server Error', details: String(error) }),
-            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+            const { data: updated, error } = await supabase
+                .from('profiles')
+                .update({ allow_public_replies })
+                .eq('user_id', user.id)
+                .select('user_id, allow_public_replies, account_privacy')
+                .single();
+            if (error) throw error;
+
+            return json({ data: updated });
+        }
+
+        return fail('Unknown action', 400);
+
+    } catch (err) {
+        const details = err instanceof Error
+            ? err.message
+            : typeof err === 'object' && err !== null
+                ? JSON.stringify(err)
+                : String(err);
+        console.error('user-profile error:', details);
+        return json({ error: 'Internal Server Error', details }, 500);
     }
 });

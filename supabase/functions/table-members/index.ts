@@ -90,6 +90,20 @@ serve(async (req) => {
                 );
             }
 
+            // Personal tables are single-member forever — invites are not allowed
+            const { data: targetTable } = await supabase
+                .from('tables')
+                .select('is_personal')
+                .eq('id', table_id)
+                .single();
+
+            if (targetTable?.is_personal) {
+                return new Response(
+                    JSON.stringify({ error: 'Cannot invite to a personal table' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
             // Check admin permission
             if (!(await isAdmin(table_id))) {
                 return new Response(
@@ -200,6 +214,20 @@ serve(async (req) => {
             if (!table_id || !targetUserId) {
                 return new Response(
                     JSON.stringify({ error: 'table_id and user_id are required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Personal Tables are locked to the owner — no removals allowed.
+            const { data: targetTable } = await supabase
+                .from('tables')
+                .select('is_personal')
+                .eq('id', table_id)
+                .single();
+
+            if (targetTable?.is_personal) {
+                return new Response(
+                    JSON.stringify({ error: 'Cannot remove members from a personal table' }),
                     { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 );
             }

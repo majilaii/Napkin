@@ -57,6 +57,42 @@ serve(async (req) => {
             const body = await req.json();
             console.log('entry function called with body:', JSON.stringify(body));
 
+            // ── upsert_restaurant action ───────────────────────────────────
+            // Persists a ghost Places result to the restaurants table without
+            // creating an entry. Used by TICKET-015 (wishlist) and TICKET-017 (search).
+            if (body.action === 'upsert_restaurant') {
+                const { restaurant: rInput } = body;
+                if (!rInput?.external_id || !rInput?.name) {
+                    return new Response(
+                        JSON.stringify({ error: 'restaurant.external_id and restaurant.name are required' }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                    );
+                }
+
+                const restaurantId = await upsertRestaurant(supabase, {
+                    external_id: rInput.external_id,
+                    name: rInput.name,
+                    location: {
+                        address: rInput.location?.address ?? rInput.formattedAddress ?? undefined,
+                        locality: rInput.location?.locality ?? rInput.city ?? undefined,
+                        country: rInput.location?.country ?? rInput.country ?? undefined,
+                    },
+                    types: rInput.types ?? rInput.categories,
+                    latitude: rInput.latitude,
+                    longitude: rInput.longitude,
+                    photoReference: rInput.photoReference,
+                    googleRating: rInput.googleRating ?? rInput.rating,
+                    googleRatingCount: rInput.googleRatingCount ?? rInput.userRatingCount,
+                    priceLevel: rInput.priceLevel,
+                    cuisine: rInput.cuisine,
+                });
+
+                return new Response(
+                    JSON.stringify({ data: { id: restaurantId } }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
+
             // ── add-take action ────────────────────────────────────────────
             if (body.action === 'add-take') {
                 const { entry_id, rating, notes } = body;
@@ -127,6 +163,8 @@ serve(async (req) => {
                 restaurant,      // { external_id, name, location, types, ... }
                 place,           // { external_id, name, address, types, ... } for non-restaurant Google Places
                 user_place_id,   // UUID for saved places (Home, etc.)
+                restaurant_id,   // UUID of an already-persisted restaurant (solo-log path)
+                place_id,        // UUID of an already-persisted place
 
                 // Entry data
                 rating,
@@ -166,8 +204,8 @@ serve(async (req) => {
                 }
             }
 
-            let restaurantId: string | null = null;
-            let placeId: string | null = null;
+            let restaurantId: string | null = restaurant_id || null;
+            let placeId: string | null = place_id || null;
             let userPlaceId: string | null = user_place_id || null;
 
             // Handle restaurant location
@@ -187,6 +225,10 @@ serve(async (req) => {
                         latitude: restaurant.latitude,
                         longitude: restaurant.longitude,
                         photoReference: restaurant.photoReference,
+                        googleRating: restaurant.googleRating,
+                        googleRatingCount: restaurant.googleRatingCount,
+                        priceLevel: restaurant.priceLevel,
+                        cuisine: restaurant.cuisine,
                     });
                 } else {
                     // Upsert to places table (non-restaurant)
@@ -232,12 +274,30 @@ serve(async (req) => {
             const visitedAtValue = visited_at ? new Date(visited_at).toISOString() : new Date().toISOString();
             const extraParticipantIds: string[] = Array.isArray(participant_ids) ? participant_ids : [];
 
+            // ── Personal-Table fallback ────────────────────────────────────
+            // When the caller omits table_id but provides a location (restaurant
+            // or place), default to the caller's personal Table so the entry is
+            // always Table-scoped. This is the solo-log path.
+            let resolvedTableId: string | undefined = table_id;
+            if (!resolvedTableId && (restaurant?.external_id || place?.external_id || user_place_id || restaurantId || placeId)) {
+                const { data: personalTable } = await supabase
+                    .from('tables')
+                    .select('id')
+                    .eq('owner_id', user.id)
+                    .eq('is_personal', true)
+                    .single();
+
+                if (personalTable) {
+                    resolvedTableId = personalTable.id;
+                }
+            }
+
             // Validate all tagged participants are members of the target table
-            if (table_id && extraParticipantIds.length > 0) {
+            if (resolvedTableId && extraParticipantIds.length > 0) {
                 const { data: members } = await supabase
                     .from('table_members')
                     .select('member_id')
-                    .eq('table_id', table_id)
+                    .eq('table_id', resolvedTableId)
                     .in('member_id', extraParticipantIds);
 
                 const memberSet = new Set((members ?? []).map((m: { member_id: string }) => m.member_id));
@@ -273,7 +333,7 @@ serve(async (req) => {
                     ...(service_rating != null ? { service_rating } : {}),
                     ...(value_rating != null ? { value_rating } : {}),
                     ...(heroPhotoUrl ? { photo_url: heroPhotoUrl } : {}),
-                    ...(table_id ? { table_id } : {}),
+                    ...(resolvedTableId ? { table_id: resolvedTableId } : {}),
                     ...(visibility ? { visibility } : {}),
                 })
                 .select()

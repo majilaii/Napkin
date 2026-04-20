@@ -3,14 +3,20 @@
  * Shows "[Name] locked in" and similar toasts, max 2 visible, auto-dismiss after 3s.
  */
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Spacing, Radius, Shadow, Type } from '@/constants/theme';
+
+export interface ToastAction {
+    label: string;
+    onPress: () => void;
+}
 
 export interface Toast {
     id: string;
     message: string;
     timestamp: number;
+    action?: ToastAction;
 }
 
 type Palette = {
@@ -91,14 +97,30 @@ function ToastItem({
                 },
             ]}
         >
-            <Text
-                style={[
-                    Type.titleSmall,
-                    { color: palette.text },
-                ]}
-            >
-                {toast.message}
-            </Text>
+            <View style={styles.toastBody}>
+                <Text
+                    style={[
+                        Type.titleSmall,
+                        { color: palette.text, flexShrink: 1 },
+                    ]}
+                >
+                    {toast.message}
+                </Text>
+                {toast.action && (
+                    <Pressable
+                        onPress={() => {
+                            toast.action!.onPress();
+                            onDismissRef.current(toast.id);
+                        }}
+                        hitSlop={8}
+                        style={styles.actionButton}
+                    >
+                        <Text style={[Type.titleSmall, { color: palette.primary ?? palette.text, fontWeight: '600' }]}>
+                            {toast.action.label}
+                        </Text>
+                    </Pressable>
+                )}
+            </View>
         </Animated.View>
     );
 }
@@ -136,5 +158,14 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.sm + 2,
         borderRadius: Radius.sm,
         alignSelf: 'center',
+    },
+    toastBody: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+    },
+    actionButton: {
+        paddingVertical: 2,
+        paddingHorizontal: 4,
     },
 });

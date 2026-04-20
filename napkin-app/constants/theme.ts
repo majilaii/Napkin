@@ -16,19 +16,19 @@ import { Platform, TextStyle } from 'react-native';
 
 export const Colors = {
   light: {
-    // Surfaces (stacked vellum layers)
-    background: '#fcf9f4',           // Layer 1: The Table
-    surface: '#fcf9f4',
-    surfaceContainer: '#f0ede9',     // Layer 2: The Journal
-    surfaceContainerLow: '#f6f3ee',
-    surfaceContainerHigh: '#ebe8e3',
-    card: '#ffffff',                 // Layer 3: The Note (lifted)
-    cardElevated: '#ffffff',
+    // Surfaces (stacked vellum layers — warm amber)
+    background: '#fdf6ec',           // Layer 1: The Table (warm cream page)
+    surface: '#fdf6ec',
+    surfaceContainer: '#f6ecdb',     // Layer 2: The Journal (amber vellum)
+    surfaceContainerLow: '#faf0e0',  // soft cream
+    surfaceContainerHigh: '#efe2ce', // deeper cream (overlap bubbles)
+    card: '#fffdf8',                 // Layer 3: The Note (warm white)
+    cardElevated: '#fffdf8',
 
     // Text
     text: '#1c1c19',                 // on-surface (never pure black)
     textSecondary: '#5c614d',        // olive secondary
-    textMuted: '#8a726c',            // outline
+    textMuted: '#8a726c',            // warm taupe metadata
 
     // Brand
     primary: '#a03f28',              // terracotta
@@ -40,7 +40,7 @@ export const Colors = {
     tertiaryFixed: '#ffddb9',        // amber chip bg
 
     // Functional
-    star: '#825516',                 // amber for ratings
+    star: '#b8842a',                 // amber for inline stars (brighter fill)
     success: '#5c614d',              // olive
     error: '#ba1a1a',
     tint: '#a03f28',
@@ -51,7 +51,9 @@ export const Colors = {
     tabIconSelected: '#a03f28',
     outline: '#8a726c',
     outlineVariant: '#ddc0ba',
-    divider: 'rgba(221, 192, 186, 0.15)', // ghost border
+    divider: 'rgba(221, 192, 186, 0.15)', // warm rule (pale rose)
+    dividerSoft: 'rgba(221, 192, 186, 0.30)', // softer variant (feed row dividers)
+    ruleInkSoft: 'rgba(138, 114, 108, 0.25)', // field underline resting (warm taupe)
     overlay: 'rgba(28, 28, 25, 0.4)',
     border: 'rgba(221, 192, 186, 0.15)',   // alias for compat
   },
@@ -87,6 +89,8 @@ export const Colors = {
     outline: '#a09888',
     outlineVariant: '#56423d',
     divider: 'rgba(86, 66, 61, 0.3)',
+    dividerSoft: 'rgba(86, 66, 61, 0.45)',
+    ruleInkSoft: 'rgba(160, 152, 136, 0.3)', // field underline resting (dark parity)
     overlay: 'rgba(0, 0, 0, 0.6)',
     border: 'rgba(86, 66, 61, 0.3)',
   },

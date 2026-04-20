@@ -7,10 +7,14 @@ import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 /**
- * Three-tab nav: Tables | (+) Log | Settings
+ * Five-tab nav: Tables | Search | (+) Log | [journal hidden] | Profile
  *
  * The centre "Log" tab is a terracotta circle that opens the create-entry
  * modal instead of navigating to a tab screen.
+ *
+ * "friends" tab is removed (TICKET-020).
+ * "settings" tab is removed; settings is now reached via gear icon on Profile.
+ * "profile" tab is added in the fifth position.
  */
 export default function TabsLayout() {
     const scheme = useColorScheme() ?? 'light';
@@ -25,19 +29,25 @@ export default function TabsLayout() {
                 tabBarInactiveTintColor: palette.tabIconDefault,
                 tabBarStyle: [
                     styles.tabBar,
-                    { backgroundColor: palette.surfaceContainerLow },
+                    { backgroundColor: palette.surfaceContainerLow, display: 'none' },
                 ],
                 tabBarLabelStyle: [Type.labelSmall, { marginTop: 2 }],
             }}
         >
-            {/* Hidden — file exists but not a visible tab */}
+            {/* Hidden — legacy placeholder, superseded by feed.tsx */}
             <Tabs.Screen
                 name="journal"
                 options={{ href: null }}
             />
+
             <Tabs.Screen
-                name="friends"
-                options={{ href: null }}
+                name="feed"
+                options={{
+                    title: 'Feed',
+                    tabBarIcon: ({ color, size }) => (
+                        <Ionicons name="home-outline" size={size} color={color} />
+                    ),
+                }}
             />
 
             <Tabs.Screen
@@ -46,6 +56,15 @@ export default function TabsLayout() {
                     title: 'Tables',
                     tabBarIcon: ({ color, size }) => (
                         <Ionicons name="restaurant-outline" size={size} color={color} />
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="search"
+                options={{
+                    title: 'Search',
+                    tabBarIcon: ({ color, size }) => (
+                        <Ionicons name="search-outline" size={size} color={color} />
                     ),
                 }}
             />
@@ -71,17 +90,17 @@ export default function TabsLayout() {
                     tabBarButton: ({ ref: _ref, ...props }) => (
                         <Pressable
                             {...props}
-                            onPress={() => router.push('/create-entry')}
+                            onPress={() => router.push('/fast-log')}
                         />
                     ),
                 }}
             />
             <Tabs.Screen
-                name="settings"
+                name="profile"
                 options={{
-                    title: 'Settings',
+                    title: 'Profile',
                     tabBarIcon: ({ color, size }) => (
-                        <Ionicons name="settings-outline" size={size} color={color} />
+                        <Ionicons name="person-circle-outline" size={size} color={color} />
                     ),
                 }}
             />
