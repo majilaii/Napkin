@@ -105,13 +105,7 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
         >
             <View
                 ref={cardRef}
-                style={[
-                    styles.card,
-                    {
-                        backgroundColor: palette.surfaceNote,
-                        borderColor: palette.dividerSoft,
-                    },
-                ]}
+                style={[styles.card, { backgroundColor: palette.surfaceNote }]}
             >
                 {isUnseen && (
                     <View
@@ -207,8 +201,7 @@ const styles = StyleSheet.create({
     card: {
         padding: 16,
         paddingVertical: 14,
-        borderRadius: Radius.md - 2,
-        borderWidth: 1,
+        borderRadius: 20,
         ...Shadow.note,
     },
     unseenDot: {

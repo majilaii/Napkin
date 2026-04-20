@@ -116,13 +116,7 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
         >
             <View
                 ref={cardRef}
-                style={[
-                    styles.card,
-                    {
-                        backgroundColor: palette.surfaceJournalLow,
-                        borderColor: palette.dividerSoft,
-                    },
-                ]}
+                style={[styles.card, { backgroundColor: palette.surfaceJournalLow }]}
             >
                 {/* Hero photo */}
                 <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
@@ -138,15 +132,11 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
                     <View
                         style={[
                             styles.heroPill,
-                            {
-                                backgroundColor: isActive
-                                    ? 'rgba(160,63,40,0.9)'
-                                    : 'rgba(28,28,25,0.8)',
-                            },
+                            { backgroundColor: 'rgba(252,249,244,0.92)' },
                         ]}
                     >
-                        {isActive && <PulseDot size={6} color="#fff" />}
-                        <Text style={styles.heroPillText}>
+                        {isActive && <PulseDot size={6} color={palette.primary} />}
+                        <Text style={[styles.heroPillText, { color: palette.primary }]}>
                             {isActive
                                 ? 'LIVE ROUND'
                                 : `ROUND \u00B7 ${dateLabel.toUpperCase()}`}
@@ -203,8 +193,8 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
                         <View style={styles.avatarRow}>
                             <AvatarStack
                                 names={memberNames}
-                                size={22}
-                                overlap={6}
+                                size={26}
+                                overlap={8}
                                 borderColor={palette.surfaceJournalLow}
                                 max={4}
                             />
