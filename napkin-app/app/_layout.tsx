@@ -211,15 +211,6 @@ function RootLayoutNav() {
             name="entry-detail"
             options={{ headerShown: false }}
           />
-          {/* TICKET-025 */}
-          <Stack.Screen
-            name="diary"
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="regulars"
-            options={{ headerShown: false }}
-          />
         </Stack>
         <BottomNavBar />
       </View>

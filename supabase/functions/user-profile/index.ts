@@ -1,5 +1,5 @@
 /**
- * User Profile Edge Function — TICKET-020 / TICKET-025
+ * User Profile Edge Function — TICKET-020
  *
  * One aggregated endpoint for the merged /u/[identifier] profile screen.
  * Replaces the original stub (which had a dead value_profiles join).
@@ -7,10 +7,7 @@
  * All actions are POST with body `{ action: "...", ... }`.
  *
  * Read actions:
- *   profile         — full merged profile payload, privacy-gated;
- *                     now includes top_four (auto-derived) + regulars_preview
- *   diary           — paginated chronological entry list (cursor on visited_at)
- *   regulars        — full list of ≥3-visit restaurants, sorted by visit_count desc
+ *   profile         — full merged profile payload, privacy-gated
  *   check_username  — uniqueness check for a candidate username
  *
  * Write actions:
@@ -86,41 +83,6 @@ type TablePreview = {
     last_entry_at: string | null;
     last_entry_restaurant_name: string | null;
     last_entry_rating: number | null;
-};
-
-// TICKET-025: Top 4 auto-derived pick
-type TopPick = {
-    restaurant_id: string;
-    name: string;
-    city: string | null;
-    photo_url: string | null;
-    max_rating: number;
-    visit_count: number;
-    last_visited_at: string | null;
-};
-
-// TICKET-025: Regulars summary (≥3 visits)
-type RegularSummary = {
-    restaurant_id: string;
-    name: string;
-    city: string | null;
-    photo_url: string | null;
-    visit_count: number;
-    avg_rating: number | null;
-    last_visited_at: string | null;
-};
-
-// TICKET-025: Single diary row
-type DiaryRow = {
-    entry_id: string;
-    restaurant_id: string;
-    restaurant_name: string;
-    city: string | null;
-    photo_url: string | null;
-    rating: number | null;
-    notes: string | null;
-    visited_at: string | null;
-    created_at: string;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -425,231 +387,6 @@ async function fetchTablePreviews(
     return previews;
 }
 
-// ── TICKET-025: New helper functions ──────────────────────────────────────
-
-/**
- * Derive the user's Top 4 restaurants.
- * Algorithm: group entries by restaurant_id, take max rating per group,
- * require rating >= 4.0, order by max_rating desc, visit_count desc,
- * last_visited_at desc. Limit 4.
- */
-async function fetchTopFour(supabase: any, userId: string, includePrivate: boolean): Promise<TopPick[]> {
-    let query = supabase
-        .from('entries')
-        .select('restaurant_id, rating, visited_at, created_at')
-        .eq('user_id', userId)
-        .not('restaurant_id', 'is', null)
-        .not('rating', 'is', null);
-    if (!includePrivate) query = query.neq('visibility', 'private');
-    const { data: entries, error } = await query;
-    if (error) throw error;
-
-    const rows = (entries ?? []) as Array<{
-        restaurant_id: string;
-        rating: number;
-        visited_at: string | null;
-        created_at: string;
-    }>;
-
-    // Group by restaurant_id
-    const grouped = new Map<string, { maxRating: number; count: number; lastVisit: string | null }>();
-    for (const row of rows) {
-        const rid = row.restaurant_id;
-        const existing = grouped.get(rid);
-        const ts = row.visited_at ?? row.created_at;
-        if (!existing) {
-            grouped.set(rid, { maxRating: row.rating, count: 1, lastVisit: ts });
-        } else {
-            grouped.set(rid, {
-                maxRating: Math.max(existing.maxRating, row.rating),
-                count: existing.count + 1,
-                lastVisit: existing.lastVisit && existing.lastVisit > ts ? existing.lastVisit : ts,
-            });
-        }
-    }
-
-    // Filter rating >= 4.0 and sort
-    const qualified = [...grouped.entries()]
-        .filter(([, v]) => v.maxRating >= 4.0)
-        .sort(([, a], [, b]) => {
-            if (b.maxRating !== a.maxRating) return b.maxRating - a.maxRating;
-            if (b.count !== a.count) return b.count - a.count;
-            const aLast = a.lastVisit ?? '';
-            const bLast = b.lastVisit ?? '';
-            return bLast < aLast ? -1 : bLast > aLast ? 1 : 0;
-        })
-        .slice(0, 4);
-
-    if (qualified.length === 0) return [];
-
-    const restaurantIds = qualified.map(([id]) => id);
-    const { data: restaurants, error: restErr } = await supabase
-        .from('restaurants')
-        .select('id, name, city, photo_url')
-        .in('id', restaurantIds);
-    if (restErr) throw restErr;
-
-    const byId = new Map((restaurants ?? []).map((r: any) => [r.id as string, r]));
-    const result: TopPick[] = [];
-    for (const [rid, stats] of qualified) {
-        const r = byId.get(rid);
-        if (!r) continue;
-        result.push({
-            restaurant_id: rid,
-            name: r.name,
-            city: r.city ?? null,
-            photo_url: r.photo_url ?? null,
-            max_rating: stats.maxRating,
-            visit_count: stats.count,
-            last_visited_at: stats.lastVisit,
-        });
-    }
-    return result;
-}
-
-/**
- * Derive the user's Regulars (≥3 visits), sorted by visit_count desc.
- * Returns up to `limit` rows (default 8 for preview, 200 for full list).
- */
-async function fetchRegulars(supabase: any, userId: string, includePrivate: boolean, limit = 8): Promise<RegularSummary[]> {
-    let query = supabase
-        .from('entries')
-        .select('restaurant_id, rating, visited_at, created_at')
-        .eq('user_id', userId)
-        .not('restaurant_id', 'is', null);
-    if (!includePrivate) query = query.neq('visibility', 'private');
-    const { data: entries, error } = await query;
-    if (error) throw error;
-
-    const rows = (entries ?? []) as Array<{
-        restaurant_id: string;
-        rating: number | null;
-        visited_at: string | null;
-        created_at: string;
-    }>;
-
-    // Group by restaurant_id
-    const grouped = new Map<string, {
-        count: number;
-        ratingSum: number;
-        ratingCount: number;
-        lastVisit: string | null;
-    }>();
-    for (const row of rows) {
-        const rid = row.restaurant_id;
-        const ts = row.visited_at ?? row.created_at;
-        const existing = grouped.get(rid);
-        if (!existing) {
-            grouped.set(rid, {
-                count: 1,
-                ratingSum: row.rating ?? 0,
-                ratingCount: row.rating != null ? 1 : 0,
-                lastVisit: ts,
-            });
-        } else {
-            grouped.set(rid, {
-                count: existing.count + 1,
-                ratingSum: existing.ratingSum + (row.rating ?? 0),
-                ratingCount: existing.ratingCount + (row.rating != null ? 1 : 0),
-                lastVisit: existing.lastVisit && existing.lastVisit > ts ? existing.lastVisit : ts,
-            });
-        }
-    }
-
-    // Filter ≥3 visits and sort by count desc
-    const qualified = [...grouped.entries()]
-        .filter(([, v]) => v.count >= 3)
-        .sort(([, a], [, b]) => b.count - a.count)
-        .slice(0, limit);
-
-    if (qualified.length === 0) return [];
-
-    const restaurantIds = qualified.map(([id]) => id);
-    const { data: restaurants, error: restErr } = await supabase
-        .from('restaurants')
-        .select('id, name, city, photo_url')
-        .in('id', restaurantIds);
-    if (restErr) throw restErr;
-
-    const byId = new Map((restaurants ?? []).map((r: any) => [r.id as string, r]));
-    const result: RegularSummary[] = [];
-    for (const [rid, stats] of qualified) {
-        const r = byId.get(rid);
-        if (!r) continue;
-        result.push({
-            restaurant_id: rid,
-            name: r.name,
-            city: r.city ?? null,
-            photo_url: r.photo_url ?? null,
-            visit_count: stats.count,
-            avg_rating: stats.ratingCount > 0 ? stats.ratingSum / stats.ratingCount : null,
-            last_visited_at: stats.lastVisit,
-        });
-    }
-    return result;
-}
-
-/**
- * Fetch paginated diary rows for a user.
- * Ordered by visited_at desc, created_at desc.
- * cursor: ISO timestamp for keyset pagination (before this timestamp).
- */
-async function fetchDiary(
-    supabase: any,
-    userId: string,
-    cursor: string | null,
-    includePrivate: boolean,
-    pageSize = 40,
-): Promise<{ rows: DiaryRow[]; nextCursor: string | null }> {
-    let query = supabase
-        .from('entries')
-        .select('id, restaurant_id, rating, notes, visited_at, created_at, restaurants(id, name, city, photo_url)')
-        .eq('user_id', userId)
-        .not('restaurant_id', 'is', null)
-        .order('visited_at', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(pageSize + 1);
-
-    if (!includePrivate) query = query.neq('visibility', 'private');
-    if (cursor) {
-        query = query.lt('visited_at', cursor);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const rawRows = (data ?? []) as Array<{
-        id: string;
-        restaurant_id: string;
-        rating: number | null;
-        notes: string | null;
-        visited_at: string | null;
-        created_at: string;
-        restaurants: { id: string; name: string; city: string | null; photo_url: string | null } | null;
-    }>;
-
-    const hasMore = rawRows.length > pageSize;
-    const rows = rawRows.slice(0, pageSize).map((row): DiaryRow => {
-        const rest = Array.isArray(row.restaurants) ? row.restaurants[0] : row.restaurants;
-        return {
-            entry_id: row.id,
-            restaurant_id: row.restaurant_id,
-            restaurant_name: rest?.name ?? 'Unknown',
-            city: rest?.city ?? null,
-            photo_url: rest?.photo_url ?? null,
-            rating: row.rating,
-            notes: row.notes,
-            visited_at: row.visited_at,
-            created_at: row.created_at,
-        };
-    });
-
-    const lastRow = rows[rows.length - 1];
-    const nextCursor = hasMore && lastRow ? (lastRow.visited_at ?? lastRow.created_at) : null;
-
-    return { rows, nextCursor };
-}
-
 // ── Main ───────────────────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -695,13 +432,11 @@ serve(async (req) => {
 
             if (isSelf) {
                 // Self: return everything, even if private
-                const [stats, publicLists, recentlyLogged, allTableIds, topFour, regularsPreview] = await Promise.all([
+                const [stats, publicLists, recentlyLogged, allTableIds] = await Promise.all([
                     fetchStats(supabase, targetId),
                     fetchPublicLists(supabase, targetId),
                     fetchRecentlyLogged(supabase, targetId),
                     fetchAllCallerTableIds(supabase, callerId),
-                    fetchTopFour(supabase, targetId, true),
-                    fetchRegulars(supabase, targetId, true, 8),
                 ]);
 
                 const tablePreviews = await fetchTablePreviews(supabase, targetId, allTableIds, 'self');
@@ -713,8 +448,6 @@ serve(async (req) => {
                         public_lists: publicLists,
                         recently_logged: recentlyLogged,
                         tables_in_common: tablePreviews,
-                        top_four: topFour,
-                        regulars_preview: regularsPreview,
                         is_self: true,
                         viewer_target_relationship: 'self' as ViewerRelationship,
                     },
@@ -738,21 +471,17 @@ serve(async (req) => {
                         public_lists: null,
                         recently_logged: null,
                         tables_in_common: tablePreviews,
-                        top_four: [],
-                        regulars_preview: [],
                         is_self: false,
                         viewer_target_relationship: relationship,
                     },
                 });
             }
 
-            // 5. public_only or public_and_tables — fetch palate + top4 + regulars
-            const [stats, publicLists, recentlyLogged, topFour, regularsPreview] = await Promise.all([
+            // 5. public_only or public_and_tables — fetch palate
+            const [stats, publicLists, recentlyLogged] = await Promise.all([
                 fetchStats(supabase, targetId),
                 fetchPublicLists(supabase, targetId),
                 fetchRecentlyLogged(supabase, targetId),
-                fetchTopFour(supabase, targetId, false),
-                fetchRegulars(supabase, targetId, false, 8),
             ]);
 
             let tablePreviews: TablePreview[] = [];
@@ -767,96 +496,10 @@ serve(async (req) => {
                     public_lists: publicLists,
                     recently_logged: recentlyLogged,
                     tables_in_common: tablePreviews,
-                    top_four: topFour,
-                    regulars_preview: regularsPreview,
                     is_self: false,
                     viewer_target_relationship: relationship,
                 },
             });
-        }
-
-        // ── diary (read, paginated) ───────────────────────────────────────
-        if (action === 'diary') {
-            const { identifier, cursor } = body;
-            if (!identifier || typeof identifier !== 'string') {
-                return fail('identifier is required', 400);
-            }
-
-            const targetProfile = await resolveProfile(supabase, identifier);
-            if (!targetProfile) return notFound();
-
-            const callerId = user.id;
-            const targetId = targetProfile.user_id;
-            const isSelf = callerId === targetId;
-
-            // For non-self: only accessible if profile is public
-            if (!isSelf) {
-                if (targetProfile.account_privacy !== 'public') return notFound();
-            }
-
-            const cursorStr = typeof cursor === 'string' ? cursor : null;
-            const { rows, nextCursor } = await fetchDiary(supabase, targetId, cursorStr, isSelf, 40);
-
-            // Year totals for the year summary band (current year only)
-            const currentYear = new Date().getFullYear().toString();
-            let yearQuery = supabase
-                .from('entries')
-                .select('id, restaurant_id, rating, notes, visited_at')
-                .eq('user_id', targetId)
-                .gte('visited_at', `${currentYear}-01-01`)
-                .lt('visited_at', `${parseInt(currentYear) + 1}-01-01`);
-            if (!isSelf) yearQuery = yearQuery.neq('visibility', 'private');
-            const { data: yearStats, error: yearErr } = await yearQuery;
-            if (yearErr) throw yearErr;
-
-            const yearRows = (yearStats ?? []) as Array<{
-                id: string;
-                restaurant_id: string | null;
-                rating: number | null;
-                notes: string | null;
-            }>;
-            const yearLogs = yearRows.length;
-            const uniqueYearRestaurants = new Set(yearRows.map((r) => r.restaurant_id).filter(Boolean));
-            const yearPlaces = uniqueYearRestaurants.size;
-            const yearRated = yearRows.filter((r) => r.rating != null);
-            const yearAvg = yearRated.length > 0
-                ? yearRated.reduce((s, r) => s + (r.rating as number), 0) / yearRated.length
-                : null;
-            const yearReviews = yearRows.filter((r) => r.notes && r.notes.trim().length > 0).length;
-
-            return json({
-                data: {
-                    rows,
-                    nextCursor,
-                    yearSummary: {
-                        year: parseInt(currentYear),
-                        logs: yearLogs,
-                        places: yearPlaces,
-                        avgRating: yearAvg,
-                        reviews: yearReviews,
-                    },
-                },
-            });
-        }
-
-        // ── regulars (read, full list) ────────────────────────────────────
-        if (action === 'regulars') {
-            const { identifier } = body;
-            if (!identifier || typeof identifier !== 'string') {
-                return fail('identifier is required', 400);
-            }
-
-            const targetProfile = await resolveProfile(supabase, identifier);
-            if (!targetProfile) return notFound();
-
-            const callerId = user.id;
-            const targetId = targetProfile.user_id;
-            const isSelf = callerId === targetId;
-
-            if (!isSelf && targetProfile.account_privacy !== 'public') return notFound();
-
-            const regulars = await fetchRegulars(supabase, targetId, isSelf, 200);
-            return json({ data: { regulars } });
         }
 
         // ── check_username ────────────────────────────────────────────────

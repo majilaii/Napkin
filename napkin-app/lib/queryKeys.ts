@@ -74,14 +74,9 @@ export const queryKeys = {
             ['lists', 'containing', userId, restaurantId] as const,
     },
 
-    // Users (public / merged profile surface — TICKET-020 / TICKET-025)
+    // Users (public / merged profile surface — TICKET-020)
     users: {
         profile: (identifier: string) => ['users', 'profile', identifier] as const,
-        diary: (userId: string, cursor?: string | null) =>
-            cursor
-                ? ['users', 'diary', userId, cursor] as const
-                : ['users', 'diary', userId] as const,
-        regulars: (userId: string) => ['users', 'regulars', userId] as const,
     },
 
     // Feed (cross-Table chronological feed — Feed tab)

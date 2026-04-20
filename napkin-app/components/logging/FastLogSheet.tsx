@@ -6,10 +6,6 @@
  *
  * On submit: calls onSubmitted so the parent can invalidate restaurant queries.
  * "Add details": pushes to /create-entry with the locked restaurant + rating prefilled.
- *
- * UI kit migration (TICKET-023): uses SheetHeader for the Cancel / title / Save
- * row; Save driver is delegated to FastLogForm via the CTA pill (kept inside
- * form for atomicity of submission state). Handle pill remains above the row.
  */
 import React from 'react';
 import {
@@ -22,9 +18,8 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Shadow, Radius } from '@/constants/theme';
+import { Colors, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { SheetHeader } from '@/components/ui';
 import { FastLogForm, type LockedRestaurant } from './FastLogForm';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -116,15 +111,6 @@ export function FastLogSheet({
                     Shadow.ambient,
                 ]}
             >
-                <SheetHeader
-                    title="Quick log"
-                    leftLabel="Cancel"
-                    // Right action stays inside the form (submit state lives there).
-                    // Passing no onRightPress + label makes the slot silent.
-                    rightLabel=""
-                    onLeftPress={onClose}
-                    showHandle
-                />
                 <FastLogForm
                     presentation="sheet"
                     lockedRestaurant={restaurant}
@@ -147,8 +133,9 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        borderTopLeftRadius: Radius.xxl,
-        borderTopRightRadius: Radius.xxl,
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        paddingTop: 12,
         overflow: 'hidden',
     },
 });

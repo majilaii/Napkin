@@ -7,18 +7,20 @@
  *   - tableId: pre-selects a Table chip
  *
  * "Add details" pushes to /create-entry with the entered data preserved.
- *
- * UI kit migration (TICKET-023): header swapped for SheetHeader atom.
  */
 import React, { useMemo } from 'react';
-import { View, StyleSheet } from 'react-native';
+import {
+    View,
+    Text,
+    Pressable,
+    StyleSheet,
+} from 'react-native';
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { FastLogForm, type LockedRestaurant } from '@/components/logging/FastLogForm';
-import { SheetHeader } from '@/components/ui';
 
 export default function FastLogScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -102,13 +104,24 @@ export default function FastLogScreen() {
         <>
             <Stack.Screen options={{ headerShown: false, presentation: 'modal' }} />
             <View style={[styles.container, { backgroundColor: palette.background }]}>
-                <View style={{ paddingTop: insets.top }}>
-                    <SheetHeader
-                        title="Quick log"
-                        leftLabel="Cancel"
-                        rightLabel=""
-                        onLeftPress={() => router.back()}
-                    />
+                {/* Header */}
+                <View style={[styles.header, { paddingTop: insets.top + Spacing.md }]}>
+                    <Pressable onPress={() => router.back()} hitSlop={12}>
+                        <Text style={[Type.body, { color: palette.primary }]}>Cancel</Text>
+                    </Pressable>
+                    <Text
+                        style={[
+                            Type.headlineLarge,
+                            {
+                                color: palette.text,
+                                fontFamily: 'Newsreader_400Regular_Italic',
+                                fontSize: 20,
+                            },
+                        ]}
+                    >
+                        Log a Meal
+                    </Text>
+                    <View style={{ width: 50 }} />
                 </View>
 
                 <FastLogForm
@@ -126,5 +139,12 @@ export default function FastLogScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: Spacing.lg,
+        paddingBottom: Spacing.md,
     },
 });

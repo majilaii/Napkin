@@ -41,12 +41,6 @@ import { SoloShareCard } from '@/components/feed/SoloShareCard';
 import { JournalNoteCard } from '@/components/feed/JournalNoteCard';
 import { FilterChipRow, type FilterChip } from '@/components/feed/FilterChipRow';
 import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
-import {
-    TableHeader,
-    EmptyChairInvitation,
-    FoundedHero,
-    TableSwitcherSheet,
-} from '@/components/tables';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -83,6 +77,23 @@ export default function TablesScreen() {
     const hasMultipleTables = (tables?.length ?? 0) > 1;
     const [showTablePicker, setShowTablePicker] = useState(false);
     const [invitationDismissed, setInvitationDismissed] = useState(false);
+
+    // Unseen dot system (TICKET-010)
+    const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
+    const markSeen = useMarkSeen();
+
+    // Fire mark_seen when the tab gains focus or activeTable changes.
+    // The 30s debounce in useMarkSeen collapses rapid tab-switches.
+    // markSeen.mutate is intentionally omitted from deps — it's stable across
+    // renders (React Query memoizes it) and we only want to re-fire on table switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useFocusEffect(
+        useCallback(() => {
+            if (activeTable?.id) {
+                markSeen.mutate({ tableId: activeTable.id });
+            }
+        }, [activeTable?.id])
+    );
 
     // Unseen dot system (TICKET-010)
     const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
@@ -233,27 +244,34 @@ export default function TablesScreen() {
     const tableName = activeTable.name;
     const isEmpty = !feedLoading && items.length === 0;
 
-    // Solo-only: user's only table is their personal journal
-    const isSoloOnly =
-        (tables?.length ?? 0) === 1 && (tables?.[0]?.tables?.is_personal ?? false);
-
-    // Brand-new non-personal table with no entries yet
-    const isFoundedEmpty =
-        !activeTable.is_personal && isEmpty && !feedLoading;
-
     // Shared header + segmented control (rendered above both tabs)
+    // paddingTop is applied by the parent: contentContainerStyle for ScrollView, inline for wishlist
     const headerAndControl = (
         <>
-            {/* TableHeader masthead — replaces old inline header block */}
-            <TableHeader
-                tableName={tableName}
-                isPersonal={activeTable.is_personal ?? false}
-                memberCount={members?.length ?? 0}
-                memberNames={memberNames}
-                hasMultipleTables={hasMultipleTables}
-                onSwitcherPress={() => setShowTablePicker(true)}
-                palette={palette}
-            />
+            {/* Header */}
+            <View style={styles.header}>
+                <Pressable
+                    onPress={() => hasMultipleTables && setShowTablePicker(true)}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                >
+                    <Text
+                        style={[
+                            Type.headlineLarge,
+                            {
+                                color: palette.text,
+                                fontFamily: 'Newsreader_400Regular_Italic',
+                                fontSize: 28,
+                            },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {tableName}
+                    </Text>
+                    {hasMultipleTables && (
+                        <Text style={{ color: palette.textMuted, fontSize: 14 }}>▾</Text>
+                    )}
+                </Pressable>
+            </View>
 
             {/* Activity | Wishlist segmented control */}
             <View style={styles.segmentedControl}>
@@ -297,46 +315,157 @@ export default function TablesScreen() {
                     )}
                 </View>
             ) : (
-                <ScrollView
-                    style={{ flex: 1 }}
-                    contentContainerStyle={{
-                        paddingTop: insets.top + Spacing.sm,
-                        paddingBottom: 100,
-                    }}
-                    showsVerticalScrollIndicator={false}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={isRefetching}
-                            onRefresh={refetch}
-                            tintColor={palette.primary}
-                        />
-                    }
-                >
-                    {headerAndControl}
+        <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{
+                paddingTop: insets.top + Spacing.sm,
+                paddingBottom: 100,
+            }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+                <RefreshControl
+                    refreshing={isRefetching}
+                    onRefresh={refetch}
+                    tintColor={palette.primary}
+                />
+            }
+        >
+            {headerAndControl}
 
-                    {/* Empty-chair invitation — solo users only, dismissable */}
-                    {isSoloOnly && !invitationDismissed && (
-                        <EmptyChairInvitation
-                            palette={palette}
-                            onGatherPress={() =>
-                                Alert.alert(
-                                    'Coming soon',
-                                    'Gathering a table will be available in a future update.',
-                                )
-                            }
-                            onDismiss={() => setInvitationDismissed(true)}
-                        />
+            {/* Filter chips — activity tab only */}
+            {items.length > 0 && (
+                <FilterChipRow
+                    chips={filterChips}
+                    activeKey={activeFilter}
+                    onSelect={setActiveFilter}
+                    palette={palette}
+                />
+            )}
+
+    // Shared header + segmented control (rendered above both tabs)
+    const headerAndControl = (
+        <>
+            {/* TableHeader masthead — replaces old inline header block */}
+            <TableHeader
+                tableName={tableName}
+                isPersonal={activeTable.is_personal ?? false}
+                memberCount={members?.length ?? 0}
+                memberNames={memberNames}
+                hasMultipleTables={hasMultipleTables}
+                onSwitcherPress={() => setShowTablePicker(true)}
+                palette={palette}
+            />
+
+            {/* Activity | Wishlist segmented control */}
+            <View style={styles.segmentedControl}>
+                {(['activity', 'wishlist'] as const).map((tab) => {
+                    const isActive = activeTab === tab;
+                    return (
+                        <Pressable
+                            key={tab}
+                            onPress={() => setActiveTab(tab)}
+                            style={[
+                                styles.segmentButton,
+                                isActive && { backgroundColor: palette.primary },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    Type.label,
+                                    {
+                                        color: isActive ? '#fff' : palette.textSecondary,
+                                        fontSize: 10,
+                                    },
+                                ]}
+                            >
+                                {tab === 'activity' ? 'Activity' : 'Wishlist'}
+                            </Text>
+                            {activeRounds.map((item) => (
+                                <TableNightCard
+                                    key={`active-${item.id}`}
+                                    item={item}
+                                    palette={palette}
+                                    tableId={activeTable?.id}
+                                    lastSeenAt={lastSeenAt ?? null}
+                                />
+                            ))}
+                        </View>
                     )}
 
-                    {/* Filter chips — activity tab only, when there are items */}
-                    {items.length > 0 && (
-                        <FilterChipRow
-                            chips={filterChips}
-                            activeKey={activeFilter}
-                            onSelect={setActiveFilter}
-                            palette={palette}
-                        />
-                    )}
+                    {/* Date-grouped timeline */}
+                    {feedSections.length > 0
+                        ? feedSections.map((section) => (
+                              <View
+                                  key={section.label}
+                                  style={{ marginBottom: Spacing.md }}
+                              >
+                                  <DateSectionHeader
+                                      title={section.label}
+                                      palette={palette}
+                                  />
+                                  <View style={styles.feedList}>
+                                      {section.items.map((item) => {
+                                          if (item.type === 'table_night') {
+                                              return (
+                                                  <TableNightCard
+                                                      key={`tn-${item.id}`}
+                                                      item={item}
+                                                      palette={palette}
+                                                      tableId={activeTable?.id}
+                                                      lastSeenAt={lastSeenAt ?? null}
+                                                  />
+                                              );
+                                          }
+                                          const solo = item as SoloShareActivity;
+                                          if (solo.rating == null) {
+                                              return (
+                                                  <JournalNoteCard
+                                                      key={`note-${item.id}`}
+                                                      item={solo}
+                                                      palette={palette}
+                                                      tableId={activeTable?.id}
+                                                      lastSeenAt={lastSeenAt ?? null}
+                                                  />
+                                              );
+                                          }
+                                          return (
+                                              <SoloShareCard
+                                                  key={`solo-${item.id}`}
+                                                  item={solo}
+                                                  palette={palette}
+                                                  tableId={activeTable?.id}
+                                                  lastSeenAt={lastSeenAt ?? null}
+                                              />
+                                          );
+                                      })}
+                                  </View>
+                              </View>
+                          ))
+                        : activeFilter && (
+                              <View
+                                  style={{
+                                      padding: Spacing.xl,
+                                      alignItems: 'center',
+                                      marginTop: Spacing.lg,
+                                  }}
+                              >
+                                  <Text
+                                      style={[
+                                          Type.body,
+                                          {
+                                              color: palette.textMuted,
+                                              textAlign: 'center',
+                                          },
+                                      ]}
+                                  >
+                                      No entries match this filter.
+                                  </Text>
+                              </View>
+                          )}
+                </View>
+            )}
+        </ScrollView>
+            )}
 
                     {/* Feed */}
                     {feedLoading ? (

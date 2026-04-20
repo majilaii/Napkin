@@ -41,7 +41,6 @@ import { OnTheTableList } from '@/components/table-night';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
 import { CommentThread } from '@/components/posts';
 import { FeedActionRow } from '@/components/feed';
-import { InlineStars } from '@/components/feed/InlineStars';
 
 type Palette = typeof Colors.light;
 
@@ -1025,13 +1024,6 @@ function ParticipantRow({
                     <Pressable onPress={canTapProfile ? handleProfilePress : undefined} hitSlop={4}>
                         <Text style={[Type.titleSmall, { color: palette.text }]}>{name}</Text>
                     </Pressable>
-                    {participant.rating != null && (
-                        <InlineStars
-                            value={participant.rating / 2}
-                            size={13}
-                            color={palette.tertiary}
-                        />
-                    )}
                     {participant.notes ? (
                         <Text
                             style={[

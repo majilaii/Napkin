@@ -1,38 +1,38 @@
 /**
- * ProfileHeader — avatar left + identity block right.
- * TICKET-025 repaint: matches canvas layout: avatar left, serif italic
- * display name, @username, bio, identity numbers row (logs · places).
- *
- * Self: gear icon top-right.
- * Stranger: identity + counts only — no follow CTA (follow graph not shipped).
+ * ProfileHeader — avatar, display name, @username, bio.
+ * Renders a gear icon (44x44) top-right when is_self=true.
+ * No inline-edit affordances — edit lives under the gear.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { UserProfileRow, ViewerRelationship, UserStats } from '@/hooks/users/useUserProfile';
+import type { UserProfileRow, ViewerRelationship } from '@/hooks/users/useUserProfile';
 
 interface Props {
     profile: UserProfileRow;
     isSelf: boolean;
     relationship: ViewerRelationship;
-    stats?: UserStats | null;
 }
 
+/**
+ * Generates initials from display_name for the avatar fallback.
+ */
 function initials(displayName: string): string {
     const parts = displayName.trim().split(/\s+/);
     if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
     return displayName.slice(0, 2).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship, stats }: Props) {
+export function ProfileHeader({ profile, isSelf, relationship }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
 
+    // @username line is shown when target is public or is self
     const showUsername =
         relationship === 'self' ||
         relationship === 'public_only' ||
@@ -40,95 +40,60 @@ export function ProfileHeader({ profile, isSelf, relationship, stats }: Props) {
 
     return (
         <View style={styles.container}>
-            {/* Row: avatar left + identity block right */}
-            <View style={styles.row}>
-                {/* Avatar */}
-                <View style={[styles.avatar, { backgroundColor: palette.surfaceContainerHigh }]}>
-                    <Text
-                        style={[
-                            Type.headlineMedium,
-                            { color: palette.textSecondary, fontFamily: 'Newsreader_400Regular_Italic' },
-                        ]}
-                    >
+            {/* Gear icon — top-right, self only */}
+            {isSelf && (
+                <Pressable
+                    onPress={() => router.push('/settings')}
+                    hitSlop={12}
+                    style={styles.gearButton}
+                >
+                    <Ionicons name="settings-outline" size={22} color={palette.textSecondary} />
+                </Pressable>
+            )}
+
+            {/* Avatar */}
+            <View style={[styles.avatarContainer, { backgroundColor: palette.surfaceContainerHigh }]}>
+                {profile.avatar_url ? (
+                    // If we had an Image component set up, we'd use it here.
+                    // For now render initials even when avatar_url is set —
+                    // a future Image component can replace this.
+                    // ARCHITECT-REVIEW: Should this use expo-image for performance?
+                    <Text style={[Type.headlineMedium, { color: palette.textSecondary }]}>
                         {initials(profile.display_name)}
                     </Text>
-                </View>
-
-                {/* Identity block */}
-                <View style={styles.identity}>
-                    <Text
-                        style={[
-                            styles.displayName,
-                            { color: palette.text, fontFamily: 'Newsreader_400Regular_Italic' },
-                        ]}
-                        numberOfLines={2}
-                    >
-                        {profile.display_name}
+                ) : (
+                    <Text style={[Type.headlineMedium, { color: palette.textSecondary }]}>
+                        {initials(profile.display_name)}
                     </Text>
-
-                    {showUsername && profile.username && (
-                        <Text style={[Type.caption, { color: palette.textMuted, marginTop: 2 }]}>
-                            @{profile.username}
-                        </Text>
-                    )}
-
-                    {profile.bio ? (
-                        <Text
-                            style={[
-                                styles.bio,
-                                { color: palette.textSecondary, fontFamily: 'Newsreader_400Regular_Italic' },
-                            ]}
-                            numberOfLines={3}
-                        >
-                            {profile.bio}
-                        </Text>
-                    ) : null}
-                </View>
-
-                {/* Gear — self only */}
-                {isSelf && (
-                    <Pressable
-                        onPress={() => router.push('/settings')}
-                        hitSlop={12}
-                        style={styles.gear}
-                    >
-                        <Ionicons name="settings-outline" size={20} color={palette.textMuted} />
-                    </Pressable>
                 )}
             </View>
 
-            {/* Identity numbers — single row */}
-            {stats && (
-                <View style={styles.countsRow}>
-                    <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
-                        <Text style={{ color: palette.text, fontWeight: '600' }}>
-                            {stats.total_logs}
-                        </Text>
-                        {' logs'}
-                    </Text>
-                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>{' · '}</Text>
-                    <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
-                        <Text style={{ color: palette.text, fontWeight: '600' }}>
-                            {stats.total_restaurants}
-                        </Text>
-                        {' places'}
-                    </Text>
-                    {stats.average_rating != null && (
-                        <>
-                            <Text style={[Type.bodySmall, { color: palette.textMuted }]}>{' · '}</Text>
-                            <Text
-                                style={{
-                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                    fontSize: 13,
-                                    color: palette.tertiary,
-                                }}
-                            >
-                                {stats.average_rating.toFixed(1)}
-                                <Text style={{ color: palette.textMuted }}>{' avg'}</Text>
-                            </Text>
-                        </>
-                    )}
-                </View>
+            {/* Display name */}
+            <Text
+                style={[
+                    Type.displaySmall,
+                    styles.displayName,
+                    {
+                        color: palette.text,
+                        fontFamily: 'Newsreader_400Regular_Italic',
+                    },
+                ]}
+            >
+                {profile.display_name}
+            </Text>
+
+            {/* @username — only when public or self */}
+            {showUsername && profile.username && (
+                <Text style={[Type.bodySmall, styles.username, { color: palette.textMuted }]}>
+                    @{profile.username}
+                </Text>
+            )}
+
+            {/* Bio */}
+            {profile.bio && (
+                <Text style={[Type.body, styles.bio, { color: palette.textSecondary }]}>
+                    {profile.bio}
+                </Text>
             )}
         </View>
     );
@@ -136,49 +101,39 @@ export function ProfileHeader({ profile, isSelf, relationship, stats }: Props) {
 
 const styles = StyleSheet.create({
     container: {
+        paddingTop: Spacing.md,
         paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.sm,
-        paddingBottom: Spacing.md,
+        alignItems: 'center',
+        position: 'relative',
     },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: Spacing.md,
-    },
-    avatar: {
-        width: 72,
-        height: 72,
-        borderRadius: 10,
+    gearButton: {
+        position: 'absolute',
+        top: Spacing.md,
+        right: Spacing.lg,
+        width: 44,
+        height: 44,
         justifyContent: 'center',
         alignItems: 'center',
-        flexShrink: 0,
     },
-    identity: {
-        flex: 1,
-        paddingTop: 4,
+    avatarContainer: {
+        width: 88,
+        height: 88,
+        borderRadius: Radius.full,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
     },
     displayName: {
-        fontSize: 24,
-        lineHeight: 28,
-        fontWeight: '500',
+        textAlign: 'center',
+        marginBottom: Spacing.xs,
+    },
+    username: {
+        textAlign: 'center',
+        marginBottom: Spacing.xs,
     },
     bio: {
-        fontSize: 13,
-        lineHeight: 19,
+        textAlign: 'center',
         marginTop: Spacing.sm,
-    },
-    gear: {
-        width: 32,
-        height: 32,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderRadius: 6,
-        marginTop: 4,
-    },
-    countsRow: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        marginTop: Spacing.sm,
-        flexWrap: 'wrap',
+        maxWidth: 300,
     },
 });

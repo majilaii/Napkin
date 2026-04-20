@@ -1,18 +1,12 @@
 /**
  * Privacy settings screen — /settings/privacy
- * TICKET-025 rebuild: "Who sees what" visual grid over existing master-toggle data.
  *
- * Layout:
- *   1. "Who sees what" title
- *   2. Italic descriptor
- *   3. Per-section grid (read-only affordances except master toggle)
- *   4. Footer explanation ("Everything follows your account switch…")
- *   5. Reply permission segmented control (existing)
- *   6. Profile editors: display name, username, avatar URL, bio (existing)
- *
- * No new mutations, no backend rewiring. The per-section pickers are visual
- * affordances — only the master toggle (account_privacy) is actionable.
- * Lists row deep-links to the lists screen (per-list privacy managed there).
+ * Shows:
+ *   - Current account visibility state
+ *   - "Preview my profile" link (always routes to /u/[currentUserId])
+ *   - Toggle action button (goes public / goes private)
+ *   - Reply permission segmented control
+ *   - Inline editors: display name, username, avatar URL, bio
  */
 import React, { useState } from 'react';
 import {
@@ -37,58 +31,6 @@ import {
     useUpdateProfile,
     useUpdateReplyPermission,
 } from '@/hooks/users';
-import { PrivacyPicker } from '@/components/profile/PrivacyPicker';
-import type { PrivacyState } from '@/components/profile/PrivacyPicker';
-
-// Per-section rows — state derived from account-level toggle
-type SectionRow = {
-    label: string;
-    sub: string;
-    state: PrivacyState;
-    /** If true, tapping the row navigates somewhere (Lists) */
-    deepLink?: string;
-};
-
-function deriveSections(isPublic: boolean): SectionRow[] {
-    return [
-        {
-            label: 'Top 4',
-            sub: 'Everyone can see your four picks.',
-            state: isPublic ? 'public' : 'private',
-        },
-        {
-            label: 'Regulars',
-            sub: 'Your most-visited places.',
-            state: isPublic ? 'public' : 'private',
-        },
-        {
-            label: 'Diary',
-            sub: 'Logs, reviews, and ratings in order.',
-            state: isPublic ? 'public' : 'private',
-        },
-        {
-            label: 'Lists',
-            sub: 'Per-list — managed in Lists.',
-            state: 'public',
-            deepLink: '/lists',
-        },
-        {
-            label: 'Wishlist',
-            sub: 'Places saving for later.',
-            state: isPublic ? 'public' : 'private',
-        },
-        {
-            label: 'Likes',
-            sub: 'Entries from others you\'ve hearted.',
-            state: 'private',
-        },
-        {
-            label: 'Stats',
-            sub: 'Totals: places, logs, reviews.',
-            state: isPublic ? 'public' : 'private',
-        },
-    ];
-}
 
 export default function PrivacyScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -109,6 +51,7 @@ export default function PrivacyScreen() {
     const [bio, setBio] = useState('');
     const [avatarUrl, setAvatarUrl] = useState('');
 
+    // Sync local state when profile loads
     React.useEffect(() => {
         if (profile) {
             setDisplayName(profile.display_name ?? '');
@@ -126,12 +69,13 @@ export default function PrivacyScreen() {
     }
 
     const isPublic = profile.account_privacy === 'public';
-    const sections = deriveSections(isPublic);
 
     const handleMakePublic = () => {
         if (!isPublic && !profile.username) {
+            // First flip: needs username — route to make-public screen
             router.push('/settings/privacy/make-public');
         } else if (!isPublic && profile.username) {
+            // Subsequent public flip: lightweight confirm
             Alert.alert(
                 'Make profile public again?',
                 'Your public lists, recently logged restaurants, and stats will become visible.',
@@ -187,7 +131,7 @@ export default function PrivacyScreen() {
             {/* Top bar */}
             <View style={styles.topBar}>
                 <Pressable onPress={() => router.back()} hitSlop={12}>
-                    <Text style={[Type.body, { color: palette.primary }]}>{'← Back'}</Text>
+                    <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
                 </Pressable>
                 <View style={{ width: 40 }} />
             </View>
@@ -196,35 +140,32 @@ export default function PrivacyScreen() {
                 contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
                 showsVerticalScrollIndicator={false}
             >
-                {/* Screen title */}
-                <Text
-                    style={[
-                        styles.screenTitle,
-                        { color: palette.text, fontFamily: 'Newsreader_400Regular_Italic' },
-                    ]}
-                >
-                    Who sees what
-                </Text>
+                <Text style={[Type.displaySmall, { color: palette.text }]}>Privacy</Text>
 
-                {/* Descriptor */}
-                <Text
-                    style={[
-                        Type.headlineItalic,
-                        styles.descriptor,
-                        { color: palette.textMuted, fontFamily: 'Newsreader_400Regular_Italic' },
-                    ]}
-                >
-                    {isPublic
-                        ? 'Your profile is public. Toggle any section below or go private to lock everything down.'
-                        : 'Your profile is private — only your Tables see you.'}
-                </Text>
+                {/* Current state banner */}
+                <View style={[styles.stateBanner, { backgroundColor: palette.surfaceContainerLow }]}>
+                    <Text style={[Type.body, { color: palette.text }]}>
+                        {isPublic
+                            ? 'Your profile is public — anyone with the link can browse your palate.'
+                            : 'Your profile is private — only your Tables see you.'}
+                    </Text>
+                    {/* Preview link */}
+                    <Pressable
+                        onPress={() => router.push(`/u/${user?.id}`)}
+                        style={{ marginTop: Spacing.sm }}
+                    >
+                        <Text style={[Type.bodySmall, { color: palette.primary }]}>
+                            Preview my profile →
+                        </Text>
+                    </Pressable>
+                </View>
 
-                {/* Master toggle */}
+                {/* Toggle action */}
                 <Pressable
                     onPress={isPublic ? handleMakePrivate : handleMakePublic}
                     disabled={updatePrivacy.isPending}
                     style={({ pressed }) => [
-                        styles.masterToggle,
+                        styles.toggleButton,
                         {
                             backgroundColor: isPublic
                                 ? palette.surfaceContainerLow
@@ -247,55 +188,7 @@ export default function PrivacyScreen() {
                     )}
                 </Pressable>
 
-                {/* Preview link */}
-                <Pressable
-                    onPress={() => router.push(`/u/${user?.id}`)}
-                    style={{ marginTop: Spacing.sm }}
-                >
-                    <Text style={[Type.bodySmall, { color: palette.primary }]}>
-                        {'Preview my profile \u2192'}
-                    </Text>
-                </Pressable>
-
-                {/* Per-section grid */}
-                <View style={[styles.sectionGrid, { borderTopColor: palette.dividerSoft }]}>
-                    {sections.map((s, i) => (
-                        <Pressable
-                            key={s.label}
-                            onPress={s.deepLink ? () => router.push(s.deepLink as any) : undefined}
-                            style={[
-                                styles.sectionRow,
-                                { borderTopColor: palette.dividerSoft },
-                            ]}
-                        >
-                            <View style={styles.sectionRowContent}>
-                                <Text
-                                    style={{
-                                        fontFamily: 'Newsreader_400Regular_Italic',
-                                        fontSize: 15,
-                                        color: palette.text,
-                                    }}
-                                >
-                                    {s.label}
-                                </Text>
-                                <Text style={[Type.caption, { color: palette.textMuted, marginTop: 3, lineHeight: 16 }]}>
-                                    {s.sub}
-                                </Text>
-                            </View>
-                            <PrivacyPicker
-                                state={s.state}
-                                disabled
-                            />
-                        </Pressable>
-                    ))}
-                </View>
-
-                {/* Footer explanation */}
-                <Text style={[Type.caption, styles.footer, { color: palette.textMuted }]}>
-                    {'Everything follows your account switch. Lists are per-list — managed in the Lists screen.'}
-                </Text>
-
-                {/* Reply permission */}
+                {/* Reply permission segmented control */}
                 <View style={styles.section}>
                     <Text style={[Type.titleSmall, { color: palette.text }]}>
                         Who can reply to my public reviews?
@@ -351,6 +244,7 @@ export default function PrivacyScreen() {
                         Profile info
                     </Text>
 
+                    {/* Display name */}
                     <Text style={[Type.caption, { color: palette.textMuted }]}>Display name</Text>
                     <TextInput
                         value={displayName}
@@ -361,6 +255,7 @@ export default function PrivacyScreen() {
                         returnKeyType="done"
                     />
 
+                    {/* Username */}
                     <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.md }]}>
                         Username {profile.username ? `(@${profile.username})` : '(not set)'}
                     </Text>
@@ -370,11 +265,12 @@ export default function PrivacyScreen() {
                             style={{ marginTop: 2 }}
                         >
                             <Text style={[Type.caption, { color: palette.primary }]}>
-                                {'Change username \u2192'}
+                                Change username →
                             </Text>
                         </Pressable>
                     )}
 
+                    {/* Avatar URL */}
                     <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.md }]}>
                         Avatar URL
                     </Text>
@@ -390,6 +286,7 @@ export default function PrivacyScreen() {
                         returnKeyType="done"
                     />
 
+                    {/* Bio */}
                     <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.md }]}>
                         Bio ({bio.length}/160)
                     </Text>
@@ -428,40 +325,16 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.lg,
     },
-    screenTitle: {
-        fontSize: 24,
-        fontWeight: '500',
-        lineHeight: 28,
-        marginBottom: Spacing.sm,
+    stateBanner: {
+        marginTop: Spacing.lg,
+        padding: Spacing.md,
+        borderRadius: Radius.md,
     },
-    descriptor: {
-        fontSize: 13,
-        lineHeight: 20,
-        marginBottom: Spacing.lg,
-    },
-    masterToggle: {
+    toggleButton: {
+        marginTop: Spacing.md,
         paddingVertical: Spacing.md,
         borderRadius: Radius.md,
         alignItems: 'center',
-    },
-    sectionGrid: {
-        marginTop: Spacing.xl,
-        borderTopWidth: 1,
-    },
-    sectionRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 14,
-        borderTopWidth: 1,
-        gap: 14,
-    },
-    sectionRowContent: {
-        flex: 1,
-    },
-    footer: {
-        marginTop: Spacing.md,
-        lineHeight: 18,
-        fontStyle: 'italic',
     },
     section: {
         marginTop: Spacing.xl,

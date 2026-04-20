@@ -71,13 +71,12 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: TableNigh
     // Relative time — null for ≥ 24h. Only appended when non-null (< 24h).
     const relativeTime = sortDate ? formatRelativeTime(sortDate) : null;
 
-    // Label: "LIVE ROUND" | "ROUND · 14 DEC" | "ROUND · 14 DEC · 2H AGO"
-    // Canvas: top-left chip overlay reads "ROUND · Sat 29 Mar" or "LIVE ROUND"
+    // Label: "LIVE ROUND" | "GROUP ENTRY · 14 DEC" | "GROUP ENTRY · 14 DEC · 2H AGO"
     const labelText = isActive
         ? 'LIVE ROUND'
         : relativeTime
-        ? `ROUND \u00B7 ${dateLabel.toUpperCase()} \u00B7 ${relativeTime.toUpperCase()}`
-        : `ROUND \u00B7 ${dateLabel.toUpperCase()}`;
+        ? `GROUP ENTRY \u00B7 ${dateLabel.toUpperCase()} \u00B7 ${relativeTime.toUpperCase()}`
+        : `GROUP ENTRY \u00B7 ${dateLabel.toUpperCase()}`;
 
     // Unseen dot: hidden on live rounds (already have PulseDot + LIVE ROUND label)
     const isUnseen =
@@ -135,20 +134,18 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: TableNigh
                 opacity: pressed ? 0.95 : 1,
             })}
         >
-            {/* Label — only when no hero photo (canvas puts chip on hero image) */}
-            {!photoUrl && (
-                <View style={styles.labelRow}>
-                    {isActive && <PulseDot size={7} color={palette.primary} />}
-                    <Text
-                        style={[
-                            styles.labelText,
-                            { color: isActive ? palette.primary : palette.textSecondary },
-                        ]}
-                    >
-                        {labelText}
-                    </Text>
-                </View>
-            )}
+            {/* Label */}
+            <View style={styles.labelRow}>
+                {isActive && <PulseDot size={7} color={palette.primary} />}
+                <Text
+                    style={[
+                        styles.labelText,
+                        { color: isActive ? palette.primary : palette.textSecondary },
+                    ]}
+                >
+                    {labelText}
+                </Text>
+            </View>
 
             {/* Card container */}
             <View

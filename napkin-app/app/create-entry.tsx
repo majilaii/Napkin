@@ -589,31 +589,87 @@ export default function CreateEntryScreen() {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                 >
-                    {/* Restaurant header — selected place shows the kit header;
-                        empty state shows a labelled underline search field. */}
-                    {selectedPlace ? (
-                        <RestaurantHeader
-                            name={selectedPlace.name}
-                            meta={headerMeta}
-                            onClear={handleClearPlace}
-                        />
-                    ) : (
-                        <View style={styles.fieldGroup}>
-                            <LabelSmall color={palette.textSecondary}>Where did you eat?</LabelSmall>
-                            <View style={{ position: 'relative' }}>
-                                <FieldUnderline
-                                    value={query}
-                                    onChangeText={setQuery}
-                                    placeholder="Search restaurants…"
-                                    fontVariant="serifItalic"
-                                    size="display"
-                                    autoFocus={!restaurantIdParam && !placePayloadParam}
-                                />
-                                {searching ? (
-                                    <ActivityIndicator
-                                        size="small"
-                                        color={palette.textMuted}
-                                        style={{ position: 'absolute', right: 4, top: 14 }}
+                    {/* Header */}
+                    <View style={styles.header}>
+                        <Pressable onPress={() => router.back()}>
+                            <Text style={[Type.body, { color: palette.primary }]}>
+                                Cancel
+                            </Text>
+                        </Pressable>
+                        <Text
+                            style={[
+                                Type.headlineLarge,
+                                {
+                                    color: palette.text,
+                                    fontFamily: 'Newsreader_400Regular_Italic',
+                                    fontSize: 20,
+                                },
+                            ]}
+                        >
+                            Log a Meal
+                        </Text>
+                        <View style={{ width: 50 }} />
+                    </View>
+
+                    {/* Restaurant search */}
+                    <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
+                        <Text style={[Type.label, { color: palette.textSecondary }]}>
+                            Where did you eat?
+                        </Text>
+
+                        {selectedPlace ? (
+                            <Pressable
+                                onPress={handleClearPlace}
+                                style={[
+                                    styles.selectedChip,
+                                    { backgroundColor: palette.surfaceContainerLow },
+                                ]}
+                            >
+                                <View style={{ flex: 1 }}>
+                                    <Text
+                                        style={{
+                                            fontFamily: 'Newsreader_400Regular_Italic',
+                                            fontSize: 22,
+                                            color: palette.text,
+                                        }}
+                                        numberOfLines={1}
+                                    >
+                                        {selectedPlace.name}
+                                    </Text>
+                                    {selectedPlace.formattedAddress && (
+                                        <Text
+                                            style={[
+                                                Type.caption,
+                                                { color: palette.textSecondary, marginTop: 2 },
+                                            ]}
+                                            numberOfLines={1}
+                                        >
+                                            {selectedPlace.formattedAddress}
+                                        </Text>
+                                    )}
+                                </View>
+                                <Text style={{ fontSize: 18, color: palette.textMuted, marginLeft: Spacing.sm }}>
+                                    ✕
+                                </Text>
+                            </Pressable>
+                        ) : (
+                            <View>
+                                <View style={{ position: 'relative' }}>
+                                    <TextInput
+                                        style={[
+                                            styles.textInput,
+                                            {
+                                                backgroundColor: palette.surfaceContainerLow,
+                                                color: palette.text,
+                                                fontFamily: 'Newsreader_400Regular_Italic',
+                                                fontSize: 22,
+                                            },
+                                        ]}
+                                        placeholder="Search restaurants..."
+                                        placeholderTextColor={palette.textMuted}
+                                        value={query}
+                                        onChangeText={setQuery}
+                                        autoFocus={!restaurantIdParam && !placePayloadParam}
                                     />
                                 ) : null}
                             </View>

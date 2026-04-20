@@ -186,7 +186,7 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: SoloShareC
 
                 {/* Text content — padded separately so hero bleeds to edges */}
                 <View style={[styles.cardContent, hasHero && styles.cardContentWithHero]}>
-                    {/* Header: "Name went solo to Restaurant" + rating + relative time */}
+                    {/* Header: "Name tried Restaurant" + rating + relative time */}
                     <View style={styles.headerRow}>
                         <View style={{ flex: 1 }}>
                             <Text style={[Type.labelSmall, { color: palette.text }]}>
