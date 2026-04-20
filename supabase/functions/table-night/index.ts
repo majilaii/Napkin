@@ -106,7 +106,8 @@ serve(async (req) => {
                         ready,
                         notes,
                         profiles (
-                            display_name
+                            display_name,
+                            avatar_url
                         )
                     `)
                     .eq('table_night_id', tableNightId);
@@ -549,14 +550,44 @@ serve(async (req) => {
                         ready,
                         notes,
                         profiles (
-                            display_name
+                            display_name,
+                            avatar_url
                         )
                     `)
                     .eq('table_night_id', table_night_id);
 
                 if (fullPartError) throw fullPartError;
 
-                return json({ ...revealed, participants: fullParticipants });
+                // Join entries to get dish_description per participant
+                const { data: revealEntries } = await supabase
+                    .from('entries')
+                    .select('user_id, dish_description')
+                    .eq('table_night_id', table_night_id);
+
+                const revealDishByUser: Record<string, string | null> = {};
+                if (revealEntries) {
+                    for (const e of revealEntries) {
+                        revealDishByUser[e.user_id] = e.dish_description ?? null;
+                    }
+                }
+
+                const revealParticipants = (fullParticipants ?? []).map((p: any) => ({
+                    ...p,
+                    dish_description: revealDishByUser[p.user_id] ?? null,
+                }));
+
+                // Join restaurant
+                let revealRestaurant = null;
+                if (revealed.restaurant_id) {
+                    const { data: r } = await supabase
+                        .from('restaurants')
+                        .select('id, name, address, city, photo_url')
+                        .eq('id', revealed.restaurant_id)
+                        .single();
+                    revealRestaurant = r;
+                }
+
+                return json({ ...revealed, restaurants: revealRestaurant, participants: revealParticipants });
             }
 
             return fail('Invalid action. Use: start, join, rate, ready, reveal');
