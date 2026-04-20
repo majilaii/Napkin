@@ -726,7 +726,7 @@ export default function CreateEntryScreen() {
                     {/* Dish — FieldUnderline with LabelSmall above */}
                     <View style={{ marginTop: Spacing.xl - 4 }}>
                         <FieldUnderline
-                            label="WHAT DID YOU HAVE?"
+                            label="What did you have?"
                             value={dish}
                             onChangeText={setDish}
                             placeholder="e.g. spicy rigatoni, negroni"

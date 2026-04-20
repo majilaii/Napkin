@@ -1404,11 +1404,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: Spacing.sm,
     },
-    quoteCard: {
-        padding: Spacing.md,
-        borderRadius: Radius.md,
-        borderLeftWidth: 3,
-    },
     userPhotoCaptionContainer: {
         position: 'absolute',
         bottom: Spacing.sm,
@@ -1447,22 +1442,6 @@ const styles = StyleSheet.create({
         borderRadius: Radius.full,
         minWidth: 64,
         alignItems: 'center',
-    },
-    inlineTextInput: {
-        borderRadius: Radius.md,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        fontSize: 15,
-        fontFamily: 'Manrope_400Regular',
-        minHeight: 44,
-    },
-    inlineTextArea: {
-        borderRadius: Radius.md,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        fontSize: 15,
-        fontFamily: 'Manrope_400Regular',
-        minHeight: 100,
     },
     editPhotoButton: {
         width: 30,
