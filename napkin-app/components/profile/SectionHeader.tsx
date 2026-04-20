@@ -58,7 +58,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'baseline',
         justifyContent: 'space-between',
-        paddingHorizontal: Spacing.lg,
+        paddingHorizontal: 22,
     },
     normal: {
         paddingTop: Spacing.lg,

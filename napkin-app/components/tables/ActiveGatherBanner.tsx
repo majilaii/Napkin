@@ -50,7 +50,6 @@ export function ActiveGatherBanner({
                 styles.container,
                 {
                     backgroundColor: palette.surfaceNote,
-                    borderColor: palette.terracottaBorder,
                     shadowColor: palette.text,
                 },
             ]}
@@ -141,8 +140,7 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.lg,
         marginTop: Spacing.xs,
         padding: 18,
-        borderRadius: 14,
-        borderWidth: 1,
+        borderRadius: 16,
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.03,
         shadowRadius: 30,
