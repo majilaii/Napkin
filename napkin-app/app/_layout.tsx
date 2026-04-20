@@ -67,6 +67,16 @@ function BottomNavBar() {
         <Text style={[Type.labelSmall, { color: activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Tables</Text>
       </Pressable>
 
+      {/* Center + button */}
+      <Pressable
+        onPress={() => router.push('/create-entry')}
+        style={navStyles.addButton}
+      >
+        <View style={[navStyles.addCircle, { backgroundColor: palette.primary }]}>
+          <Ionicons name="add" size={28} color="#fff" />
+        </View>
+      </Pressable>
+
       {/* Search tab */}
       <Pressable
         onPress={() => router.replace('/search')}
@@ -74,16 +84,6 @@ function BottomNavBar() {
       >
         <Ionicons name="search-outline" size={24} color={activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault} />
         <Text style={[Type.labelSmall, { color: activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Search</Text>
-      </Pressable>
-
-      {/* Center + button */}
-      <Pressable
-        onPress={() => router.push('/fast-log')}
-        style={navStyles.addButton}
-      >
-        <View style={[navStyles.addCircle, { backgroundColor: palette.primary }]}>
-          <Ionicons name="add" size={28} color="#fff" />
-        </View>
       </Pressable>
 
       {/* Profile tab */}
@@ -161,10 +161,6 @@ function RootLayoutNav() {
           <Stack.Screen name="auth" options={{ headerShown: false }} />
           <Stack.Screen
             name="create-entry"
-            options={{ presentation: 'modal', headerShown: false }}
-          />
-          <Stack.Screen
-            name="fast-log"
             options={{ presentation: 'modal', headerShown: false }}
           />
           <Stack.Screen

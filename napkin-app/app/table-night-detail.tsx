@@ -1,7 +1,21 @@
 /**
- * Table Night Detail — full breakdown of a revealed/closed Table Night.
- * Shows per-person overall + category scores (vibe/flavor/service/value).
- * Also shows a shared photo grid aggregated from all participants' entries.
+ * Round Detail — canvas WF6 aesthetic.
+ *
+ * Layout (top → bottom):
+ *   1. Simple top bar: ← back | "Round · <date>" | ⋯
+ *   2. Hero photo (radius 10, margin 22, ~180tall) with:
+ *        bottom-left:  italic serif restaurant name + city·cuisine sub
+ *        bottom-right: cream rating chip "4.8" + "ROUND AVG"
+ *   3. Previously here banner (quiet memory of prior visits)
+ *   4. Breakdown — compact 4-cell chip row (category averages)
+ *   5. On the Table — menu-card module (revealed only)
+ *   6. "{N} voices" — alternating-surface voice cards per participant
+ *   7. Photos — shared photo grid (revealed only)
+ *   8. Replies
+ *
+ * Bonus info (breakdown, on-the-table, photos, replies, category chips,
+ * per-voice photo strip) is layered *inside* the wireframe aesthetic rather
+ * than bolted onto a separate scorecard.
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -25,7 +39,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
-import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { supabase } from '@/lib/supabase';
@@ -38,6 +52,7 @@ import {
 import { useTableRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
 import { PreviouslyHereBanner, DeltaChip } from '@/components/restaurants';
 import { OnTheTableList } from '@/components/table-night';
+import { InlineStars } from '@/components/feed/InlineStars';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
 import { CommentThread } from '@/components/posts';
 import { FeedActionRow } from '@/components/feed';
@@ -45,11 +60,17 @@ import { FeedActionRow } from '@/components/feed';
 type Palette = typeof Colors.light;
 
 const CATEGORY_LABELS = [
-    { key: 'vibe_rating' as const, label: 'Vibe', short: 'V' },
-    { key: 'flavor_rating' as const, label: 'Flavor', short: 'F' },
-    { key: 'service_rating' as const, label: 'Service', short: 'S' },
-    { key: 'value_rating' as const, label: 'Value', short: '$' },
+    { key: 'vibe_rating' as const, label: 'Vibe' },
+    { key: 'flavor_rating' as const, label: 'Flavor' },
+    { key: 'service_rating' as const, label: 'Service' },
+    { key: 'value_rating' as const, label: 'Value' },
 ];
+
+function voicesLabel(n: number): string {
+    const names = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'];
+    const word = names[n] ?? String(n);
+    return `${word} voices`;
+}
 
 // ── Pool photo type ────────────────────────────────────────────────────────
 
@@ -64,7 +85,6 @@ export interface PoolPhoto {
 // ── Entry photos per participant ───────────────────────────────────────────
 
 async function fetchNightEntryPhotos(nightId: string): Promise<Record<string, string[]>> {
-    // Fetch all entries for this night
     const { data: entries } = await supabase
         .from('entries')
         .select('id, user_id')
@@ -74,14 +94,12 @@ async function fetchNightEntryPhotos(nightId: string): Promise<Record<string, st
 
     const entryIds = entries.map((e: { id: string }) => e.id);
 
-    // Fetch all photos for these entries
     const { data: photos } = await supabase
         .from('entry_photos')
         .select('entry_id, photo_url, sort_order')
         .in('entry_id', entryIds)
         .order('sort_order', { ascending: true });
 
-    // Build a map: user_id -> [photo_url, ...]
     const entryToUser = new Map(
         entries.map((e: { id: string; user_id: string }) => [e.id, e.user_id])
     );
@@ -107,7 +125,6 @@ function useNightEntryPhotos(nightId: string | null | undefined) {
 // ── Shared photo pool ──────────────────────────────────────────────────────
 
 async function fetchNightPhotoPool(nightId: string): Promise<PoolPhoto[]> {
-    // Fetch all entries for this night (with profile display_name)
     const { data: entries } = await supabase
         .from('entries')
         .select('id, user_id, profiles(display_name)')
@@ -117,7 +134,6 @@ async function fetchNightPhotoPool(nightId: string): Promise<PoolPhoto[]> {
 
     const entryIds = entries.map((e: { id: string }) => e.id);
 
-    // Fetch all photos for these entries ordered by sort_order then created_at
     const { data: photos } = await supabase
         .from('entry_photos')
         .select('id, entry_id, photo_url, sort_order')
@@ -126,9 +142,14 @@ async function fetchNightPhotoPool(nightId: string): Promise<PoolPhoto[]> {
 
     if (!photos || photos.length === 0) return [];
 
-    // Build lookup: entry_id -> { user_id, display_name }
-    // Supabase returns profiles as an array even for single FK joins
-    type EntryRow = { id: string; user_id: string; profiles: { display_name: string }[] | { display_name: string } | null };
+    type EntryRow = {
+        id: string;
+        user_id: string;
+        profiles:
+            | { display_name: string }[]
+            | { display_name: string }
+            | null;
+    };
     const entryMeta = new Map(
         (entries as EntryRow[]).map((e) => {
             const profilesData = e.profiles;
@@ -166,7 +187,6 @@ function useNightPhotoPool(nightId: string | null | undefined) {
     });
 }
 
-/** Fetch the current user's entry_id for a given night (null if no entry). */
 async function fetchMyEntryId(nightId: string, userId: string): Promise<string | null> {
     const { data } = await supabase
         .from('entries')
@@ -177,7 +197,11 @@ async function fetchMyEntryId(nightId: string, userId: string): Promise<string |
     return data?.id ?? null;
 }
 
-function useMyEntryId(nightId: string | null | undefined, userId: string | null | undefined, enabled: boolean) {
+function useMyEntryId(
+    nightId: string | null | undefined,
+    userId: string | null | undefined,
+    enabled: boolean
+) {
     return useQuery({
         queryKey: ['myEntryId', nightId, userId],
         queryFn: () => fetchMyEntryId(nightId!, userId!),
@@ -202,7 +226,6 @@ export default function TableNightDetailScreen() {
     const isRevealedOrClosed =
         nightStatus?.status === 'revealed' || nightStatus?.status === 'closed';
 
-    // Post interactions — only fetch + subscribe after reveal
     const { data: interactions } = usePostInteractions(
         isRevealedOrClosed ? 'table_night' : null,
         isRevealedOrClosed ? nightId : null,
@@ -219,8 +242,6 @@ export default function TableNightDetailScreen() {
     );
     const { data: myEntryId = null } = useMyEntryId(nightId, user?.id, isRevealedOrClosed);
 
-    // Restaurant history (excluding this round). Powers the "Previously here"
-    // banner + delta chip. Only meaningful once nightStatus has loaded.
     const { data: restaurantHistory } = useTableRestaurantHistory(
         nightStatus?.restaurant_id ?? null,
         nightStatus?.table_id ?? null,
@@ -228,7 +249,6 @@ export default function TableNightDetailScreen() {
     );
     const previousGroupAvg = restaurantHistory?.last_visit?.rating ?? null;
 
-    // Lightbox state
     const [lightboxPhoto, setLightboxPhoto] = useState<PoolPhoto | null>(null);
 
     if (isLoading || !nightStatus) {
@@ -242,7 +262,6 @@ export default function TableNightDetailScreen() {
         );
     }
 
-    // Overall average from star ratings
     const overallRatings = nightStatus.participants
         .filter((p) => p.rating != null)
         .map((p) => p.rating as number);
@@ -251,7 +270,6 @@ export default function TableNightDetailScreen() {
             ? overallRatings.reduce((a, b) => a + b, 0) / overallRatings.length
             : null;
 
-    // Category averages
     const categoryAvgs = CATEGORY_LABELS.map(({ key, label }) => {
         const vals = nightStatus.participants
             .filter((p) => p[key] != null)
@@ -262,14 +280,39 @@ export default function TableNightDetailScreen() {
         };
     });
 
-    const date = new Date(
+    // Canvas WF6 date format: "Sat 29 Mar"
+    const dateShort = new Date(
         nightStatus.revealed_at ?? nightStatus.created_at
-    ).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
+    ).toLocaleDateString('en-GB', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+    });
 
     const heroPhotoUrl = nightStatus.restaurants?.photo_url ?? null;
+    const restaurantName = nightStatus.restaurants?.name ?? 'Round';
+    const citySub = [
+        nightStatus.restaurants?.city,
+        (nightStatus.restaurants as { cuisine?: string | null } | null)?.cuisine,
+    ]
+        .filter(Boolean)
+        .join(' \u00B7 ');
 
-    // Post-round photo upload state
     const isRevealed = nightStatus.status === 'revealed' || nightStatus.status === 'closed';
+
+    const voicedParticipants = nightStatus.participants;
+    const voiceCount = voicedParticipants.length;
+
+    const goToRestaurant = nightStatus.restaurant_id
+        ? () =>
+              router.push({
+                  pathname: '/restaurant/[id]',
+                  params: {
+                      id: nightStatus.restaurant_id!,
+                      tableId: nightStatus.table_id,
+                  },
+              })
+        : undefined;
 
     return (
         <>
@@ -277,151 +320,98 @@ export default function TableNightDetailScreen() {
             <View style={{ flex: 1, backgroundColor: palette.background }}>
                 <ScrollView
                     contentContainerStyle={{
+                        paddingTop: insets.top + 6,
                         paddingBottom: insets.bottom + 40,
-                        paddingTop: heroPhotoUrl ? 0 : insets.top + Spacing.md,
                     }}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Hero image with canvas-style overlay */}
-                    {heroPhotoUrl ? (
-                        <View>
-                            <Image
-                                source={{ uri: heroPhotoUrl }}
-                                style={{ width: '100%', aspectRatio: 16 / 9 }}
-                                resizeMode="cover"
-                            />
-                            {/* Gradient scrim — top (nav) + bottom (text) */}
-                            <View
-                                style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    right: 0,
-                                    height: insets.top + 56,
-                                    backgroundColor: 'rgba(0,0,0,0.35)',
-                                }}
-                            />
-                            <View
-                                style={{
-                                    position: 'absolute',
-                                    bottom: 0,
-                                    left: 0,
-                                    right: 0,
-                                    height: 100,
-                                    backgroundColor: 'rgba(0,0,0,0.45)',
-                                }}
-                            />
-                            {/* Back button */}
-                            <View
-                                style={[
-                                    styles.topBar,
-                                    { position: 'absolute', top: insets.top, left: 0, right: 0 },
-                                ]}
-                            >
-                                <Pressable onPress={() => router.back()}>
-                                    <Text style={[Type.body, { color: '#fff' }]}>← Back</Text>
-                                </Pressable>
-                            </View>
-                            {/* Canvas overlay: restaurant name bottom-left, rating pill bottom-right */}
-                            <View style={styles.heroOverlayRow}>
-                                <Pressable
-                                    onPress={() => {
-                                        if (nightStatus.restaurant_id) {
-                                            router.push({
-                                                pathname: '/restaurant/[id]',
-                                                params: {
-                                                    id: nightStatus.restaurant_id,
-                                                    tableId: nightStatus.table_id,
-                                                },
-                                            });
-                                        }
-                                    }}
-                                    disabled={!nightStatus.restaurant_id}
-                                    style={{ flex: 1 }}
-                                >
-                                    <Text style={[styles.heroRestaurantName]} numberOfLines={2}>
-                                        {nightStatus.restaurants?.name ?? 'Round'}
-                                    </Text>
-                                </Pressable>
-                                {overallAvg != null && (
-                                    <View
+                    {/* ── Top bar: ← | Round · date | ⋯ ── */}
+                    <View style={styles.topBar}>
+                        <Pressable onPress={() => router.back()} hitSlop={8}>
+                            <Text style={[styles.topBarChevron, { color: palette.textMuted }]}>
+                                ‹
+                            </Text>
+                        </Pressable>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.topBarKicker, { color: palette.textMuted }]}>
+                                Round {'\u00B7'} {dateShort}
+                            </Text>
+                        </View>
+                        <Text style={[styles.topBarMore, { color: palette.textMuted }]}>
+                            ⋯
+                        </Text>
+                    </View>
+
+                    {/* ── Hero photo w/ rating chip (WF6) ── */}
+                    <Pressable onPress={goToRestaurant} disabled={!goToRestaurant}>
+                        <View style={styles.hero}>
+                            {heroPhotoUrl ? (
+                                <Image
+                                    source={{ uri: heroPhotoUrl }}
+                                    style={StyleSheet.absoluteFillObject}
+                                    resizeMode="cover"
+                                />
+                            ) : (
+                                <View
+                                    style={[
+                                        StyleSheet.absoluteFillObject,
+                                        { backgroundColor: palette.surfaceContainerHigh },
+                                    ]}
+                                />
+                            )}
+                            {/* Subtle darkening scrim at bottom so text reads */}
+                            {heroPhotoUrl && <View style={styles.heroScrim} />}
+
+                            <View style={styles.heroOverlay}>
+                                <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Text
                                         style={[
-                                            styles.heroRatingChip,
-                                            { backgroundColor: palette.tertiaryFixed },
+                                            styles.heroName,
+                                            { color: heroPhotoUrl ? '#f6ecd9' : palette.text },
                                         ]}
+                                        numberOfLines={2}
                                     >
+                                        {restaurantName}
+                                    </Text>
+                                    {!!citySub && (
                                         <Text
                                             style={[
-                                                styles.heroRatingValue,
-                                                { color: palette.tertiary },
+                                                styles.heroSub,
+                                                {
+                                                    color: heroPhotoUrl
+                                                        ? 'rgba(246,236,217,0.85)'
+                                                        : palette.textMuted,
+                                                },
                                             ]}
+                                            numberOfLines={1}
+                                        >
+                                            {citySub}
+                                        </Text>
+                                    )}
+                                </View>
+
+                                {overallAvg != null && (
+                                    <View style={styles.heroPill}>
+                                        <Text
+                                            style={[styles.heroPillValue, { color: palette.tertiary }]}
                                         >
                                             {overallAvg.toFixed(1)}
                                         </Text>
                                         <Text
-                                            style={[
-                                                styles.heroRatingLabel,
-                                                { color: palette.tertiary },
-                                            ]}
+                                            style={[styles.heroPillLabel, { color: palette.textMuted }]}
                                         >
-                                            AVG
+                                            ROUND AVG
                                         </Text>
                                     </View>
                                 )}
                             </View>
                         </View>
-                    ) : (
-                        <View style={styles.topBar}>
-                            <Pressable onPress={() => router.back()}>
-                                <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
-                            </Pressable>
-                        </View>
-                    )}
+                    </Pressable>
 
-                    {/* Header — only shown when there is no hero photo */}
-                    {!heroPhotoUrl && (
-                        <View style={styles.headerSection}>
-                            <Text style={[Type.labelSmall, { color: palette.textMuted, letterSpacing: 1.5 }]}>
-                                Round · {date}
-                            </Text>
-                            <Pressable
-                                onPress={() => {
-                                    if (nightStatus.restaurant_id) {
-                                        router.push({
-                                            pathname: '/restaurant/[id]',
-                                            params: {
-                                                id: nightStatus.restaurant_id,
-                                                tableId: nightStatus.table_id,
-                                            },
-                                        });
-                                    }
-                                }}
-                                disabled={!nightStatus.restaurant_id}
-                            >
-                                <Text
-                                    style={[
-                                        Type.displayLarge,
-                                        {
-                                            color: palette.text,
-                                            fontFamily: 'Newsreader_400Regular_Italic',
-                                            fontSize: 38,
-                                            lineHeight: 42,
-                                            marginTop: Spacing.xs,
-                                        },
-                                    ]}
-                                >
-                                    {nightStatus.restaurants?.name ?? 'Round'}
-                                </Text>
-                            </Pressable>
-                        </View>
-                    )}
-
-                    {/* Date sub-label when hero photo is present */}
-                    {heroPhotoUrl && (
-                        <View style={[styles.headerSection, { marginTop: Spacing.sm }]}>
-                            <Text style={[Type.labelSmall, { color: palette.textMuted, letterSpacing: 1.5 }]}>
-                                Round · {date}
-                            </Text>
+                    {/* Delta vs last table visit (subtle, directly under hero) */}
+                    {overallAvg != null && previousGroupAvg != null && (
+                        <View style={styles.deltaRow}>
+                            <DeltaChip current={overallAvg} previous={previousGroupAvg} />
                         </View>
                     )}
 
@@ -432,81 +422,48 @@ export default function TableNightDetailScreen() {
                             visitCount={restaurantHistory.visit_count}
                             lastRating={restaurantHistory.last_visit?.rating ?? null}
                             lastDate={restaurantHistory.last_visit?.date ?? null}
-                            onPress={
-                                nightStatus.restaurant_id
-                                    ? () =>
-                                          router.push({
-                                              pathname: '/restaurant/[id]',
-                                              params: {
-                                                  id: nightStatus.restaurant_id!,
-                                                  tableId: nightStatus.table_id,
-                                              },
-                                          })
-                                    : undefined
-                            }
+                            onPress={goToRestaurant}
                         />
                     )}
 
-                    {/* Overall Rating + Summary Sentence */}
-                    {overallAvg != null && (
-                        <View style={{ alignItems: 'center', marginTop: Spacing.lg }}>
-                            <View
-                                style={[
-                                    styles.overallBubble,
-                                    { backgroundColor: palette.tertiaryFixed },
-                                    Shadow.ambient,
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        Type.ratingLarge,
-                                        { color: palette.tertiary, fontSize: 36, lineHeight: 40 },
-                                    ]}
-                                >
-                                    {overallAvg.toFixed(1)}
-                                </Text>
-                                <Text style={[Type.labelSmall, { color: palette.tertiary, opacity: 0.7 }]}>
-                                    Final Average
-                                </Text>
-                            </View>
-                            <DeltaChip current={overallAvg} previous={previousGroupAvg} />
-                            <SummarySentence overallAvg={overallAvg} categoryAvgs={categoryAvgs} palette={palette} />
-                        </View>
-                    )}
-
-                    {/* Category Breakdown — table-wide averages */}
+                    {/* Breakdown — compact 4-cell chip row */}
                     {categoryAvgs.some((c) => c.avg != null) && (
                         <View style={styles.section}>
-                            <SectionLabel palette={palette}>Breakdown</SectionLabel>
-                            <View style={styles.breakdownGrid}>
-                                {categoryAvgs.map(
-                                    ({ label, avg }) =>
-                                        avg != null && (
-                                            <View
-                                                key={label}
-                                                style={[
-                                                    styles.breakdownCell,
-                                                    { backgroundColor: palette.surfaceContainerLow },
-                                                ]}
-                                            >
-                                                <Text
-                                                    style={[Type.rating, { color: palette.tertiary, fontSize: 22 }]}
-                                                >
-                                                    {avg.toFixed(1)}
-                                                </Text>
-                                                <Text
-                                                    style={[Type.labelSmall, { color: palette.textMuted, marginTop: 4 }]}
-                                                >
-                                                    {label}
-                                                </Text>
-                                            </View>
-                                        )
-                                )}
+                            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                                Breakdown
+                            </Text>
+                            <View style={styles.breakdownRow}>
+                                {categoryAvgs.map(({ label, avg }) => (
+                                    <View
+                                        key={label}
+                                        style={[
+                                            styles.breakdownCell,
+                                            { backgroundColor: palette.surfaceJournalLow },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.breakdownValue,
+                                                { color: palette.tertiary },
+                                            ]}
+                                        >
+                                            {avg != null ? avg.toFixed(1) : '–'}
+                                        </Text>
+                                        <Text
+                                            style={[
+                                                styles.breakdownLabel,
+                                                { color: palette.textMuted },
+                                            ]}
+                                        >
+                                            {label}
+                                        </Text>
+                                    </View>
+                                ))}
                             </View>
                         </View>
                     )}
 
-                    {/* On the Table — menu-card module (revealed/closed only) */}
+                    {/* On the Table — revealed/closed only */}
                     {isRevealedOrClosed && (
                         <View style={styles.section}>
                             <OnTheTableList
@@ -517,12 +474,14 @@ export default function TableNightDetailScreen() {
                         </View>
                     )}
 
-                    {/* Who Said What — per-person scores with category breakdown */}
+                    {/* Voices — WF6 style cards */}
                     <View style={styles.section}>
-                        <SectionLabel palette={palette}>Who Said What</SectionLabel>
-                        <View style={{ gap: Spacing.md }}>
-                            {nightStatus.participants.map((p, i) => (
-                                <ParticipantRow
+                        <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                            {voicesLabel(voiceCount)}
+                        </Text>
+                        <View style={{ gap: 14 }}>
+                            {voicedParticipants.map((p, i) => (
+                                <VoiceCard
                                     key={p.user_id}
                                     participant={p}
                                     nightId={nightId!}
@@ -549,7 +508,7 @@ export default function TableNightDetailScreen() {
                         queryClient={queryClient}
                     />
 
-                    {/* Action row + Replies — only when revealed */}
+                    {/* Action row + Replies — revealed only */}
                     {isRevealedOrClosed && nightId && (
                         <View style={styles.section}>
                             <FeedActionRow
@@ -571,7 +530,9 @@ export default function TableNightDetailScreen() {
                                 tableId={nightStatus?.table_id ?? undefined}
                             />
                             <View style={{ height: Spacing.lg }} />
-                            <SectionLabel palette={palette}>Replies</SectionLabel>
+                            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                                Replies
+                            </Text>
                             <CommentThread
                                 targetType="table_night"
                                 targetId={nightId}
@@ -581,28 +542,232 @@ export default function TableNightDetailScreen() {
                         </View>
                     )}
 
-                    {/* Footer */}
-                    <View style={styles.section}>
+                    <View style={{ paddingHorizontal: 22, paddingTop: 24 }}>
                         <Text
                             style={[
-                                Type.bodySmall,
-                                { color: palette.textMuted, textAlign: 'center', fontStyle: 'italic' },
+                                styles.footer,
+                                { color: palette.textMuted },
                             ]}
                         >
-                            {nightStatus.participants.length} people at the table
+                            {voiceCount} at the table
                         </Text>
                     </View>
                 </ScrollView>
 
-                {/* Photo Lightbox */}
                 {lightboxPhoto && (
-                    <PhotoLightbox
-                        photo={lightboxPhoto}
-                        onClose={() => setLightboxPhoto(null)}
-                    />
+                    <PhotoLightbox photo={lightboxPhoto} onClose={() => setLightboxPhoto(null)} />
                 )}
             </View>
         </>
+    );
+}
+
+// ── VoiceCard (WF6) ────────────────────────────────────────────────────────
+
+function VoiceCard({
+    participant,
+    nightId,
+    tableId,
+    canTapProfile,
+    palette,
+    photoUrls,
+    rowIndex = 0,
+}: {
+    participant: TableNightParticipant;
+    nightId: string;
+    tableId: string;
+    canTapProfile: boolean;
+    palette: Palette;
+    photoUrls: string[];
+    rowIndex?: number;
+}) {
+    // Alternating surface — WF6: even rows on note, odd rows on journal-low
+    const cardBg = rowIndex % 2 === 0 ? palette.surfaceNote : palette.surfaceJournalLow;
+    const router = useRouter();
+    const name = participant.profiles.display_name;
+    const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+
+    const handleProfilePress = () => {
+        if (canTapProfile && tableId) {
+            router.push({
+                pathname: '/member/[userId]',
+                params: { userId: participant.user_id, tableId },
+            });
+        }
+    };
+
+    // Waiting state — hasn't submitted yet
+    const isWaiting = participant.rating === null && !participant.ready;
+
+    const hasCategoryRatings =
+        participant.vibe_rating != null ||
+        participant.flavor_rating != null ||
+        participant.service_rating != null ||
+        participant.value_rating != null;
+
+    if (isWaiting) {
+        return (
+            <View
+                style={[
+                    voiceStyles.card,
+                    { backgroundColor: cardBg, borderColor: palette.divider, opacity: 0.55 },
+                ]}
+            >
+                <View style={voiceStyles.topRow}>
+                    <View
+                        style={[
+                            voiceStyles.avatar,
+                            { backgroundColor: palette.surfaceContainerHigh },
+                        ]}
+                    >
+                        <Text style={[voiceStyles.initials, { color: palette.textMuted }]}>
+                            {initials}
+                        </Text>
+                    </View>
+                    <Text
+                        style={[
+                            voiceStyles.name,
+                            { color: palette.textMuted, flex: 1 },
+                        ]}
+                    >
+                        {name}
+                    </Text>
+                    <Text
+                        style={[
+                            voiceStyles.waiting,
+                            { color: palette.textMuted },
+                        ]}
+                    >
+                        hasn&apos;t submitted
+                    </Text>
+                </View>
+            </View>
+        );
+    }
+
+    return (
+        <Pressable
+            onPress={() =>
+                router.push({
+                    pathname: '/entry-detail',
+                    params: { nightId, userId: participant.user_id },
+                })
+            }
+            style={({ pressed }) => [
+                voiceStyles.card,
+                { backgroundColor: cardBg, borderColor: palette.divider, opacity: pressed ? 0.85 : 1 },
+            ]}
+        >
+            {/* Top row: avatar · name · stars · rating */}
+            <View style={voiceStyles.topRow}>
+                <Pressable
+                    onPress={canTapProfile ? handleProfilePress : undefined}
+                    hitSlop={canTapProfile ? 8 : 0}
+                    disabled={!canTapProfile}
+                    style={[
+                        voiceStyles.avatar,
+                        { backgroundColor: palette.secondaryContainer },
+                    ]}
+                >
+                    <Text style={[voiceStyles.initials, { color: palette.text }]}>
+                        {initials}
+                    </Text>
+                </Pressable>
+                <Pressable
+                    onPress={canTapProfile ? handleProfilePress : undefined}
+                    hitSlop={4}
+                    disabled={!canTapProfile}
+                    style={{ flex: 1, minWidth: 0 }}
+                >
+                    <Text
+                        style={[voiceStyles.name, { color: palette.text }]}
+                        numberOfLines={1}
+                    >
+                        {name}
+                    </Text>
+                </Pressable>
+                {participant.rating != null && (
+                    <>
+                        <InlineStars value={participant.rating} size={11} color={palette.star} />
+                        <Text
+                            style={[
+                                voiceStyles.rating,
+                                { color: palette.textSecondary },
+                            ]}
+                        >
+                            {participant.rating.toFixed(1)}
+                        </Text>
+                    </>
+                )}
+            </View>
+
+            {/* Italic pull-quote, indented past avatar */}
+            {participant.notes ? (
+                <Text
+                    style={[voiceStyles.quote, { color: palette.text }]}
+                    numberOfLines={4}
+                >
+                    &ldquo;{participant.notes}&rdquo;
+                </Text>
+            ) : null}
+
+            {/* Category chips (inline, optional) */}
+            {hasCategoryRatings && (
+                <View style={voiceStyles.chipRow}>
+                    {CATEGORY_LABELS.map(({ key, label }) => {
+                        const val = participant[key];
+                        if (val == null) return null;
+                        return (
+                            <View
+                                key={key}
+                                style={[
+                                    voiceStyles.chip,
+                                    { backgroundColor: palette.surfaceJournalHi },
+                                ]}
+                            >
+                                <Text
+                                    style={[voiceStyles.chipLabel, { color: palette.textMuted }]}
+                                >
+                                    {label}
+                                </Text>
+                                <Text
+                                    style={[voiceStyles.chipValue, { color: palette.tertiary }]}
+                                >
+                                    {val.toFixed(1)}
+                                </Text>
+                            </View>
+                        );
+                    })}
+                </View>
+            )}
+
+            {/* Photo thumbnail strip */}
+            {photoUrls.length > 0 && (
+                <View style={voiceStyles.photoStrip}>
+                    {photoUrls.slice(0, 4).map((url, i) => (
+                        <Image
+                            key={i}
+                            source={{ uri: url }}
+                            style={voiceStyles.photoThumb}
+                            resizeMode="cover"
+                        />
+                    ))}
+                    {photoUrls.length > 4 && (
+                        <View
+                            style={[
+                                voiceStyles.photoThumb,
+                                voiceStyles.photoOverflow,
+                                { backgroundColor: palette.surfaceContainerHigh },
+                            ]}
+                        >
+                            <Text style={[Type.caption, { color: palette.textSecondary }]}>
+                                +{photoUrls.length - 4}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+            )}
+        </Pressable>
     );
 }
 
@@ -631,55 +796,55 @@ function SharedPhotoGrid({
 }) {
     const [isUploading, setIsUploading] = useState(false);
 
-    // 3-column grid with Spacing.xs gap
     const gap = Spacing.xs;
-    const padding = Spacing.lg;
+    const padding = 22;
     const thumbSize = Math.floor((screenWidth - padding * 2 - gap * 2) / 3);
 
-    const uploadPhoto = useCallback(async (uri: string) => {
-        if (!userId || !myEntryId) return;
-        setIsUploading(true);
-        try {
-            const publicUrl = await compressAndUpload(uri, userId);
+    const uploadPhoto = useCallback(
+        async (uri: string) => {
+            if (!userId || !myEntryId) return;
+            setIsUploading(true);
+            try {
+                const publicUrl = await compressAndUpload(uri, userId);
 
-            // Determine next sort_order from existing photos for this entry
-            const { data: maxRow } = await supabase
-                .from('entry_photos')
-                .select('sort_order')
-                .eq('entry_id', myEntryId)
-                .order('sort_order', { ascending: false })
-                .limit(1)
-                .single();
-            const sortOrder = (maxRow?.sort_order ?? 0) + 1;
+                const { data: maxRow } = await supabase
+                    .from('entry_photos')
+                    .select('sort_order')
+                    .eq('entry_id', myEntryId)
+                    .order('sort_order', { ascending: false })
+                    .limit(1)
+                    .single();
+                const sortOrder = (maxRow?.sort_order ?? 0) + 1;
 
-            const { error } = await supabase
-                .from('entry_photos')
-                .insert({
-                    entry_id: myEntryId,
-                    photo_url: publicUrl,
-                    sort_order: sortOrder,
-                });
+                const { error } = await supabase
+                    .from('entry_photos')
+                    .insert({
+                        entry_id: myEntryId,
+                        photo_url: publicUrl,
+                        sort_order: sortOrder,
+                    });
 
-            if (error) {
-                Alert.alert('Upload failed', error.message);
-                return;
+                if (error) {
+                    Alert.alert('Upload failed', error.message);
+                    return;
+                }
+
+                await Promise.all([
+                    queryClient.invalidateQueries({
+                        queryKey: queryKeys.tableNight.photoPool(nightId),
+                    }),
+                    queryClient.invalidateQueries({
+                        queryKey: ['night-entry-photos', nightId],
+                    }),
+                ]);
+            } catch {
+                Alert.alert('Upload failed', 'Could not upload photo. Please try again.');
+            } finally {
+                setIsUploading(false);
             }
-
-            // Invalidate both the pool and the per-participant photo queries
-            await Promise.all([
-                queryClient.invalidateQueries({
-                    queryKey: queryKeys.tableNight.photoPool(nightId),
-                }),
-                queryClient.invalidateQueries({
-                    queryKey: ['night-entry-photos', nightId],
-                }),
-            ]);
-        } catch {
-            Alert.alert('Upload failed', 'Could not upload photo. Please try again.');
-        } finally {
-            setIsUploading(false);
-        }
-    }, [userId, myEntryId, nightId, queryClient]);
+        },
+        [userId, myEntryId, nightId, queryClient]
+    );
 
     const handleAddPhoto = useCallback(() => {
         if (!userId || !myEntryId) return;
@@ -697,7 +862,10 @@ function SharedPhotoGrid({
                     quality: 1,
                 });
             } catch {
-                Alert.alert('Camera Unavailable', 'Camera is not available on this device. Try choosing from your photo library instead.');
+                Alert.alert(
+                    'Camera Unavailable',
+                    'Camera is not available on this device. Try choosing from your photo library instead.'
+                );
                 return;
             }
             if (!result.canceled && result.assets[0]) {
@@ -735,15 +903,14 @@ function SharedPhotoGrid({
         }
     }, [userId, myEntryId, uploadPhoto]);
 
-    // Hide section entirely if no photos and no upload button to show
     const showAddButton = isRevealed && myEntryId !== null;
     if (photos.length === 0 && !showAddButton) return null;
 
     return (
         <View style={styles.section}>
-            <SectionLabelWithCount palette={palette} count={photos.length}>
-                Photos
-            </SectionLabelWithCount>
+            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                Photos{photos.length > 0 ? ` \u00B7 ${photos.length}` : ''}
+            </Text>
 
             {photos.length > 0 && (
                 <View style={styles.photoGrid}>
@@ -764,10 +931,13 @@ function SharedPhotoGrid({
                                 <View style={{ width: thumbSize, height: thumbSize }}>
                                     <ExpoImage
                                         source={{ uri: photo.photo_url }}
-                                        style={{ width: thumbSize, height: thumbSize, borderRadius: Radius.sm }}
+                                        style={{
+                                            width: thumbSize,
+                                            height: thumbSize,
+                                            borderRadius: Radius.sm,
+                                        }}
                                         contentFit="cover"
                                     />
-                                    {/* Dark scrim + initials avatar overlay */}
                                     <View style={styles.gridThumbScrim} />
                                     <View style={styles.gridThumbAvatar}>
                                         <Text style={styles.gridThumbInitials}>{initials}</Text>
@@ -779,7 +949,6 @@ function SharedPhotoGrid({
                 </View>
             )}
 
-            {/* "Add Photos" button — only when revealed and user has an entry */}
             {showAddButton && (
                 <Pressable
                     onPress={handleAddPhoto}
@@ -818,32 +987,19 @@ function PhotoLightbox({
     onClose: () => void;
 }) {
     return (
-        <Modal
-            visible
-            transparent
-            animationType="fade"
-            onRequestClose={onClose}
-        >
+        <Modal visible transparent animationType="fade" onRequestClose={onClose}>
             <View style={styles.lightboxBackdrop}>
                 <ExpoImage
                     source={{ uri: photo.photo_url }}
                     style={styles.lightboxImage}
                     contentFit="contain"
                 />
-
-                {/* Photographer name */}
                 <View style={styles.lightboxFooter}>
                     <Text style={[Type.bodySmall, { color: '#fff', fontStyle: 'italic' }]}>
                         Photo by {photo.display_name}
                     </Text>
                 </View>
-
-                {/* Close button */}
-                <Pressable
-                    onPress={onClose}
-                    style={styles.lightboxClose}
-                    hitSlop={12}
-                >
+                <Pressable onPress={onClose} style={styles.lightboxClose} hitSlop={12}>
                     <Ionicons name="close" size={24} color="#fff" />
                 </Pressable>
             </View>
@@ -851,361 +1007,142 @@ function PhotoLightbox({
     );
 }
 
-// ── Components ─────────────────────────────────────────────────────────────
-
-function SectionLabel({ palette, children }: { palette: Palette; children: string }) {
-    return (
-        <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.md }]}>
-            {children}
-        </Text>
-    );
-}
-
-function SectionLabelWithCount({
-    palette,
-    children,
-    count,
-}: {
-    palette: Palette;
-    children: string;
-    count: number;
-}) {
-    return (
-        <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.md }]}>
-            {children}
-            {count > 0 && (
-                <Text style={[Type.label, { color: palette.textMuted }]}>
-                    {' '}({count})
-                </Text>
-            )}
-        </Text>
-    );
-}
-
-function SummarySentence({
-    overallAvg,
-    categoryAvgs,
-    palette,
-}: {
-    overallAvg: number;
-    categoryAvgs: { label: string; avg: number | null }[];
-    palette: Palette;
-}) {
-    const withData = categoryAvgs.filter((c) => c.avg != null) as { label: string; avg: number }[];
-    if (withData.length === 0) return null;
-
-    const highest = withData.reduce((best, c) => (c.avg > best.avg ? c : best), withData[0]);
-
-    // Check if all categories are within 0.1 of each other (consensus)
-    const allTied = withData.every((c) => Math.abs(c.avg - highest.avg) <= 0.1);
-
-    const sentence = allTied
-        ? `The table gave this a ${overallAvg.toFixed(1)} across the board.`
-        : `The table gave this a ${overallAvg.toFixed(1)}. ${highest.label} was the standout at ${highest.avg.toFixed(1)}.`;
-
-    return (
-        <Text
-            style={[
-                Type.bodySmall,
-                {
-                    color: palette.textMuted,
-                    fontStyle: 'italic',
-                    textAlign: 'center',
-                    marginTop: Spacing.sm,
-                    paddingHorizontal: Spacing.xl,
-                },
-            ]}
-        >
-            {sentence}
-        </Text>
-    );
-}
-
-function ParticipantRow({
-    participant,
-    nightId,
-    tableId,
-    canTapProfile,
-    palette,
-    photoUrls,
-    rowIndex = 0,
-}: {
-    participant: TableNightParticipant;
-    nightId: string;
-    tableId: string;
-    canTapProfile: boolean;
-    palette: Palette;
-    photoUrls: string[];
-    rowIndex?: number;
-}) {
-    // Canvas WF6: alternating surfaces — even rows on card, odd rows on lower surface.
-    const cardBg = rowIndex % 2 === 0 ? palette.card : palette.surfaceContainerLow;
-    const router = useRouter();
-    const name = participant.profiles.display_name;
-    const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2);
-
-    const handleProfilePress = () => {
-        if (canTapProfile && tableId) {
-            router.push({
-                pathname: '/member/[userId]',
-                params: { userId: participant.user_id, tableId },
-            });
-        }
-    };
-
-    // Waiting state: participant hasn't submitted yet
-    const isWaiting = participant.rating === null && !participant.ready;
-
-    const hasCategoryRatings =
-        participant.vibe_rating != null ||
-        participant.flavor_rating != null ||
-        participant.service_rating != null ||
-        participant.value_rating != null;
-
-    if (isWaiting) {
-        return (
-            <View
-                style={[
-                    styles.participantCard,
-                    { backgroundColor: cardBg, opacity: 0.5 },
-                    Shadow.subtle,
-                ]}
-            >
-                <View style={styles.participantTop}>
-                    <View
-                        style={[styles.participantAvatar, { backgroundColor: palette.surfaceContainerHigh }]}
-                    >
-                        <Text style={{ fontSize: 12, fontFamily: 'Manrope_700Bold', color: palette.textMuted }}>
-                            {initials}
-                        </Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                        <Text style={[Type.titleSmall, { color: palette.textMuted }]}>{name}</Text>
-                        <Text
-                            style={[
-                                Type.bodySmall,
-                                { color: palette.textMuted, fontStyle: 'italic', marginTop: 2 },
-                            ]}
-                        >
-                            hasn&apos;t submitted yet
-                        </Text>
-                    </View>
-                </View>
-            </View>
-        );
-    }
-
-    return (
-        <Pressable
-            onPress={() =>
-                router.push({
-                    pathname: '/entry-detail',
-                    params: { nightId, userId: participant.user_id },
-                })
-            }
-            style={({ pressed }) => [
-                styles.participantCard,
-                { backgroundColor: cardBg, opacity: pressed ? 0.8 : 1 },
-                Shadow.subtle,
-            ]}
-        >
-            {/* Top row: avatar + name + overall score */}
-            <View style={styles.participantTop}>
-                <Pressable
-                    onPress={canTapProfile ? handleProfilePress : undefined}
-                    hitSlop={canTapProfile ? 8 : 0}
-                    style={[styles.participantAvatar, { backgroundColor: palette.secondaryContainer }]}
-                >
-                    <Text style={{ fontSize: 12, fontFamily: 'Manrope_700Bold', color: palette.text }}>
-                        {initials}
-                    </Text>
-                </Pressable>
-                <View style={{ flex: 1, gap: Spacing.xs }}>
-                    <Pressable onPress={canTapProfile ? handleProfilePress : undefined} hitSlop={4}>
-                        <Text style={[Type.titleSmall, { color: palette.text }]}>{name}</Text>
-                    </Pressable>
-                    {participant.notes ? (
-                        <Text
-                            style={[
-                                styles.voiceQuote,
-                                { color: palette.textSecondary },
-                            ]}
-                            numberOfLines={3}
-                        >
-                            &ldquo;{participant.notes}&rdquo;
-                        </Text>
-                    ) : null}
-                </View>
-                {participant.rating != null && (
-                    <Text style={[Type.rating, { color: palette.tertiary, fontSize: 20 }]}>
-                        {participant.rating.toFixed(1)}
-                    </Text>
-                )}
-            </View>
-
-            {/* Category breakdown chips */}
-            {hasCategoryRatings && (
-                <View style={styles.categoryChips}>
-                    {CATEGORY_LABELS.map(({ key, label }) => {
-                        const val = participant[key];
-                        if (val == null) return null;
-                        return (
-                            <View
-                                key={key}
-                                style={[styles.categoryChip, { backgroundColor: palette.surfaceContainerLow }]}
-                            >
-                                <Text style={[Type.labelSmall, { color: palette.textMuted, fontSize: 9 }]}>
-                                    {label}
-                                </Text>
-                                <Text
-                                    style={{
-                                        fontSize: 13,
-                                        fontFamily: 'Newsreader_400Regular_Italic',
-                                        color: palette.tertiary,
-                                    }}
-                                >
-                                    {val.toFixed(1)}
-                                </Text>
-                            </View>
-                        );
-                    })}
-                </View>
-            )}
-
-            {/* Photo thumbnail strip */}
-            {photoUrls.length > 0 && (
-                <View style={styles.photoStrip}>
-                    {photoUrls.slice(0, 4).map((url, i) => (
-                        <Image
-                            key={i}
-                            source={{ uri: url }}
-                            style={styles.photoStripThumb}
-                            resizeMode="cover"
-                        />
-                    ))}
-                    {photoUrls.length > 4 && (
-                        <View style={[styles.photoStripThumb, styles.photoStripOverflow, { backgroundColor: palette.surfaceContainerHigh }]}>
-                            <Text style={[Type.caption, { color: palette.textSecondary }]}>
-                                +{photoUrls.length - 4}
-                            </Text>
-                        </View>
-                    )}
-                </View>
-            )}
-        </Pressable>
-    );
-}
-
 // ── Styles ─────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    topBar: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
-    headerSection: { paddingHorizontal: Spacing.lg },
 
-    // Canvas hero overlay — bottom strip with restaurant name + rating
-    heroOverlayRow: {
+    // Top bar — WF6
+    topBar: {
+        paddingHorizontal: 22,
+        paddingTop: 6,
+        paddingBottom: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    topBarChevron: {
+        fontSize: 24,
+        lineHeight: 24,
+        fontFamily: 'Manrope_400Regular',
+    },
+    topBarKicker: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+    topBarMore: {
+        fontSize: 16,
+        lineHeight: 16,
+    },
+
+    // Hero — WF6: margin 22, height 180, radius 10
+    hero: {
+        marginHorizontal: 22,
+        marginBottom: 16,
+        height: 180,
+        borderRadius: Radius.md - 2, // 10
+        overflow: 'hidden',
+        backgroundColor: '#a03f28',
+        position: 'relative',
+    },
+    heroScrim: {
         position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
+        left: 0, right: 0, bottom: 0,
+        height: 110,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    heroOverlay: {
+        position: 'absolute',
+        left: 14,
+        right: 14,
+        bottom: 12,
         flexDirection: 'row',
         alignItems: 'flex-end',
         justifyContent: 'space-between',
-        paddingHorizontal: Spacing.lg,
-        paddingBottom: Spacing.md,
-        gap: Spacing.md,
+        gap: 10,
     },
-    heroRestaurantName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 28,
-        lineHeight: 34,
-        color: '#fff',
+    heroName: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 26,
+        lineHeight: 29,
+        letterSpacing: -0.3,
+        textShadowColor: 'rgba(0,0,0,0.4)',
+        textShadowRadius: 8,
     },
-    heroRatingChip: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: Radius.lg,
-        alignItems: 'center',
-        flexShrink: 0,
-    },
-    heroRatingValue: {
-        fontFamily: 'Newsreader_700Bold',
-        fontSize: 22,
-        lineHeight: 26,
-    },
-    heroRatingLabel: {
+    heroSub: {
+        fontSize: 10,
+        letterSpacing: 0.4,
+        marginTop: 3,
         fontFamily: 'Manrope_500Medium',
-        fontSize: 9,
-        letterSpacing: 0.8,
-        opacity: 0.7,
-        marginTop: -2,
     },
-    overallBubble: {
+    heroPill: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: 'rgba(252,249,244,0.92)',
         alignItems: 'center',
-        paddingHorizontal: Spacing.xl,
-        paddingVertical: Spacing.md,
-        borderRadius: Radius.xl,
+        flexDirection: 'row',
+        gap: 6,
     },
-    section: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.xl },
+    heroPillValue: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 18,
+        lineHeight: 18,
+    },
+    heroPillLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+    },
 
-    breakdownGrid: { flexDirection: 'row', gap: Spacing.sm },
+    // Delta under hero
+    deltaRow: {
+        paddingHorizontal: 22,
+        paddingBottom: 12,
+        flexDirection: 'row',
+    },
+
+    // Section shell
+    section: {
+        paddingHorizontal: 22,
+        paddingTop: 14,
+    },
+    sectionLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+        marginBottom: 10,
+    },
+
+    // Breakdown
+    breakdownRow: {
+        flexDirection: 'row',
+        gap: 8,
+    },
     breakdownCell: {
         flex: 1,
         alignItems: 'center',
-        paddingVertical: Spacing.md,
-        borderRadius: Radius.lg,
+        paddingVertical: 10,
+        borderRadius: Radius.md - 2,
+    },
+    breakdownValue: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 20,
+        lineHeight: 22,
+    },
+    breakdownLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+        marginTop: 2,
     },
 
-    participantCard: {
-        padding: Spacing.md,
-        borderRadius: Radius.lg,
-    },
-    // Canvas: italic serif pull-quote for participant voice
-    voiceQuote: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
-        lineHeight: 20,
-    },
-    participantTop: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.md,
-    },
-    participantAvatar: {
-        width: 44, height: 44, borderRadius: 22,
-        alignItems: 'center', justifyContent: 'center',
-    },
-    categoryChips: {
-        flexDirection: 'row',
-        gap: Spacing.sm,
-        marginTop: Spacing.sm,
-        marginLeft: 44 + Spacing.md, // offset past avatar
-    },
-    categoryChip: {
-        flex: 1,
-        alignItems: 'center',
-        paddingVertical: 6,
-        borderRadius: Radius.sm,
-        gap: 2,
-    },
-    photoStrip: {
-        flexDirection: 'row',
-        gap: Spacing.xs,
-        marginTop: Spacing.sm,
-        marginLeft: 44 + Spacing.md, // offset past avatar
-    },
-    photoStripThumb: {
-        width: 48,
-        height: 48,
-        borderRadius: Radius.sm,
-    },
-    photoStripOverflow: {
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-
-    // Shared photo grid
+    // Photos grid
     photoGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -1213,9 +1150,7 @@ const styles = StyleSheet.create({
     },
     gridThumbScrim: {
         position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
+        bottom: 0, left: 0, right: 0,
         height: 28,
         borderBottomLeftRadius: Radius.sm,
         borderBottomRightRadius: Radius.sm,
@@ -1249,6 +1184,13 @@ const styles = StyleSheet.create({
         borderStyle: 'dashed',
     },
 
+    // Footer
+    footer: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 12,
+        textAlign: 'center',
+    },
+
     // Lightbox
     lightboxBackdrop: {
         flex: 1,
@@ -1256,15 +1198,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    lightboxImage: {
-        width: '100%',
-        flex: 1,
-    },
+    lightboxImage: { width: '100%', flex: 1 },
     lightboxFooter: {
         position: 'absolute',
         bottom: 40,
-        left: 0,
-        right: 0,
+        left: 0, right: 0,
         alignItems: 'center',
         paddingHorizontal: Spacing.lg,
     },
@@ -1276,6 +1214,92 @@ const styles = StyleSheet.create({
         height: 36,
         borderRadius: 18,
         backgroundColor: 'rgba(0,0,0,0.5)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+});
+
+// ── Voice styles ──────────────────────────────────────────────────────────
+
+const voiceStyles = StyleSheet.create({
+    card: {
+        padding: 14,
+        borderRadius: Radius.md - 2,
+        borderWidth: 1,
+    },
+    topRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    avatar: {
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
+    initials: {
+        fontSize: 11,
+        fontFamily: 'Manrope_700Bold',
+    },
+    name: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+    },
+    rating: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 12,
+    },
+    waiting: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 11,
+    },
+    quote: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        lineHeight: 19,
+        marginTop: 8,
+        paddingLeft: 36, // past 26-avatar + 10-gap
+    },
+    chipRow: {
+        flexDirection: 'row',
+        gap: 6,
+        marginTop: 10,
+        paddingLeft: 36,
+        flexWrap: 'wrap',
+    },
+    chip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 3,
+    },
+    chipLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+    },
+    chipValue: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 11,
+    },
+    photoStrip: {
+        flexDirection: 'row',
+        gap: Spacing.xs,
+        marginTop: 10,
+        paddingLeft: 36,
+    },
+    photoThumb: {
+        width: 44,
+        height: 44,
+        borderRadius: Radius.sm,
+    },
+    photoOverflow: {
         alignItems: 'center',
         justifyContent: 'center',
     },

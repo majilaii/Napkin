@@ -1445,6 +1445,13 @@ const styles = StyleSheet.create({
         minWidth: 64,
         alignItems: 'center',
     },
+    quoteCard: {
+        borderLeftWidth: 3,
+        paddingLeft: Spacing.md,
+        paddingVertical: Spacing.sm,
+        borderRadius: Radius.md,
+        marginTop: Spacing.xs,
+    },
     inlineTextInput: {
         borderRadius: Radius.md,
         paddingHorizontal: Spacing.md,

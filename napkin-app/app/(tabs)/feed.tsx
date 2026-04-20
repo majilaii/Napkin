@@ -45,9 +45,9 @@ export default function FeedScreen() {
 
     const groups = useMemo(() => groupByDay(data?.entries ?? []), [data?.entries]);
 
-    const railTitle = scope === 'tables' ? 'Circling your tables' : 'Around town';
-    const railKicker = scope === 'tables' ? 'Popular · 14 days' : 'Popular · 7 days';
-    const railScope = scope === 'tables' ? 'Your tables' : 'London · editorial';
+    const railTitle = scope === 'tables' ? 'Circling your table' : 'Around town';
+    const railKicker = scope === 'tables' ? 'Circling · 14 days' : 'Popular · 7 days';
+    const railScope = scope === 'tables' ? 'Tablemates' : 'London · editorial';
     const trending = scope === 'tables' ? data?.trending ?? [] : TOWN_TRENDING_MOCK;
 
     const onRefresh = () => {

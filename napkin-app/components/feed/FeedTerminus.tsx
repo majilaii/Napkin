@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface Props {
@@ -10,7 +10,7 @@ interface Props {
 }
 
 /** "You're all caught up." end-of-feed card. No infinite scroll. */
-export function FeedTerminus({ windowDays = 14 }: Props) {
+export function FeedTerminus(_: Props = {}) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -42,7 +42,7 @@ export function FeedTerminus({ windowDays = 14 }: Props) {
             </Text>
 
             <Pressable
-                onPress={() => router.push('/fast-log')}
+                onPress={() => router.push('/create-entry')}
                 style={({ pressed }) => ({
                     marginTop: 26,
                     paddingHorizontal: 20,
@@ -63,20 +63,6 @@ export function FeedTerminus({ windowDays = 14 }: Props) {
                     Log a visit
                 </Text>
             </Pressable>
-
-            <Text
-                style={{
-                    marginTop: Spacing.lg,
-                    fontFamily: 'Manrope_400Regular',
-                    fontSize: 10,
-                    color: palette.textMuted,
-                    letterSpacing: 0.5,
-                    textTransform: 'uppercase',
-                }}
-            >
-                Showing the last {windowDays} days
-            </Text>
         </View>
     );
 }
-

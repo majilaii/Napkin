@@ -2,10 +2,8 @@
  * FastLogSheet — bottom-sheet wrapper around FastLogForm.
  *
  * Used from the restaurant page's "Log a visit → Solo log" path.
- * Mirrors the Modal+backdrop pattern from LogVisitSheet.tsx.
- *
- * On submit: calls onSubmitted so the parent can invalidate restaurant queries.
- * "Add details": pushes to /create-entry with the locked restaurant + rating prefilled.
+ * Canvas: napkin-design-system/project/ui_kits/napkin-app/logger-canvas.html
+ * (sheet presentation owns the SheetHeader above the form).
  */
 import React from 'react';
 import {
@@ -18,8 +16,9 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Shadow } from '@/constants/theme';
+import { Colors, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { SheetHeader } from '@/components/ui';
 import { FastLogForm, type LockedRestaurant } from './FastLogForm';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -47,27 +46,25 @@ export function FastLogSheet({
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const handleAddDetails = (prefill: {
+    const handleOpenFullEntry = (prefill: {
         rating: number;
-        restaurant: any;
-        lockedRestaurant?: LockedRestaurant;
+        axes: { food: number; vibe: number; service: number; value: number };
+        lockedRestaurant: LockedRestaurant;
         tableId: string | null;
+        note: string;
     }) => {
-        // Dismiss sheet first, then push to composer
         onClose();
 
-        // Build params for create-entry
         const params: Record<string, string> = { mode: 'solo' };
 
-        if (prefill.lockedRestaurant?.placePayload) {
+        if (prefill.lockedRestaurant.placePayload) {
             params.placePayload = JSON.stringify(prefill.lockedRestaurant.placePayload);
-        } else if (prefill.lockedRestaurant?.external_id) {
-            // Construct a minimal placePayload from locked restaurant data
+        } else if (prefill.lockedRestaurant.external_id) {
             params.placePayload = JSON.stringify({
                 id: prefill.lockedRestaurant.external_id,
                 name: prefill.lockedRestaurant.name,
             });
-        } else if (prefill.lockedRestaurant?.id) {
+        } else if (prefill.lockedRestaurant.id) {
             params.restaurantId = prefill.lockedRestaurant.id;
         }
 
@@ -77,6 +74,13 @@ export function FastLogSheet({
         if (prefill.tableId) {
             params.tableId = prefill.tableId;
         }
+        if (prefill.note.trim()) {
+            params.note = prefill.note.trim();
+        }
+        if (prefill.axes.food > 0) params.foodRating = String(prefill.axes.food);
+        if (prefill.axes.vibe > 0) params.vibeRating = String(prefill.axes.vibe);
+        if (prefill.axes.service > 0) params.serviceRating = String(prefill.axes.service);
+        if (prefill.axes.value > 0) params.valueRating = String(prefill.axes.value);
 
         router.push({ pathname: '/create-entry', params });
     };
@@ -111,13 +115,19 @@ export function FastLogSheet({
                     Shadow.ambient,
                 ]}
             >
+                <SheetHeader
+                    title="Quick log"
+                    leftLabel="Cancel"
+                    rightLabel=""
+                    onLeftPress={onClose}
+                    showHandle
+                />
+
                 <FastLogForm
-                    presentation="sheet"
                     lockedRestaurant={restaurant}
                     initialTableId={initialTableId}
                     onSubmitted={handleSubmitted}
-                    onAddDetails={handleAddDetails}
-                    onClose={onClose}
+                    onOpenFullEntry={handleOpenFullEntry}
                 />
             </View>
         </Modal>
@@ -133,9 +143,8 @@ const styles = StyleSheet.create({
         bottom: 0,
         left: 0,
         right: 0,
-        borderTopLeftRadius: 32,
-        borderTopRightRadius: 32,
-        paddingTop: 12,
+        borderTopLeftRadius: Radius.xxl,
+        borderTopRightRadius: Radius.xxl,
         overflow: 'hidden',
     },
 });
