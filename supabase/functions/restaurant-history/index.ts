@@ -76,6 +76,24 @@ function fail(message: string, status = 400): Response {
     return json({ error: message }, status);
 }
 
+async function fetchProfiles(
+    supabase: any,
+    userIds: string[],
+): Promise<Map<string, { display_name: string; avatar_url: string | null }>> {
+    const map = new Map<string, { display_name: string; avatar_url: string | null }>();
+    if (userIds.length === 0) return map;
+    const unique = [...new Set(userIds)];
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('user_id, display_name, avatar_url')
+        .in('user_id', unique);
+    if (error) throw error;
+    for (const p of (data ?? []) as any[]) {
+        map.set(p.user_id, { display_name: p.display_name ?? 'Member', avatar_url: p.avatar_url ?? null });
+    }
+    return map;
+}
+
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
@@ -260,8 +278,7 @@ serve(async (req) => {
                     rating,
                     visited_at,
                     created_at,
-                    user_id,
-                    profiles ( display_name )
+                    user_id
                 `)
                 .eq('table_id', tableId)
                 .eq('restaurant_id', restaurantId)
@@ -506,20 +523,23 @@ serve(async (req) => {
             if (sharedUserIds.length > 0) {
                 const { data: sharedEntries, error: sharedEntriesErr } = await supabase
                     .from('entries')
-                    .select('user_id, rating, profiles(display_name, avatar_url)')
+                    .select('user_id, rating')
                     .in('user_id', sharedUserIds)
                     .eq('restaurant_id', resolvedRestaurantId)
                     .not('rating', 'is', null);
                 if (sharedEntriesErr) throw sharedEntriesErr;
 
+                const sharedProfiles = await fetchProfiles(supabase, sharedUserIds);
+
                 // Group by user_id, compute personal avg
                 const byUser = new Map<string, { display_name: string; avatar_url: string | null; ratings: number[] }>();
                 for (const e of (sharedEntries ?? []) as any[]) {
                     const uid = e.user_id as string;
+                    const prof = sharedProfiles.get(uid);
                     if (!byUser.has(uid)) {
                         byUser.set(uid, {
-                            display_name: e.profiles?.display_name ?? 'Member',
-                            avatar_url: e.profiles?.avatar_url ?? null,
+                            display_name: prof?.display_name ?? 'Member',
+                            avatar_url: prof?.avatar_url ?? null,
                             ratings: [],
                         });
                     }
@@ -545,7 +565,7 @@ serve(async (req) => {
                 // Solo entries
                 const { data: feedEntries, error: feedEntriesErr } = await supabase
                     .from('entries')
-                    .select('id, user_id, rating, visited_at, created_at, notes, table_night_id, profiles(display_name, avatar_url)')
+                    .select('id, user_id, rating, visited_at, created_at, content, table_night_id')
                     .in('user_id', allVisibleUserIds)
                     .eq('restaurant_id', resolvedRestaurantId)
                     .is('table_night_id', null)
@@ -553,17 +573,20 @@ serve(async (req) => {
                     .order('visited_at', { ascending: false });
                 if (feedEntriesErr) throw feedEntriesErr;
 
+                const feedProfiles = await fetchProfiles(supabase, (feedEntries ?? []).map((e: any) => e.user_id as string));
+
                 for (const e of (feedEntries ?? []) as any[]) {
+                    const prof = feedProfiles.get(e.user_id);
                     visitsRaw.push({
                         kind: 'solo',
                         id: e.id,
                         entry_id: e.id,
                         user_id: e.user_id,
-                        avatar_url: e.profiles?.avatar_url ?? null,
+                        avatar_url: prof?.avatar_url ?? null,
                         rating: e.rating,
                         date: e.visited_at ?? e.created_at,
-                        user_display_names: e.profiles?.display_name ? [e.profiles.display_name] : [],
-                        note: e.notes ?? null,
+                        user_display_names: prof?.display_name ? [prof.display_name] : [],
+                        note: e.content ?? null,
                     });
                 }
 
@@ -636,9 +659,10 @@ serve(async (req) => {
 
         return fail('Unknown action', 400);
     } catch (err) {
-        console.error('restaurant-history error:', err);
+        const msg = err instanceof Error ? err.message : JSON.stringify(err);
+        console.error('restaurant-history error:', msg, err);
         return json(
-            { error: 'Internal Server Error', details: String(err) },
+            { error: 'Internal Server Error', details: msg },
             500,
         );
     }

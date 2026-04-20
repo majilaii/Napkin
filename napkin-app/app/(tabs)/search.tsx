@@ -13,7 +13,7 @@
  *   Tier 1/2 → /restaurant/[id]?tableId=... (persisted)
  *   Tier 3 (ghost) → /restaurant/[placeId]?placeId=... (TICKET-016 ghost shape)
  */
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
     View,
     Text,
@@ -27,6 +27,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
+import * as Location from 'expo-location';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -109,6 +110,22 @@ export default function SearchScreen() {
     const listRef = useRef<FlatList<FlatItem>>(null);
     const didRestoreScrollRef = useRef(false);
 
+    // ── Geolocation for Places bias ──────────────────────────────────────
+    const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+    useEffect(() => {
+        (async () => {
+            try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') return;
+                const loc = await Location.getLastKnownPositionAsync() ??
+                    await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                if (loc) setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+            } catch {
+                // Location unavailable — search works fine without bias
+            }
+        })();
+    }, []);
+
     // Sync module-scope lastQuery on unmount / query change
     useEffect(() => {
         lastQuery = immediateQuery;
@@ -146,6 +163,7 @@ export default function SearchScreen() {
     const { results, isLoading, isPlacesError, refetch } = useRestaurantSearch(
         debouncedQuery,
         user?.id,
+        coords,
     );
     const recentQueries = useRecentSearches();
 

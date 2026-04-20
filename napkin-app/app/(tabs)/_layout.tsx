@@ -29,15 +29,25 @@ export default function TabsLayout() {
                 tabBarInactiveTintColor: palette.tabIconDefault,
                 tabBarStyle: [
                     styles.tabBar,
-                    { backgroundColor: palette.surfaceContainerLow },
+                    { backgroundColor: palette.surfaceContainerLow, display: 'none' },
                 ],
                 tabBarLabelStyle: [Type.labelSmall, { marginTop: 2 }],
             }}
         >
-            {/* Hidden — file exists but not a visible tab */}
+            {/* Hidden — legacy placeholder, superseded by feed.tsx */}
             <Tabs.Screen
                 name="journal"
                 options={{ href: null }}
+            />
+
+            <Tabs.Screen
+                name="feed"
+                options={{
+                    title: 'Feed',
+                    tabBarIcon: ({ color, size }) => (
+                        <Ionicons name="home-outline" size={size} color={color} />
+                    ),
+                }}
             />
 
             <Tabs.Screen

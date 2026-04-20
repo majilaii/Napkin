@@ -34,6 +34,7 @@ export interface SearchResultRow {
     name: string;
     city: string | null;
     cuisine: string | null;
+    address: string | null;
     /** For tier 1/2: stored photo_url. For tier 3: Places photoReference for thumb URL. */
     photoUrl: string | null;
     photoReference: string | null;
@@ -50,10 +51,19 @@ export interface SearchResults {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-async function fetchPlaces(query: string): Promise<PlacesResult[]> {
+async function fetchPlaces(
+    query: string,
+    coords?: { latitude: number; longitude: number } | null,
+): Promise<PlacesResult[]> {
     const { data: { session } } = await supabase.auth.getSession();
+    const body: any = { query, limit: 15 };
+    if (coords) {
+        body.latitude = coords.latitude;
+        body.longitude = coords.longitude;
+        body.radius = 10000; // 10 km bias
+    }
     const { data, error } = await supabase.functions.invoke('places-search', {
-        body: { query, limit: 15 },
+        body,
         headers: session?.access_token
             ? { Authorization: `Bearer ${session.access_token}` }
             : undefined,
@@ -105,6 +115,7 @@ function mergeResults(
         name: r.name,
         city: r.city,
         cuisine: r.cuisine,
+        address: null,
         photoUrl: r.photo_url,
         photoReference: null,
         tier: 'visited',
@@ -117,6 +128,7 @@ function mergeResults(
         name: r.name,
         city: r.city,
         cuisine: r.cuisine,
+        address: null,
         photoUrl: r.photo_url,
         photoReference: null,
         tier: 'onNapkin',
@@ -130,6 +142,7 @@ function mergeResults(
             name: p.name ?? 'Unknown',
             city: p.city,
             cuisine: p.cuisine,
+            address: p.formattedAddress,
             photoUrl: null,
             photoReference: p.photoReference,
             tier: 'morePlaces',
@@ -143,6 +156,7 @@ function mergeResults(
 export function useRestaurantSearch(
     query: string,
     userId: string | null | undefined,
+    coords?: { latitude: number; longitude: number } | null,
 ): {
     results: SearchResults;
     isLoading: boolean;
@@ -160,7 +174,7 @@ export function useRestaurantSearch(
         queryFn: async () => {
             const cached = searchCache.get(trimmed);
             if (cached) return cached.places;
-            return fetchPlaces(trimmed);
+            return fetchPlaces(trimmed, coords);
         },
         enabled: enabled && !cachedResult,
         staleTime: 1000 * 60 * 5, // 5 minutes

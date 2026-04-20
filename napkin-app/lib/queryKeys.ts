@@ -79,6 +79,11 @@ export const queryKeys = {
         profile: (identifier: string) => ['users', 'profile', identifier] as const,
     },
 
+    // Feed (cross-Table chronological feed — Feed tab)
+    feed: {
+        all: (userId: string) => ['feed', userId] as const,
+    },
+
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
         tableHistory: (

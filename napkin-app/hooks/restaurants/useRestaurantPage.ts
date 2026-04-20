@@ -96,14 +96,26 @@ async function fetchRestaurantPage(
     const params = new URLSearchParams({ action: 'page', restaurant_id: restaurantId });
     if (tableId) params.set('table_id', tableId);
 
-    const headers = await getAuthHeaders();
-    const { data, error } = await supabase.functions.invoke(
-        `restaurant-history?${params.toString()}`,
-        { method: 'GET', headers },
-    );
-    if (error) throw await unwrapInvokeError(error);
-    if ((data as any)?.error) throw new Error((data as any).error);
-    return (data as { data: RestaurantPageData }).data;
+    const { data: { session } } = await supabase.auth.getSession();
+    const supabaseUrl = (supabase as any).supabaseUrl as string;
+    const url = `${supabaseUrl}/functions/v1/restaurant-history?${params.toString()}`;
+
+    const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+            Authorization: `Bearer ${session?.access_token ?? ''}`,
+            'Content-Type': 'application/json',
+        },
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`restaurant-history failed: ${res.status} ${text}`);
+    }
+
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    return json.data;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────

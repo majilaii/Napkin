@@ -225,7 +225,7 @@ serve(async (req) => {
                 return jsonResponse({ data: [] });
             }
 
-            // Fetch all wishlist items for members of this table, joined to restaurants + profiles
+            // Fetch all wishlist items for members of this table, joined to restaurants
             const { data: wishlistRows, error: wishlistError } = await supabase
                 .from('wishlist_items')
                 .select(`
@@ -243,16 +243,25 @@ serve(async (req) => {
                         google_rating,
                         price_level,
                         external_id
-                    ),
-                    profile:profiles (
-                        display_name,
-                        avatar_url
                     )
                 `)
                 .in('user_id', memberIds)
                 .order('created_at', { ascending: false });
 
             if (wishlistError) throw wishlistError;
+
+            // Fetch profiles separately (no FK from wishlist_items → profiles)
+            const uniqueUserIds = [...new Set((wishlistRows ?? []).map((r: any) => r.user_id as string))];
+            const profileMap = new Map<string, { display_name: string | null; avatar_url: string | null }>();
+            if (uniqueUserIds.length > 0) {
+                const { data: profiles } = await supabase
+                    .from('profiles')
+                    .select('user_id, display_name, avatar_url')
+                    .in('user_id', uniqueUserIds);
+                for (const p of (profiles ?? [])) {
+                    profileMap.set(p.user_id, { display_name: p.display_name, avatar_url: p.avatar_url });
+                }
+            }
 
             // Aggregate: group by restaurant_id, count members, collect member info
             const restaurantMap = new Map<string, {
@@ -276,10 +285,11 @@ serve(async (req) => {
                 entry.count++;
                 // Cap at 5 members for the avatar stack
                 if (entry.members.length < 5) {
+                    const prof = profileMap.get(row.user_id as string);
                     entry.members.push({
                         user_id: row.user_id as string,
-                        display_name: (row.profile as any)?.display_name ?? null,
-                        avatar_url: (row.profile as any)?.avatar_url ?? null,
+                        display_name: prof?.display_name ?? null,
+                        avatar_url: prof?.avatar_url ?? null,
                     });
                 }
                 // Keep the most recent save timestamp for secondary sort

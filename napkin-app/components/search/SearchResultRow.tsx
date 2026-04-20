@@ -34,10 +34,16 @@ export function SearchResultRow({ item, onPress }: Props) {
     const thumbUrl = item.photoUrl ?? buildPhotoUrl(item.photoReference);
     const showGlyph = !thumbUrl || imgError;
 
-    const metaParts: string[] = [];
-    if (item.city) metaParts.push(item.city);
-    if (item.cuisine) metaParts.push(item.cuisine);
-    const meta = metaParts.join(' · ');
+    // Prefer address for chains (more specific), fall back to city · cuisine
+    let meta = '';
+    if (item.address) {
+        meta = item.address;
+    } else {
+        const metaParts: string[] = [];
+        if (item.city) metaParts.push(item.city);
+        if (item.cuisine) metaParts.push(item.cuisine);
+        meta = metaParts.join(' · ');
+    }
 
     return (
         <Pressable

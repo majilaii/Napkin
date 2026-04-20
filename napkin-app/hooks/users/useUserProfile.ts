@@ -94,9 +94,18 @@ async function fetchUserProfile(identifier: string): Promise<UserProfileResult> 
     });
 
     if (error) {
-        const status = (error as { context?: { status?: number } }).context?.status;
+        // Try to extract body from the FunctionsHttpError
+        let details = error.message;
+        try {
+            if (error.context && typeof error.context.json === 'function') {
+                const body = await error.context.json();
+                details = JSON.stringify(body);
+            }
+        } catch (_) { /* ignore */ }
+
+        const status = (error as any).context?.status;
         if (status === 404) return { data: null, isNotFound: true };
-        throw error;
+        throw new Error(details);
     }
 
     if (data?.error === 'not_found') {

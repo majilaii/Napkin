@@ -33,7 +33,9 @@ export default function ProfileTab() {
     const router = useRouter();
     const { user } = useAuth();
 
-    const { data: result, isLoading, error } = useUserProfile(user?.id);
+    const { data: result, isLoading: profileLoading, error } = useUserProfile(user?.id);
+
+    const isLoading = !user || profileLoading;
 
     const profileData = result?.data ?? null;
 
@@ -57,8 +59,11 @@ export default function ProfileTab() {
             {/* Error */}
             {!isLoading && error && (
                 <View style={styles.center}>
-                    <Text style={[Type.body, { color: palette.textSecondary, textAlign: 'center' }]}>
+                    <Text style={[Type.body, { color: palette.textSecondary, textAlign: 'center', paddingHorizontal: 20 }]}>
                         Couldn&apos;t load your profile
+                    </Text>
+                    <Text style={[Type.labelSmall, { color: palette.textSecondary, textAlign: 'center', marginTop: 8, paddingHorizontal: 20 }]}>
+                        {error.message}
                     </Text>
                 </View>
             )}
