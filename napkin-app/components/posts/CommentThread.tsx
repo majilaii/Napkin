@@ -1,11 +1,8 @@
 /**
- * CommentThread — oldest-first flat comment list + inline composer.
+ * CommentThread — oldest-first reply list + paper composer.
  *
- * - Empty state: muted italic "No replies yet — be the first."
- * - Composer: single-line input growing up to 4 lines, "Say something…" placeholder
- * - Send button activates when body.length ≥ 1 (after trim)
- * - 2000 char limit; counter shows once user passes 1900
- * - Optimistic send via useAddComment
+ * Replies flow as a single column with hairline dividers between rows.
+ * Composer sits in a warm-cream slab with a small terracotta send pill.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -14,11 +11,13 @@ import {
     TextInput,
     Pressable,
     StyleSheet,
-    ScrollView,
 } from 'react-native';
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAddComment, useDiscardFailedComment } from '@/hooks/posts/usePostInteractions';
+import {
+    useAddComment,
+    useDiscardFailedComment,
+} from '@/hooks/posts/usePostInteractions';
 import type { Comment, TargetType } from '@/hooks/posts/usePostInteractions';
 import { CommentRow } from './CommentRow';
 
@@ -26,14 +25,18 @@ interface CommentThreadProps {
     targetType: TargetType;
     targetId: string;
     comments: Comment[];
-    /** When true, focus the composer on mount (used when opened via "Reply" tap). */
     autoFocusComposer?: boolean;
 }
 
 const MAX_CHARS = 2000;
 const COUNTER_THRESHOLD = 1900;
 
-export function CommentThread({ targetType, targetId, comments, autoFocusComposer }: CommentThreadProps) {
+export function CommentThread({
+    targetType,
+    targetId,
+    comments,
+    autoFocusComposer,
+}: CommentThreadProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const addComment = useAddComment();
@@ -44,15 +47,22 @@ export function CommentThread({ targetType, targetId, comments, autoFocusCompose
     const handleRetry = (failed: Comment) => {
         const nonce = failed.client_nonce;
         if (!nonce) return;
-        // Drop the failed row, then re-send with the same nonce so any
-        // late-arriving server response still reconciles correctly.
         discardFailed({ targetType, targetId, clientNonce: nonce });
-        addComment.mutate({ targetType, targetId, body: failed.body, clientNonce: nonce });
+        addComment.mutate({
+            targetType,
+            targetId,
+            body: failed.body,
+            clientNonce: nonce,
+        });
     };
 
     const handleDiscard = (failed: Comment) => {
         if (!failed.client_nonce) return;
-        discardFailed({ targetType, targetId, clientNonce: failed.client_nonce });
+        discardFailed({
+            targetType,
+            targetId,
+            clientNonce: failed.client_nonce,
+        });
     };
 
     useEffect(() => {
@@ -68,51 +78,57 @@ export function CommentThread({ targetType, targetId, comments, autoFocusCompose
 
     const handleSend = () => {
         if (!canSend) return;
-        const nonce = `nonce-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const nonce = `nonce-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}`;
         addComment.mutate(
             { targetType, targetId, body: trimmed, clientNonce: nonce },
-            { onSuccess: () => setBody('') }
+            { onSuccess: () => setBody('') },
         );
         setBody('');
     };
 
     return (
         <View style={styles.container}>
-            {/* Comment list */}
             {comments.length === 0 ? (
-                <Text
-                    style={[
-                        Type.body,
-                        {
-                            color: palette.textMuted,
-                            fontStyle: 'italic',
-                            textAlign: 'center',
-                            paddingVertical: Spacing.md,
-                        },
-                    ]}
-                >
-                    No replies yet — be the first.
+                <Text style={[styles.empty, { color: palette.textMuted }]}>
+                    The table is quiet — say something.
                 </Text>
             ) : (
-                <View style={styles.list}>
-                    {comments.map((comment) => (
-                        <CommentRow
+                <View>
+                    {comments.map((comment, idx) => (
+                        <View
                             key={comment.id}
-                            comment={comment}
-                            targetType={targetType}
-                            targetId={targetId}
-                            onRetry={
-                                comment.failed ? () => handleRetry(comment) : undefined
+                            style={
+                                idx > 0
+                                    ? {
+                                          borderTopWidth:
+                                              StyleSheet.hairlineWidth,
+                                          borderTopColor: palette.dividerSoft,
+                                      }
+                                    : undefined
                             }
-                            onDiscard={
-                                comment.failed ? () => handleDiscard(comment) : undefined
-                            }
-                        />
+                        >
+                            <CommentRow
+                                comment={comment}
+                                targetType={targetType}
+                                targetId={targetId}
+                                onRetry={
+                                    comment.failed
+                                        ? () => handleRetry(comment)
+                                        : undefined
+                                }
+                                onDiscard={
+                                    comment.failed
+                                        ? () => handleDiscard(comment)
+                                        : undefined
+                                }
+                            />
+                        </View>
                     ))}
                 </View>
             )}
 
-            {/* Composer */}
             <View
                 style={[
                     styles.composer,
@@ -130,10 +146,7 @@ export function CommentThread({ targetType, targetId, comments, autoFocusCompose
                     }}
                     placeholder="Say something…"
                     placeholderTextColor={palette.textMuted}
-                    style={[
-                        styles.input,
-                        { color: palette.text },
-                    ]}
+                    style={[styles.input, { color: palette.text }]}
                     multiline
                     maxLength={MAX_CHARS}
                     returnKeyType="default"
@@ -144,8 +157,13 @@ export function CommentThread({ targetType, targetId, comments, autoFocusCompose
                 {showCounter && (
                     <Text
                         style={[
-                            Type.caption,
-                            { color: body.length >= MAX_CHARS ? palette.error : palette.textMuted },
+                            styles.counter,
+                            {
+                                color:
+                                    body.length >= MAX_CHARS
+                                        ? palette.error
+                                        : palette.textMuted,
+                            },
                         ]}
                     >
                         {body.length}/{MAX_CHARS}
@@ -160,7 +178,9 @@ export function CommentThread({ targetType, targetId, comments, autoFocusCompose
                     style={({ pressed }) => [
                         styles.sendBtn,
                         {
-                            backgroundColor: canSend ? palette.primary : palette.surfaceContainerHigh,
+                            backgroundColor: canSend
+                                ? palette.primary
+                                : palette.surfaceContainerHigh,
                             opacity: pressed ? 0.8 : 1,
                         },
                     ]}
@@ -168,7 +188,11 @@ export function CommentThread({ targetType, targetId, comments, autoFocusCompose
                     <Text
                         style={[
                             styles.sendArrow,
-                            { color: canSend ? '#fff' : palette.textMuted },
+                            {
+                                color: canSend
+                                    ? palette.background
+                                    : palette.textMuted,
+                            },
                         ]}
                     >
                         ↑
@@ -181,34 +205,42 @@ export function CommentThread({ targetType, targetId, comments, autoFocusCompose
 
 const styles = StyleSheet.create({
     container: {
-        gap: Spacing.md,
+        gap: Spacing.sm + 4,
     },
-    list: {
-        gap: Spacing.md,
+    empty: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        textAlign: 'center',
+        paddingVertical: Spacing.md,
     },
     composer: {
         flexDirection: 'row',
         alignItems: 'flex-end',
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: Radius.lg,
+        borderRadius: 10,
         paddingLeft: Spacing.md,
         paddingRight: Spacing.sm,
         paddingVertical: Spacing.sm,
         gap: Spacing.sm,
+        marginTop: Spacing.xs,
     },
     input: {
         flex: 1,
         fontFamily: 'Manrope_400Regular',
         fontSize: 14,
         lineHeight: 20,
-        maxHeight: 88, // ~4 lines at 22px line height
+        maxHeight: 88,
         paddingTop: 0,
         paddingBottom: 0,
     },
+    counter: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+    },
     sendBtn: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        width: 30,
+        height: 30,
+        borderRadius: 15,
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
@@ -216,6 +248,6 @@ const styles = StyleSheet.create({
     sendArrow: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 16,
-        lineHeight: 20,
+        lineHeight: 18,
     },
 });
