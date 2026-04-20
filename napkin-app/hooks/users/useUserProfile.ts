@@ -66,12 +66,46 @@ export type TablePreview = {
     last_entry_rating: number | null;
 };
 
+export type TopPick = {
+    restaurant_id: string;
+    name: string;
+    city: string | null;
+    photo_url: string | null;
+    max_rating: number;
+    visit_count: number;
+    last_visited_at: string | null;
+};
+
+export type RegularSummary = {
+    restaurant_id: string;
+    name: string;
+    city: string | null;
+    photo_url: string | null;
+    visit_count: number;
+    avg_rating: number | null;
+    last_visited_at: string | null;
+};
+
+export type DiaryEntryRow = {
+    entry_id: string;
+    restaurant_id: string;
+    restaurant_name: string;
+    city: string | null;
+    photo_url: string | null;
+    rating: number | null;
+    note: string | null;
+    visited_at: string;
+    created_at: string;
+};
+
 export type UserProfileData = {
     profile: UserProfileRow;
     stats: UserStats | null;
     public_lists: ProfileListSummary[] | null;
     recently_logged: RestaurantTile[] | null;
     tables_in_common: TablePreview[];
+    top_four: TopPick[];
+    regulars_preview: RegularSummary[];
     is_self: boolean;
     viewer_target_relationship: ViewerRelationship;
 };

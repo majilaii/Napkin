@@ -1,51 +1,55 @@
 /**
- * FastLogForm — shared fast-log form component.
+ * FastLogForm — canonical Fast Log (Heirloom kit).
  *
- * Collects exactly three fields: restaurant, rating (0.5–5.0), Table.
- * Renders in two presentation modes:
- *   - 'modal': full-screen (used by app/fast-log.tsx from + tab)
- *   - 'sheet': inline (used by FastLogSheet on restaurant page)
+ * Reached ONLY from the restaurant page via FastLogSheet. The restaurant is
+ * always locked — there is no search path here. The + tab button opens the
+ * full composer (/create-entry) instead.
  *
- * Submit path: reuses useCreateEntry verbatim.
- * "Add details" pushes to /create-entry with prefill params (pre-submit only).
+ * Canvas source: napkin-design-system/project/ui_kits/napkin-app/logger-canvas.html
+ * Section 1 "Fast Log canonical" + progressive-disclosure "Break it down".
+ *
+ * Layout (top → bottom, single column):
+ *   RestaurantHeader (locked)
+ *   Stars (34px) + caption ("Really good · 4.5 / 5")
+ *   Hairline
+ *   FieldUnderline note ("a line about it (optional)")
+ *   Hairline
+ *   "Post to" chip row
+ *   "+ Break it down" — TOGGLES an in-place expansion that reveals 4 axis
+ *     rows (Food / Vibe / Service / Value). Closing the section zeros nothing
+ *     — axis state persists across the toggle.
+ *   LOG IT pill
+ *   "open full entry →" — escape hatch to the composer for photos / companions.
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     ScrollView,
-    TextInput,
     Pressable,
     ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Location from 'expo-location';
 
-import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useTables } from '@/hooks/tables/useTables';
 import { StarRating } from '@/components/StarRating';
 import { supabase } from '@/lib/supabase';
+import {
+    RestaurantHeader,
+    FieldUnderline,
+    Chip,
+    Label,
+} from '@/components/ui';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface PlaceResult {
-    id: string;
-    name: string;
-    formattedAddress: string | null;
-    latitude: number | null;
-    longitude: number | null;
-    categories: string[];
-    photoReference: string | null;
-}
-
 export interface LockedRestaurant {
-    /** Napkin UUID — present if this is a persisted restaurant */
+    /** Napkin UUID — present if the restaurant is persisted */
     id?: string;
     /** Google Place ID — present for ghost restaurants */
     external_id?: string;
@@ -55,33 +59,122 @@ export interface LockedRestaurant {
 }
 
 export interface FastLogFormProps {
-    presentation: 'modal' | 'sheet';
-    /** When set, restaurant field is non-interactive (restaurant page entry point) */
-    lockedRestaurant?: LockedRestaurant;
-    /** Defaults to personal Table */
+    /** Required — FastLogForm always runs in locked mode. */
+    lockedRestaurant: LockedRestaurant;
     initialTableId?: string;
-    /** Called with the created entryId after successful submit */
     onSubmitted: (entryId: string) => void;
-    /** Called when user taps "Add details" — receives prefill data for create-entry */
-    onAddDetails: (prefill: {
+    /** Route to full composer via the explicit "open full entry →" link. */
+    onOpenFullEntry: (prefill: {
         rating: number;
-        restaurant: PlaceResult | null;
-        lockedRestaurant?: LockedRestaurant;
+        axes: { food: number; vibe: number; service: number; value: number };
+        lockedRestaurant: LockedRestaurant;
         tableId: string | null;
+        note: string;
     }) => void;
-    /** Sheet presentation only — called on backdrop tap or close */
-    onClose?: () => void;
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function ratingCaption(value: number): { phrase: string | null; numeric: string | null } {
+    if (value <= 0) return { phrase: null, numeric: 'Tap a star' };
+    const snapped = Math.round(value * 2) / 2;
+    const phrase =
+        snapped >= 5
+            ? 'Loved it'
+            : snapped >= 4
+              ? 'Really good'
+              : snapped >= 3
+                ? 'Pretty good'
+                : snapped >= 2
+                  ? 'Okay'
+                  : 'Not my thing';
+    return { phrase, numeric: `${snapped} / 5` };
+}
+
+function metaFromLocked(r: LockedRestaurant): string | undefined {
+    const pp = r.placePayload;
+    if (!pp) return undefined;
+    return pp.formattedAddress ?? undefined;
+}
+
+function photoFromLocked(r: LockedRestaurant): string | null {
+    const ref = r.placePayload?.photoReference;
+    if (!ref) return null;
+    const supabaseUrl = (supabase as any).supabaseUrl as string | undefined;
+    if (!supabaseUrl) return null;
+    return `${supabaseUrl}/functions/v1/places-photo?ref=${encodeURIComponent(ref)}`;
+}
+
+// ── AxisRow — inline sub-axis rating ─────────────────────────────────────────
+
+interface AxisRowProps {
+    label: string;
+    value: number;
+    onChange: (v: number) => void;
+}
+
+function AxisRow({ label, value, onChange }: AxisRowProps) {
+    const scheme = useColorScheme() ?? 'light';
+    const palette = Colors[scheme];
+    return (
+        <View style={axisStyles.row}>
+            <Text
+                style={[
+                    axisStyles.label,
+                    { color: palette.textSecondary },
+                ]}
+            >
+                {label}
+            </Text>
+            <View style={axisStyles.stars}>
+                <StarRating
+                    value={value}
+                    size={18}
+                    editable
+                    onChange={onChange}
+                    showValue={false}
+                />
+            </View>
+            <Text
+                style={{
+                    fontFamily: 'Newsreader_400Regular_Italic',
+                    fontSize: 16,
+                    color: value > 0 ? palette.text : palette.textMuted,
+                    minWidth: 28,
+                    textAlign: 'right',
+                }}
+            >
+                {value > 0 ? value.toFixed(1) : '—'}
+            </Text>
+        </View>
+    );
+}
+
+const axisStyles = StyleSheet.create({
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+    },
+    label: {
+        width: 80,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+    },
+    stars: {
+        flex: 1,
+    },
+});
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function FastLogForm({
-    presentation,
     lockedRestaurant,
     initialTableId,
     onSubmitted,
-    onAddDetails,
-    onClose,
+    onOpenFullEntry,
 }: FastLogFormProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -105,79 +198,19 @@ export function FastLogForm({
         }
     }, [defaultTableId, selectedTableId]);
 
-    // ── Restaurant search (not shown when lockedRestaurant is set) ────────
-    const [query, setQuery] = useState('');
-    const [results, setResults] = useState<PlaceResult[]>([]);
-    const [searching, setSearching] = useState(false);
-    const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
-    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    // Device location for search bias
-    const [deviceLocation, setDeviceLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-    useEffect(() => {
-        if (lockedRestaurant) return; // no search needed
-        (async () => {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') return;
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            setDeviceLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-        })();
-    }, [lockedRestaurant]);
-
-    useEffect(() => {
-        if (lockedRestaurant || selectedPlace) return;
-        if (query.trim().length < 2) {
-            setResults([]);
-            return;
-        }
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => searchPlaces(query.trim()), 350);
-        return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-    }, [query, selectedPlace, lockedRestaurant]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    const searchPlaces = async (q: string) => {
-        setSearching(true);
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke('places-search', {
-                body: {
-                    query: q,
-                    limit: 5,
-                    ...(deviceLocation && { latitude: deviceLocation.latitude, longitude: deviceLocation.longitude }),
-                },
-                headers: session?.access_token
-                    ? { Authorization: `Bearer ${session.access_token}` }
-                    : undefined,
-            });
-            if (error) throw error;
-            setResults(data?.data ?? []);
-        } catch (e) {
-            console.warn('Places search failed:', e);
-        } finally {
-            setSearching(false);
-        }
-    };
-
-    const handleSelectPlace = (place: PlaceResult) => {
-        setSelectedPlace(place);
-        setQuery(place.name);
-        setResults([]);
-    };
-
-    const handleClearPlace = () => {
-        setSelectedPlace(null);
-        setQuery('');
-        setResults([]);
-    };
-
-    // ── Rating ────────────────────────────────────────────────────────────
+    // ── Rating + note + axes ──────────────────────────────────────────────
     const [rating, setRating] = useState(0);
+    const [note, setNote] = useState('');
+    const [expanded, setExpanded] = useState(false);
+    const [foodRating, setFoodRating] = useState(0);
+    const [vibeRating, setVibeRating] = useState(0);
+    const [serviceRating, setServiceRating] = useState(0);
+    const [valueRating, setValueRating] = useState(0);
 
     // ── Submit ────────────────────────────────────────────────────────────
     const createEntry = useCreateEntry(user?.id, selectedTableId);
 
-    const hasRestaurant = !!lockedRestaurant || !!selectedPlace || query.trim().length > 0;
-    const canSubmit = hasRestaurant && rating > 0;
+    const canSubmit = rating > 0;
     const isSubmitting = createEntry.isPending;
     const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -186,46 +219,23 @@ export function FastLogForm({
         setSubmitError(null);
 
         let restaurantData: any;
-
-        if (lockedRestaurant) {
-            // Restaurant page path — build from locked data
-            const payload = lockedRestaurant.placePayload;
-            if (payload) {
-                restaurantData = {
-                    external_id: payload.id ?? payload.external_id ?? lockedRestaurant.external_id ?? '',
-                    name: payload.name ?? lockedRestaurant.name,
-                    location: payload.formattedAddress
-                        ? { address: payload.formattedAddress }
-                        : undefined,
-                    types: payload.categories ?? ['restaurant'],
-                    latitude: payload.latitude ?? undefined,
-                    longitude: payload.longitude ?? undefined,
-                    photoReference: payload.photoReference ?? undefined,
-                };
-            } else {
-                restaurantData = {
-                    external_id: lockedRestaurant.external_id ?? lockedRestaurant.id ?? `manual-${Date.now()}`,
-                    name: lockedRestaurant.name,
-                    types: ['restaurant'],
-                };
-            }
-        } else if (selectedPlace) {
+        const payload = lockedRestaurant.placePayload;
+        if (payload) {
             restaurantData = {
-                external_id: selectedPlace.id,
-                name: selectedPlace.name,
-                location: selectedPlace.formattedAddress
-                    ? { address: selectedPlace.formattedAddress }
+                external_id: payload.id ?? payload.external_id ?? lockedRestaurant.external_id ?? '',
+                name: payload.name ?? lockedRestaurant.name,
+                location: payload.formattedAddress
+                    ? { address: payload.formattedAddress }
                     : undefined,
-                types: selectedPlace.categories?.length ? selectedPlace.categories : ['restaurant'],
-                latitude: selectedPlace.latitude ?? undefined,
-                longitude: selectedPlace.longitude ?? undefined,
-                photoReference: selectedPlace.photoReference ?? undefined,
+                types: payload.categories ?? ['restaurant'],
+                latitude: payload.latitude ?? undefined,
+                longitude: payload.longitude ?? undefined,
+                photoReference: payload.photoReference ?? undefined,
             };
         } else {
-            // Manual entry — no place selected, use query text
             restaurantData = {
-                external_id: `manual-${query.trim().toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
-                name: query.trim(),
+                external_id: lockedRestaurant.external_id ?? lockedRestaurant.id ?? `manual-${Date.now()}`,
+                name: lockedRestaurant.name,
                 types: ['restaurant'],
             };
         }
@@ -238,291 +248,227 @@ export function FastLogForm({
                 rating: ratingValue,
                 table_id: selectedTableId ?? undefined,
                 visibility: selectedTableId ? 'table' : 'private',
+                content: note.trim() || undefined,
+                flavor_rating: foodRating > 0 ? foodRating : undefined,
+                vibe_rating: vibeRating > 0 ? vibeRating : undefined,
+                service_rating: serviceRating > 0 ? serviceRating : undefined,
+                value_rating: valueRating > 0 ? valueRating : undefined,
             });
             const entryId = result?.id ?? result?.entry?.id ?? '';
             onSubmitted(entryId);
         } catch (e: any) {
             setSubmitError(e.message ?? 'Could not save entry. Tap to retry.');
         }
-    }, [canSubmit, isSubmitting, lockedRestaurant, selectedPlace, query, rating, selectedTableId, createEntry, onSubmitted]);
+    }, [
+        canSubmit,
+        isSubmitting,
+        lockedRestaurant,
+        rating,
+        note,
+        foodRating,
+        vibeRating,
+        serviceRating,
+        valueRating,
+        selectedTableId,
+        createEntry,
+        onSubmitted,
+    ]);
 
-    // ── "Add details" — push to full composer with prefill ───────────────
-    const handleAddDetails = useCallback(() => {
+    const handleOpenFullEntry = useCallback(() => {
         if (createEntry.isPending || createEntry.isSuccess) return;
-        onAddDetails({
+        onOpenFullEntry({
             rating,
-            restaurant: selectedPlace,
+            axes: {
+                food: foodRating,
+                vibe: vibeRating,
+                service: serviceRating,
+                value: valueRating,
+            },
             lockedRestaurant,
             tableId: selectedTableId,
+            note,
         });
-    }, [rating, selectedPlace, lockedRestaurant, selectedTableId, createEntry.isPending, createEntry.isSuccess, onAddDetails]);
+    }, [
+        rating,
+        foodRating,
+        vibeRating,
+        serviceRating,
+        valueRating,
+        lockedRestaurant,
+        selectedTableId,
+        note,
+        createEntry.isPending,
+        createEntry.isSuccess,
+        onOpenFullEntry,
+    ]);
 
     // ── Render ────────────────────────────────────────────────────────────
 
-    const isModal = presentation === 'modal';
+    const caption = ratingCaption(rating);
+    const restaurantPhoto = photoFromLocked(lockedRestaurant);
+    const restaurantMeta = metaFromLocked(lockedRestaurant);
 
-    const content = (
+    return (
         <ScrollView
-            contentContainerStyle={[
-                styles.scrollContent,
-                isModal && styles.scrollContentModal,
-            ]}
+            contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
         >
-            {/* Sheet header — close button */}
-            {!isModal && onClose && (
-                <View style={styles.sheetHeader}>
-                    <View style={[styles.handle, { backgroundColor: palette.outlineVariant }]} />
-                    <Text
-                        style={[
-                            Type.headlineMedium,
-                            { color: palette.text, marginTop: Spacing.md },
-                        ]}
-                    >
-                        Rate this spot
-                    </Text>
-                </View>
-            )}
+            <RestaurantHeader
+                name={lockedRestaurant.name}
+                meta={restaurantMeta}
+                photoUrl={restaurantPhoto}
+                locked
+            />
 
-            {/* Restaurant field */}
-            {lockedRestaurant ? (
-                // Locked: show name chip, no interaction
-                <View style={[styles.fieldGroup, !isModal && { marginTop: Spacing.lg }]}>
-                    <Text style={[Type.label, { color: palette.textSecondary }]}>
-                        Where did you eat?
-                    </Text>
-                    <View
-                        style={[
-                            styles.lockedChip,
-                            { backgroundColor: palette.surfaceContainerLow },
-                        ]}
-                    >
+            <View style={styles.ratingBlock}>
+                <StarRating
+                    value={rating}
+                    size={34}
+                    editable
+                    onChange={setRating}
+                    showValue={false}
+                />
+                <View style={styles.captionRow}>
+                    {caption.phrase ? (
                         <Text
                             style={{
                                 fontFamily: 'Newsreader_400Regular_Italic',
-                                fontSize: 22,
+                                fontSize: 15,
                                 color: palette.text,
+                                marginRight: 8,
                             }}
-                            numberOfLines={1}
                         >
-                            {lockedRestaurant.name}
+                            {caption.phrase}
                         </Text>
-                        <Ionicons name="lock-closed-outline" size={14} color={palette.textMuted} />
-                    </View>
-                </View>
-            ) : (
-                // Search field
-                <View style={[styles.fieldGroup, !isModal && { marginTop: Spacing.lg }]}>
-                    <Text style={[Type.label, { color: palette.textSecondary }]}>
-                        Where did you eat?
-                    </Text>
-                    {selectedPlace ? (
-                        <Pressable
-                            onPress={handleClearPlace}
-                            style={[
-                                styles.selectedChip,
-                                { backgroundColor: palette.surfaceContainerLow },
-                            ]}
+                    ) : null}
+                    {caption.numeric ? (
+                        <Text
+                            style={{
+                                fontFamily: 'Manrope_700Bold',
+                                fontSize: 11,
+                                color: palette.textMuted,
+                                letterSpacing: 0.6,
+                                textTransform: 'uppercase',
+                            }}
                         >
-                            <View style={{ flex: 1 }}>
-                                <Text
-                                    style={{
-                                        fontFamily: 'Newsreader_400Regular_Italic',
-                                        fontSize: 22,
-                                        color: palette.text,
-                                    }}
-                                    numberOfLines={1}
-                                >
-                                    {selectedPlace.name}
-                                </Text>
-                                {selectedPlace.formattedAddress && (
-                                    <Text
-                                        style={[
-                                            Type.caption,
-                                            { color: palette.textSecondary, marginTop: 2 },
-                                        ]}
-                                        numberOfLines={1}
-                                    >
-                                        {selectedPlace.formattedAddress}
-                                    </Text>
-                                )}
-                            </View>
-                            <Text style={{ fontSize: 18, color: palette.textMuted, marginLeft: Spacing.sm }}>
-                                ✕
-                            </Text>
-                        </Pressable>
-                    ) : (
-                        <View>
-                            <View style={{ position: 'relative' }}>
-                                <TextInput
-                                    style={[
-                                        styles.textInput,
-                                        {
-                                            backgroundColor: palette.surfaceContainerLow,
-                                            color: palette.text,
-                                            fontFamily: 'Newsreader_400Regular_Italic',
-                                            fontSize: 22,
-                                        },
-                                    ]}
-                                    placeholder="Search restaurants..."
-                                    placeholderTextColor={palette.textMuted}
-                                    value={query}
-                                    onChangeText={setQuery}
-                                    autoFocus={isModal}
-                                />
-                                {searching && (
-                                    <ActivityIndicator
-                                        size="small"
-                                        color={palette.textMuted}
-                                        style={{ position: 'absolute', right: 16, top: 16 }}
-                                    />
-                                )}
-                            </View>
-                            {results.length > 0 && (
-                                <View
-                                    style={[
-                                        styles.dropdown,
-                                        {
-                                            backgroundColor: palette.surfaceContainerLow,
-                                            ...Shadow.subtle,
-                                        },
-                                    ]}
-                                >
-                                    {results.map((place, i) => (
-                                        <Pressable
-                                            key={place.id}
-                                            onPress={() => handleSelectPlace(place)}
-                                            style={({ pressed }) => [
-                                                styles.dropdownRow,
-                                                {
-                                                    backgroundColor: pressed
-                                                        ? palette.surfaceContainerHigh
-                                                        : 'transparent',
-                                                    borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
-                                                    borderTopColor: palette.surfaceContainerHigh,
-                                                },
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    Type.body,
-                                                    { color: palette.text, fontFamily: 'Manrope_500Medium' },
-                                                ]}
-                                                numberOfLines={1}
-                                            >
-                                                {place.name}
-                                            </Text>
-                                            {place.formattedAddress && (
-                                                <Text
-                                                    style={[Type.caption, { color: palette.textSecondary, marginTop: 1 }]}
-                                                    numberOfLines={1}
-                                                >
-                                                    {place.formattedAddress}
-                                                </Text>
-                                            )}
-                                        </Pressable>
-                                    ))}
-                                </View>
-                            )}
-                            {query.trim().length >= 2 && results.length === 0 && !searching && (
-                                <Text
-                                    style={[
-                                        Type.caption,
-                                        { color: palette.textMuted, marginTop: Spacing.xs, paddingLeft: Spacing.xs },
-                                    ]}
-                                >
-                                    No results — you can still submit with this name
-                                </Text>
-                            )}
-                        </View>
-                    )}
-                </View>
-            )}
-
-            {/* Rating */}
-            <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                <Text style={[Type.label, { color: palette.textSecondary }]}>
-                    Your rating
-                </Text>
-                <View style={styles.ratingRow}>
-                    <StarRating
-                        value={rating}
-                        size={36}
-                        editable
-                        onChange={setRating}
-                        showValue
-                    />
+                            {caption.numeric}
+                        </Text>
+                    ) : null}
                 </View>
             </View>
 
-            {/* Table picker */}
-            {sortedTables.length > 0 && (
-                <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                    <Text style={[Type.label, { color: palette.textSecondary }]}>
-                        Post to
-                    </Text>
+            <View style={[styles.hairline, { backgroundColor: palette.dividerSoft }]} />
+
+            <FieldUnderline
+                placeholder="a line about it (optional)"
+                value={note}
+                onChangeText={setNote}
+                fontVariant="serif"
+                size="body"
+                containerStyle={styles.noteField}
+                returnKeyType="done"
+                maxLength={280}
+            />
+
+            <View
+                style={[
+                    styles.hairline,
+                    { backgroundColor: palette.dividerSoft, marginTop: Spacing.md },
+                ]}
+            />
+
+            {sortedTables.length > 0 ? (
+                <View style={styles.postToBlock}>
+                    <Label color={palette.textMuted}>Post to</Label>
                     <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
                         contentContainerStyle={styles.chipRow}
                     >
                         {sortedTables.map(t => (
-                            <Pressable
+                            <Chip
                                 key={t.id}
+                                active={selectedTableId === t.id}
                                 onPress={() => setSelectedTableId(t.id)}
-                                style={[
-                                    styles.tableChip,
-                                    {
-                                        backgroundColor:
-                                            selectedTableId === t.id
-                                                ? palette.primary
-                                                : palette.surfaceContainerLow,
-                                    },
-                                ]}
                             >
-                                <Text
-                                    style={[
-                                        Type.caption,
-                                        {
-                                            color:
-                                                selectedTableId === t.id
-                                                    ? '#fff'
-                                                    : palette.text,
-                                        },
-                                    ]}
-                                    numberOfLines={1}
-                                >
-                                    {t.name}
-                                </Text>
-                            </Pressable>
+                                {t.name}
+                            </Chip>
                         ))}
                     </ScrollView>
                 </View>
-            )}
+            ) : null}
 
-            {/* Error state */}
-            {submitError && (
-                <View style={[styles.errorRow, { marginTop: Spacing.md }]}>
+            <Pressable
+                onPress={() => setExpanded(v => !v)}
+                hitSlop={6}
+                style={({ pressed }) => [
+                    styles.breakItDown,
+                    { opacity: pressed ? 0.6 : 1 },
+                ]}
+            >
+                <Ionicons
+                    name={expanded ? 'remove' : 'add'}
+                    size={14}
+                    color={palette.primary}
+                    style={{ marginRight: 4 }}
+                />
+                <Text
+                    style={{
+                        fontFamily: 'Manrope_500Medium',
+                        fontSize: 12,
+                        color: palette.primary,
+                    }}
+                >
+                    {expanded ? 'Hide the breakdown' : 'Break it down'}
+                </Text>
+            </Pressable>
+
+            {expanded ? (
+                <View style={styles.axesBlock}>
+                    <AxisRow label="Food" value={foodRating} onChange={setFoodRating} />
+                    <AxisRow label="Vibe" value={vibeRating} onChange={setVibeRating} />
+                    <AxisRow label="Service" value={serviceRating} onChange={setServiceRating} />
+                    <AxisRow label="Value" value={valueRating} onChange={setValueRating} />
+                    <Text
+                        style={[
+                            styles.axesHint,
+                            { color: palette.textMuted },
+                        ]}
+                    >
+                        Sub-scores are independent — they don&apos;t need to average to your overall.
+                    </Text>
+                </View>
+            ) : null}
+
+            {submitError ? (
+                <View style={styles.errorRow}>
                     <Text style={[Type.bodySmall, { color: palette.error }]}>
                         {submitError}
                     </Text>
                     <Pressable onPress={handleSubmit}>
-                        <Text style={[Type.caption, { color: palette.error, textDecorationLine: 'underline', marginLeft: Spacing.xs }]}>
+                        <Text
+                            style={[
+                                Type.caption,
+                                {
+                                    color: palette.error,
+                                    textDecorationLine: 'underline',
+                                    marginLeft: Spacing.xs,
+                                },
+                            ]}
+                        >
                             Retry
                         </Text>
                     </Pressable>
                 </View>
-            )}
+            ) : null}
 
-            {/* Primary CTA */}
             <Pressable
                 disabled={!canSubmit || isSubmitting}
                 onPress={handleSubmit}
                 style={({ pressed }) => [
                     styles.ctaButton,
                     {
-                        marginTop: Spacing.xl,
                         backgroundColor: canSubmit
                             ? palette.primary
                             : palette.surfaceContainerHigh,
@@ -538,7 +484,7 @@ export function FastLogForm({
                             Type.label,
                             {
                                 color: canSubmit ? '#fff' : palette.textMuted,
-                                letterSpacing: 2,
+                                letterSpacing: 1.5,
                             },
                         ]}
                     >
@@ -547,124 +493,108 @@ export function FastLogForm({
                 )}
             </Pressable>
 
-            {/* Secondary: Add details */}
             <Pressable
-                onPress={handleAddDetails}
+                onPress={handleOpenFullEntry}
                 disabled={createEntry.isPending || createEntry.isSuccess}
+                hitSlop={6}
                 style={({ pressed }) => [
-                    styles.addDetailsLink,
-                    { opacity: pressed || createEntry.isPending || createEntry.isSuccess ? 0.5 : 1 },
+                    styles.openFullEntry,
+                    {
+                        opacity:
+                            pressed || createEntry.isPending || createEntry.isSuccess ? 0.5 : 1,
+                    },
                 ]}
             >
-                <Text style={[Type.caption, { color: palette.textSecondary }]}>
-                    Want to add notes or photos?{' '}
+                <Text
+                    style={{
+                        fontFamily: 'Manrope_500Medium',
+                        fontSize: 12,
+                        color: palette.textSecondary,
+                    }}
+                >
+                    Want photos, dish notes, companions?{'  '}
                 </Text>
-                <Text style={[Type.caption, { color: palette.primary }]}>
-                    Add details
+                <Text
+                    style={{
+                        fontFamily: 'Manrope_600SemiBold',
+                        fontSize: 12,
+                        color: palette.primary,
+                    }}
+                >
+                    open full entry →
                 </Text>
             </Pressable>
         </ScrollView>
     );
-
-    if (isModal) {
-        return (
-            <KeyboardAvoidingView
-                style={{ flex: 1, backgroundColor: palette.background }}
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            >
-                {content}
-            </KeyboardAvoidingView>
-        );
-    }
-
-    return content;
 }
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
+const PAGE_H = 20;
+
 const styles = StyleSheet.create({
     scrollContent: {
-        paddingHorizontal: Spacing.lg,
+        paddingHorizontal: PAGE_H,
+        paddingTop: 18,
         paddingBottom: Spacing.xl,
     },
-    scrollContentModal: {
-        paddingTop: Spacing.xl,
+    ratingBlock: {
+        marginTop: 26,
+        gap: 10,
     },
-    sheetHeader: {
-        alignItems: 'center',
-        marginBottom: Spacing.md,
-    },
-    handle: {
-        width: 36,
-        height: 4,
-        borderRadius: Radius.full,
-    },
-    fieldGroup: {
-        gap: Spacing.sm,
-    },
-    lockedChip: {
+    captionRow: {
         flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
+        alignItems: 'baseline',
+    },
+    hairline: {
+        height: StyleSheet.hairlineWidth,
+        marginTop: 20,
+    },
+    noteField: {
+        marginTop: 16,
+    },
+    postToBlock: {
+        marginTop: 18,
         gap: Spacing.sm,
-    },
-    selectedChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
-    },
-    textInput: {
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
-    },
-    dropdown: {
-        borderRadius: Radius.lg,
-        marginTop: Spacing.xs,
-        overflow: 'hidden',
-    },
-    dropdownRow: {
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-    },
-    ratingRow: {
-        alignItems: 'center',
-        paddingVertical: Spacing.sm,
     },
     chipRow: {
-        gap: Spacing.sm,
+        gap: 8,
         paddingRight: Spacing.sm,
     },
-    tableChip: {
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        borderRadius: Radius.full,
-        maxWidth: 160,
+    breakItDown: {
+        alignSelf: 'flex-start',
+        marginTop: 22,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    axesBlock: {
+        marginTop: 10,
+    },
+    axesHint: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 12,
+        lineHeight: 18,
+        marginTop: 6,
     },
     errorRow: {
         flexDirection: 'row',
         alignItems: 'center',
         flexWrap: 'wrap',
+        marginTop: Spacing.md,
     },
     ctaButton: {
-        height: 56,
+        marginTop: Spacing.xl,
+        height: 50,
         borderRadius: 9999,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    addDetailsLink: {
+    openFullEntry: {
+        marginTop: 14,
+        paddingVertical: 6,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: Spacing.md,
-        paddingVertical: Spacing.sm,
+        flexWrap: 'wrap',
     },
 });

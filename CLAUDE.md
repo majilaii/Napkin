@@ -1,5 +1,38 @@
 # CLAUDE.md — Napkin Implementation Guide
 
+## Design source of truth — READ BEFORE ANY UI WORK
+
+All Napkin UI must match the **Heirloom Journal** design system. The canonical bundle is:
+
+**`https://api.anthropic.com/v1/design/h/arCMwe2IOddzhHFBISX_Ng`**
+
+Fetch + extract:
+```
+curl -sL -o /tmp/design.tar.gz "https://api.anthropic.com/v1/design/h/arCMwe2IOddzhHFBISX_Ng"
+mkdir -p /tmp/design && tar -xzf /tmp/design.tar.gz -C /tmp/design
+```
+
+Before implementing ANY screen, component, or visual change:
+1. Read `napkin-design-system/project/README.md` (design bible — voice, palette, type, iconography, components, card archetypes).
+2. Read the relevant canvas in `napkin-design-system/project/ui_kits/napkin-app/` (e.g., `profile-canvas.jsx`, `feed-canvas.jsx`, `restaurant-canvas.jsx`, `logger-canvas.jsx`, `tables-canvas.jsx`, `crossroad.jsx`).
+3. Match visuals in React Native. Translate prototype HTML/JSX idioms — but spacing, color, type, radii, shadows must match.
+4. Tokens live in `napkin-app/constants/theme.ts` and must stay aligned with `napkin-design-system/project/colors_and_type.css`. Never hardcode colors/spacing/type in components.
+5. Copy assets (avatars, icons, photos) from `napkin-design-system/project/assets/` — never redraw.
+6. If the bundle is ambiguous, ask the user before implementing.
+
+**Non-negotiable brand rules** (see `project/README.md` for full detail):
+- Warm paper + italic Newsreader is the brand. Italic serif = brand voice (wordmark, Table names, restaurant names, rating numerals).
+- Never pure black. Use `#1c1c19`.
+- No 1px solid borders for sectioning. Structure = background shifts + spacing + ghosted warm rules.
+- Ambient shadows only (`0 8px 30px rgba(28,28,25,0.06)`). No hard drop shadows.
+- Verbs are lowercase past-tense: `noted` / `tried` / `pinned` / `voted` / `gathered`. Never "posted/shared."
+- Middle dot `·` separates metadata. Em dash `—` prefixes pull-quotes.
+- No emoji in chrome. Only as user-generated reactions.
+- Ionicons outline @ 24px. Fills avoided.
+- Max two accent colors per screen (terracotta / olive / amber — pick two).
+
+This rule applies to all agents (builder, code-reviewer, product-designer). Subagents MUST consult the bundle, not just `theme.ts`.
+
 ## What is Napkin?
 
 Napkin is **"Letterboxd for restaurants, with a private supper club."** A mobile app where you catalogue meals — alone or with close friends — inside private groups ("Tables"), and where the Table's accumulated taste compounds into a trust graph that makes recommendations actually useful. Public surfaces (profiles, lists, reviews) exist as an opt-in expression of self, not as the hero.
@@ -12,8 +45,8 @@ Napkin is **"Letterboxd for restaurants, with a private supper club."** A mobile
 
 ### Privacy and the public layer (doctrine locked 2026-04-17)
 
-- **Default: private.** Account-level privacy is the master switch. New users are private by default; public is explicit opt-in.
-- **Opt-in public surfaces:** once opted in, a user's profile, lists, and written reviews become world-browsable — Letterboxd-shaped. These surfaces fill gaps the Table can't (traveling, new cuisines, areas no one's been).
+- **Profiles are PUBLIC BY DEFAULT** (updated 2026-04-20). When a user has a profile, it's world-browsable — Letterboxd-shaped. Opt-out via settings toggle. Do NOT gate behind opt-in.
+- **Logs default private.** Surface on public profile only when log has real review content AND profile is public (the default).
 - **Tables are never public.** Whatever a user opts in to publicly does not include Table activity. The Table circle stays sacred regardless of account mode.
 - **Logs vs. lists have different defaults:**
   - **Logs** (rating + note): private by default. Only surface publicly if the account is opted-in AND the log has real review content.
@@ -26,12 +59,44 @@ Napkin is **"Letterboxd for restaurants, with a private supper club."** A mobile
 **External context** (Google Places rating) is shown on restaurant pages as a sibling signal — never merged with Napkin numbers, never computed as a cross-Table aggregate.
 
 **Rejected and superseded (do not re-open):**
-- Product A "Beli with trust" (public-default, broad discovery as hero) — rejected 2026-04-17 in favor of Product B.
-- Public-by-default for logs — rejected. Causes self-censorship; fills public pages with noise.
-- Per-log privacy toggles — rejected. Account-level master toggle only, Letterboxd precedent.
-- The older "Path A — no public layer ever" formulation is superseded. The door is now *opened but controlled*: public surfaces exist, opt-in, supporting-not-heroic.
+- Product A "Beli with trust" as the whole app (public-default, broad discovery as hero) — rejected. Tables remain the hero.
+- Public-by-default for logs — rejected. Causes self-censorship.
+- Per-log privacy toggles — rejected. Account-level toggle only.
+- Private-by-default profiles (old 2026-04-17 stance) — superseded 2026-04-20. Profiles now public-default with opt-out.
+- "Path A — no public layer ever" — superseded. Public surfaces exist; Tables still never public.
 
-If you feel a gravitational pull toward public-default or toward making discovery the hero, re-read this section. The doctrine has been re-litigated multiple times and the shape above is where it landed.
+## Core thesis: Individual-first. Tables emerge. (2026-04-20)
+
+Napkin is **individual + friends by default**; a Table **emerges naturally** when a crew keeps eating together. Not three IA forks — one timeline, four moments:
+
+1. **Day one — a lone ledger.** Solo, private-by-default journal. No tables, no groups, no share sheet. Retention = craft of journaling. This is the product for days/weeks/months.
+2. **First spark — tag a friend.** Log sheet gains one optional field: *who were you with?* Tagging Clara lets her see the entry in her feed. No room, no invite. Friends graph fills in; each friend carries a "meals together" count.
+3. **Emergence — the app names it.** Trigger: 3+ shared meals with the same set within ~3 months. A quiet **suggestion card in the feed** reads: *"You, Clara, Thomas & Julian keep eating together. Start a table?"* Refusable. Never nags twice.
+4. **Centerpiece — the table becomes a place.** Editorial masthead with name + members + stitched past-meal history. Rounds voting now has a home. Most users will have 1–2 tables.
+
+Rules:
+- **Do NOT frame solo as a deficient table.** Solo must be a complete, self-respecting product. Most users never form a table — fine.
+- **Do NOT gamify the arc.** No XP, no levels, no Duolingo HUD. Progression reads as life happening.
+- **Emergence card is rare and dismissible.** One trigger, soft copy, single primary CTA + "Maybe later." Never show twice for the same set in a short window.
+- **Design continuity across the arc.** Same components, same grammar. Table feed = solo feed + shared authorship + masthead.
+- **The hero is the arc itself**, not any single surface. Round is a niche side mode, NOT the hero. If this file still hints otherwise, treat as stale.
+
+Related code surfaces: `app/looking-back.tsx`, `app/seed-from-solo.tsx`, `components/tables/FoundedHero.tsx`, `components/tables/TableHeader.tsx`. Companion-tagging field not yet built; schema does not yet carry `companion_ids`.
+
+## Wishlist model
+
+Emergent overlap, not declared nomination.
+
+- **Personal wishlist:** Pinterest-style one-tap saves, private to user, cross-Table. Low-stakes hoarding.
+- **Table wishlist:** NOT directly editable. An algorithmic merge/ranking of members' personal wishlists. More members saving a restaurant → higher rank (e.g., "3 of you want to try Kono").
+- **No "Nominate" / unilateral add-to-Table action.** Omitted v1 to avoid spam and test whether emergent model is sufficient.
+- **Leaving a Table:** personal wishlist untouched; contributions to Table overlap simply drop out.
+- **UI:** Table wishlist emphasizes overlap count ("3 of you saved this") as primary ranking signal. Do NOT build an add-to-Table action.
+
+## User preferences — honor these
+
+- **Bottom nav stays Ionicons + labels.** Do NOT swap for the canvas text-only uppercase variant from `feed-canvas` / `profile-canvas`. 52×52 floating terracotta `+` with negative margin. User rejected text-only nav; icons are non-negotiable. When doing canvas-faithful passes, skip the bottom nav — leave `app/_layout.tsx::BottomNavBar` and `navStyles` alone. If asked to redesign nav later, confirm before replacing icons.
+- **Terse responses.** Don't narrate. Short updates, direct answers.
 
 ## Terminology
 

@@ -39,13 +39,16 @@ import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
 import { SoloShareCard } from '@/components/feed/SoloShareCard';
 import { JournalNoteCard } from '@/components/feed/JournalNoteCard';
-import { FilterChipRow, type FilterChip } from '@/components/feed/FilterChipRow';
 import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
+import { useRouter } from 'expo-router';
 import {
     TableHeader,
     EmptyChairInvitation,
     FoundedHero,
     TableSwitcherSheet,
+    ActiveGatherBanner,
+    SubsetCard,
+    TickRow,
 } from '@/components/tables';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -73,6 +76,7 @@ export default function TablesScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
+    const router = useRouter();
     const { user } = useAuth();
 
     // Real data
@@ -113,41 +117,8 @@ export default function TablesScreen() {
         [activityData],
     );
 
-    // ── Filter / group logic ───────────────────────────────────────────
-    const [activeFilter, setActiveFilter] = useState<string | null>(null);
+    // ── Grouping logic ─────────────────────────────────────────────────
     const { data: members } = useTableMembers(activeTable?.id);
-
-    const filterChips = useMemo<FilterChip[]>(() => {
-        const chips: FilterChip[] = [{ key: 'rounds', label: 'Rounds' }];
-        if (members) {
-            for (const m of members) {
-                chips.push({
-                    key: `user:${m.member_id}`,
-                    label: m.profiles?.display_name ?? 'Unknown',
-                });
-            }
-        }
-        return chips;
-    }, [members]);
-
-    const filteredItems = useMemo(() => {
-        if (!activeFilter) return items;
-        if (activeFilter === 'rounds')
-            return items.filter((i) => i.type === 'table_night');
-        if (activeFilter.startsWith('user:')) {
-            const userId = activeFilter.slice(5);
-            return items.filter((i) => {
-                if (i.type === 'solo_share')
-                    return (i as SoloShareActivity).user_id === userId;
-                if (i.type === 'table_night')
-                    return (i as TableNightActivity).participants?.some(
-                        (p) => p.user_id === userId,
-                    );
-                return false;
-            });
-        }
-        return items;
-    }, [items, activeFilter]);
 
     const activeRounds = useMemo(
         () =>
@@ -159,16 +130,21 @@ export default function TablesScreen() {
         [items],
     );
 
+    const totalRoundCount = useMemo(
+        () => items.filter((i) => i.type === 'table_night').length,
+        [items],
+    );
+
     const timelineItems = useMemo(
         () =>
-            filteredItems.filter(
+            items.filter(
                 (i) =>
                     !(
                         i.type === 'table_night' &&
                         (i as TableNightActivity).status === 'rating'
                     ),
             ),
-        [filteredItems],
+        [items],
     );
 
     const feedSections = useMemo<FeedSection[]>(() => {
@@ -249,39 +225,70 @@ export default function TablesScreen() {
                 tableName={tableName}
                 isPersonal={activeTable.is_personal ?? false}
                 memberCount={members?.length ?? 0}
+                roundCount={totalRoundCount}
                 memberNames={memberNames}
                 hasMultipleTables={hasMultipleTables}
                 onSwitcherPress={() => setShowTablePicker(true)}
                 palette={palette}
             />
 
-            {/* Activity | Wishlist segmented control */}
-            <View style={styles.segmentedControl}>
-                {(['activity', 'wishlist'] as const).map((tab) => {
-                    const isActive = activeTab === tab;
-                    return (
-                        <Pressable
-                            key={tab}
-                            onPress={() => setActiveTab(tab)}
+            {/* Activity | Wishlist — editorial section-label style */}
+            <View style={styles.tabRow}>
+                <View style={styles.tabRowInner}>
+                        {(['activity', 'wishlist'] as const).map((tab) => {
+                        const isActive = activeTab === tab;
+                        return (
+                            <Pressable
+                                key={tab}
+                                onPress={() => setActiveTab(tab)}
+                                style={styles.tabButton}
+                            >
+                                <Text
+                                    style={[
+                                        styles.tabLabel,
+                                        {
+                                            color: isActive
+                                                ? palette.text
+                                                : palette.textMuted,
+                                        },
+                                    ]}
+                                >
+                                    {tab === 'activity' ? 'Activity' : 'Wishlist'}
+                                </Text>
+                                <View
+                                    style={[
+                                        styles.tabUnderline,
+                                        {
+                                            backgroundColor: isActive
+                                                ? palette.primary
+                                                : 'transparent',
+                                        },
+                                    ]}
+                                />
+                            </Pressable>
+                        );
+                    })}
+                </View>
+                {!activeTable.is_personal && totalRoundCount > 0 && (
+                    <Pressable
+                        onPress={() =>
+                            router.push({
+                                pathname: '/looking-back',
+                                params: { tableId: activeTable.id },
+                            })
+                        }
+                        hitSlop={8}
+                    >
+                        <Text
                             style={[
-                                styles.segmentButton,
-                                isActive && { backgroundColor: palette.primary },
+                                styles.lookingBackText,
+                                { color: palette.primary },
                             ]}
                         >
-                            <Text
-                                style={[
-                                    Type.label,
-                                    {
-                                        color: isActive ? '#fff' : palette.textSecondary,
-                                        fontSize: 10,
-                                    },
-                                ]}
-                            >
-                                {tab === 'activity' ? 'Activity' : 'Wishlist'}
-                            </Text>
-                        </Pressable>
-                    );
-                })}
+                            LOOKING BACK {'\u2197'}
+                        </Text>
+                    </Pressable>
+                )}
             </View>
         </>
     );
@@ -319,22 +326,12 @@ export default function TablesScreen() {
                         <EmptyChairInvitation
                             palette={palette}
                             onGatherPress={() =>
-                                Alert.alert(
-                                    'Coming soon',
-                                    'Gathering a table will be available in a future update.',
-                                )
+                                router.push({
+                                    pathname: '/seed-from-solo',
+                                    params: { tableName: 'Your new table' },
+                                })
                             }
                             onDismiss={() => setInvitationDismissed(true)}
-                        />
-                    )}
-
-                    {/* Filter chips — activity tab only, when there are items */}
-                    {items.length > 0 && (
-                        <FilterChipRow
-                            chips={filterChips}
-                            activeKey={activeFilter}
-                            onSelect={setActiveFilter}
-                            palette={palette}
                         />
                     )}
 
@@ -350,6 +347,12 @@ export default function TablesScreen() {
                             tableName={tableName}
                             foundedAt={activeTable.created_at}
                             palette={palette}
+                            onInvite={() =>
+                                Alert.alert(
+                                    'Coming soon',
+                                    'Inviting members will be available in a future update.',
+                                )
+                            }
                         />
                     ) : isEmpty && !isSoloOnly ? (
                         /* Empty personal table (or named table after filtering) */
@@ -383,38 +386,85 @@ export default function TablesScreen() {
                         </View>
                     ) : (
                         <View style={{ paddingTop: Spacing.sm }}>
-                            {/* Active rounds shelf */}
-                            {activeRounds.length > 0 && (
-                                <View
-                                    style={{
-                                        paddingHorizontal: Spacing.lg,
-                                        gap: Spacing.md,
-                                        marginBottom: Spacing.lg,
-                                    }}
-                                >
-                                    <Text
-                                        style={[
-                                            Type.label,
-                                            { color: palette.textMuted },
-                                        ]}
-                                    >
-                                        IN PROGRESS
-                                    </Text>
-                                    {activeRounds.map((item) => (
-                                        <TableNightCard
-                                            key={`active-${item.id}`}
-                                            item={item}
+                            {/* Active Gather banner — voting on where to eat next */}
+                            {activeRounds.length > 0 &&
+                                activeRounds.slice(0, 1).map((gatherItem) => {
+                                    const totalMembers = members?.length ?? 0;
+                                    const votedCount =
+                                        gatherItem.participants?.filter(
+                                            (p) => p.rating != null,
+                                        ).length ?? 0;
+                                    const when = new Date(
+                                        gatherItem.sort_date || gatherItem.created_at,
+                                    ).toLocaleDateString('en-US', {
+                                        weekday: 'short',
+                                    });
+                                    const leader =
+                                        gatherItem.restaurants?.name ?? 'In progress';
+                                    return (
+                                        <ActiveGatherBanner
+                                            key={`gather-${gatherItem.id}`}
+                                            when={`${when} \u00B7 live`}
+                                            leaderBy={`${
+                                                gatherItem.participants?.[0]?.profiles
+                                                    ?.display_name ?? 'Someone'
+                                            } leads`}
+                                            votedCount={votedCount}
+                                            totalCount={Math.max(
+                                                totalMembers,
+                                                gatherItem.participants?.length ?? 0,
+                                            )}
+                                            candidates={[
+                                                {
+                                                    name: leader,
+                                                    pct: 58,
+                                                    leading: true,
+                                                },
+                                                { name: 'Nearby pin', pct: 32 },
+                                                { name: 'Wishlist', pct: 10 },
+                                            ]}
+                                            onCastVote={() =>
+                                                router.push({
+                                                    pathname: '/table-night',
+                                                    params: { nightId: gatherItem.id },
+                                                })
+                                            }
                                             palette={palette}
-                                            tableId={activeTable?.id}
-                                            lastSeenAt={lastSeenAt ?? null}
                                         />
-                                    ))}
-                                </View>
-                            )}
+                                    );
+                                })}
+
+                            {/* Anniversary tick — yearly milestones */}
+                            {(() => {
+                                if (
+                                    !activeTable?.created_at ||
+                                    activeTable.is_personal
+                                ) {
+                                    return null;
+                                }
+                                const founded = new Date(activeTable.created_at);
+                                const now = new Date();
+                                const years =
+                                    now.getFullYear() - founded.getFullYear();
+                                if (years < 1) return null;
+                                return (
+                                    <TickRow
+                                        kind="anniversary"
+                                        what={`${years} year${
+                                            years === 1 ? '' : 's'
+                                        } at the table — `}
+                                        who="Looking back"
+                                        when={founded.toLocaleDateString('en-US', {
+                                            month: 'short',
+                                            day: 'numeric',
+                                        })}
+                                        palette={palette}
+                                    />
+                                );
+                            })()}
 
                             {/* Date-grouped timeline */}
-                            {feedSections.length > 0
-                                ? feedSections.map((section) => (
+                            {feedSections.map((section) => (
                                       <View
                                           key={section.label}
                                           style={{ marginBottom: Spacing.md }}
@@ -426,6 +476,90 @@ export default function TablesScreen() {
                                           <View style={styles.feedList}>
                                               {section.items.map((item) => {
                                                   if (item.type === 'table_night') {
+                                                      const tn = item as TableNightActivity;
+                                                      const participantCount =
+                                                          tn.participants?.length ?? 0;
+                                                      const totalMembers =
+                                                          members?.length ?? 0;
+                                                      const isSubset =
+                                                          !activeTable.is_personal &&
+                                                          totalMembers > 1 &&
+                                                          participantCount > 0 &&
+                                                          participantCount < totalMembers;
+                                                      if (isSubset) {
+                                                          const presentIds = new Set(
+                                                              tn.participants.map(
+                                                                  (p) => p.user_id,
+                                                              ),
+                                                          );
+                                                          const present =
+                                                              tn.participants.map(
+                                                                  (p) =>
+                                                                      p.profiles
+                                                                          ?.display_name ??
+                                                                      '?',
+                                                              );
+                                                          const missing =
+                                                              (members ?? [])
+                                                                  .filter(
+                                                                      (m) =>
+                                                                          !presentIds.has(
+                                                                              m.member_id,
+                                                                          ),
+                                                                  )
+                                                                  .map(
+                                                                      (m) =>
+                                                                          m.profiles
+                                                                              ?.display_name ??
+                                                                          '?',
+                                                                  );
+                                                          const d = new Date(
+                                                              tn.revealed_at ??
+                                                                  tn.created_at,
+                                                          ).toLocaleDateString(
+                                                              'en-GB',
+                                                              {
+                                                                  weekday: 'short',
+                                                                  day: '2-digit',
+                                                                  month: 'short',
+                                                              },
+                                                          );
+                                                          return (
+                                                              <View
+                                                                  key={`subset-${tn.id}`}
+                                                                  style={{
+                                                                      marginHorizontal: 22,
+                                                                      marginBottom: 20,
+                                                                  }}
+                                                              >
+                                                                  <SubsetCard
+                                                                      id={tn.id}
+                                                                      photoUrl={
+                                                                          tn.restaurants
+                                                                              ?.photo_url ??
+                                                                          null
+                                                                      }
+                                                                      restaurantName={
+                                                                          tn.restaurants
+                                                                              ?.name ??
+                                                                          'Unknown'
+                                                                      }
+                                                                      subLabel={
+                                                                          tn.restaurants
+                                                                              ?.city ??
+                                                                          undefined
+                                                                      }
+                                                                      date={d}
+                                                                      present={present}
+                                                                      missing={missing}
+                                                                      averageRating={
+                                                                          tn.average_rating
+                                                                      }
+                                                                      palette={palette}
+                                                                  />
+                                                              </View>
+                                                          );
+                                                      }
                                                       return (
                                                           <TableNightCard
                                                               key={`tn-${item.id}`}
@@ -460,28 +594,7 @@ export default function TablesScreen() {
                                               })}
                                           </View>
                                       </View>
-                                  ))
-                                : activeFilter && (
-                                      <View
-                                          style={{
-                                              padding: Spacing.xl,
-                                              alignItems: 'center',
-                                              marginTop: Spacing.lg,
-                                          }}
-                                      >
-                                          <Text
-                                              style={[
-                                                  Type.body,
-                                                  {
-                                                      color: palette.textMuted,
-                                                      textAlign: 'center',
-                                                  },
-                                              ]}
-                                          >
-                                              No entries match this filter.
-                                          </Text>
-                                      </View>
-                                  )}
+                                  ))}
                         </View>
                     )}
                 </ScrollView>
@@ -498,10 +611,10 @@ export default function TablesScreen() {
                 liveRoundTableIds={liveRoundTableIds}
                 onGatherNew={() => {
                     setShowTablePicker(false);
-                    Alert.alert(
-                        'Coming soon',
-                        'Gathering a table will be available in a future update.',
-                    );
+                    router.push({
+                        pathname: '/seed-from-solo',
+                        params: { tableName: 'Your new table' },
+                    });
                 }}
             />
         </View>
@@ -522,19 +635,44 @@ const styles = StyleSheet.create({
         paddingTop: Spacing.sm,
         gap: Spacing.xl + Spacing.md,
     },
-    segmentedControl: {
+    tabRow: {
         flexDirection: 'row',
-        marginHorizontal: Spacing.lg,
-        marginBottom: Spacing.sm,
-        borderRadius: 20,
-        backgroundColor: 'rgba(0,0,0,0.06)',
-        padding: 3,
-        gap: 2,
-    },
-    segmentButton: {
-        flex: 1,
-        paddingVertical: 6,
-        borderRadius: 17,
+        paddingHorizontal: 22,
+        paddingTop: Spacing.sm,
+        paddingBottom: Spacing.xs,
         alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    tabRowInner: {
+        flexDirection: 'row',
+        gap: Spacing.lg,
+    },
+    lookingBackText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 0.8,
+    },
+    tabButton: {
+        alignItems: 'flex-start',
+    },
+    tabLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+        paddingVertical: 4,
+    },
+    tabUnderline: {
+        height: 2,
+        alignSelf: 'stretch',
+        marginTop: 2,
+    },
+    sectionLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+        paddingTop: 14,
+        paddingBottom: 8,
     },
 });

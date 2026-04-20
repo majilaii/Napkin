@@ -1,12 +1,15 @@
 /**
- * LogVisitSheet — bottom sheet that appears when user taps "Log a visit".
+ * LogVisitSheet — 3-option menu sheet that appears after tapping the
+ * floating "Log" pill on a restaurant page.
+ *
+ * Canvas: napkin-design-system/project/ui_kits/napkin-app/logging-entry-canvas.html
+ * Section 2, variant ③ "Menu sheet — discrete choices" — expanded to three
+ * rows for our Round primitive.
  *
  * Options:
- *   - "Solo log" (always shown)
- *   - "Start a Round here" (only when hasSocialTable is true)
- *
- * Uses React Native Modal for the sheet overlay (no new dep; same pattern as
- * existing bottom sheets in this codebase).
+ *   ① Quick log          — ~10s: stars, optional line, done (FastLogSheet)
+ *   ② Write a review     — prose, photos, companions (/create-entry solo)
+ *   ③ Start a Round      — group rating event (shown only for social Tables)
  */
 import React from 'react';
 import {
@@ -20,7 +23,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 type Palette = typeof Colors.light;
@@ -28,24 +31,31 @@ type Palette = typeof Colors.light;
 interface Props {
     visible: boolean;
     onClose: () => void;
-    /** Fires after the sheet finishes dismissing (iOS only). Use this to chain follow-up sheets. */
     onDismiss?: () => void;
-    onSoloLog: () => void;
+    onQuickLog: () => void;
+    onWriteReview: () => void;
     onStartRound: () => void;
     showRoundOption: boolean;
+    restaurantName?: string;
 }
 
 export function LogVisitSheet({
     visible,
     onClose,
     onDismiss,
-    onSoloLog,
+    onQuickLog,
+    onWriteReview,
     onStartRound,
     showRoundOption,
+    restaurantName,
 }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
     const insets = useSafeAreaInsets();
+
+    const title = restaurantName
+        ? `Add ${restaurantName} to your ledger`
+        : 'Add to your ledger';
 
     return (
         <Modal
@@ -55,12 +65,10 @@ export function LogVisitSheet({
             onRequestClose={onClose}
             onDismiss={onDismiss}
         >
-            {/* Backdrop tap to dismiss */}
             <TouchableWithoutFeedback onPress={onClose}>
                 <View style={[styles.backdrop, { backgroundColor: palette.overlay }]} />
             </TouchableWithoutFeedback>
 
-            {/* Sheet */}
             <View
                 style={[
                     styles.sheet,
@@ -71,87 +79,177 @@ export function LogVisitSheet({
                     Shadow.ambient,
                 ]}
             >
-                {/* Handle bar */}
                 <View style={[styles.handle, { backgroundColor: palette.outlineVariant }]} />
 
                 <Text
                     style={[
-                        Type.headlineMedium,
-                        {
-                            color: palette.text,
-                            marginBottom: Spacing.lg,
-                            paddingHorizontal: Spacing.lg,
-                        },
+                        styles.caption,
+                        { color: palette.textMuted },
                     ]}
+                    numberOfLines={1}
                 >
-                    Log a visit
+                    {title}
                 </Text>
 
-                {/* Solo log */}
-                <Pressable
-                    onPress={onSoloLog}
-                    style={({ pressed }) => [
-                        styles.option,
-                        { backgroundColor: pressed ? palette.surfaceContainerLow : palette.card },
-                    ]}
-                >
-                    <View
-                        style={[
-                            styles.iconCircle,
-                            { backgroundColor: palette.primaryMuted },
-                        ]}
-                    >
-                        <Ionicons name="book-outline" size={20} color={palette.primary} />
-                    </View>
-                    <View style={styles.optionText}>
-                        <Text style={[Type.titleMedium, { color: palette.text }]}>
-                            Solo log
-                        </Text>
-                        <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
-                            Add to your personal diary
-                        </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
-                </Pressable>
+                {/* Quick log — primary (terracotta fill) */}
+                <PrimaryOption
+                    palette={palette}
+                    onPress={onQuickLog}
+                    glyph="star"
+                    title="Quick log"
+                    subtitle="Stars, a line, done. ~10 seconds."
+                />
 
-                {/* Start a Round */}
-                {showRoundOption && (
-                    <Pressable
+                {/* Write a review — secondary (journal-low fill) */}
+                <SecondaryOption
+                    palette={palette}
+                    onPress={onWriteReview}
+                    iconName="create-outline"
+                    title="Write a review"
+                    subtitle="Prose, photos, the full entry."
+                />
+
+                {/* Start a Round — tertiary (journal-low fill) */}
+                {showRoundOption ? (
+                    <SecondaryOption
+                        palette={palette}
                         onPress={onStartRound}
-                        style={({ pressed }) => [
-                            styles.option,
-                            {
-                                backgroundColor: pressed
-                                    ? palette.surfaceContainerLow
-                                    : palette.card,
-                            },
-                        ]}
-                    >
-                        <View
-                            style={[
-                                styles.iconCircle,
-                                { backgroundColor: palette.secondaryContainer },
-                            ]}
-                        >
-                            <Ionicons name="people-outline" size={20} color={palette.secondary} />
-                        </View>
-                        <View style={styles.optionText}>
-                            <Text style={[Type.titleMedium, { color: palette.text }]}>
-                                Start a Round here
-                            </Text>
-                            <Text
-                                style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}
-                            >
-                                Rate together with your Table
-                            </Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
-                    </Pressable>
-                )}
+                        iconName="people-outline"
+                        title="Start a Round"
+                        subtitle="Rate together with your Table."
+                    />
+                ) : null}
             </View>
         </Modal>
     );
 }
+
+function PrimaryOption({
+    palette,
+    onPress,
+    glyph,
+    title,
+    subtitle,
+}: {
+    palette: Palette;
+    onPress: () => void;
+    glyph: 'star';
+    title: string;
+    subtitle: string;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            style={({ pressed }) => [
+                optionStyles.row,
+                {
+                    backgroundColor: pressed ? palette.primaryContainer : palette.primary,
+                },
+            ]}
+        >
+            <Text
+                style={{
+                    fontSize: 22,
+                    color: '#f6ecd9',
+                    fontFamily: 'Manrope_400Regular',
+                }}
+            >
+                {glyph === 'star' ? '★' : ''}
+            </Text>
+            <View style={optionStyles.text}>
+                <Text
+                    style={{
+                        fontFamily: 'Newsreader_400Regular_Italic',
+                        fontSize: 17,
+                        color: '#f6ecd9',
+                        lineHeight: 20,
+                    }}
+                >
+                    {title}
+                </Text>
+                <Text
+                    style={{
+                        fontFamily: 'Manrope_500Medium',
+                        fontSize: 11,
+                        color: 'rgba(246, 236, 217, 0.82)',
+                        marginTop: 2,
+                    }}
+                >
+                    {subtitle}
+                </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="rgba(246, 236, 217, 0.75)" />
+        </Pressable>
+    );
+}
+
+function SecondaryOption({
+    palette,
+    onPress,
+    iconName,
+    title,
+    subtitle,
+}: {
+    palette: Palette;
+    onPress: () => void;
+    iconName: keyof typeof Ionicons.glyphMap;
+    title: string;
+    subtitle: string;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            style={({ pressed }) => [
+                optionStyles.row,
+                {
+                    backgroundColor: pressed
+                        ? palette.surfaceContainer
+                        : palette.surfaceContainerLow,
+                    marginTop: 10,
+                },
+            ]}
+        >
+            <Ionicons name={iconName} size={20} color={palette.primary} />
+            <View style={optionStyles.text}>
+                <Text
+                    style={{
+                        fontFamily: 'Newsreader_400Regular_Italic',
+                        fontSize: 17,
+                        color: palette.text,
+                        lineHeight: 20,
+                    }}
+                >
+                    {title}
+                </Text>
+                <Text
+                    style={{
+                        fontFamily: 'Manrope_500Medium',
+                        fontSize: 11,
+                        color: palette.textMuted,
+                        marginTop: 2,
+                    }}
+                >
+                    {subtitle}
+                </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
+        </Pressable>
+    );
+}
+
+const optionStyles = StyleSheet.create({
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+        padding: 16,
+        marginHorizontal: Spacing.lg,
+        borderRadius: Radius.md,
+    },
+    text: {
+        flex: 1,
+    },
+});
 
 const styles = StyleSheet.create({
     backdrop: {
@@ -173,21 +271,12 @@ const styles = StyleSheet.create({
         alignSelf: 'center',
         marginBottom: Spacing.md,
     },
-    option: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        gap: Spacing.md,
-    },
-    iconCircle: {
-        width: 44,
-        height: 44,
-        borderRadius: Radius.full,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    optionText: {
-        flex: 1,
+    caption: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+        letterSpacing: 1.4,
+        textTransform: 'uppercase',
+        marginHorizontal: Spacing.lg,
+        marginBottom: Spacing.md,
     },
 });

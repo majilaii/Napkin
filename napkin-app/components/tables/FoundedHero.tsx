@@ -1,21 +1,23 @@
 /**
  * FoundedHero — "Founded today" centered block for brand-new named tables.
  *
- * Shown when activeTable is non-personal and items.length === 0.
- * Canvas: WF3 "Founded, just you" — centered date + invitation text.
- * Purely presentational.
+ * Canvas WF3: centered founding date + invitation text + a
+ * "Round the table" member block with a "Pull up a chair" invite CTA.
  */
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Colors, Spacing, Type } from '@/constants/theme';
+import { Avatar } from '@/components/feed/Avatar';
 
 type Palette = typeof Colors.light;
 
 interface FoundedHeroProps {
     tableName: string;
     foundedAt: string;
+    founderName?: string;
     palette: Palette;
+    onInvite?: () => void;
 }
 
 function formatFoundedDate(dateStr: string): string {
@@ -27,31 +29,70 @@ function formatFoundedDate(dateStr: string): string {
     });
 }
 
-export function FoundedHero({ tableName, foundedAt, palette }: FoundedHeroProps) {
+export function FoundedHero({
+    tableName,
+    foundedAt,
+    founderName = 'You',
+    palette,
+    onInvite,
+}: FoundedHeroProps) {
     const dateLabel = formatFoundedDate(foundedAt);
 
     return (
-        <View style={styles.container}>
-            {/* Rule */}
-            <View style={[styles.rule, { backgroundColor: palette.outlineVariant }]} />
+        <View>
+            <View style={styles.container}>
+                <View style={[styles.rule, { backgroundColor: palette.outlineVariant }]} />
+                <Text style={[styles.kicker, { color: palette.primary }]}>
+                    {`Founded ${dateLabel} \u00B7 by ${founderName.toLowerCase()}`}
+                </Text>
+                <Text style={[styles.tableName, { color: palette.text }]} numberOfLines={2}>
+                    {tableName}
+                </Text>
+                <Text style={[Type.bodySmall, styles.body, { color: palette.textSecondary }]}>
+                    The table is set. Log a meal or start a Round to begin your shared history.
+                </Text>
+                <View style={[styles.rule, { backgroundColor: palette.outlineVariant }]} />
+            </View>
 
-            {/* Date kicker — terracotta (ceremonial) */}
-            <Text style={[styles.kicker, { color: palette.primary }]}>
-                {`Founded ${dateLabel} \u00B7 by you`}
+            {/* Round the table — founder block + invite */}
+            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                ROUND THE TABLE
             </Text>
-
-            {/* Table name */}
-            <Text style={[styles.tableName, { color: palette.text }]} numberOfLines={2}>
-                {tableName}
-            </Text>
-
-            {/* Invitation copy */}
-            <Text style={[Type.bodySmall, styles.body, { color: palette.textSecondary }]}>
-                The table is set. Log a meal or start a Round to begin your shared history.
-            </Text>
-
-            {/* Rule */}
-            <View style={[styles.rule, { backgroundColor: palette.outlineVariant }]} />
+            <View
+                style={[
+                    styles.founderRow,
+                    {
+                        backgroundColor: palette.surfaceNote,
+                        borderColor: palette.outlineVariant,
+                    },
+                ]}
+            >
+                <Avatar name={founderName} url={null} size={40} palette={palette} />
+                <View style={{ flex: 1 }}>
+                    <Text style={[styles.founderName, { color: palette.text }]}>
+                        {founderName}
+                    </Text>
+                    <Text style={[styles.founderSub, { color: palette.textMuted }]}>
+                        Founder
+                    </Text>
+                </View>
+                {onInvite ? (
+                    <Pressable
+                        onPress={onInvite}
+                        style={({ pressed }) => [
+                            styles.inviteBtn,
+                            {
+                                backgroundColor: palette.primary,
+                                opacity: pressed ? 0.88 : 1,
+                            },
+                        ]}
+                    >
+                        <Text style={[styles.inviteText, { color: palette.background }]}>
+                            PULL UP A CHAIR
+                        </Text>
+                    </Pressable>
+                ) : null}
+            </View>
         </View>
     );
 }
@@ -86,5 +127,42 @@ const styles = StyleSheet.create({
         marginTop: Spacing.sm,
         fontStyle: 'italic',
         lineHeight: 20,
+    },
+    sectionLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 0.8,
+        marginHorizontal: 22,
+        marginTop: Spacing.sm,
+        marginBottom: Spacing.sm,
+    },
+    founderRow: {
+        marginHorizontal: 22,
+        padding: 14,
+        borderRadius: 12,
+        borderWidth: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: Spacing.lg,
+    },
+    founderName: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 14,
+    },
+    founderSub: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        marginTop: 2,
+    },
+    inviteBtn: {
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 999,
+    },
+    inviteText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10,
+        letterSpacing: 0.8,
     },
 });

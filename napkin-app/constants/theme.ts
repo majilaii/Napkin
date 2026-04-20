@@ -24,20 +24,42 @@ export const Colors = {
     surfaceContainerHigh: '#efe2ce', // deeper cream (overlap bubbles)
     card: '#fffdf8',                 // Layer 3: The Note (warm white)
     cardElevated: '#fffdf8',
+    surfaceNote: '#fffdf8',          // alias: --surface-note
+    surfaceJournal: '#f6ecdb',       // alias: --surface-journal
+    surfaceJournalLow: '#faf0e0',    // alias: --surface-journal-low
+    surfaceJournalHi: '#efe2ce',     // alias: --surface-journal-hi
 
     // Text
     text: '#1c1c19',                 // on-surface (never pure black)
     textSecondary: '#5c614d',        // olive secondary
     textMuted: '#8a726c',            // warm taupe metadata
+    textInverse: '#ffffff',
 
-    // Brand
+    // Brand — terracotta family
     primary: '#a03f28',              // terracotta
-    primaryContainer: '#c0573e',     // lighter terracotta (for gradients)
+    primaryContainer: '#c0573e',     // lighter terracotta
     primaryMuted: 'rgba(160, 63, 40, 0.08)',
+    terracottaWarm: '#c0573e',       // --terracotta-warm
+    terracottaDeep: '#7c2d12',       // --terracotta-deep
+    terracottaInk: '#9a3412',        // --terracotta-ink (nib-stroke)
+    terracottaScrim: 'rgba(160, 63, 40, 0.05)',
+    terracottaBorder: 'rgba(160, 63, 40, 0.10)',
+
+    // Secondary — olive
     secondary: '#5c614d',            // olive
     secondaryContainer: '#e0e5cc',   // olive cream
+    oliveCream: '#e0e5cc',           // alias
+
+    // Tertiary — amber family (ratings + chips)
     tertiary: '#825516',             // amber
-    tertiaryFixed: '#ffddb9',        // amber chip bg
+    tertiaryFixed: '#ffddb9',        // amber-cream chip bg
+    amberInk: '#663e00',             // deep amber text
+    amberOnCream: '#2b1700',         // near-black on amber
+    amberBright: '#d97706',          // inline rating numerals
+    amberChipHi: '#ffedd5',          // warmer amber
+
+    // Sanguine — Round / visit-count accent
+    sanguine: '#8a2a1a',
 
     // Functional
     star: '#b8842a',                 // amber for inline stars (brighter fill)
@@ -53,9 +75,10 @@ export const Colors = {
     outlineVariant: '#ddc0ba',
     divider: 'rgba(221, 192, 186, 0.15)', // warm rule (pale rose)
     dividerSoft: 'rgba(221, 192, 186, 0.30)', // softer variant (feed row dividers)
+    ruleWarmNib: 'rgba(221, 192, 186, 1)',  // full pale-rose rule
     overlay: 'rgba(28, 28, 25, 0.4)',
     border: 'rgba(221, 192, 186, 0.15)',   // alias for compat
-    ruleInkSoft: 'rgba(160, 63, 40, 0.18)',  // soft terracotta rule lines
+    ruleInkSoft: 'rgba(138, 114, 108, 0.25)',  // --rule-ink-soft — warm taupe, field underline resting
   },
   dark: {
     background: '#1a1816',
@@ -65,18 +88,37 @@ export const Colors = {
     surfaceContainerHigh: '#2a2724',
     card: '#2a2724',
     cardElevated: '#302c28',
+    surfaceNote: '#2a2724',
+    surfaceJournal: '#252220',
+    surfaceJournalLow: '#201e1c',
+    surfaceJournalHi: '#2a2724',
 
     text: '#f3f0eb',
     textSecondary: '#c4c9b1',
     textMuted: '#a09888',
+    textInverse: '#1a1816',
 
     primary: '#ffb4a3',
     primaryContainer: '#812914',
     primaryMuted: 'rgba(255, 180, 163, 0.12)',
+    terracottaWarm: '#d4766a',
+    terracottaDeep: '#ff7a5a',
+    terracottaInk: '#ff967d',
+    terracottaScrim: 'rgba(255, 180, 163, 0.06)',
+    terracottaBorder: 'rgba(255, 180, 163, 0.12)',
+
     secondary: '#c4c9b1',
     secondaryContainer: '#444937',
+    oliveCream: '#444937',
+
     tertiary: '#f8bb73',
     tertiaryFixed: '#663e00',
+    amberInk: '#ffd9a8',
+    amberOnCream: '#ffd9a8',
+    amberBright: '#ffb547',
+    amberChipHi: '#7a4a12',
+
+    sanguine: '#d4766a',
 
     star: '#f8bb73',
     success: '#c4c9b1',
@@ -90,6 +132,7 @@ export const Colors = {
     outlineVariant: '#56423d',
     divider: 'rgba(86, 66, 61, 0.3)',
     dividerSoft: 'rgba(86, 66, 61, 0.45)',
+    ruleWarmNib: 'rgba(86, 66, 61, 1)',
     overlay: 'rgba(0, 0, 0, 0.6)',
     border: 'rgba(86, 66, 61, 0.3)',
     ruleInkSoft: 'rgba(200, 140, 120, 0.20)',  // soft terracotta rule lines (dark)
@@ -106,11 +149,12 @@ export const Spacing = {
 } as const;
 
 export const Radius = {
-  sm: 4,     // scrapbook clips
+  sm: 4,     // scrapbook clips, chips
   md: 12,
-  lg: 16,
-  xl: 24,    // cards
-  xxl: 32,   // hero cards
+  lg: 16,    // text cards, notes
+  xl: 24,
+  xxl: 28,   // feed hero cards
+  xxxl: 32,  // large hero bubbles
   full: 9999,
 } as const;
 
@@ -122,6 +166,30 @@ export const Shadow = {
     shadowOpacity: 0.06,
     shadowRadius: 30,
     elevation: 3,
+  },
+  /** --shadow-note — for white notes */
+  note: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.03,
+    shadowRadius: 30,
+    elevation: 2,
+  },
+  /** --shadow-clip — photo clip */
+  clip: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  /** --shadow-nav — bottom nav blur */
+  nav: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.04,
+    shadowRadius: 30,
+    elevation: 4,
   },
   subtle: {
     shadowColor: '#1c1c19',

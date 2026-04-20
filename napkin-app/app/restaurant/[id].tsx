@@ -1,5 +1,5 @@
 /**
- * Restaurant detail page — v2.
+ * Restaurant detail page — V1 "Dossier" (Heirloom UI kit).
  *
  * Supports three arrival modes:
  *   1. Persisted restaurant — id is a Napkin UUID (arrives from feed / round / entry detail)
@@ -17,15 +17,15 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
     ActivityIndicator,
+    Alert,
     Platform,
-    Pressable,
     ScrollView,
     StyleSheet,
     Text,
     View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -33,6 +33,9 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
+import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
+import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
+import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import {
     useRestaurantPage,
     restaurantFromPlace,
@@ -40,11 +43,13 @@ import {
 } from '@/hooks/restaurants/useRestaurantPage';
 import {
     RestaurantHero,
-    RestaurantNumbers,
-    WhoBeenRow,
-    RatingDistribution,
+    RestaurantTabs,
+    type RestaurantTab,
+    TableRatingBlock,
+    VoiceCard,
+    FloatingLogButton,
     LogVisitSheet,
-    VisitListRow,
+    CommunityTab,
 } from '@/components/restaurants';
 import { FastLogSheet } from '@/components/logging';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
@@ -54,10 +59,6 @@ type Palette = typeof Colors.light;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-/**
- * Converts a Places payload shape (from search nav params) into a
- * RestaurantPayload for WishlistHeartButton.
- */
 function placePayloadToWishlistPayload(place: any): RestaurantPayload {
     return {
         external_id: place.id ?? place.external_id ?? place.placeId ?? '',
@@ -78,10 +79,6 @@ function placePayloadToWishlistPayload(place: any): RestaurantPayload {
     };
 }
 
-/**
- * Synthesise a partial RestaurantPageRestaurant from a parsed Places payload.
- * Used to render the hero immediately for ghosts.
- */
 function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
     return restaurantFromPlace({
         external_id: payload.id ?? payload.external_id ?? payload.placeId ?? '',
@@ -97,13 +94,13 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
     });
 }
 
-// ── Screen ─────────────────────────────────────────────────────────────────────
+// Approximate RN pixel width of ~22 (canvas) with a Spacing token (Spacing.lg = 24).
+const PAGE_H = 22;
 
 export default function RestaurantScreen() {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
     const router = useRouter();
-    const insets = useSafeAreaInsets();
     const { user } = useAuth();
 
     const { id, tableId, placeId, placePayload } = useLocalSearchParams<{
@@ -123,8 +120,6 @@ export default function RestaurantScreen() {
         }
     }, [placePayload]);
 
-    // ── Determine the restaurant ID to fetch ─────────────────────────────────
-    // For ghost arrivals, the `id` param IS the Google Place ID; the server resolves by external_id.
     const restaurantId = id ?? null;
     const isGhost = !!placeId;
 
@@ -135,18 +130,15 @@ export default function RestaurantScreen() {
     );
     const isActuallyLoading = isLoading && fetchStatus === 'fetching';
 
-    // Tables — to determine if user has social Tables
     const { data: tables } = useTables(user?.id);
     const hasSocialTable = useMemo(
         () => (tables ?? []).some((m) => !m.tables.is_personal),
         [tables],
     );
 
-    // Warm wishlist cache for heart button
     useMyWishlist(user?.id);
 
     // ── Ghost synthesis ───────────────────────────────────────────────────────
-    // Use synthesised data when server hasn't returned a restaurant yet
     const ghostRestaurant: RestaurantPageRestaurant | null = useMemo(() => {
         if (!isGhost) return null;
         if (parsedPlacePayload) return ghostRestaurantFromPayload(parsedPlacePayload);
@@ -158,29 +150,22 @@ export default function RestaurantScreen() {
         return placePayloadToWishlistPayload(parsedPlacePayload);
     }, [isGhost, parsedPlacePayload]);
 
-    // Resolved restaurant — prefer server data, fall back to ghost synthesis
     const restaurant: RestaurantPageRestaurant | null =
         pageData?.restaurant ?? ghostRestaurant ?? null;
 
     // ── Log visit sheet state ─────────────────────────────────────────────────
     const [showLogSheet, setShowLogSheet] = useState(false);
     const [showFastLogSheet, setShowFastLogSheet] = useState(false);
-    // Defer opening FastLogSheet until LogVisitSheet finishes dismissing (iOS flicker guard)
     const [pendingFastLog, setPendingFastLog] = useState(false);
 
     const qc = useQueryClient();
 
-    // After fast-log submit, invalidate restaurant page so hero numbers refresh
     const handleFastLogSubmitted = useCallback((_entryId: string) => {
         if (restaurantId) {
             qc.invalidateQueries({ queryKey: queryKeys.restaurants.page(restaurantId, tableId ?? undefined) });
         }
     }, [qc, restaurantId, tableId]);
 
-    // Build navigation params for create-entry, carrying the restaurant context.
-    // We always pass placePayload when we have a restaurant object in hand — this avoids
-    // a redundant fetch in create-entry. restaurantId is only passed as a fallback when
-    // we have the UUID but the full payload hasn't arrived yet (edge case).
     const createEntryParams = useMemo(() => {
         const r = pageData?.restaurant ?? ghostRestaurant;
         if (r) {
@@ -198,22 +183,16 @@ export default function RestaurantScreen() {
                 }),
             };
         }
-        // Fallback: server data not yet loaded; pass the Napkin id so create-entry
-        // can fetch it independently (only reached in the persisted + slow-network case).
         if (!isGhost && restaurantId) {
             return { restaurantId };
         }
-        // Ghost without any payload: pass the raw placePayload param through
         if (placePayload) {
             return { placePayload };
         }
         return {};
     }, [pageData?.restaurant, ghostRestaurant, isGhost, restaurantId, placePayload]);
 
-    const handleSoloLog = () => {
-        // iOS: Modal.onDismiss is supported — defer open until LogVisitSheet
-        //      finishes dismissing to avoid two-modal flicker.
-        // Android: onDismiss is not implemented on Modal; swap in-place.
+    const handleQuickLog = () => {
         if (Platform.OS === 'ios') {
             setPendingFastLog(true);
             setShowLogSheet(false);
@@ -228,6 +207,14 @@ export default function RestaurantScreen() {
             setPendingFastLog(false);
             setShowFastLogSheet(true);
         }
+    };
+
+    const handleWriteReview = () => {
+        setShowLogSheet(false);
+        router.push({
+            pathname: '/create-entry',
+            params: { ...createEntryParams, mode: 'solo' },
+        });
     };
 
     const handleStartRound = () => {
@@ -253,7 +240,10 @@ export default function RestaurantScreen() {
         }
     };
 
-    // ── Distribution ratings ──────────────────────────────────────────────────
+    // ── Tab state ──────────────────────────────────────────────────────────────
+    const [activeTab, setActiveTab] = useState<RestaurantTab>('our-table');
+
+    // ── Derived data ──────────────────────────────────────────────────────────
     const allRatings = useMemo(
         () =>
             (pageData?.visits ?? [])
@@ -261,148 +251,266 @@ export default function RestaurantScreen() {
                 .filter((r): r is number => r != null),
         [pageData?.visits],
     );
-    const showDistribution = allRatings.length >= 3;
+    const whosBeenCount = pageData?.whos_been.length ?? 0;
+    const loggedBefore = (pageData?.personal.visit_count ?? 0) > 0;
+
+    // ── Wishlist wiring for the hero bookmark ─────────────────────────────
+    const persistedRestaurantId =
+        pageData?.restaurant?.id ?? (isGhost ? undefined : restaurantId ?? undefined);
+    const bookmarked = useIsWishlisted(persistedRestaurantId, user?.id);
+    const wishlistAdd = useWishlistAdd(user?.id);
+    const wishlistRemove = useWishlistRemove(user?.id);
+    const bookmarkDisabled = !user?.id || !restaurant;
+
+    const handleBookmarkPress = useCallback(() => {
+        if (bookmarkDisabled || !restaurant) return;
+        if (bookmarked) {
+            const rid = persistedRestaurantId ?? wishlistAdd.data?.restaurant_id;
+            if (!rid) return;
+            wishlistRemove.mutate(rid, {
+                onError: () => Alert.alert("Couldn't remove", 'Try again'),
+            });
+        } else {
+            const input = persistedRestaurantId
+                ? { restaurant_id: persistedRestaurantId }
+                : { restaurant: ghostWishlistPayload ?? placePayloadToWishlistPayload({
+                    id: restaurant.external_id ?? '',
+                    name: restaurant.name,
+                    formattedAddress: restaurant.address,
+                    city: restaurant.city,
+                    country: restaurant.country,
+                    cuisine: restaurant.cuisine,
+                    priceLevel: restaurant.price_level,
+                    googleRating: restaurant.google_rating,
+                    googleRatingCount: restaurant.google_rating_count,
+                }) };
+            wishlistAdd.mutate(input as any, {
+                onError: () => Alert.alert("Couldn't save", 'Try again'),
+            });
+        }
+    }, [
+        bookmarkDisabled,
+        bookmarked,
+        persistedRestaurantId,
+        wishlistAdd,
+        wishlistRemove,
+        ghostWishlistPayload,
+        restaurant,
+    ]);
+
+    // ── Info tab content ─────────────────────────────────────────────────────
+    const infoRows = useMemo(() => {
+        if (!restaurant) return [] as { label: string; value: string }[];
+        const rows: { label: string; value: string }[] = [];
+        const street = [restaurant.address, restaurant.city].filter(Boolean).join(', ');
+        if (street) rows.push({ label: 'Address', value: street });
+        if (restaurant.cuisine) rows.push({ label: 'Cuisine', value: restaurant.cuisine });
+        if (restaurant.price_level != null) {
+            rows.push({ label: 'Price', value: '$'.repeat(Math.max(1, Math.min(4, restaurant.price_level))) });
+        }
+        if (restaurant.google_rating != null) {
+            const count = restaurant.google_rating_count
+                ? ` · ${restaurant.google_rating_count.toLocaleString()} ratings`
+                : '';
+            rows.push({
+                label: 'Google',
+                value: `${restaurant.google_rating.toFixed(1)}${count}`,
+            });
+        }
+        return rows;
+    }, [restaurant]);
 
     // ── Render ────────────────────────────────────────────────────────────────
-
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
+            <StatusBar style="light" />
             <View style={[styles.container, { backgroundColor: palette.background }]}>
-                {/* Top bar */}
-                <View style={[styles.topBar, { paddingTop: insets.top + Spacing.sm }]}>
-                    <Pressable onPress={() => router.back()} hitSlop={12}>
-                        <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
-                    </Pressable>
-                    {/* Share placeholder — future */}
-                    <View style={{ width: 40 }} />
-                </View>
-
                 <ScrollView
-                    contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xxl }}
+                    contentContainerStyle={{ paddingBottom: 120 }}
                     showsVerticalScrollIndicator={false}
                 >
                     {/* Loading state — shown only when we have nothing to display yet */}
-                    {isActuallyLoading && !restaurant && (
+                    {isActuallyLoading && !restaurant ? (
                         <View style={styles.loadingCenter}>
                             <ActivityIndicator color={palette.primary} />
                         </View>
-                    )}
+                    ) : null}
 
-                    {/* Hero band */}
-                    {restaurant && (
+                    {/* Hero */}
+                    {restaurant ? (
                         <RestaurantHero
                             restaurant={restaurant}
-                            userId={user?.id}
-                            restaurantPayloadForGhost={ghostWishlistPayload ?? undefined}
+                            onBack={() => router.back()}
+                            bookmarked={bookmarked}
+                            onBookmarkPress={bookmarkDisabled ? undefined : handleBookmarkPress}
                         />
-                    )}
+                    ) : null}
 
-                    {/* Numbers band */}
-                    {pageData && restaurant && (
-                        <RestaurantNumbers
-                            personal={pageData.personal}
-                            tableChip={pageData.table_chip}
-                            googleRating={restaurant.google_rating}
-                            googleRatingCount={restaurant.google_rating_count}
-                        />
-                    )}
+                    {/* Tabs */}
+                    {restaurant ? (
+                        <RestaurantTabs active={activeTab} onChange={setActiveTab} />
+                    ) : null}
 
-                    {/* Ghost: only hero + Google chip */}
-                    {isGhost && !pageData && ghostRestaurant && (
-                        <RestaurantNumbers
-                            personal={{ average: null, visit_count: 0 }}
-                            tableChip={null}
-                            googleRating={ghostRestaurant.google_rating}
-                            googleRatingCount={ghostRestaurant.google_rating_count}
-                        />
-                    )}
-
-                    {/* Log CTA */}
-                    {restaurant && (
-                        <View style={styles.ctaSection}>
-                            <Pressable
-                                onPress={() => setShowLogSheet(true)}
-                                style={({ pressed }) => [
-                                    styles.logButton,
-                                    {
-                                        backgroundColor: pressed
-                                            ? palette.primaryContainer
-                                            : palette.primary,
-                                    },
-                                ]}
-                            >
-                                <Text style={[Type.titleMedium, { color: '#fff' }]}>
-                                    Log a visit
-                                </Text>
-                            </Pressable>
-                        </View>
-                    )}
-
-                    {/* Secondary loading for data-dependent sections */}
-                    {isActuallyLoading && restaurant && (
-                        <View style={styles.sectionSpinner}>
-                            <ActivityIndicator size="small" color={palette.textMuted} />
-                        </View>
-                    )}
-
-                    {/* Error degraded state — still shows hero + CTA above */}
-                    {error && (
-                        <View style={styles.section}>
-                            <Text style={[Type.bodySmall, { color: palette.textMuted, fontStyle: 'italic' }]}>
-                                Could not load visit history.
-                            </Text>
-                        </View>
-                    )}
-
-                    {/* Rating distribution */}
-                    {showDistribution && pageData && (
-                        <RatingDistribution ratings={allRatings} />
-                    )}
-
-                    {/* Who's been */}
-                    {pageData && pageData.whos_been.length > 0 && (
-                        <WhoBeenRow users={pageData.whos_been} />
-                    )}
-
-                    {/* Visits feed */}
-                    {pageData && pageData.visits.length > 0 && (
+                    {/* Error degraded state */}
+                    {error ? (
                         <View style={styles.section}>
                             <Text
                                 style={[
-                                    Type.label,
-                                    { color: palette.textSecondary, marginBottom: Spacing.md },
+                                    Type.bodySmall,
+                                    { color: palette.textMuted, fontStyle: 'italic' },
                                 ]}
                             >
-                                Visits
+                                Could not load visit history.
                             </Text>
-                            <View style={{ gap: Spacing.sm }}>
-                                {pageData.visits.map((v) => (
-                                    <VisitListRow
-                                        key={`${v.kind}-${v.id}`}
-                                        visit={v as Visit}
-                                        onPress={() => handleVisitPress(v)}
-                                    />
-                                ))}
-                            </View>
                         </View>
-                    )}
+                    ) : null}
+
+                    {/* Our Table */}
+                    {restaurant && activeTab === 'our-table' ? (
+                        <View>
+                            {pageData ? (
+                                <TableRatingBlock
+                                    personal={pageData.personal}
+                                    tableChip={pageData.table_chip}
+                                    whosBeenCount={whosBeenCount}
+                                    ratings={allRatings}
+                                />
+                            ) : isGhost ? null : (
+                                <View style={styles.sectionSpinner}>
+                                    <ActivityIndicator size="small" color={palette.textMuted} />
+                                </View>
+                            )}
+
+                            {pageData && pageData.visits.length > 0 ? (
+                                <View style={styles.voicesSection}>
+                                    <Text
+                                        style={[
+                                            styles.sectionLabel,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        Voices
+                                    </Text>
+                                    <View style={{ gap: 18 }}>
+                                        {pageData.visits.slice(0, 8).map((v) => (
+                                            <VoiceCard
+                                                key={`${v.kind}-${v.id}`}
+                                                voice={{
+                                                    avatarUrl: v.avatar_url,
+                                                    displayName:
+                                                        v.user_display_names[0] ?? 'Tablemate',
+                                                    rating: v.rating,
+                                                    date: v.date,
+                                                    note: v.note,
+                                                }}
+                                                onPress={() => handleVisitPress(v)}
+                                            />
+                                        ))}
+                                    </View>
+                                </View>
+                            ) : pageData ? (
+                                <View style={styles.section}>
+                                    <Text
+                                        style={[
+                                            Type.bodySmall,
+                                            {
+                                                color: palette.textMuted,
+                                                fontFamily: 'Newsreader_400Regular_Italic',
+                                                fontSize: 14,
+                                            },
+                                        ]}
+                                    >
+                                        Nobody at your tables has been yet.
+                                    </Text>
+                                </View>
+                            ) : null}
+                        </View>
+                    ) : null}
+
+                    {/* Everyone — V4c structure, Google as external sibling signal */}
+                    {restaurant && activeTab === 'critics' ? (
+                        <CommunityTab
+                            googleRating={restaurant.google_rating}
+                            googleRatingCount={restaurant.google_rating_count}
+                        />
+                    ) : null}
+
+                    {/* Info */}
+                    {restaurant && activeTab === 'info' ? (
+                        <View style={styles.infoSection}>
+                            {infoRows.length === 0 ? (
+                                <Text
+                                    style={[
+                                        Type.bodySmall,
+                                        {
+                                            color: palette.textMuted,
+                                            fontFamily: 'Newsreader_400Regular_Italic',
+                                        },
+                                    ]}
+                                >
+                                    No practical info on file.
+                                </Text>
+                            ) : (
+                                infoRows.map((row, i) => (
+                                    <View
+                                        key={row.label}
+                                        style={[
+                                            styles.infoRow,
+                                            i < infoRows.length - 1 && {
+                                                borderBottomColor: palette.divider,
+                                                borderBottomWidth: StyleSheet.hairlineWidth,
+                                            },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.infoLabel,
+                                                { color: palette.textMuted },
+                                            ]}
+                                        >
+                                            {row.label}
+                                        </Text>
+                                        <Text
+                                            style={[
+                                                styles.infoValue,
+                                                { color: palette.text },
+                                            ]}
+                                            numberOfLines={2}
+                                        >
+                                            {row.value}
+                                        </Text>
+                                    </View>
+                                ))
+                            )}
+                        </View>
+                    ) : null}
                 </ScrollView>
 
-                {/* Log visit sheet — choose between solo and round */}
-                {restaurant && (
+                {/* Floating log pill */}
+                {restaurant ? (
+                    <FloatingLogButton
+                        loggedBefore={loggedBefore}
+                        onPress={() => setShowLogSheet(true)}
+                    />
+                ) : null}
+
+                {/* Log visit sheet (Quick log / Write a review / Start a Round) */}
+                {restaurant ? (
                     <LogVisitSheet
                         visible={showLogSheet}
                         onClose={() => setShowLogSheet(false)}
                         onDismiss={handleLogSheetDismiss}
-                        onSoloLog={handleSoloLog}
+                        onQuickLog={handleQuickLog}
+                        onWriteReview={handleWriteReview}
                         onStartRound={handleStartRound}
                         showRoundOption={hasSocialTable}
+                        restaurantName={restaurant.name}
                     />
-                )}
+                ) : null}
 
-                {/* Fast log sheet — solo log bottom sheet with restaurant locked */}
-                {restaurant && (
+                {/* Fast log sheet */}
+                {restaurant ? (
                     <FastLogSheet
                         visible={showFastLogSheet}
                         onClose={() => setShowFastLogSheet(false)}
@@ -429,7 +537,7 @@ export default function RestaurantScreen() {
                         initialTableId={tableId}
                         onSubmitted={handleFastLogSubmitted}
                     />
-                )}
+                ) : null}
             </View>
         </>
     );
@@ -439,13 +547,6 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
-    topBar: {
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.sm,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
     loadingCenter: {
         paddingVertical: Spacing.xxl,
         alignItems: 'center',
@@ -454,18 +555,45 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.lg,
         alignItems: 'center',
     },
-    ctaSection: {
-        paddingHorizontal: Spacing.lg,
+    section: {
+        paddingHorizontal: PAGE_H,
+        paddingTop: Spacing.xl,
+    },
+    voicesSection: {
+        paddingHorizontal: PAGE_H,
+        paddingTop: Spacing.xl,
+    },
+    sectionLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        marginBottom: 12,
+    },
+    infoSection: {
+        paddingHorizontal: PAGE_H,
         paddingTop: Spacing.lg,
     },
-    logButton: {
-        paddingVertical: Spacing.md,
-        borderRadius: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
+    infoRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        paddingVertical: 14,
+        gap: 16,
     },
-    section: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.xl,
+    infoLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        flexShrink: 0,
+        paddingTop: 2,
+    },
+    infoValue: {
+        flex: 1,
+        textAlign: 'right',
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 15,
+        lineHeight: 22,
     },
 });

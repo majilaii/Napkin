@@ -1,22 +1,29 @@
 /**
- * RestaurantHero — photo band + name (Newsreader italic) + muted meta line.
- * Heart button overlay top-right.
+ * RestaurantHero — V1 "Dossier" full-bleed hero.
  *
- * Works for both persisted restaurants (id present) and ghost restaurants
- * (pass `restaurant` Places payload to WishlistHeartButton instead of id).
+ * Full-bleed photo (no horizontal padding) with dark gradient scrim top+bottom.
+ * Chrome (back / bookmark / share / more) floats over the photo in a cream-on-
+ * dark glass style. Title block sits bottom-left: UPPERCASE meta (cuisine ·
+ * city) → italic serif name → italic serif address.
+ *
+ * Bookmark lives in the chrome (per logging-entry-canvas). Log affordance is
+ * the floating pill bottom-right — not this component.
  */
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Radius, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { WishlistHeartButton } from '@/components/wishlist';
-import { AddToListButton } from '@/components/lists';
 import type { RestaurantPageRestaurant } from '@/hooks/restaurants/useRestaurantPage';
-import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
 type Palette = typeof Colors.light;
+
+const HERO_HEIGHT = 340;
+const CREAM = '#f6ecd9';
 
 function priceTierLabel(level: number | null): string {
     if (level == null) return '';
@@ -25,107 +32,95 @@ function priceTierLabel(level: number | null): string {
 
 interface Props {
     restaurant: RestaurantPageRestaurant;
-    userId: string | null | undefined;
-    /** Ghost Places payload — passed to WishlistHeartButton when restaurant.id is empty */
-    restaurantPayloadForGhost?: RestaurantPayload;
+    onBack?: () => void;
+    onShare?: () => void;
+    onMore?: () => void;
+    bookmarked?: boolean;
+    onBookmarkPress?: () => void;
 }
 
 export function RestaurantHero({
     restaurant,
-    userId,
-    restaurantPayloadForGhost,
+    onBack,
+    onShare,
+    onMore,
+    bookmarked = false,
+    onBookmarkPress,
 }: Props) {
+    const insets = useSafeAreaInsets();
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
 
     const photoUri = restaurant.photo_url ?? null;
 
     const metaParts: string[] = [];
-    if (restaurant.address) metaParts.push(restaurant.address);
-    if (restaurant.city) metaParts.push(restaurant.city);
     if (restaurant.cuisine) metaParts.push(restaurant.cuisine);
+    if (restaurant.city) metaParts.push(restaurant.city);
     const priceTier = priceTierLabel(restaurant.price_level);
     if (priceTier) metaParts.push(priceTier);
     const metaLine = metaParts.join(' · ');
 
-    const isGhost = !restaurant.id;
-
     return (
-        <View>
-            {/* Photo */}
+        <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
             {photoUri ? (
-                <View style={styles.photoContainer}>
-                    <ExpoImage
-                        source={{ uri: photoUri }}
-                        style={styles.heroPhoto}
-                        contentFit="cover"
-                        transition={200}
-                    />
-                    {/* Scrim for heart legibility */}
-                    <View style={styles.scrim} />
-                    {/* Heart + List button — overlaid top-right */}
-                    <View style={styles.heartOverlay}>
-                        <AddToListButton
-                            restaurantId={isGhost ? undefined : restaurant.id}
-                            restaurantPayload={isGhost ? restaurantPayloadForGhost : undefined}
-                            restaurantName={restaurant.name}
-                            userId={userId}
-                            size={24}
-                        />
-                        <WishlistHeartButton
-                            restaurantId={isGhost ? undefined : restaurant.id}
-                            restaurant={isGhost ? restaurantPayloadForGhost : undefined}
-                            userId={userId}
-                            size={26}
-                        />
-                    </View>
-                </View>
-            ) : (
-                /* No photo — heart sits in a bar above the name text */
-                <View style={[styles.noPhotoBar, { backgroundColor: palette.surfaceContainerLow }]}>
-                    <View style={[styles.heartNoPhoto, { flexDirection: 'row', gap: 12 }]}>
-                        <AddToListButton
-                            restaurantId={isGhost ? undefined : restaurant.id}
-                            restaurantPayload={isGhost ? restaurantPayloadForGhost : undefined}
-                            restaurantName={restaurant.name}
-                            userId={userId}
-                            size={24}
-                        />
-                        <WishlistHeartButton
-                            restaurantId={isGhost ? undefined : restaurant.id}
-                            restaurant={isGhost ? restaurantPayloadForGhost : undefined}
-                            userId={userId}
-                            size={26}
-                        />
-                    </View>
-                </View>
-            )}
+                <ExpoImage
+                    source={{ uri: photoUri }}
+                    style={StyleSheet.absoluteFill}
+                    contentFit="cover"
+                    transition={200}
+                />
+            ) : null}
 
-            {/* Name + meta */}
-            <View style={styles.nameBlock}>
-                <Text
-                    style={[
-                        Type.displayLarge,
-                        {
-                            color: palette.text,
-                            fontFamily: 'Newsreader_400Regular_Italic',
-                            fontSize: 34,
-                            lineHeight: 40,
-                        },
-                    ]}
-                    numberOfLines={3}
-                >
+            {/* Dark gradient scrim — top for chrome legibility, bottom for title */}
+            <LinearGradient
+                colors={[
+                    'rgba(28,28,25,0.55)',
+                    'rgba(28,28,25,0)',
+                    'rgba(28,28,25,0)',
+                    'rgba(28,28,25,0.85)',
+                ]}
+                locations={[0, 0.3, 0.55, 1]}
+                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+            />
+
+            {/* Chrome */}
+            <View style={[styles.chrome, { top: insets.top + 8 }]}>
+                <ChromeButton onPress={onBack}>
+                    <Ionicons name="chevron-back" size={18} color={CREAM} />
+                </ChromeButton>
+                <View style={styles.chromeRight}>
+                    {onBookmarkPress ? (
+                        <ChromeButton onPress={onBookmarkPress}>
+                            <Ionicons
+                                name={bookmarked ? 'bookmark' : 'bookmark-outline'}
+                                size={14}
+                                color={CREAM}
+                            />
+                        </ChromeButton>
+                    ) : null}
+                    <ChromeButton onPress={onShare}>
+                        <Ionicons name="share-outline" size={15} color={CREAM} />
+                    </ChromeButton>
+                    <ChromeButton onPress={onMore}>
+                        <Ionicons name="ellipsis-horizontal" size={16} color={CREAM} />
+                    </ChromeButton>
+                </View>
+            </View>
+
+            {/* Title block */}
+            <View style={styles.titleBlock}>
+                {metaLine ? (
+                    <Text style={styles.metaLine} numberOfLines={1}>
+                        {metaLine.toUpperCase()}
+                    </Text>
+                ) : null}
+                <Text style={styles.name} numberOfLines={3}>
                     {restaurant.name}
                 </Text>
-                {metaLine ? (
-                    <Text
-                        style={[
-                            Type.bodySmall,
-                            { color: palette.textMuted, marginTop: 4 },
-                        ]}
-                        numberOfLines={2}
-                    >
-                        {metaLine}
+                {restaurant.address ? (
+                    <Text style={styles.address} numberOfLines={2}>
+                        {restaurant.address}
                     </Text>
                 ) : null}
             </View>
@@ -133,44 +128,77 @@ export function RestaurantHero({
     );
 }
 
+function ChromeButton({
+    children,
+    onPress,
+}: {
+    children: React.ReactNode;
+    onPress?: () => void;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            hitSlop={8}
+            disabled={!onPress}
+            style={({ pressed }) => [styles.chromeBtn, { opacity: pressed ? 0.7 : 1 }]}
+        >
+            {children}
+        </Pressable>
+    );
+}
+
 const styles = StyleSheet.create({
-    photoContainer: {
+    hero: {
+        height: HERO_HEIGHT,
         position: 'relative',
+        overflow: 'hidden',
     },
-    heroPhoto: {
-        width: '100%',
-        height: 220,
-        borderRadius: 0,
-    },
-    scrim: {
+    chrome: {
         position: 'absolute',
-        top: 0,
-        right: 0,
-        width: 80,
-        height: 60,
-        // subtle gradient-like fade at the corner for heart legibility
-        backgroundColor: 'transparent',
-    },
-    heartOverlay: {
-        position: 'absolute',
-        top: Spacing.md,
-        right: Spacing.md,
-        backgroundColor: 'rgba(252,249,244,0.85)',
-        borderRadius: Radius.full,
-        padding: 8,
+        left: Spacing.md - 2,
+        right: Spacing.md - 2,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        justifyContent: 'space-between',
     },
-    noPhotoBar: {
-        height: 56,
+    chromeRight: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    chromeBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(28,28,25,0.35)',
+        alignItems: 'center',
         justifyContent: 'center',
-        alignItems: 'flex-end',
-        paddingHorizontal: Spacing.lg,
     },
-    heartNoPhoto: {},
-    nameBlock: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.md,
+    titleBlock: {
+        position: 'absolute',
+        left: 22,
+        right: 22,
+        bottom: 18,
+    },
+    metaLine: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 1.5,
+        color: CREAM,
+        opacity: 0.75,
+        marginBottom: 6,
+    },
+    name: {
+        fontFamily: 'Newsreader_600SemiBold',
+        fontSize: 36,
+        lineHeight: 36,
+        color: CREAM,
+        letterSpacing: -0.8,
+    },
+    address: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        color: CREAM,
+        opacity: 0.8,
+        marginTop: 5,
     },
 });

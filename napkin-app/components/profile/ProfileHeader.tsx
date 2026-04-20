@@ -1,139 +1,189 @@
 /**
- * ProfileHeader — avatar, display name, @username, bio.
- * Renders a gear icon (44x44) top-right when is_self=true.
- * No inline-edit affordances — edit lives under the gear.
+ * ProfileHeader — canvas-faithful header block.
+ * TICKET-025
+ *
+ * Layout (from profile-canvas.jsx ProfileHero):
+ *   Row: Avatar (72x72 rounded square, radius 10) | Identity block | Gear (self)
+ *   Identity block: display name (serif italic 24) + @handle + bio (italic serif 13)
+ *   Numbers row below: logs · places · avg
+ *
+ * No centering. No circle avatar. Gear renders inline, not floating.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { UserProfileRow, ViewerRelationship } from '@/hooks/users/useUserProfile';
+import type {
+    UserProfileRow,
+    UserStats,
+    ViewerRelationship,
+} from '@/hooks/users/useUserProfile';
 
 interface Props {
     profile: UserProfileRow;
     isSelf: boolean;
     relationship: ViewerRelationship;
+    stats?: UserStats | null;
 }
 
-/**
- * Generates initials from display_name for the avatar fallback.
- */
 function initials(displayName: string): string {
     const parts = displayName.trim().split(/\s+/);
     if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-    return displayName.slice(0, 2).toUpperCase();
+    return displayName.slice(0, 1).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship }: Props) {
+export function ProfileHeader({ profile, isSelf, relationship, stats }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
 
-    // @username line is shown when target is public or is self
     const showUsername =
         relationship === 'self' ||
         relationship === 'public_only' ||
         relationship === 'public_and_tables';
 
+    const totalLogs = stats?.total_logs ?? 0;
+    const totalPlaces = stats?.total_restaurants ?? 0;
+
     return (
         <View style={styles.container}>
-            {/* Gear icon — top-right, self only */}
-            {isSelf && (
-                <Pressable
-                    onPress={() => router.push('/settings')}
-                    hitSlop={12}
-                    style={styles.gearButton}
-                >
-                    <Ionicons name="settings-outline" size={22} color={palette.textSecondary} />
-                </Pressable>
-            )}
+            <View style={styles.row}>
+                <View style={[styles.avatar, { backgroundColor: palette.primaryContainer }]}>
+                    <Text style={styles.avatarInitials}>
+                        {initials(profile.display_name)}
+                    </Text>
+                </View>
 
-            {/* Avatar */}
-            <View style={[styles.avatarContainer, { backgroundColor: palette.surfaceContainerHigh }]}>
-                {profile.avatar_url ? (
-                    // If we had an Image component set up, we'd use it here.
-                    // For now render initials even when avatar_url is set —
-                    // a future Image component can replace this.
-                    // ARCHITECT-REVIEW: Should this use expo-image for performance?
-                    <Text style={[Type.headlineMedium, { color: palette.textSecondary }]}>
-                        {initials(profile.display_name)}
+                <View style={styles.identity}>
+                    <Text
+                        style={[styles.displayName, { color: palette.text }]}
+                        numberOfLines={1}
+                    >
+                        {profile.display_name}
                     </Text>
-                ) : (
-                    <Text style={[Type.headlineMedium, { color: palette.textSecondary }]}>
-                        {initials(profile.display_name)}
-                    </Text>
+                    {showUsername && profile.username && (
+                        <Text style={[styles.handle, { color: palette.textMuted }]}>
+                            @{profile.username}
+                        </Text>
+                    )}
+                    {profile.bio ? (
+                        <Text style={[styles.bio, { color: palette.textSecondary }]}>
+                            {profile.bio}
+                        </Text>
+                    ) : null}
+                </View>
+
+                {isSelf && (
+                    <Pressable
+                        onPress={() => router.push('/settings')}
+                        hitSlop={10}
+                        style={styles.gear}
+                    >
+                        <Ionicons
+                            name="settings-outline"
+                            size={20}
+                            color={palette.textMuted}
+                        />
+                    </Pressable>
                 )}
             </View>
 
-            {/* Display name */}
-            <Text
-                style={[
-                    Type.displaySmall,
-                    styles.displayName,
-                    {
-                        color: palette.text,
-                        fontFamily: 'Newsreader_400Regular_Italic',
-                    },
-                ]}
-            >
-                {profile.display_name}
-            </Text>
-
-            {/* @username — only when public or self */}
-            {showUsername && profile.username && (
-                <Text style={[Type.bodySmall, styles.username, { color: palette.textMuted }]}>
-                    @{profile.username}
+            <View style={styles.numbers}>
+                <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
+                    <Text style={[styles.numberStrong, { color: palette.text }]}>
+                        {totalLogs}
+                    </Text>
+                    {' logs'}
                 </Text>
-            )}
-
-            {/* Bio */}
-            {profile.bio && (
-                <Text style={[Type.body, styles.bio, { color: palette.textSecondary }]}>
-                    {profile.bio}
+                <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
+                    <Text style={[styles.numberStrong, { color: palette.text }]}>
+                        {totalPlaces}
+                    </Text>
+                    {' places'}
                 </Text>
-            )}
+                {stats?.average_rating != null && (
+                    <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
+                        <Text style={[styles.numberStrong, { color: palette.text }]}>
+                            {stats.average_rating.toFixed(1)}
+                        </Text>
+                        {' avg'}
+                    </Text>
+                )}
+            </View>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
-        paddingTop: Spacing.md,
-        paddingHorizontal: Spacing.lg,
-        alignItems: 'center',
-        position: 'relative',
+        paddingTop: Spacing.sm,
+        paddingHorizontal: 22,
+        paddingBottom: Spacing.md,
     },
-    gearButton: {
-        position: 'absolute',
-        top: Spacing.md,
-        right: Spacing.lg,
-        width: 44,
-        height: 44,
+    row: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: Spacing.md,
+    },
+    avatar: {
+        width: 72,
+        height: 72,
+        borderRadius: 10,
         justifyContent: 'center',
         alignItems: 'center',
+        flexShrink: 0,
     },
-    avatarContainer: {
-        width: 88,
-        height: 88,
-        borderRadius: Radius.full,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: Spacing.md,
+    avatarInitials: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        color: 'rgba(255,255,255,0.92)',
+        fontSize: 22,
+        letterSpacing: 0.5,
+    },
+    identity: {
+        flex: 1,
+        paddingTop: 4,
+        minWidth: 0,
     },
     displayName: {
-        textAlign: 'center',
-        marginBottom: Spacing.xs,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 24,
+        fontWeight: '500',
+        lineHeight: 28,
     },
-    username: {
-        textAlign: 'center',
-        marginBottom: Spacing.xs,
+    handle: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 12,
+        marginTop: 2,
+        letterSpacing: 0.2,
     },
     bio: {
-        textAlign: 'center',
-        marginTop: Spacing.sm,
-        maxWidth: 300,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        marginTop: 8,
+        lineHeight: 19,
+    },
+    gear: {
+        width: 32,
+        height: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: -2,
+    },
+    numbers: {
+        marginTop: 14,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: Spacing.md,
+    },
+    numbersText: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 12,
+    },
+    numberStrong: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontWeight: '600',
     },
 });

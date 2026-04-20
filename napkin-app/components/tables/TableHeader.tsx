@@ -1,13 +1,16 @@
 /**
  * TableHeader — masthead for the Tables tab.
  *
- * Layout:
- *   "TABLE" uppercase kicker label  (top)
- *   Italic serif table name + ▾ affordance when multi-table  (below kicker)
- *   Right-aligned: avatar stack + sub-label ("4 members · 23 rounds")
+ * Canvas-faithful (TTableHeader in tables-screens.jsx):
+ *   Left column:
+ *     "TABLE" kicker (10pt, 0.8 letter-spacing, uppercase, muted)
+ *     Italic serif name (Newsreader italic, 24pt / 500 weight) + ▾ caret inline
+ *     Sub label directly under the name (11pt muted, e.g. "4 members · 23 rounds")
+ *   Right column:
+ *     Avatar stack — 22px circles, overlapping -6px, 2px border in surface color
+ *     Shows up to 3 avatars + "+N" overflow chip
  *
- * Mirrors canvas TTableHeader.
- * Props: purely presentational — no hook calls inside.
+ * Purely presentational — no hook calls inside.
  */
 
 import React from 'react';
@@ -22,7 +25,7 @@ export interface TableHeaderProps {
     isPersonal: boolean;
     memberCount: number;
     roundCount?: number;
-    /** Top 3 member names to show as avatar stack */
+    /** Member names to show as avatar stack (first 3 render, rest counted) */
     memberNames: string[];
     hasMultipleTables: boolean;
     onSwitcherPress: () => void;
@@ -30,8 +33,8 @@ export interface TableHeaderProps {
 }
 
 const MAX_STACK_AVATARS = 3;
-const AVATAR_SIZE = 28;
-const AVATAR_OFFSET = 10;
+const AVATAR_SIZE = 22;
+const AVATAR_OVERLAP = 6;
 
 export function TableHeader({
     tableName,
@@ -44,11 +47,15 @@ export function TableHeader({
     palette,
 }: TableHeaderProps) {
     const visibleAvatars = memberNames.slice(0, MAX_STACK_AVATARS);
+    const overflow = Math.max(memberNames.length - MAX_STACK_AVATARS, 0);
+    const stackCells = visibleAvatars.length + (overflow > 0 ? 1 : 0);
     const stackWidth =
-        AVATAR_SIZE + (visibleAvatars.length - 1) * (AVATAR_SIZE - AVATAR_OFFSET);
+        stackCells > 0 ? AVATAR_SIZE + (stackCells - 1) * (AVATAR_SIZE - AVATAR_OVERLAP) : 0;
 
     const subParts: string[] = [];
-    if (memberCount > 0) {
+    if (isPersonal) {
+        subParts.push('Solo');
+    } else if (memberCount > 0) {
         subParts.push(`${memberCount} ${memberCount === 1 ? 'member' : 'members'}`);
     }
     if (roundCount != null && roundCount > 0) {
@@ -60,22 +67,23 @@ export function TableHeader({
 
     return (
         <View style={styles.container}>
-            {/* Left column: kicker + name */}
+            {/* Left column: kicker + name + sub */}
             <Pressable
                 onPress={() => hasMultipleTables && onSwitcherPress()}
                 style={styles.nameBlock}
                 accessibilityRole="button"
-                accessibilityLabel={hasMultipleTables ? `Switch table, currently ${tableName}` : tableName}
+                accessibilityLabel={
+                    hasMultipleTables
+                        ? `Switch table, currently ${tableName}`
+                        : tableName
+                }
             >
                 <Text style={[styles.kicker, { color: palette.textMuted }]}>
                     {kicker}
                 </Text>
                 <View style={styles.nameRow}>
                     <Text
-                        style={[
-                            styles.tableName,
-                            { color: palette.text },
-                        ]}
+                        style={[styles.tableName, { color: palette.text }]}
                         numberOfLines={1}
                     >
                         {tableName}
@@ -86,38 +94,60 @@ export function TableHeader({
                         </Text>
                     )}
                 </View>
+                {subLabel ? (
+                    <Text style={[styles.subLabel, { color: palette.textMuted }]}>
+                        {subLabel}
+                    </Text>
+                ) : null}
             </Pressable>
 
-            {/* Right column: stacked avatars + sub-label */}
-            {visibleAvatars.length > 0 && (
-                <View style={styles.rightBlock}>
-                    <View style={[styles.avatarStack, { width: stackWidth }]}>
-                        {visibleAvatars.map((name, i) => (
-                            <View
-                                key={i}
+            {/* Right column: stacked avatars */}
+            {stackCells > 0 && (
+                <View style={[styles.avatarStack, { width: stackWidth }]}>
+                    {visibleAvatars.map((name, i) => (
+                        <View
+                            key={i}
+                            style={[
+                                styles.avatarWrapper,
+                                {
+                                    left: i * (AVATAR_SIZE - AVATAR_OVERLAP),
+                                    zIndex: MAX_STACK_AVATARS - i,
+                                    borderColor: palette.background,
+                                },
+                            ]}
+                        >
+                            <Avatar
+                                name={name}
+                                url={null}
+                                size={AVATAR_SIZE}
+                                palette={palette}
+                            />
+                        </View>
+                    ))}
+                    {overflow > 0 && (
+                        <View
+                            style={[
+                                styles.avatarWrapper,
+                                styles.overflowChip,
+                                {
+                                    left:
+                                        visibleAvatars.length *
+                                        (AVATAR_SIZE - AVATAR_OVERLAP),
+                                    borderColor: palette.background,
+                                    backgroundColor: palette.surfaceContainerHigh,
+                                },
+                            ]}
+                        >
+                            <Text
                                 style={[
-                                    styles.avatarWrapper,
-                                    {
-                                        left: i * (AVATAR_SIZE - AVATAR_OFFSET),
-                                        zIndex: MAX_STACK_AVATARS - i,
-                                        borderColor: palette.background,
-                                    },
+                                    styles.overflowText,
+                                    { color: palette.textSecondary },
                                 ]}
                             >
-                                <Avatar
-                                    name={name}
-                                    url={null}
-                                    size={AVATAR_SIZE}
-                                    palette={palette}
-                                />
-                            </View>
-                        ))}
-                    </View>
-                    {subLabel ? (
-                        <Text style={[styles.subLabel, { color: palette.textMuted }]}>
-                            {subLabel}
-                        </Text>
-                    ) : null}
+                                +{overflow}
+                            </Text>
+                        </View>
+                    )}
                 </View>
             )}
         </View>
@@ -129,52 +159,63 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'flex-end',
         justifyContent: 'space-between',
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.lg,
-        paddingBottom: Spacing.md,
+        paddingHorizontal: 22,
+        paddingTop: Spacing.sm,
+        paddingBottom: 14,
+        gap: 12,
     },
     nameBlock: {
         flex: 1,
-        marginRight: Spacing.md,
+        minWidth: 0,
     },
     kicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.5,
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 0.8,
         textTransform: 'uppercase',
-        marginBottom: 2,
+        marginBottom: 3,
     },
     nameRow: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'baseline',
         gap: 6,
     },
     tableName: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 28,
-        lineHeight: 32,
-        flex: 1,
+        fontSize: 24,
+        lineHeight: 26,
+        letterSpacing: -0.3,
+        flexShrink: 1,
     },
     chevron: {
         fontSize: 14,
-        marginBottom: 2,
     },
-    rightBlock: {
-        alignItems: 'flex-end',
-        gap: Spacing.xs,
+    subLabel: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        marginTop: 3,
+        letterSpacing: 0.2,
     },
     avatarStack: {
         position: 'relative',
         height: AVATAR_SIZE,
+        marginBottom: 3,
     },
     avatarWrapper: {
         position: 'absolute',
+        top: 0,
         borderWidth: 2,
         borderRadius: AVATAR_SIZE / 2,
+        width: AVATAR_SIZE,
+        height: AVATAR_SIZE,
+        overflow: 'hidden',
     },
-    subLabel: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 10,
-        letterSpacing: 0.3,
+    overflowChip: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    overflowText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
     },
 });

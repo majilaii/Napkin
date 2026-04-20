@@ -1,8 +1,13 @@
+export { ProfileScreenBody } from './ProfileScreenBody';
 export { ProfileHeader } from './ProfileHeader';
-export { PalateSection } from './PalateSection';
-export { PalateStatsStrip } from './PalateStatsStrip';
-export { PublicListsSection } from './PublicListsSection';
-export { RecentlyLoggedGrid } from './RecentlyLoggedGrid';
+export { ProfileIndex } from './ProfileIndex';
+export { SectionHeader } from './SectionHeader';
+export { Rating } from './Rating';
+export { TopFour } from './TopFour';
+export { RegularsRail } from './RegularsRail';
+export { RegularRow } from './RegularRow';
+export { DiaryRow } from './DiaryRow';
+export { PrivacyPicker } from './PrivacyPicker';
 export { TablesInCommonSection } from './TablesInCommonSection';
 export { TablePreviewCard } from './TablePreviewCard';
 export { NotFoundState } from './NotFoundState';
