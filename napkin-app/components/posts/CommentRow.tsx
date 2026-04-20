@@ -1,8 +1,7 @@
 /**
- * CommentRow — a single comment in the thread.
- *
- * Shows: avatar, display name, body, relative timestamp, "· edited" marker.
- * Author sees "..." menu for edit (within 5 min) and delete.
+ * CommentRow — a single reply rendered as a margin note.
+ * Avatar 24px + content: name · time, Manrope body.
+ * Parent renders hairline dividers between rows.
  */
 import React, { useState } from 'react';
 import {
@@ -15,7 +14,7 @@ import {
     Platform,
     TextInput,
 } from 'react-native';
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useEditComment, useDeleteComment } from '@/hooks/posts/usePostInteractions';
@@ -39,10 +38,19 @@ function formatRelativeTime(dateStr: string): string {
     if (hrs < 24) return `${hrs}h`;
     const days = Math.floor(hrs / 24);
     if (days < 7) return `${days}d`;
-    return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    return new Date(dateStr).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+    });
 }
 
-export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }: CommentRowProps) {
+export function CommentRow({
+    comment,
+    targetType,
+    targetId,
+    onRetry,
+    onDiscard,
+}: CommentRowProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const { user } = useAuth();
@@ -58,19 +66,23 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
     const canDelete = isAuthor && !comment.pending;
 
     const name = comment.profiles?.display_name ?? 'Someone';
-    const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+    const initials = name
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
 
     const timeLabel = comment.failed
-        ? "Couldn't send"
+        ? "couldn't send"
         : comment.pending
-        ? 'Sending…'
+        ? 'sending…'
         : formatRelativeTime(comment.created_at);
 
     const handleMenu = () => {
         const options = canEdit
             ? ['Cancel', 'Edit', 'Delete']
             : ['Cancel', 'Delete'];
-
         const cancelIndex = 0;
         const deleteIndex = options.length - 1;
         const editIndex = canEdit ? 1 : -1;
@@ -85,12 +97,15 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
                 (idx) => {
                     if (canEdit && idx === editIndex) setIsEditing(true);
                     if (idx === deleteIndex) handleDelete();
-                }
+                },
             );
         } else {
             const alertOptions = [];
             if (canEdit) {
-                alertOptions.push({ text: 'Edit', onPress: () => setIsEditing(true) });
+                alertOptions.push({
+                    text: 'Edit',
+                    onPress: () => setIsEditing(true),
+                });
             }
             alertOptions.push({
                 text: 'Delete',
@@ -103,11 +118,7 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
     };
 
     const handleDelete = () => {
-        deleteComment.mutate({
-            targetType,
-            targetId,
-            commentId: comment.id,
-        });
+        deleteComment.mutate({ targetType, targetId, commentId: comment.id });
     };
 
     const handleSaveEdit = () => {
@@ -118,13 +129,14 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
             {
                 onSuccess: () => setIsEditing(false),
                 onError: () => setIsEditing(false),
-            }
+            },
         );
     };
 
+    const muted = comment.pending || comment.failed;
+
     return (
-        <View style={styles.row}>
-            {/* Avatar */}
+        <View style={[styles.row, { opacity: muted ? 0.7 : 1 }]}>
             <View
                 style={[
                     styles.avatar,
@@ -136,15 +148,17 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
                 </Text>
             </View>
 
-            {/* Content */}
             <View style={styles.content}>
                 <View style={styles.nameRow}>
-                    <Text style={[Type.titleSmall, { color: palette.text }]}>{name}</Text>
+                    <Text style={[styles.name, { color: palette.text }]}>
+                        {name}
+                    </Text>
+                    <Text style={[styles.dot, { color: palette.textMuted }]}>·</Text>
                     <Text
                         style={[
-                            Type.caption,
+                            styles.time,
                             {
-                                color: comment.pending ? palette.textMuted : palette.textMuted,
+                                color: palette.textMuted,
                                 fontStyle: comment.pending ? 'italic' : 'normal',
                             },
                         ]}
@@ -159,7 +173,9 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
                             style={styles.menuBtn}
                             accessibilityLabel="Comment options"
                         >
-                            <Text style={[Type.caption, { color: palette.textMuted }]}>
+                            <Text
+                                style={[styles.menuDots, { color: palette.textMuted }]}
+                            >
                                 •••
                             </Text>
                         </Pressable>
@@ -192,15 +208,23 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
                                 }}
                                 hitSlop={8}
                             >
-                                <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
+                                <Text
+                                    style={[
+                                        styles.actionLabel,
+                                        { color: palette.textSecondary },
+                                    ]}
+                                >
                                     Cancel
                                 </Text>
                             </Pressable>
                             <Pressable onPress={handleSaveEdit} hitSlop={8}>
                                 <Text
                                     style={[
-                                        Type.bodySmall,
-                                        { color: palette.primary, fontFamily: 'Manrope_700Bold' },
+                                        styles.actionLabel,
+                                        {
+                                            color: palette.primary,
+                                            fontFamily: 'Manrope_700Bold',
+                                        },
                                     ]}
                                 >
                                     Save
@@ -210,19 +234,7 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
                     </View>
                 ) : (
                     <>
-                        <Text
-                            style={[
-                                Type.body,
-                                {
-                                    color:
-                                        comment.pending || comment.failed
-                                            ? palette.textMuted
-                                            : palette.text,
-                                    marginTop: 2,
-                                    lineHeight: 20,
-                                },
-                            ]}
-                        >
+                        <Text style={[styles.body, { color: palette.text }]}>
                             {comment.body}
                         </Text>
                         {comment.failed && (
@@ -235,10 +247,11 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
                                     >
                                         <Text
                                             style={[
-                                                Type.bodySmall,
+                                                styles.actionLabel,
                                                 {
                                                     color: palette.primary,
-                                                    fontFamily: 'Manrope_700Bold',
+                                                    fontFamily:
+                                                        'Manrope_700Bold',
                                                 },
                                             ]}
                                         >
@@ -254,7 +267,7 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
                                     >
                                         <Text
                                             style={[
-                                                Type.bodySmall,
+                                                styles.actionLabel,
                                                 { color: palette.textSecondary },
                                             ]}
                                         >
@@ -274,40 +287,64 @@ export function CommentRow({ comment, targetType, targetId, onRetry, onDiscard }
 const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
-        gap: Spacing.sm,
+        gap: Spacing.sm + 2,
         alignItems: 'flex-start',
+        paddingVertical: Spacing.sm + 2,
     },
     avatar: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
     },
     avatarInitials: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
+        fontSize: 9.5,
     },
     content: {
         flex: 1,
+        paddingTop: 1,
     },
     nameRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: Spacing.xs,
-        flexWrap: 'wrap',
+        gap: 6,
+    },
+    name: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+    },
+    dot: {
+        fontSize: 11,
+    },
+    time: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10.5,
+        letterSpacing: 0.1,
     },
     menuBtn: {
         marginLeft: 'auto',
         paddingHorizontal: 4,
     },
+    menuDots: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        lineHeight: 12,
+    },
+    body: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 14,
+        lineHeight: 20,
+        marginTop: 3,
+    },
     editContainer: {
-        marginTop: Spacing.xs,
+        marginTop: Spacing.xs + 2,
         gap: Spacing.xs,
     },
     editInput: {
-        borderWidth: 1,
+        borderWidth: StyleSheet.hairlineWidth,
         borderRadius: Radius.sm,
         padding: Spacing.sm,
         fontFamily: 'Manrope_400Regular',
@@ -320,9 +357,15 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
         gap: Spacing.md,
     },
+    actionLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
     failedActions: {
         flexDirection: 'row',
         gap: Spacing.md,
-        marginTop: Spacing.xs,
+        marginTop: Spacing.xs + 2,
     },
 });
