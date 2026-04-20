@@ -186,14 +186,14 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: SoloShareC
 
                 {/* Text content — padded separately so hero bleeds to edges */}
                 <View style={[styles.cardContent, hasHero && styles.cardContentWithHero]}>
-                    {/* Header: "Name tried Restaurant" + rating + relative time */}
+                    {/* Header: "Name went solo to Restaurant" + rating + relative time */}
                     <View style={styles.headerRow}>
                         <View style={{ flex: 1 }}>
                             <Text style={[Type.labelSmall, { color: palette.text }]}>
                                 <Text style={{ fontFamily: 'Manrope_600SemiBold' }}>
                                     {displayName}
                                 </Text>
-                                {' tried '}
+                                {' went solo to '}
                                 <Text
                                     style={{
                                         fontFamily: 'Newsreader_400Regular_Italic',

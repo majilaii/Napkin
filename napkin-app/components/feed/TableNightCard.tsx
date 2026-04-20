@@ -71,12 +71,13 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: TableNigh
     // Relative time — null for ≥ 24h. Only appended when non-null (< 24h).
     const relativeTime = sortDate ? formatRelativeTime(sortDate) : null;
 
-    // Label: "LIVE ROUND" | "GROUP ENTRY · 14 DEC" | "GROUP ENTRY · 14 DEC · 2H AGO"
+    // Label: "LIVE ROUND" | "ROUND · 14 DEC" | "ROUND · 14 DEC · 2H AGO"
+    // Canvas: top-left chip overlay reads "ROUND · Sat 29 Mar" or "LIVE ROUND"
     const labelText = isActive
         ? 'LIVE ROUND'
         : relativeTime
-        ? `GROUP ENTRY \u00B7 ${dateLabel.toUpperCase()} \u00B7 ${relativeTime.toUpperCase()}`
-        : `GROUP ENTRY \u00B7 ${dateLabel.toUpperCase()}`;
+        ? `ROUND \u00B7 ${dateLabel.toUpperCase()} \u00B7 ${relativeTime.toUpperCase()}`
+        : `ROUND \u00B7 ${dateLabel.toUpperCase()}`;
 
     // Unseen dot: hidden on live rounds (already have PulseDot + LIVE ROUND label)
     const isUnseen =
@@ -134,18 +135,20 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: TableNigh
                 opacity: pressed ? 0.95 : 1,
             })}
         >
-            {/* Label */}
-            <View style={styles.labelRow}>
-                {isActive && <PulseDot size={7} color={palette.primary} />}
-                <Text
-                    style={[
-                        styles.labelText,
-                        { color: isActive ? palette.primary : palette.textSecondary },
-                    ]}
-                >
-                    {labelText}
-                </Text>
-            </View>
+            {/* Label — only when no hero photo (canvas puts chip on hero image) */}
+            {!photoUrl && (
+                <View style={styles.labelRow}>
+                    {isActive && <PulseDot size={7} color={palette.primary} />}
+                    <Text
+                        style={[
+                            styles.labelText,
+                            { color: isActive ? palette.primary : palette.textSecondary },
+                        ]}
+                    >
+                        {labelText}
+                    </Text>
+                </View>
+            )}
 
             {/* Card container */}
             <View
@@ -169,11 +172,36 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: TableNigh
 
                 {/* Hero image or fallback */}
                 {photoUrl ? (
-                    <Image
-                        source={{ uri: photoUrl }}
-                        style={styles.heroImage}
-                        resizeMode="cover"
-                    />
+                    <View style={{ position: 'relative' }}>
+                        <Image
+                            source={{ uri: photoUrl }}
+                            style={styles.heroImage}
+                            resizeMode="cover"
+                        />
+                        {/* Canvas-style chip overlay — top-left corner */}
+                        <View
+                            style={[
+                                styles.heroChip,
+                                {
+                                    backgroundColor: isActive
+                                        ? palette.tertiaryFixed
+                                        : 'rgba(28,28,25,0.55)',
+                                },
+                            ]}
+                        >
+                            {isActive && (
+                                <PulseDot size={6} color={palette.tertiary} />
+                            )}
+                            <Text
+                                style={[
+                                    styles.heroChipText,
+                                    { color: isActive ? palette.tertiary : '#fff' },
+                                ]}
+                            >
+                                {isActive ? 'LIVE ROUND' : `ROUND \u00B7 ${dateLabel.toUpperCase()}`}
+                            </Text>
+                        </View>
+                    </View>
                 ) : (
                     <View
                         style={[
@@ -384,6 +412,22 @@ const styles = StyleSheet.create({
     heroImage: {
         width: '100%',
         height: 220,
+    },
+    heroChip: {
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 6,
+    },
+    heroChipText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+        letterSpacing: 1.2,
     },
     heroFallback: {
         width: '100%',
