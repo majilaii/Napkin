@@ -67,7 +67,7 @@ export function FeedHeader({ subtitle, location, onFilterPress }: Props) {
                 hitSlop={12}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingBottom: 3 }}
             >
-                <Ionicons name="options-outline" size={14} color={palette.textMuted} />
+                <Ionicons name="menu-outline" size={14} color={palette.textMuted} />
                 <Text
                     style={{
                         fontFamily: 'Manrope_400Regular',

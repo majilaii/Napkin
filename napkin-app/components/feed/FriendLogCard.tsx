@@ -17,7 +17,7 @@ interface Props {
 
 /**
  * Prose-rich chronological feed card.
- * Byline: "{name} logged {restaurant}" with the restaurant in serif italic.
+ * Byline: "{name} tried {restaurant}" (or "noted" when unrated) with the restaurant in serif italic.
  * Rating + optional liked heart, right-aligned relative time.
  * Optional prose, optional photo grid (1/2/3+), reaction + reply footer.
  */
@@ -81,7 +81,7 @@ export function FriendLogCard({ entry, time, sub }: Props) {
                     <Text style={{ fontFamily: 'Manrope_600SemiBold', color: palette.text }}>
                         {entry.author.display_name}
                     </Text>
-                    <Text>{rating > 0 ? ' logged ' : ' noted '}</Text>
+                    <Text>{rating > 0 ? ' tried ' : ' noted '}</Text>
                     <Text style={{ fontFamily: 'Newsreader_400Regular_Italic', fontSize: 14, color: palette.text }}>
                         {restaurantName}
                     </Text>

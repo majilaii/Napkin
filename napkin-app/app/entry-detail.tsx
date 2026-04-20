@@ -8,7 +8,7 @@
  *  - Mutations via useUpdateEntry (direct supabase-js PATCH, no feed re-sort)
  *  - Photo add/remove via useAddEntryPhoto / useRemoveEntryPhoto
  */
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
     View,
     Text,
@@ -22,14 +22,17 @@ import {
     Alert,
     ActionSheetIOS,
     Platform,
+    KeyboardAvoidingView,
+    findNodeHandle,
+    UIManager,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import { StarRating } from '@/components/StarRating';
@@ -39,10 +42,16 @@ import { useUserRestaurantHistory } from '@/hooks/restaurants/useRestaurantHisto
 import { PreviouslyHereBanner } from '@/components/restaurants';
 import { useAuth } from '@/providers/AuthProvider';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
-import { CommentThread } from '@/components/posts';
-import { FeedActionRow } from '@/components/feed';
+import { CommentRow } from '@/components/posts/CommentRow';
 import { useUpdateEntry } from '@/hooks/entries/useUpdateEntry';
 import { useAddEntryPhoto, useRemoveEntryPhoto } from '@/hooks/entries/useEntryPhotoMutations';
+import { useTables } from '@/hooks/tables/useTables';
+import {
+    useAddComment,
+    useDiscardFailedComment,
+    useToggleReaction,
+} from '@/hooks/posts/usePostInteractions';
+import { ReactionPicker } from '@/components/feed/ReactionPicker';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -323,6 +332,21 @@ export default function EntryDetailScreen() {
         viewer?.id ?? null,
         entry?.id,
     );
+
+    // Personal-table detection — an entry on the viewer's personal table is a
+    // private journal entry. Reactions + replies are suppressed for those.
+    const { data: viewerTables } = useTables(viewer?.id);
+    const personalTableId = (viewerTables ?? []).find(
+        (m) => m.tables.is_personal,
+    )?.tables.id;
+    const isPersonalEntry = !!entry?.table_id && entry.table_id === personalTableId;
+
+    // Reply composer — opens when user taps reply in the floating pill, or
+    // when the screen was navigated to via FeedActionRow with focus=reply.
+    const [replyOpen, setReplyOpen] = useState(false);
+    useEffect(() => {
+        if (focus === 'reply') setReplyOpen(true);
+    }, [focus]);
     // Photo carousel index
     const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
@@ -592,6 +616,40 @@ export default function EntryDetailScreen() {
         setIsEditingBreakdown(false);
     };
 
+    // ── Comment retry / discard (failed-send edge case) ──────────────────────
+    const addCommentForRetry = useAddComment();
+    const discardFailedComment = useDiscardFailedComment();
+
+    const handleCommentRetry = useCallback(
+        (failed: { body: string; client_nonce?: string | null }) => {
+            if (!entry?.id || !failed.client_nonce) return;
+            discardFailedComment({
+                targetType: 'entry',
+                targetId: entry.id,
+                clientNonce: failed.client_nonce,
+            });
+            addCommentForRetry.mutate({
+                targetType: 'entry',
+                targetId: entry.id,
+                body: failed.body,
+                clientNonce: failed.client_nonce,
+            });
+        },
+        [entry?.id, addCommentForRetry, discardFailedComment],
+    );
+
+    const handleCommentDiscard = useCallback(
+        (failed: { client_nonce?: string | null }) => {
+            if (!entry?.id || !failed.client_nonce) return;
+            discardFailedComment({
+                targetType: 'entry',
+                targetId: entry.id,
+                clientNonce: failed.client_nonce,
+            });
+        },
+        [entry?.id, discardFailedComment],
+    );
+
     // ── Loading / error states ────────────────────────────────────────────────
 
     if (isLoading || !entry) {
@@ -633,13 +691,28 @@ export default function EntryDetailScreen() {
 
     const isRoundEntry = !!entry.table_night_id;
 
+    // Past-tense verb per brand: "tried" when rated, "noted" when not.
+    const ratingVerb = entry.rating != null && entry.rating > 0 ? 'tried' : 'noted';
+
+    // Short date in field-notebook style ("18 apr"), always lowercase downstream.
+    const shortDate = (() => {
+        const d = new Date(entry.visited_at ?? entry.created_at);
+        if (isNaN(d.getTime())) return fullDate;
+        return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    })();
+
+    // Address line combines street + city with middle-dot separator.
+    const addressLine = [entry.restaurants?.address, entry.restaurants?.city]
+        .filter((p): p is string => !!p)
+        .join(' \u00B7 ');
+
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
             <View style={{ flex: 1, backgroundColor: palette.background }}>
                 <ScrollView
                     contentContainerStyle={{
-                        paddingBottom: insets.bottom + 40,
+                        paddingBottom: insets.bottom + (isPersonalEntry ? 40 : 110),
                         paddingTop: hasHeroDisplay ? 0 : insets.top + Spacing.md,
                     }}
                     showsVerticalScrollIndicator={false}
@@ -846,108 +919,218 @@ export default function EntryDetailScreen() {
                         </View>
                     )}
 
-                    {/* Header */}
-                    <View style={styles.headerSection}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {/* ── Body (encased note card) ───────────────────────── */}
+                    <View
+                        style={[
+                            styles.bodyCard,
+                            {
+                                backgroundColor: palette.surfaceNote,
+                                borderColor: palette.divider,
+                                marginTop: hasHeroDisplay ? -18 : 8,
+                            },
+                        ]}
+                    >
+                        {/* Kicker: lowercase past-tense verb · relative date · full date */}
+                        <Text style={[styles.kicker, { color: palette.textMuted }]}>
+                            {ratingVerb}
+                            {' \u00B7 '}
+                            {relativeDate.toLowerCase()}
+                            {' \u00B7 '}
+                            {shortDate.toLowerCase()}
+                            {isRoundEntry ? ' \u00B7 round' : ''}
+                        </Text>
+
+                        {/* Title row: restaurant name + address | inline rating */}
+                        <View style={styles.titleRow}>
                             <Pressable
                                 onPress={() => {
-                                    if (entry.user_id && entry.table_id) {
+                                    if (entry.restaurant_id) {
                                         router.push({
-                                            pathname: '/member/[userId]',
-                                            params: { userId: entry.user_id, tableId: entry.table_id },
+                                            pathname: '/restaurant/[id]',
+                                            params: {
+                                                id: entry.restaurant_id,
+                                                ...(entry.table_id ? { tableId: entry.table_id } : {}),
+                                            },
                                         });
                                     }
                                 }}
-                                hitSlop={8}
+                                disabled={!entry.restaurant_id}
+                                style={{ flex: 1, paddingRight: Spacing.sm }}
                             >
-                                <InitialsAvatar name={displayName} size={36} palette={palette} />
+                                <Text style={[styles.restaurantName, { color: palette.text }]}>
+                                    {restaurantName}
+                                </Text>
+                                {addressLine ? (
+                                    <Text style={[styles.address, { color: palette.textMuted }]} numberOfLines={1}>
+                                        {addressLine}
+                                    </Text>
+                                ) : null}
                             </Pressable>
-                            <View>
+
+                            {/* Rating — inline to the right */}
+                            {!isEditingRating && entry.rating != null ? (
                                 <Pressable
-                                    onPress={() => {
-                                        if (entry.user_id && entry.table_id) {
-                                            router.push({
-                                                pathname: '/member/[userId]',
-                                                params: { userId: entry.user_id, tableId: entry.table_id },
-                                            });
-                                        }
-                                    }}
-                                    hitSlop={4}
+                                    onPress={isOwnEntry ? handleRatingTap : undefined}
+                                    disabled={!isOwnEntry}
+                                    hitSlop={8}
+                                    style={styles.ratingStack}
                                 >
-                                    <Text style={[Type.titleSmall, { color: palette.text }]}>
-                                        {displayName}
+                                    <Text style={[styles.ratingNum, { color: palette.text }]}>
+                                        {entry.rating.toFixed(1)}
+                                    </Text>
+                                    <Text style={[styles.ratingSlash, { color: palette.textMuted }]}>
+                                        / 5
                                     </Text>
                                 </Pressable>
-                                <Text style={[Type.titleSmall, { color: palette.text }]}>
-                                    {relativeDate}
-                                </Text>
-                                <Text style={[Type.labelSmall, { color: palette.textMuted, marginTop: 1 }]}>
-                                    {fullDate}
-                                    {isRoundEntry ? ' · Round' : ''}
-                                </Text>
-                                {/* View profile link */}
-                                {entry.user_id && entry.table_id && (
-                                    <Pressable
-                                        onPress={() =>
-                                            router.push({
-                                                pathname: '/member/[userId]',
-                                                params: { userId: entry.user_id, tableId: entry.table_id! },
-                                            })
-                                        }
-                                        hitSlop={4}
-                                    >
-                                        <Text
-                                            style={[
-                                                Type.caption,
-                                                { color: palette.primary, marginTop: 2 },
-                                            ]}
-                                        >
-                                            View profile
-                                        </Text>
-                                    </Pressable>
-                                )}
-                            </View>
+                            ) : null}
                         </View>
 
-                        <Pressable
-                            onPress={() => {
-                                if (entry.restaurant_id) {
+                        {/* Rating editor (inline, below title row) */}
+                        {isEditingRating ? (
+                            <View style={styles.ratingEditor}>
+                                <StarRating
+                                    value={localRating ?? 0}
+                                    size={32}
+                                    editable
+                                    onChange={handleRatingChange}
+                                />
+                                <View style={styles.editButtonRow}>
+                                    <Pressable
+                                        onPress={handleRatingCancel}
+                                        hitSlop={8}
+                                    >
+                                        <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
+                                    </Pressable>
+                                    <Pressable
+                                        onPress={handleRatingSave}
+                                        disabled={updateEntry.isPending}
+                                        hitSlop={8}
+                                    >
+                                        {updateEntry.isPending ? (
+                                            <ActivityIndicator size="small" color={palette.primary} />
+                                        ) : (
+                                            <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
+                                        )}
+                                    </Pressable>
+                                </View>
+                                {ratingError ? (
+                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
+                                        {ratingError}
+                                    </Text>
+                                ) : null}
+                            </View>
+                        ) : entry.rating != null ? (
+                            <View style={styles.starsRow}>
+                                <StarRating value={entry.rating} size={16} editable={false} />
+                            </View>
+                        ) : null}
+
+                        {/* Previously-here banner — viewer's cross-Table history */}
+                        {userHistory && userHistory.visit_count > 0 && (
+                            <View style={{ marginTop: Spacing.lg }}>
+                                <PreviouslyHereBanner
+                                    voice="user"
+                                    visitCount={userHistory.visit_count}
+                                    lastRating={userHistory.last_visit?.rating ?? null}
+                                    lastDate={userHistory.last_visit?.date ?? null}
+                                    onPress={
+                                        entry.restaurant_id
+                                            ? () =>
+                                                  router.push({
+                                                      pathname: '/restaurant/[id]',
+                                                      params: {
+                                                          id: entry.restaurant_id!,
+                                                          ...(entry.table_id ? { tableId: entry.table_id } : {}),
+                                                      },
+                                                  })
+                                            : undefined
+                                    }
+                                />
+                            </View>
+                        )}
+
+                        {/* Round context banner */}
+                        {isRoundEntry && roundContext && (
+                            <Pressable
+                                onPress={() =>
                                     router.push({
-                                        pathname: '/restaurant/[id]',
-                                        params: {
-                                            id: entry.restaurant_id,
-                                            ...(entry.table_id ? { tableId: entry.table_id } : {}),
-                                        },
-                                    });
+                                        pathname: '/table-night-detail',
+                                        params: { nightId: entry.table_night_id! },
+                                    })
                                 }
-                            }}
-                            disabled={!entry.restaurant_id}
-                        >
-                            <Text
-                                style={[
-                                    Type.displayLarge,
-                                    {
-                                        color: palette.text,
-                                        fontFamily: 'Newsreader_400Regular_Italic',
-                                        fontSize: 38,
-                                        lineHeight: 44,
-                                        marginTop: Spacing.lg,
-                                    },
+                                style={({ pressed }) => [
+                                    styles.roundBanner,
+                                    { backgroundColor: palette.primaryMuted, opacity: pressed ? 0.7 : 1 },
                                 ]}
                             >
-                                {restaurantName}
-                            </Text>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.roundBannerTitle, { color: palette.primary }]}>
+                                        Part of a Round
+                                    </Text>
+                                    <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
+                                        {roundContext.participantCount} {roundContext.participantCount === 1 ? 'person' : 'people'}
+                                        {roundContext.groupAverage != null
+                                            ? ` \u00B7 Group avg ${roundContext.groupAverage.toFixed(1)}`
+                                            : ''}
+                                    </Text>
+                                </View>
+                                <Text style={[Type.body, { color: palette.primary }]}>›</Text>
+                            </Pressable>
+                        )}
 
-                            {entry.restaurants?.address ? (
-                                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 4 }]}>
-                                    {entry.restaurants.address}
+                        {/* Prose / note — em-dash pull-quote, Newsreader 18/1.55 */}
+                        {isEditingNote ? (
+                            <View style={styles.proseEditor}>
+                                <TextInput
+                                    style={[
+                                        styles.proseInput,
+                                        { color: palette.text },
+                                    ]}
+                                    value={localNote}
+                                    onChangeText={setLocalNote}
+                                    placeholder="Say something about it."
+                                    placeholderTextColor={palette.textMuted}
+                                    multiline
+                                    textAlignVertical="top"
+                                    autoFocus
+                                />
+                                <View style={styles.editButtonRow}>
+                                    {noteSaving && (
+                                        <ActivityIndicator size="small" color={palette.textMuted} />
+                                    )}
+                                    <Pressable onPress={handleNoteCancel} hitSlop={8}>
+                                        <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
+                                    </Pressable>
+                                    <Pressable
+                                        onPress={handleNoteSave}
+                                        disabled={updateEntry.isPending}
+                                        hitSlop={8}
+                                    >
+                                        <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
+                                    </Pressable>
+                                </View>
+                                {noteError ? (
+                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
+                                        {noteError}
+                                    </Text>
+                                ) : null}
+                            </View>
+                        ) : entry.content ? (
+                            <Pressable
+                                onPress={isOwnEntry ? handleNoteEditStart : undefined}
+                                disabled={!isOwnEntry}
+                                style={styles.proseBlock}
+                            >
+                                <Text style={[styles.prose, { color: palette.text }]}>
+                                    {'\u2014 '}
+                                    {entry.content}
                                 </Text>
-                            ) : null}
-                        </Pressable>
+                            </Pressable>
+                        ) : null}
 
-                        {/* Dish subheader — inline edit mode or view mode */}
+                        {/* Dish line */}
                         {isEditingDish ? (
-                            <View style={{ marginTop: Spacing.sm }}>
+                            <View style={styles.dishEditor}>
                                 <TextInput
                                     style={[
                                         styles.inlineTextInput,
@@ -955,23 +1138,26 @@ export default function EntryDetailScreen() {
                                     ]}
                                     value={localDish}
                                     onChangeText={setLocalDish}
-                                    placeholder="e.g. Spicy rigatoni, negroni"
+                                    placeholder="e.g. spicy rigatoni, negroni"
                                     placeholderTextColor={palette.textMuted}
                                     autoFocus
                                     onBlur={handleDishSave}
                                 />
-                                {updateEntry.isPending && (
-                                    <ActivityIndicator size="small" color={palette.textMuted} style={{ marginTop: Spacing.xs }} />
-                                )}
-                                {dishError && (
-                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>{dishError}</Text>
-                                )}
-                                <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm }}>
-                                    <Pressable onPress={handleDishCancel}>
-                                        <Text style={[Type.caption, { color: palette.textSecondary }]}>Cancel</Text>
+                                {dishError ? (
+                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
+                                        {dishError}
+                                    </Text>
+                                ) : null}
+                                <View style={styles.editButtonRow}>
+                                    <Pressable onPress={handleDishCancel} hitSlop={8}>
+                                        <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
                                     </Pressable>
-                                    <Pressable onPress={handleDishSave} disabled={updateEntry.isPending}>
-                                        <Text style={[Type.caption, { color: palette.primary }]}>Save</Text>
+                                    <Pressable
+                                        onPress={handleDishSave}
+                                        disabled={updateEntry.isPending}
+                                        hitSlop={8}
+                                    >
+                                        <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
                                     </Pressable>
                                 </View>
                             </View>
@@ -979,343 +1165,153 @@ export default function EntryDetailScreen() {
                             <Pressable
                                 onPress={isOwnEntry ? handleDishEditStart : undefined}
                                 disabled={!isOwnEntry}
-                                style={{ flexDirection: 'row', alignItems: 'center', marginTop: Spacing.xs }}
+                                style={styles.dishRow}
                             >
-                                <Text style={[Type.headlineItalic, { color: palette.textSecondary }]}>
-                                    {'\u2014'} {entry.dish_description}
+                                <Text style={[styles.dishText, { color: palette.textSecondary }]}>
+                                    <Text style={[styles.dishLabel, { color: palette.textMuted }]}>
+                                        dish{'  '}
+                                    </Text>
+                                    {'\u2014  '}
+                                    {entry.dish_description}
                                 </Text>
-                                {isOwnEntry && (
-                                    <Ionicons
-                                        name="pencil-outline"
-                                        size={12}
-                                        color={palette.textSecondary}
-                                        style={{ marginLeft: Spacing.xs }}
-                                    />
-                                )}
-                            </Pressable>
-                        ) : isOwnEntry ? (
-                            <Pressable onPress={handleDishEditStart} style={{ marginTop: Spacing.sm }}>
-                                <View style={[styles.mutedRow, { backgroundColor: palette.surfaceContainerLow }]}>
-                                    <Ionicons name="restaurant-outline" size={16} color={palette.textMuted} />
-                                    <Text style={[Type.body, { color: palette.textMuted }]}>Add a dish</Text>
-                                </View>
                             </Pressable>
                         ) : null}
-                    </View>
 
-                    {/* Previously here — viewer's cross-Table personal history */}
-                    {userHistory && userHistory.visit_count > 0 && (
-                        <PreviouslyHereBanner
-                            voice="user"
-                            visitCount={userHistory.visit_count}
-                            lastRating={userHistory.last_visit?.rating ?? null}
-                            lastDate={userHistory.last_visit?.date ?? null}
-                            onPress={
-                                entry.restaurant_id
-                                    ? () =>
-                                          router.push({
-                                              pathname: '/restaurant/[id]',
-                                              params: {
-                                                  id: entry.restaurant_id!,
-                                                  ...(entry.table_id ? { tableId: entry.table_id } : {}),
-                                              },
-                                          })
-                                    : undefined
-                            }
-                        />
-                    )}
-
-                    {/* Round Context Banner */}
-                    {isRoundEntry && roundContext && (
-                        <Pressable
-                            onPress={() =>
-                                router.push({
-                                    pathname: '/table-night-detail',
-                                    params: { nightId: entry.table_night_id! },
-                                })
-                            }
-                            style={({ pressed }) => [
-                                styles.roundBanner,
-                                { backgroundColor: palette.primaryMuted, opacity: pressed ? 0.7 : 1 },
-                            ]}
-                        >
-                            <View style={{ flex: 1 }}>
-                                <Text style={[Type.titleSmall, { color: palette.primary }]}>
-                                    Part of a Round
-                                </Text>
-                                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
-                                    {roundContext.participantCount} {roundContext.participantCount === 1 ? 'person' : 'people'}
-                                    {roundContext.groupAverage != null
-                                        ? ` · Group avg ${roundContext.groupAverage.toFixed(1)}`
-                                        : ''}
-                                </Text>
-                            </View>
-                            <Text style={[Type.body, { color: palette.primary }]}>›</Text>
-                        </Pressable>
-                    )}
-
-                    {/* Overall Rating — tappable for own entries */}
-                    <View style={{ alignItems: 'center', marginTop: Spacing.xl }}>
-                        {isEditingRating ? (
-                            // Inline rating editor
-                            <View style={{ alignItems: 'center', gap: Spacing.sm }}>
-                                <StarRating
-                                    value={localRating ?? 0}
-                                    size={36}
-                                    editable
-                                    onChange={handleRatingChange}
-                                    showValue
-                                />
-                                <View style={{ flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.sm }}>
-                                    <Pressable
-                                        onPress={handleRatingCancel}
-                                        style={[styles.editActionBtn, { backgroundColor: palette.surfaceContainerHigh }]}
-                                    >
-                                        <Text style={[Type.caption, { color: palette.textSecondary }]}>Cancel</Text>
-                                    </Pressable>
-                                    <Pressable
-                                        onPress={handleRatingSave}
-                                        disabled={updateEntry.isPending}
-                                        style={[styles.editActionBtn, { backgroundColor: palette.primary }]}
-                                    >
-                                        {updateEntry.isPending ? (
-                                            <ActivityIndicator size="small" color="#fff" />
-                                        ) : (
-                                            <Text style={[Type.caption, { color: '#fff' }]}>Save</Text>
-                                        )}
+                        {/* Breakdown — inline strip; opens editor on tap */}
+                        {isEditingBreakdown ? (
+                            <View style={styles.breakdownEditor}>
+                                <View style={styles.breakdownEditorHeader}>
+                                    <Text style={[styles.sectionTinyLabel, { color: palette.textMuted }]}>
+                                        break it down
+                                    </Text>
+                                    <Pressable onPress={handleBreakdownClose} hitSlop={8}>
+                                        <Text style={[styles.editAction, { color: palette.primary }]}>done</Text>
                                     </Pressable>
                                 </View>
-                                {ratingError && (
-                                    <Text style={[Type.caption, { color: palette.error }]}>{ratingError}</Text>
-                                )}
+                                {CATEGORY_LABELS.map(({ key, label }) => (
+                                    <View key={key} style={styles.breakdownEditRow}>
+                                        <Text style={[styles.breakdownEditLabel, { color: palette.textSecondary }]}>
+                                            {label.toLowerCase()}
+                                        </Text>
+                                        <StarRating
+                                            value={localBreakdown[key] ?? 0}
+                                            size={20}
+                                            editable
+                                            onChange={(v) => handleBreakdownCategoryChange(key, v)}
+                                        />
+                                        {breakdownErrors[key] ? (
+                                            <Text style={[Type.caption, { color: palette.error }]}>
+                                                {breakdownErrors[key]}
+                                            </Text>
+                                        ) : null}
+                                    </View>
+                                ))}
                             </View>
-                        ) : (
+                        ) : hasCategoryRatings ? (
                             <Pressable
-                                onPress={isOwnEntry ? handleRatingTap : undefined}
+                                onPress={isOwnEntry ? handleBreakdownEditStart : undefined}
                                 disabled={!isOwnEntry}
+                                style={styles.breakdownStripWrap}
                             >
-                                {entry.rating != null ? (
-                                    <View>
-                                        <View
-                                            style={[
-                                                styles.ratingBubble,
-                                                { backgroundColor: palette.tertiaryFixed },
-                                                Shadow.ambient,
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    Type.ratingLarge ?? Type.rating,
-                                                    { color: palette.tertiary, fontSize: 36, lineHeight: 40 },
-                                                ]}
-                                            >
-                                                {entry.rating.toFixed(1)}
-                                            </Text>
-                                            <Text style={[Type.labelSmall, { color: palette.tertiary, opacity: 0.7 }]}>
-                                                Overall
-                                            </Text>
-                                            {isOwnEntry && (
-                                                <Text style={[Type.caption, { color: palette.tertiary, opacity: 0.5, marginTop: 2, fontSize: 9 }]}>
-                                                    Tap to edit
+                                <Text style={[styles.breakdownStrip, { color: palette.textSecondary }]}>
+                                    {CATEGORY_LABELS
+                                        .filter(({ key }) => entry[key] != null)
+                                        .map(({ key, label }, i, arr) => {
+                                            const val = entry[key] as number;
+                                            return (
+                                                <Text key={key}>
+                                                    <Text style={{ color: palette.textMuted }}>
+                                                        {label.toLowerCase()}{' '}
+                                                    </Text>
+                                                    <Text style={styles.breakdownNum}>
+                                                        {val.toFixed(1)}
+                                                    </Text>
+                                                    {i < arr.length - 1 ? '  \u00B7  ' : ''}
                                                 </Text>
-                                            )}
-                                        </View>
-                                        <View style={{ marginTop: Spacing.sm }}>
-                                            <StarRating value={entry.rating} size={24} editable={false} />
-                                        </View>
-                                    </View>
-                                ) : isOwnEntry ? (
-                                    // No rating yet — muted affordance
-                                    <View style={[styles.mutedRow, { backgroundColor: palette.surfaceContainerLow }]}>
-                                        <Ionicons name="star-outline" size={16} color={palette.textMuted} />
-                                        <Text style={[Type.body, { color: palette.textMuted }]}>Add a rating</Text>
-                                    </View>
-                                ) : null}
+                                            );
+                                        })}
+                                </Text>
+                            </Pressable>
+                        ) : null}
+
+                        {/* ── Authorship (table entries only — your own shows no author) ── */}
+                        {!isPersonalEntry && !isOwnEntry && entry.user_id && entry.table_id && (
+                            <Pressable
+                                onPress={() =>
+                                    router.push({
+                                        pathname: '/member/[userId]',
+                                        params: { userId: entry.user_id, tableId: entry.table_id! },
+                                    })
+                                }
+                                style={styles.authorRow}
+                            >
+                                <InitialsAvatar name={displayName} size={28} palette={palette} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.authorName, { color: palette.textSecondary }]}>
+                                        logged by{' '}
+                                        <Text style={{ color: palette.text, fontFamily: 'Manrope_600SemiBold' }}>
+                                            {displayName}
+                                        </Text>
+                                    </Text>
+                                </View>
                             </Pressable>
                         )}
                     </View>
 
-                    {/* Category Breakdown */}
-                    <View style={styles.section}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.md }}>
-                            <Text style={[Type.label, { color: palette.textSecondary }]}>
-                                Breakdown
-                            </Text>
-                            {isOwnEntry && hasCategoryRatings && !isEditingBreakdown && (
-                                <Pressable onPress={handleBreakdownEditStart} hitSlop={8}>
-                                    <Text style={[Type.caption, { color: palette.primary }]}>Edit</Text>
-                                </Pressable>
-                            )}
-                            {isOwnEntry && isEditingBreakdown && (
-                                <Pressable onPress={handleBreakdownClose} hitSlop={8}>
-                                    <Text style={[Type.caption, { color: palette.textSecondary }]}>Done</Text>
-                                </Pressable>
-                            )}
-                        </View>
-
-                        {hasCategoryRatings || isEditingBreakdown ? (
-                            // Breakdown grid — editable for own entries
-                            isEditingBreakdown ? (
-                                <View style={{ gap: Spacing.md }}>
-                                    {CATEGORY_LABELS.map(({ key, label }) => (
-                                        <View key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md }}>
-                                            <Text style={[Type.bodySmall, { color: palette.text, width: 60 }]}>{label}</Text>
-                                            <StarRating
-                                                value={localBreakdown[key] ?? 0}
-                                                size={22}
-                                                editable
-                                                onChange={(v) => handleBreakdownCategoryChange(key, v)}
-                                            />
-                                            {updateEntry.isPending && (
-                                                <ActivityIndicator size="small" color={palette.textMuted} />
-                                            )}
-                                            {breakdownErrors[key] ? (
-                                                <Text style={[Type.caption, { color: palette.error }]}>{breakdownErrors[key]}</Text>
-                                            ) : null}
-                                        </View>
-                                    ))}
-                                </View>
-                            ) : (
-                                <View style={styles.breakdownGrid}>
-                                    {CATEGORY_LABELS.map(({ key, label }) => {
-                                        const val = entry[key];
-                                        if (val == null) return null;
-                                        return (
-                                            <View
-                                                key={label}
-                                                style={[
-                                                    styles.breakdownCell,
-                                                    { backgroundColor: palette.surfaceContainerLow },
-                                                ]}
-                                            >
-                                                <Text style={[Type.rating, { color: palette.tertiary, fontSize: 22 }]}>
-                                                    {val.toFixed(1)}
-                                                </Text>
-                                                <Text style={[Type.labelSmall, { color: palette.textMuted, marginTop: 4 }]}>
-                                                    {label}
-                                                </Text>
-                                            </View>
-                                        );
-                                    })}
-                                </View>
-                            )
-                        ) : isOwnEntry ? (
-                            // "Rate the details" muted affordance
-                            <Pressable onPress={handleBreakdownEditStart}>
-                                <View style={[styles.mutedRow, { backgroundColor: palette.surfaceContainerLow }]}>
-                                    <Ionicons name="grid-outline" size={16} color={palette.textMuted} />
-                                    <Text style={[Type.body, { color: palette.textMuted }]}>Rate the details</Text>
-                                </View>
-                            </Pressable>
-                        ) : null}
-                    </View>
-
-                    {/* Notes */}
-                    <View style={styles.section}>
-                        <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
-                            Notes
-                        </Text>
-                        {isEditingNote ? (
-                            <View>
-                                <TextInput
-                                    style={[
-                                        styles.inlineTextArea,
-                                        { backgroundColor: palette.surfaceContainerLow, color: palette.text },
-                                    ]}
-                                    value={localNote}
-                                    onChangeText={setLocalNote}
-                                    placeholder="How was it? Any highlights?"
-                                    placeholderTextColor={palette.textMuted}
-                                    multiline
-                                    numberOfLines={4}
-                                    textAlignVertical="top"
-                                    autoFocus
+                    {/* Comments — plain rows on the warm cream page, outside the note card. */}
+                    {/* Personal-table entries have no replies; hide comments too. */}
+                    {!isPersonalEntry && entry.id && entry.table_id && (interactions?.comments ?? []).length > 0 && (
+                        <View style={styles.commentsOutside}>
+                            {(interactions?.comments ?? []).map((c) => (
+                                <CommentRow
+                                    key={c.id}
+                                    comment={c}
+                                    targetType="entry"
+                                    targetId={entry.id}
+                                    onRetry={
+                                        c.failed && c.client_nonce
+                                            ? () => handleCommentRetry(c)
+                                            : undefined
+                                    }
+                                    onDiscard={
+                                        c.failed && c.client_nonce
+                                            ? () => handleCommentDiscard(c)
+                                            : undefined
+                                    }
                                 />
-                                {noteSaving && (
-                                    <ActivityIndicator size="small" color={palette.textMuted} style={{ marginTop: Spacing.xs }} />
-                                )}
-                                {noteError && (
-                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>{noteError}</Text>
-                                )}
-                                <View style={{ flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.sm }}>
-                                    <Pressable onPress={handleNoteCancel}>
-                                        <Text style={[Type.caption, { color: palette.textSecondary }]}>Cancel</Text>
-                                    </Pressable>
-                                    <Pressable onPress={handleNoteSave} disabled={updateEntry.isPending}>
-                                        <Text style={[Type.caption, { color: palette.primary }]}>Save</Text>
-                                    </Pressable>
-                                </View>
-                            </View>
-                        ) : entry.content ? (
-                            <Pressable onPress={isOwnEntry ? handleNoteEditStart : undefined} disabled={!isOwnEntry}>
-                                <View
-                                    style={[
-                                        styles.quoteCard,
-                                        {
-                                            backgroundColor: palette.surfaceContainerLow,
-                                            borderLeftColor: palette.tertiaryFixed,
-                                        },
-                                    ]}
-                                >
-                                    <Text
-                                        style={[
-                                            Type.body,
-                                            { color: palette.text, fontStyle: 'italic', lineHeight: 24 },
-                                        ]}
-                                    >
-                                        &ldquo;{entry.content}&rdquo;
-                                    </Text>
-                                    {isOwnEntry && (
-                                        <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.xs }]}>
-                                            Tap to edit
-                                        </Text>
-                                    )}
-                                </View>
-                            </Pressable>
-                        ) : isOwnEntry ? (
-                            <Pressable onPress={handleNoteEditStart}>
-                                <View style={[styles.mutedRow, { backgroundColor: palette.surfaceContainerLow }]}>
-                                    <Ionicons name="pencil-outline" size={16} color={palette.textMuted} />
-                                    <Text style={[Type.body, { color: palette.textMuted }]}>Add a note</Text>
-                                </View>
-                            </Pressable>
-                        ) : null}
-                    </View>
-
-                    {/* Action row + Replies */}
-                    {entry.id && (
-                        <View style={styles.section}>
-                            <FeedActionRow
-                                targetType="entry"
-                                targetId={entry.id}
-                                topEmojis={interactions?.counts.top_emojis ?? []}
-                                reactionCount={interactions?.counts.reactions ?? 0}
-                                commentCount={interactions?.counts.comments ?? 0}
-                                myReactions={
-                                    viewer
-                                        ? (interactions?.reactions ?? [])
-                                              .filter((r) => r.user_id === viewer.id)
-                                              .map((r) => r.emoji)
-                                        : []
-                                }
-                                palette={palette}
-                                detailPathname="/entry-detail"
-                                detailParams={{ entryId: entry.id }}
-                                tableId={entry.table_id ?? undefined}
-                            />
-                            <View style={{ height: Spacing.lg }} />
-                            <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
-                                Replies
-                            </Text>
-                            <CommentThread
-                                targetType="entry"
-                                targetId={entry.id}
-                                comments={interactions?.comments ?? []}
-                                autoFocusComposer={focus === 'reply'}
-                            />
+                            ))}
                         </View>
                     )}
                 </ScrollView>
+
+                {/* ── Floating action pill + docked composer ── */}
+                {/* Table entries only. Personal entries are a private journal — no social UI. */}
+                {!isPersonalEntry && entry.id && entry.table_id && (
+                    replyOpen ? (
+                        <DockedReplyComposer
+                            entryId={entry.id}
+                            palette={palette}
+                            onClose={() => setReplyOpen(false)}
+                        />
+                    ) : (
+                        <FloatingActionPill
+                            entryId={entry.id}
+                            reactionCount={interactions?.counts.reactions ?? 0}
+                            commentCount={interactions?.counts.comments ?? 0}
+                            myReactions={
+                                viewer
+                                    ? (interactions?.reactions ?? [])
+                                          .filter((r) => r.user_id === viewer.id)
+                                          .map((r) => r.emoji)
+                                    : []
+                            }
+                            palette={palette}
+                            tableId={entry.table_id ?? undefined}
+                            onReplyPress={() => setReplyOpen(true)}
+                            bottomInset={insets.bottom}
+                        />
+                    )
+                )}
             </View>
         </>
     );
@@ -1370,7 +1366,332 @@ function InitialsAvatar({
     );
 }
 
+// ── FloatingActionPill ────────────────────────────────────────────────────────
+//
+// Instagram-story-style floating pill docked bottom-right. Holds the like
+// toggle (tap = ❤️ on/off, long-press = emoji picker) and the reply trigger.
+// Only rendered for table entries — personal-table entries have no social UI.
+
+interface FloatingActionPillProps {
+    entryId: string;
+    reactionCount: number;
+    commentCount: number;
+    myReactions: string[];
+    palette: Palette;
+    tableId?: string;
+    onReplyPress: () => void;
+    bottomInset: number;
+}
+
+function FloatingActionPill({
+    entryId,
+    reactionCount,
+    commentCount,
+    myReactions,
+    palette,
+    tableId,
+    onReplyPress,
+    bottomInset,
+}: FloatingActionPillProps) {
+    const toggleReaction = useToggleReaction();
+    const queryClient = useQueryClient();
+
+    const [localLiked, setLocalLiked] = useState<string | null>(
+        myReactions.includes('❤️') ? '❤️' : myReactions[0] ?? null,
+    );
+    const [countDelta, setCountDelta] = useState(0);
+
+    const anchorRef = useRef<View>(null);
+    const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+
+    const liked = !!localLiked;
+    const effectiveCount = Math.max(0, reactionCount + countDelta);
+
+    const invalidateFeed = () => {
+        if (tableId) {
+            queryClient.invalidateQueries({
+                queryKey: ['tableActivity', tableId],
+                exact: false,
+            });
+        }
+    };
+
+    const applyToggle = (emoji: string) => {
+        const hadThisEmoji = localLiked === emoji;
+        const wasLiked = liked;
+
+        if (hadThisEmoji) {
+            setLocalLiked(null);
+            setCountDelta((d) => d - 1);
+        } else {
+            setLocalLiked(emoji);
+            if (!wasLiked) setCountDelta((d) => d + 1);
+        }
+
+        if (!hadThisEmoji && wasLiked && localLiked) {
+            toggleReaction.mutate(
+                { targetType: 'entry', targetId: entryId, emoji: localLiked },
+                { onSuccess: invalidateFeed },
+            );
+        }
+
+        toggleReaction.mutate(
+            { targetType: 'entry', targetId: entryId, emoji },
+            {
+                onSuccess: invalidateFeed,
+                onError: () => {
+                    setLocalLiked(wasLiked ? localLiked : null);
+                    setCountDelta((d) =>
+                        hadThisEmoji ? d + 1 : wasLiked ? d : d - 1,
+                    );
+                },
+            },
+        );
+    };
+
+    const handleTapLike = () => {
+        applyToggle(liked ? localLiked! : '❤️');
+    };
+
+    const handleLongPress = () => {
+        if (!anchorRef.current) return;
+        const handle = findNodeHandle(anchorRef.current);
+        if (handle == null) return;
+        UIManager.measureInWindow(handle, (x, y) => {
+            setPickerAnchor({ x, y });
+        });
+    };
+
+    const handlePick = (emoji: string) => {
+        setPickerAnchor(null);
+        applyToggle(emoji);
+    };
+
+    return (
+        <>
+            <View
+                style={[
+                    styles.floatingPill,
+                    { bottom: Math.max(bottomInset, 12) + 8 },
+                ]}
+                pointerEvents="box-none"
+            >
+                <View
+                    style={[
+                        styles.floatingPillInner,
+                        { backgroundColor: 'rgba(252, 249, 244, 0.92)' },
+                    ]}
+                >
+                    <Pressable
+                        ref={anchorRef}
+                        onPress={handleTapLike}
+                        onLongPress={handleLongPress}
+                        delayLongPress={220}
+                        hitSlop={6}
+                        style={styles.pillBtn}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                            liked ? 'Unlike' : 'Like (long-press to pick an emoji)'
+                        }
+                    >
+                        {liked ? (
+                            <Text style={styles.pillEmoji} allowFontScaling={false}>
+                                {localLiked}
+                            </Text>
+                        ) : (
+                            <Ionicons
+                                name="heart-outline"
+                                size={18}
+                                color={palette.textSecondary}
+                            />
+                        )}
+                        {effectiveCount > 0 ? (
+                            <Text
+                                style={[
+                                    styles.pillCount,
+                                    { color: palette.textSecondary },
+                                ]}
+                            >
+                                {effectiveCount}
+                            </Text>
+                        ) : null}
+                    </Pressable>
+
+                    <View
+                        style={[
+                            styles.pillSep,
+                            { backgroundColor: 'rgba(28, 28, 25, 0.12)' },
+                        ]}
+                    />
+
+                    <Pressable
+                        onPress={onReplyPress}
+                        hitSlop={6}
+                        style={styles.pillBtn}
+                        accessibilityRole="button"
+                        accessibilityLabel="Reply"
+                    >
+                        <Ionicons
+                            name="chatbubble-outline"
+                            size={16}
+                            color={palette.textSecondary}
+                        />
+                        <Text style={[styles.pillLabel, { color: palette.text }]}>
+                            reply
+                        </Text>
+                        {commentCount > 0 ? (
+                            <Text
+                                style={[
+                                    styles.pillCount,
+                                    { color: palette.textSecondary },
+                                ]}
+                            >
+                                {commentCount}
+                            </Text>
+                        ) : null}
+                    </Pressable>
+                </View>
+            </View>
+
+            <ReactionPicker
+                visible={!!pickerAnchor}
+                anchor={pickerAnchor}
+                onPick={handlePick}
+                onClose={() => setPickerAnchor(null)}
+            />
+        </>
+    );
+}
+
+// ── DockedReplyComposer ───────────────────────────────────────────────────────
+//
+// Slides up from the bottom when the user taps "reply" on the floating pill.
+// iMessage pattern — KeyboardAvoidingView keeps the input pinned above the
+// keyboard. Closes on cancel or after a successful send.
+
+interface DockedReplyComposerProps {
+    entryId: string;
+    palette: Palette;
+    onClose: () => void;
+}
+
+function DockedReplyComposer({ entryId, palette, onClose }: DockedReplyComposerProps) {
+    const [body, setBody] = useState('');
+    const [sendError, setSendError] = useState<string | null>(null);
+    const addComment = useAddComment();
+    const inputRef = useRef<TextInput>(null);
+
+    useEffect(() => {
+        const t = setTimeout(() => inputRef.current?.focus(), 150);
+        return () => clearTimeout(t);
+    }, []);
+
+    const trimmed = body.trim();
+    const canSend = trimmed.length >= 1 && !addComment.isPending;
+
+    const handleSend = () => {
+        if (!canSend) return;
+        setSendError(null);
+        const pendingBody = trimmed;
+        const nonce = `nonce-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        addComment.mutate(
+            { targetType: 'entry', targetId: entryId, body: pendingBody, clientNonce: nonce },
+            {
+                onSuccess: () => {
+                    setBody('');
+                    setSendError(null);
+                    onClose();
+                },
+                onError: (err: any) => {
+                    // Keep body + composer open so user can retry or edit.
+                    setBody(pendingBody);
+                    const msg =
+                        err?.message ??
+                        err?.error ??
+                        'Send failed. Tap retry.';
+                    setSendError(msg);
+                },
+            },
+        );
+    };
+
+    return (
+        <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.dockedComposerWrap}
+            pointerEvents="box-none"
+        >
+            <View
+                style={[
+                    styles.dockedComposer,
+                    {
+                        backgroundColor: palette.surfaceNote,
+                        borderTopColor: palette.dividerSoft,
+                    },
+                ]}
+            >
+                <TextInput
+                    ref={inputRef}
+                    value={body}
+                    onChangeText={(t) => {
+                        setBody(t);
+                        if (sendError) setSendError(null);
+                    }}
+                    placeholder="say something"
+                    placeholderTextColor={palette.textMuted}
+                    style={[styles.dockedInput, { color: palette.text }]}
+                    multiline
+                    returnKeyType="default"
+                    blurOnSubmit={false}
+                />
+                {sendError ? (
+                    <Text
+                        style={{
+                            fontFamily: 'Manrope_500Medium',
+                            fontSize: 11,
+                            color: palette.error,
+                            marginTop: Spacing.xs,
+                        }}
+                    >
+                        {sendError}
+                    </Text>
+                ) : null}
+                <View style={styles.dockedActions}>
+                    <Pressable
+                        onPress={() => {
+                            setBody('');
+                            setSendError(null);
+                            onClose();
+                        }}
+                        hitSlop={8}
+                    >
+                        <Text style={[styles.editAction, { color: palette.textSecondary }]}>
+                            cancel
+                        </Text>
+                    </Pressable>
+                    <Pressable onPress={handleSend} disabled={!canSend} hitSlop={8}>
+                        {addComment.isPending ? (
+                            <ActivityIndicator size="small" color={palette.primary} />
+                        ) : (
+                            <Text
+                                style={[
+                                    styles.editAction,
+                                    { color: canSend ? palette.primary : palette.textMuted },
+                                ]}
+                            >
+                                {sendError ? 'retry' : 'send'}
+                            </Text>
+                        )}
+                    </Pressable>
+                </View>
+            </View>
+        </KeyboardAvoidingView>
+    );
+}
+
 // ── Styles ─────────────────────────────────────────────────────────────────────
+
+const PAGE_H = 22;
 
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -1381,23 +1702,82 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
     },
-    headerSection: { paddingHorizontal: Spacing.lg },
-    ratingBubble: {
-        alignItems: 'center',
-        paddingHorizontal: Spacing.xl,
-        paddingVertical: Spacing.md,
+    section: { paddingHorizontal: PAGE_H, paddingTop: Spacing.xl },
+
+    // ── Body — encased note card ──
+    // Brand: white `--surface-note`, radius-xl, near-invisible warm border,
+    // `--shadow-note`. Floats just below the hero (slightly overlapping).
+    bodyCard: {
+        marginHorizontal: 14,
+        paddingHorizontal: 20,
+        paddingTop: 24,
+        paddingBottom: 28,
         borderRadius: Radius.xl,
+        borderWidth: StyleSheet.hairlineWidth,
+        shadowColor: '#1c1c19',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.05,
+        shadowRadius: 24,
+        elevation: 3,
     },
-    section: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.xxl },
-    breakdownGrid: { flexDirection: 'row', gap: Spacing.sm },
-    breakdownCell: {
-        flex: 1,
-        alignItems: 'center',
-        paddingVertical: Spacing.md,
-        borderRadius: Radius.lg,
+
+    // Kicker — lowercase past-tense verb · relative date · short date
+    kicker: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        letterSpacing: 0.4,
     },
+
+    // Title row — name + inline rating
+    titleRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        marginTop: Spacing.sm + 2,
+    },
+    restaurantName: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 34,
+        lineHeight: 38,
+        letterSpacing: -0.4,
+    },
+    address: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        marginTop: 4,
+        letterSpacing: 0.2,
+    },
+
+    // Inline rating stack — italic serif number + "/ 5"
+    ratingStack: {
+        alignItems: 'flex-end',
+        paddingTop: 4,
+    },
+    ratingNum: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 34,
+        lineHeight: 36,
+        letterSpacing: -0.6,
+    },
+    ratingSlash: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        marginTop: 2,
+    },
+    // Stars row — 16px single line below title row
+    starsRow: {
+        marginTop: Spacing.sm + 2,
+    },
+
+    // Rating editor (shown inline when isEditingRating)
+    ratingEditor: {
+        marginTop: Spacing.md,
+        alignItems: 'flex-start',
+        gap: Spacing.sm,
+    },
+
+    // Round banner
     roundBanner: {
-        marginHorizontal: Spacing.lg,
         marginTop: Spacing.lg,
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.md,
@@ -1406,6 +1786,209 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: Spacing.sm,
     },
+    roundBannerTitle: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+    },
+
+    // Prose — em-dash pull-quote, Newsreader 18/1.55
+    proseBlock: {
+        marginTop: Spacing.xl,
+    },
+    prose: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 18,
+        lineHeight: 28,
+    },
+
+    // Prose editor (tapped to edit)
+    proseEditor: {
+        marginTop: Spacing.xl,
+    },
+    proseInput: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 18,
+        lineHeight: 28,
+        minHeight: 120,
+        padding: 0,
+        textAlignVertical: 'top',
+    },
+
+    // Dish line
+    dishRow: {
+        marginTop: Spacing.md,
+    },
+    dishText: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15,
+        lineHeight: 22,
+    },
+    dishLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+    },
+    dishEditor: {
+        marginTop: Spacing.md,
+    },
+
+    // Breakdown strip — "food 2.0 · vibe 1.0 · service 2.5 · value 1.5"
+    breakdownStripWrap: {
+        marginTop: Spacing.lg,
+        paddingTop: Spacing.md,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: 'transparent', // filled by parent's divider if needed; keep structural
+    },
+    breakdownStrip: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 12,
+        letterSpacing: 0.2,
+    },
+    breakdownNum: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+    },
+
+    // Breakdown editor
+    breakdownEditor: {
+        marginTop: Spacing.lg,
+        gap: Spacing.sm,
+    },
+    breakdownEditorHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: Spacing.sm,
+    },
+    breakdownEditRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+        paddingVertical: Spacing.xs,
+    },
+    breakdownEditLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        width: 60,
+    },
+
+    // Edit button row (cancel / save)
+    editButtonRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.lg,
+        marginTop: Spacing.sm,
+    },
+    editAction: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
+        letterSpacing: 0.3,
+    },
+    sectionTinyLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+
+    // Authorship row — only on table entries not-your-own
+    authorRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginTop: Spacing.xl,
+    },
+    authorName: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 12,
+    },
+
+    // Comments — plain rows on warm cream, sits below the note card.
+    commentsOutside: {
+        gap: Spacing.md,
+        paddingHorizontal: PAGE_H,
+        paddingTop: Spacing.xl,
+    },
+
+    // Floating bottom-right action pill — Instagram story-style.
+    // Outer wrapper sets position absolute; inner renders the visible pill.
+    floatingPill: {
+        position: 'absolute',
+        right: 16,
+        left: 0,
+        alignItems: 'flex-end',
+    },
+    floatingPillInner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: Radius.full,
+        shadowColor: '#1c1c19',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.14,
+        shadowRadius: 18,
+        elevation: 6,
+        // Inset 1px warm hairline per brand rule.
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: 'rgba(28, 28, 25, 0.06)',
+    },
+    pillBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+    },
+    pillEmoji: {
+        fontSize: 16,
+        lineHeight: 20,
+    },
+    pillLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        letterSpacing: 0.1,
+    },
+    pillCount: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
+    },
+    pillSep: {
+        width: 1,
+        height: 14,
+    },
+
+    // Docked reply composer — iMessage pattern, slides up from bottom
+    dockedComposerWrap: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+    },
+    dockedComposer: {
+        paddingHorizontal: Spacing.md,
+        paddingTop: Spacing.md,
+        paddingBottom: Spacing.md,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    dockedInput: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 15,
+        lineHeight: 22,
+        minHeight: 44,
+        maxHeight: 140,
+        padding: 0,
+    },
+    dockedActions: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: Spacing.lg,
+        marginTop: Spacing.sm,
+    },
+
+    // Photo caption + page dots (hero carousel)
     userPhotoCaptionContainer: {
         position: 'absolute',
         bottom: Spacing.sm,
@@ -1430,44 +2013,8 @@ const styles = StyleSheet.create({
         height: 6,
         borderRadius: 3,
     },
-    // Edit affordances
-    mutedRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.sm,
-        padding: Spacing.md,
-        borderRadius: Radius.md,
-    },
-    editActionBtn: {
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        borderRadius: Radius.full,
-        minWidth: 64,
-        alignItems: 'center',
-    },
-    quoteCard: {
-        borderLeftWidth: 3,
-        paddingLeft: Spacing.md,
-        paddingVertical: Spacing.sm,
-        borderRadius: Radius.md,
-        marginTop: Spacing.xs,
-    },
-    inlineTextInput: {
-        borderRadius: Radius.md,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        fontSize: 15,
-        fontFamily: 'Manrope_400Regular',
-        minHeight: 44,
-    },
-    inlineTextArea: {
-        borderRadius: Radius.md,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        fontSize: 15,
-        fontFamily: 'Manrope_400Regular',
-        minHeight: 100,
-    },
+
+    // Photo manage mode
     editPhotoButton: {
         width: 30,
         height: 30,
@@ -1506,5 +2053,15 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingVertical: Spacing.md,
         borderRadius: Radius.lg,
+    },
+
+    // Inline text input (dish)
+    inlineTextInput: {
+        borderRadius: Radius.md,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
+        fontSize: 15,
+        fontFamily: 'Manrope_400Regular',
+        minHeight: 44,
     },
 });
