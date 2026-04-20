@@ -32,7 +32,14 @@ import { useTables } from '@/hooks/tables/useTables';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { useStartRound } from '@/hooks/tables/useStartRound';
 import { StarRating } from '@/components/StarRating';
-import { MultiPhotoRow } from '@/components/MultiPhotoRow';
+import {
+    SheetHeader,
+    RestaurantHeader,
+    FieldUnderline,
+    PhotoCollage,
+    Label,
+    LabelSmall,
+} from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
 
@@ -541,20 +548,43 @@ export default function CreateEntryScreen() {
             ? 'START THE ROUND'
             : 'SHARE';
 
+    // Table picker subtitle — neutral placeholder per architect's clarification (3).
+    // Do NOT fabricate wishlist/shortlist reasons — ships a lie until the lookup exists.
+    const TABLE_SUBTITLE = 'tap to share to this table';
+
+    // Initials for the 30x30 glyph tile per table (first letter of name).
+    const tableGlyph = (name: string) =>
+        name.trim().charAt(0).toUpperCase() || 'T';
+
+    // Restaurant meta for the header block (Dinner · Tue Apr 14 style is future work;
+    // keep it grounded in address for now since that's what we already have).
+    const headerMeta = selectedPlace?.formattedAddress ?? undefined;
+
     // ── Render ────────────────────────────────────────────────────────────
 
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
             <KeyboardAvoidingView
-                style={{ flex: 1, backgroundColor: palette.background }}
+                style={{ flex: 1, backgroundColor: palette.card }}
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             >
+                <View style={{ paddingTop: insets.top }}>
+                    <SheetHeader
+                        title="A new entry"
+                        leftLabel="Cancel"
+                        rightLabel={submitLabel === 'LOG IT' ? 'Save' : submitLabel === 'START THE ROUND' ? 'Start' : 'Post'}
+                        onLeftPress={() => router.back()}
+                        onRightPress={handleSubmit}
+                        rightDisabled={!canSubmit}
+                        rightPending={isSubmitting}
+                    />
+                </View>
                 <ScrollView
                     contentContainerStyle={{
-                        paddingTop: insets.top + Spacing.md,
+                        paddingTop: Spacing.md,
                         paddingBottom: insets.bottom + 120,
-                        paddingHorizontal: Spacing.lg,
+                        paddingHorizontal: Spacing.lg + 2,
                     }}
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
@@ -641,226 +671,438 @@ export default function CreateEntryScreen() {
                                         onChangeText={setQuery}
                                         autoFocus={!restaurantIdParam && !placePayloadParam}
                                     />
-                                    {searching && (
-                                        <ActivityIndicator
-                                            size="small"
-                                            color={palette.textMuted}
-                                            style={{ position: 'absolute', right: 16, top: 16 }}
-                                        />
-                                    )}
-                                </View>
-
-                                {results.length > 0 && (
-                                    <View
-                                        style={[
-                                            styles.dropdown,
-                                            {
-                                                backgroundColor: palette.surfaceContainerLow,
-                                                ...Shadow.subtle,
-                                            },
-                                        ]}
-                                    >
-                                        {results.map((place, i) => (
-                                            <Pressable
-                                                key={place.id}
-                                                onPress={() => handleSelectPlace(place)}
-                                                style={({ pressed }) => [
-                                                    styles.dropdownRow,
+                                ) : null}
+                            </View>
+                            {results.length > 0 ? (
+                                <View
+                                    style={[
+                                        styles.dropdown,
+                                        {
+                                            backgroundColor: palette.surfaceContainerLow,
+                                            ...Shadow.subtle,
+                                        },
+                                    ]}
+                                >
+                                    {results.map((place, i) => (
+                                        <Pressable
+                                            key={place.id}
+                                            onPress={() => handleSelectPlace(place)}
+                                            style={({ pressed }) => [
+                                                styles.dropdownRow,
+                                                {
+                                                    backgroundColor: pressed
+                                                        ? palette.surfaceContainerHigh
+                                                        : 'transparent',
+                                                    borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
+                                                    borderTopColor: palette.surfaceContainerHigh,
+                                                },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    Type.body,
                                                     {
-                                                        backgroundColor: pressed
-                                                            ? palette.surfaceContainerHigh
-                                                            : 'transparent',
-                                                        borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
-                                                        borderTopColor: palette.surfaceContainerHigh,
+                                                        color: palette.text,
+                                                        fontFamily: 'Manrope_500Medium',
                                                     },
                                                 ]}
+                                                numberOfLines={1}
                                             >
+                                                {place.name}
+                                            </Text>
+                                            {place.formattedAddress ? (
                                                 <Text
                                                     style={[
-                                                        Type.body,
-                                                        {
-                                                            color: palette.text,
-                                                            fontFamily: 'Manrope_500Medium',
-                                                        },
+                                                        Type.caption,
+                                                        { color: palette.textSecondary, marginTop: 1 },
                                                     ]}
                                                     numberOfLines={1}
                                                 >
-                                                    {place.name}
+                                                    {place.formattedAddress}
                                                 </Text>
-                                                {place.formattedAddress && (
-                                                    <Text
-                                                        style={[
-                                                            Type.caption,
-                                                            { color: palette.textSecondary, marginTop: 1 },
-                                                        ]}
-                                                        numberOfLines={1}
-                                                    >
-                                                        {place.formattedAddress}
-                                                    </Text>
-                                                )}
-                                            </Pressable>
-                                        ))}
-                                    </View>
-                                )}
-
-                                {query.trim().length >= 2 && results.length === 0 && !searching && (
-                                    <Text
-                                        style={[
-                                            Type.caption,
-                                            { color: palette.textMuted, marginTop: Spacing.xs, paddingLeft: Spacing.xs },
-                                        ]}
-                                    >
-                                        No results — you can still submit with this name
-                                    </Text>
-                                )}
-                            </View>
-                        )}
-                    </View>
-
-                    {/* Table picker */}
-                    {sortedTables.length > 0 && (
-                        <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                            <Text style={[Type.label, { color: palette.textSecondary }]}>
-                                Post to
-                            </Text>
-                            <ScrollView
-                                horizontal
-                                showsHorizontalScrollIndicator={false}
-                                contentContainerStyle={styles.chipRow}
-                            >
-                                {sortedTables.map(t => (
-                                    <Pressable
-                                        key={t.id}
-                                        onPress={() => setSelectedTableId(t.id)}
-                                        style={[
-                                            styles.tableChip,
-                                            {
-                                                backgroundColor:
-                                                    selectedTableId === t.id
-                                                        ? palette.primary
-                                                        : palette.surfaceContainerLow,
-                                            },
-                                        ]}
-                                    >
-                                        <Text
-                                            style={[
-                                                Type.caption,
-                                                {
-                                                    color:
-                                                        selectedTableId === t.id
-                                                            ? '#fff'
-                                                            : palette.text,
-                                                },
-                                            ]}
-                                            numberOfLines={1}
-                                        >
-                                            {t.name}
-                                        </Text>
-                                    </Pressable>
-                                ))}
-                            </ScrollView>
+                                            ) : null}
+                                        </Pressable>
+                                    ))}
+                                </View>
+                            ) : null}
+                            {query.trim().length >= 2 && results.length === 0 && !searching ? (
+                                <Text
+                                    style={[
+                                        Type.caption,
+                                        { color: palette.textMuted, marginTop: Spacing.xs },
+                                    ]}
+                                >
+                                    no results — you can still submit with this name
+                                </Text>
+                            ) : null}
                         </View>
                     )}
 
-                    {/* Mode picker (group tables only) */}
-                    {!isPersonalTable && selectedTableId && (
-                        <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                            <Text style={[Type.label, { color: palette.textSecondary }]}>
-                                How are you posting?
+                    {/* Overall rating — stars row */}
+                    <View style={{ marginTop: Spacing.lg }}>
+                        <StarRating
+                            value={rating}
+                            size={26}
+                            editable
+                            onChange={setRating}
+                        />
+                    </View>
+
+                    {/* Dynamic photo collage */}
+                    <View style={{ marginTop: Spacing.lg }}>
+                        <PhotoCollage
+                            photos={photos}
+                            maxPhotos={MAX_PHOTOS}
+                            onAdd={handlePhotoPress}
+                            onRemove={handleRemovePhoto}
+                            onRetry={handleRetryPhoto}
+                        />
+                    </View>
+
+                    {/* Notes — Newsreader 18/1.55 prose, no fill, "Start writing…" ghost */}
+                    <View style={{ marginTop: Spacing.xl - 4 }}>
+                        <TextInput
+                            style={{
+                                fontFamily: 'Newsreader_400Regular',
+                                fontSize: 18,
+                                lineHeight: 28,
+                                color: palette.text,
+                                minHeight: 160,
+                                padding: 0,
+                                textAlignVertical: 'top',
+                            }}
+                            placeholder="Start writing…"
+                            placeholderTextColor={palette.textMuted}
+                            value={notes}
+                            onChangeText={setNotes}
+                            multiline
+                        />
+                    </View>
+
+                    {/* Dish — FieldUnderline with LabelSmall above */}
+                    <View style={{ marginTop: Spacing.xl - 4 }}>
+                        <FieldUnderline
+                            label="What did you have?"
+                            value={dish}
+                            onChangeText={setDish}
+                            placeholder="e.g. spicy rigatoni, negroni"
+                            fontVariant="sans"
+                            size="body"
+                        />
+                    </View>
+
+                    {/* Secondary ratings — collapsible, underline-divided */}
+                    <View
+                        style={[
+                            styles.sectionDivider,
+                            { backgroundColor: palette.dividerSoft },
+                        ]}
+                    />
+                    <View>
+                        <Pressable
+                            style={styles.detailsToggle}
+                            onPress={() => setShowDetails(!showDetails)}
+                        >
+                            <Label>Break it down</Label>
+                            <Ionicons
+                                name={showDetails ? 'chevron-up' : 'chevron-down'}
+                                size={16}
+                                color={palette.textSecondary}
+                            />
+                        </Pressable>
+
+                        {showDetails ? (
+                            <View style={styles.detailRatings}>
+                                {([
+                                    ['Flavor', flavorRating, setFlavorRating],
+                                    ['Vibes', vibeRating, setVibeRating],
+                                    ['Service', serviceRating, setServiceRating],
+                                    ['Value', valueRating, setValueRating],
+                                ] as const).map(([label, val, setter]) => (
+                                    <View key={label} style={styles.detailRow}>
+                                        <Text
+                                            style={[
+                                                Type.labelSmall,
+                                                { color: palette.textSecondary, width: 72 },
+                                            ]}
+                                        >
+                                            {label.toUpperCase()}
+                                        </Text>
+                                        <StarRating
+                                            value={val as number}
+                                            size={22}
+                                            editable
+                                            onChange={setter as (v: number) => void}
+                                        />
+                                    </View>
+                                ))}
+                            </View>
+                        ) : null}
+                    </View>
+
+                    {/* Table picker — single-select radio rows (clarification 2) */}
+                    {sortedTables.length > 0 ? (
+                        <>
+                            <View
+                                style={[
+                                    styles.sectionDivider,
+                                    { backgroundColor: palette.dividerSoft },
+                                ]}
+                            />
+                            <View style={styles.tablePickerHeader}>
+                                <Label>Share to a table?</Label>
+                                <Text
+                                    style={{
+                                        fontFamily: 'Newsreader_400Regular_Italic',
+                                        fontSize: 13,
+                                        color: palette.textMuted,
+                                    }}
+                                >
+                                    optional
+                                </Text>
+                            </View>
+                            {sortedTables.map((t) => {
+                                const isSelected = selectedTableId === t.id;
+                                return (
+                                    <Pressable
+                                        key={t.id}
+                                        onPress={() => setSelectedTableId(t.id)}
+                                        style={({ pressed }) => [
+                                            styles.tableRow,
+                                            {
+                                                backgroundColor: isSelected
+                                                    ? palette.surfaceContainer
+                                                    : 'transparent',
+                                                borderColor: isSelected
+                                                    ? palette.primary
+                                                    : 'transparent',
+                                                opacity: pressed ? 0.85 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <View
+                                            style={[
+                                                styles.glyphTile,
+                                                {
+                                                    backgroundColor: isSelected
+                                                        ? palette.primary
+                                                        : palette.primaryMuted,
+                                                },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={{
+                                                    fontFamily: 'Newsreader_400Regular_Italic',
+                                                    fontSize: 14,
+                                                    fontWeight: '600',
+                                                    color: isSelected ? '#fff' : palette.primary,
+                                                }}
+                                            >
+                                                {tableGlyph(t.name)}
+                                            </Text>
+                                        </View>
+                                        <View style={{ flex: 1, minWidth: 0 }}>
+                                            <Text
+                                                style={{
+                                                    fontFamily: 'Newsreader_400Regular_Italic',
+                                                    fontSize: 15,
+                                                    color: palette.text,
+                                                    lineHeight: 18,
+                                                }}
+                                                numberOfLines={1}
+                                            >
+                                                {t.name}
+                                            </Text>
+                                            <Text
+                                                style={{
+                                                    fontFamily: 'Manrope_400Regular',
+                                                    fontSize: 11,
+                                                    color: palette.textMuted,
+                                                    marginTop: 2,
+                                                    lineHeight: 14,
+                                                }}
+                                                numberOfLines={1}
+                                            >
+                                                {TABLE_SUBTITLE}
+                                            </Text>
+                                        </View>
+                                        {/* Radio glyph — empty circle / filled dot (clarification 2) */}
+                                        <View
+                                            style={[
+                                                styles.radioOuter,
+                                                {
+                                                    borderColor: isSelected
+                                                        ? palette.primary
+                                                        : palette.ruleInkSoft,
+                                                },
+                                            ]}
+                                        >
+                                            {isSelected ? (
+                                                <View
+                                                    style={[
+                                                        styles.radioInner,
+                                                        { backgroundColor: palette.primary },
+                                                    ]}
+                                                />
+                                            ) : null}
+                                        </View>
+                                    </Pressable>
+                                );
+                            })}
+                            <Text
+                                style={{
+                                    fontFamily: 'Newsreader_400Regular_Italic',
+                                    fontSize: 11,
+                                    color: palette.textMuted,
+                                    marginTop: Spacing.sm,
+                                    lineHeight: 16,
+                                }}
+                            >
+                                Tables see each other&apos;s logs. Leave this on your personal Table to keep it private to your Journal.
                             </Text>
+                        </>
+                    ) : null}
+
+                    {/* Mode picker (group tables only) — restyled kit chrome */}
+                    {!isPersonalTable && selectedTableId ? (
+                        <>
+                            <View
+                                style={[
+                                    styles.sectionDivider,
+                                    { backgroundColor: palette.dividerSoft },
+                                ]}
+                            />
+                            <Label style={{ marginBottom: Spacing.sm }}>How are you posting?</Label>
                             <View style={styles.modePicker}>
                                 <Pressable
                                     onPress={() => setPostMode('solo')}
-                                    style={[
+                                    style={({ pressed }) => [
                                         styles.modeCard,
                                         {
-                                            backgroundColor: postMode === 'solo'
-                                                ? palette.primaryMuted
-                                                : palette.surfaceContainerLow,
-                                            borderWidth: postMode === 'solo' ? 1.5 : 0,
-                                            borderColor: postMode === 'solo' ? palette.primary : 'transparent',
+                                            backgroundColor:
+                                                postMode === 'solo'
+                                                    ? palette.surfaceContainer
+                                                    : palette.surfaceContainerLow,
+                                            borderColor:
+                                                postMode === 'solo'
+                                                    ? palette.primary
+                                                    : palette.ruleInkSoft,
+                                            opacity: pressed ? 0.85 : 1,
                                         },
                                     ]}
                                 >
                                     <Ionicons
                                         name="chatbubble-outline"
                                         size={20}
-                                        color={postMode === 'solo' ? palette.primary : palette.textSecondary}
+                                        color={
+                                            postMode === 'solo'
+                                                ? palette.primary
+                                                : palette.textSecondary
+                                        }
                                     />
                                     <Text
-                                        style={[
-                                            Type.titleSmall,
-                                            { color: postMode === 'solo' ? palette.primary : palette.text, marginTop: Spacing.xs },
-                                        ]}
+                                        style={{
+                                            fontFamily: 'Newsreader_400Regular_Italic',
+                                            fontSize: 16,
+                                            color:
+                                                postMode === 'solo'
+                                                    ? palette.primary
+                                                    : palette.text,
+                                            marginTop: Spacing.xs,
+                                        }}
                                     >
-                                        Solo Share
+                                        Solo share
                                     </Text>
                                     <Text
                                         style={[
                                             Type.caption,
-                                            { color: palette.textMuted, marginTop: 2 },
+                                            {
+                                                color: palette.textMuted,
+                                                marginTop: 2,
+                                                textAlign: 'center',
+                                            },
                                         ]}
                                     >
-                                        Quick rec to the group
+                                        a quick rec to the group
                                     </Text>
                                 </Pressable>
                                 <Pressable
                                     onPress={() => setPostMode('round')}
-                                    style={[
+                                    style={({ pressed }) => [
                                         styles.modeCard,
                                         {
-                                            backgroundColor: postMode === 'round'
-                                                ? palette.primaryMuted
-                                                : palette.surfaceContainerLow,
-                                            borderWidth: postMode === 'round' ? 1.5 : 0,
-                                            borderColor: postMode === 'round' ? palette.primary : 'transparent',
+                                            backgroundColor:
+                                                postMode === 'round'
+                                                    ? palette.surfaceContainer
+                                                    : palette.surfaceContainerLow,
+                                            borderColor:
+                                                postMode === 'round'
+                                                    ? palette.primary
+                                                    : palette.ruleInkSoft,
+                                            opacity: pressed ? 0.85 : 1,
                                         },
                                     ]}
                                 >
                                     <Ionicons
                                         name="people-outline"
                                         size={20}
-                                        color={postMode === 'round' ? palette.primary : palette.textSecondary}
+                                        color={
+                                            postMode === 'round'
+                                                ? palette.primary
+                                                : palette.textSecondary
+                                        }
                                     />
                                     <Text
-                                        style={[
-                                            Type.titleSmall,
-                                            { color: postMode === 'round' ? palette.primary : palette.text, marginTop: Spacing.xs },
-                                        ]}
+                                        style={{
+                                            fontFamily: 'Newsreader_400Regular_Italic',
+                                            fontSize: 16,
+                                            color:
+                                                postMode === 'round'
+                                                    ? palette.primary
+                                                    : palette.text,
+                                            marginTop: Spacing.xs,
+                                        }}
                                     >
                                         Start a Round
                                     </Text>
                                     <Text
                                         style={[
                                             Type.caption,
-                                            { color: palette.textMuted, marginTop: 2 },
+                                            {
+                                                color: palette.textMuted,
+                                                marginTop: 2,
+                                                textAlign: 'center',
+                                            },
                                         ]}
                                     >
-                                        Everyone rates it
+                                        everyone rates it
                                     </Text>
                                 </Pressable>
                             </View>
-                        </View>
-                    )}
+                        </>
+                    ) : null}
 
                     {/* Attendee picker (Round mode only) */}
-                    {!isPersonalTable && postMode === 'round' && selectedTableId && (
-                        <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                            <Text style={[Type.label, { color: palette.textSecondary }]}>
-                                Who was there?
-                            </Text>
-
+                    {!isPersonalTable && postMode === 'round' && selectedTableId ? (
+                        <View style={{ marginTop: Spacing.lg }}>
+                            <Label style={{ marginBottom: Spacing.sm }}>Who was there?</Label>
                             {membersLoading ? (
-                                <ActivityIndicator size="small" color={palette.textMuted} style={{ marginTop: Spacing.sm }} />
-                            ) : tableMembers && tableMembers.filter(m => m.member_id !== user?.id).length > 0 ? (
+                                <ActivityIndicator
+                                    size="small"
+                                    color={palette.textMuted}
+                                    style={{ marginTop: Spacing.sm }}
+                                />
+                            ) : tableMembers &&
+                              tableMembers.filter((m) => m.member_id !== user?.id).length > 0 ? (
                                 <View style={styles.participantGrid}>
-                                    {tableMembers.map(member => {
+                                    {tableMembers.map((member) => {
                                         const isCreator = member.member_id === user?.id;
-                                        const isSelected = isCreator || selectedParticipantIds.has(member.member_id);
+                                        const isSelected =
+                                            isCreator || selectedParticipantIds.has(member.member_id);
                                         const displayName = member.profiles?.display_name ?? 'Member';
                                         const initials = displayName
                                             .split(' ')
-                                            .map(n => n[0])
+                                            .map((n) => n[0])
                                             .join('')
                                             .slice(0, 2)
                                             .toUpperCase();
@@ -917,149 +1159,48 @@ export default function CreateEntryScreen() {
                                     })}
                                 </View>
                             ) : (
-                                <View style={[styles.emptyMembersBox, { backgroundColor: palette.surfaceContainerLow }]}>
-                                    <Text style={[Type.body, { color: palette.textMuted, textAlign: 'center' }]}>
+                                <View
+                                    style={[
+                                        styles.emptyMembersBox,
+                                        { backgroundColor: palette.surfaceContainerLow },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            Type.body,
+                                            { color: palette.textMuted, textAlign: 'center' },
+                                        ]}
+                                    >
                                         No friends at this table yet
                                     </Text>
-                                    <Text style={[Type.caption, { color: palette.textMuted, textAlign: 'center', marginTop: 2 }]}>
+                                    <Text
+                                        style={[
+                                            Type.caption,
+                                            {
+                                                color: palette.textMuted,
+                                                textAlign: 'center',
+                                                marginTop: 2,
+                                            },
+                                        ]}
+                                    >
                                         Invite people from the table settings
                                     </Text>
                                 </View>
                             )}
                         </View>
-                    )}
+                    ) : null}
 
-                    {/* Overall rating (always visible) */}
-                    <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                        <Text style={[Type.label, { color: palette.textSecondary }]}>
-                            Your rating
-                        </Text>
-                        <View style={styles.ratingRow}>
-                            <StarRating
-                                value={rating}
-                                size={36}
-                                editable
-                                onChange={setRating}
-                                showValue
-                            />
-                        </View>
-                    </View>
-
-                    {/* Secondary ratings (collapsible) */}
-                    <View style={[styles.fieldGroup, { marginTop: Spacing.lg }]}>
-                        <Pressable
-                            style={styles.detailsToggle}
-                            onPress={() => setShowDetails(!showDetails)}
-                        >
-                            <Text style={[Type.label, { color: palette.textSecondary }]}>
-                                Rate the details
-                            </Text>
-                            <Ionicons
-                                name={showDetails ? 'chevron-up' : 'chevron-down'}
-                                size={16}
-                                color={palette.textSecondary}
-                            />
-                        </Pressable>
-
-                        {showDetails && (
-                            <View style={styles.detailRatings}>
-                                {([
-                                    ['Flavor', flavorRating, setFlavorRating],
-                                    ['Vibes', vibeRating, setVibeRating],
-                                    ['Service', serviceRating, setServiceRating],
-                                    ['Value', valueRating, setValueRating],
-                                ] as const).map(([label, val, setter]) => (
-                                    <View key={label} style={styles.detailRow}>
-                                        <Text style={[Type.bodySmall, { color: palette.text, width: 60 }]}>
-                                            {label}
-                                        </Text>
-                                        <StarRating
-                                            value={val as number}
-                                            size={22}
-                                            editable
-                                            onChange={setter as (v: number) => void}
-                                        />
-                                    </View>
-                                ))}
-                            </View>
-                        )}
-                    </View>
-
-                    {/* What did you have? */}
-                    <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                        <Text style={[Type.label, { color: palette.textSecondary }]}>
-                            What did you have?
-                        </Text>
-                        <TextInput
-                            style={[
-                                styles.textInput,
-                                {
-                                    backgroundColor: palette.surfaceContainerLow,
-                                    color: palette.text,
-                                    fontFamily: 'Manrope_400Regular',
-                                    fontSize: 15,
-                                },
-                            ]}
-                            placeholder="e.g. Spicy rigatoni, negroni"
-                            placeholderTextColor={palette.textMuted}
-                            value={dish}
-                            onChangeText={setDish}
-                        />
-                    </View>
-
-                    {/* Notes */}
-                    <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                        <Text style={[Type.label, { color: palette.textSecondary }]}>
-                            Notes
-                        </Text>
-                        <TextInput
-                            style={[
-                                styles.textArea,
-                                {
-                                    backgroundColor: palette.surfaceContainerLow,
-                                    color: palette.text,
-                                    fontFamily: 'Manrope_400Regular',
-                                    fontSize: 15,
-                                },
-                            ]}
-                            placeholder="How was it? Any highlights?"
-                            placeholderTextColor={palette.textMuted}
-                            value={notes}
-                            onChangeText={setNotes}
-                            multiline
-                            numberOfLines={4}
-                            textAlignVertical="top"
-                        />
-                    </View>
-
-                    {/* Photos */}
-                    <View style={[styles.fieldGroup, { marginTop: Spacing.xl }]}>
-                        <Text style={[Type.label, { color: palette.textSecondary }]}>
-                            Photos
-                        </Text>
-
-                        <MultiPhotoRow
-                            photos={photos}
-                            maxPhotos={MAX_PHOTOS}
-                            onAdd={handlePhotoPress}
-                            onRemove={handleRemovePhoto}
-                            onRetry={handleRetryPhoto}
-                            palette={palette}
-                        />
-                    </View>
-
-                    {/* Submit */}
+                    {/* Primary CTA — pill, terracotta, UPPERCASE tracked */}
                     <Pressable
                         disabled={!canSubmit || isSubmitting}
                         onPress={handleSubmit}
                         style={({ pressed }) => [
                             styles.ctaButton,
                             {
-                                marginTop: Spacing.xl + Spacing.md,
                                 backgroundColor: canSubmit
                                     ? palette.primary
                                     : palette.surfaceContainerHigh,
-                                opacity: pressed ? 0.9 : isSubmitting ? 0.6 : 1,
+                                opacity: pressed ? 0.85 : isSubmitting ? 0.6 : 1,
                             },
                         ]}
                     >
@@ -1071,7 +1212,7 @@ export default function CreateEntryScreen() {
                                     Type.label,
                                     {
                                         color: canSubmit ? '#fff' : palette.textMuted,
-                                        letterSpacing: 2,
+                                        letterSpacing: 1.5,
                                     },
                                 ]}
                             >
@@ -1088,76 +1229,23 @@ export default function CreateEntryScreen() {
 // ── Styles ────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
     fieldGroup: {
         gap: Spacing.sm,
     },
-    textInput: {
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
-    },
-    textArea: {
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 100,
-    },
-    ctaButton: {
-        height: 56,
-        borderRadius: 9999,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    selectedChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-        minHeight: 52,
-    },
     dropdown: {
-        borderRadius: Radius.lg,
+        borderRadius: Radius.md,
         marginTop: Spacing.xs,
         overflow: 'hidden',
     },
     dropdownRow: {
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-    },
-    chipRow: {
-        gap: Spacing.sm,
-        paddingRight: Spacing.sm,
-    },
-    tableChip: {
         paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        borderRadius: Radius.full,
-        maxWidth: 160,
+        paddingVertical: Spacing.sm + 2,
     },
-    // Mode picker
-    modePicker: {
-        flexDirection: 'row',
-        gap: Spacing.sm,
+    sectionDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginVertical: Spacing.lg,
     },
-    modeCard: {
-        flex: 1,
-        alignItems: 'center',
-        paddingVertical: Spacing.md,
-        paddingHorizontal: Spacing.sm,
-        borderRadius: Radius.lg,
-    },
-    // Rating
-    ratingRow: {
-        alignItems: 'center',
-        paddingVertical: Spacing.sm,
-    },
+    // "Break it down" toggle
     detailsToggle: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -1165,12 +1253,64 @@ const styles = StyleSheet.create({
     },
     detailRatings: {
         gap: Spacing.md,
-        paddingTop: Spacing.sm,
+        paddingTop: Spacing.md,
     },
     detailRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.md,
+    },
+    // Table picker
+    tablePickerHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: Spacing.sm + 2,
+    },
+    tableRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md - 4,
+        paddingVertical: Spacing.sm + 4,
+        paddingHorizontal: Spacing.sm + 4,
+        borderRadius: 8,
+        marginBottom: Spacing.xs + 2,
+        borderWidth: 1,
+    },
+    glyphTile: {
+        width: 30,
+        height: 30,
+        borderRadius: 6,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
+    radioOuter: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
+    radioInner: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+    },
+    // Mode picker
+    modePicker: {
+        flexDirection: 'row',
+        gap: Spacing.sm + 2,
+    },
+    modeCard: {
+        flex: 1,
+        alignItems: 'center',
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.sm,
+        borderRadius: Radius.md,
+        borderWidth: 1,
     },
     // Participants
     participantGrid: {
@@ -1198,5 +1338,13 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.md,
         borderRadius: Radius.lg,
         alignItems: 'center',
+    },
+    // Submit pill
+    ctaButton: {
+        height: 52,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: Spacing.xl,
     },
 });

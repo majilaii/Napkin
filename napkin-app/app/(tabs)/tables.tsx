@@ -1,7 +1,12 @@
 /**
  * Tables tab — activity feed for the active table.
  * Real data via useTables + useTableActivity hooks.
- * Features: table switcher, PulseDot on live banner, Table Night cards, solo share rows.
+ * Features: TableHeader masthead, TableSwitcherSheet (bottom sheet),
+ * EmptyChairInvitation slab for solo-only users, FoundedHero for brand-new tables,
+ * PulseDot on live banner, Table Night cards, solo share rows.
+ *
+ * TICKET-024: visual reskin to Heirloom UI kit. Hooks, state, and filter
+ * logic are unchanged.
  */
 
 import React, { useState, useMemo, useCallback } from 'react';
@@ -13,7 +18,7 @@ import {
     RefreshControl,
     Pressable,
     ActivityIndicator,
-    Modal,
+    Alert,
 } from 'react-native';
 import { WishlistGrid } from '@/components/wishlist';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -71,6 +76,24 @@ export default function TablesScreen() {
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const hasMultipleTables = (tables?.length ?? 0) > 1;
     const [showTablePicker, setShowTablePicker] = useState(false);
+    const [invitationDismissed, setInvitationDismissed] = useState(false);
+
+    // Unseen dot system (TICKET-010)
+    const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
+    const markSeen = useMarkSeen();
+
+    // Fire mark_seen when the tab gains focus or activeTable changes.
+    // The 30s debounce in useMarkSeen collapses rapid tab-switches.
+    // markSeen.mutate is intentionally omitted from deps — it's stable across
+    // renders (React Query memoizes it) and we only want to re-fire on table switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useFocusEffect(
+        useCallback(() => {
+            if (activeTable?.id) {
+                markSeen.mutate({ tableId: activeTable.id });
+            }
+        }, [activeTable?.id])
+    );
 
     // Unseen dot system (TICKET-010)
     const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
@@ -172,6 +195,21 @@ export default function TablesScreen() {
         }
         return sections;
     }, [timelineItems]);
+
+    // Member names for avatar stack in TableHeader (must be before early returns)
+    const memberNames = useMemo(
+        () => members?.map((m) => m.profiles?.display_name ?? '?') ?? [],
+        [members],
+    );
+
+    // Table IDs that have a live round — used by the switcher sheet (must be before early returns)
+    const liveRoundTableIds = useMemo(() => {
+        const ids = new Set<string>();
+        if (activeTable?.id && activeRounds.length > 0) {
+            ids.add(activeTable.id);
+        }
+        return ids;
+    }, [activeTable?.id, activeRounds.length]);
 
     if (tablesLoading) {
         return (
@@ -304,59 +342,43 @@ export default function TablesScreen() {
                 />
             )}
 
-            {/* Feed */}
-            {feedLoading ? (
-                <ActivityIndicator
-                    color={palette.primary}
-                    style={{ marginTop: Spacing.xxl }}
-                />
-            ) : isEmpty ? (
-                <View
-                    style={{
-                        padding: Spacing.xl,
-                        alignItems: 'center',
-                        marginTop: Spacing.xxl,
-                    }}
-                >
-                    <Text
-                        style={[
-                            Type.headlineMedium,
-                            { color: palette.text, textAlign: 'center' },
-                        ]}
-                    >
-                        Nothing here yet
-                    </Text>
-                    <Text
-                        style={[
-                            Type.body,
-                            {
-                                color: palette.textSecondary,
-                                textAlign: 'center',
-                                marginTop: Spacing.sm,
-                            },
-                        ]}
-                    >
-                        Log a meal or start a Table Night to get the conversation going.
-                    </Text>
-                </View>
-            ) : (
-                <View style={{ paddingTop: Spacing.sm }}>
-                    {/* Active rounds shelf */}
-                    {activeRounds.length > 0 && (
-                        <View
-                            style={{
-                                paddingHorizontal: Spacing.lg,
-                                gap: Spacing.md,
-                                marginBottom: Spacing.lg,
-                            }}
+    // Shared header + segmented control (rendered above both tabs)
+    const headerAndControl = (
+        <>
+            {/* TableHeader masthead — replaces old inline header block */}
+            <TableHeader
+                tableName={tableName}
+                isPersonal={activeTable.is_personal ?? false}
+                memberCount={members?.length ?? 0}
+                memberNames={memberNames}
+                hasMultipleTables={hasMultipleTables}
+                onSwitcherPress={() => setShowTablePicker(true)}
+                palette={palette}
+            />
+
+            {/* Activity | Wishlist segmented control */}
+            <View style={styles.segmentedControl}>
+                {(['activity', 'wishlist'] as const).map((tab) => {
+                    const isActive = activeTab === tab;
+                    return (
+                        <Pressable
+                            key={tab}
+                            onPress={() => setActiveTab(tab)}
+                            style={[
+                                styles.segmentButton,
+                                isActive && { backgroundColor: palette.primary },
+                            ]}
                         >
                             <Text
                                 style={[
                                     Type.label,
-                                    { color: palette.textMuted },
+                                    {
+                                        color: isActive ? '#fff' : palette.textSecondary,
+                                        fontSize: 10,
+                                    },
                                 ]}
                             >
-                                IN PROGRESS
+                                {tab === 'activity' ? 'Activity' : 'Wishlist'}
                             </Text>
                             {activeRounds.map((item) => (
                                 <TableNightCard
@@ -445,80 +467,172 @@ export default function TablesScreen() {
         </ScrollView>
             )}
 
-            {/* Table picker dropdown */}
-            <Modal
-                visible={showTablePicker}
-                transparent
-                animationType="fade"
-                onRequestClose={() => setShowTablePicker(false)}
-            >
-                <Pressable
-                    style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-start' }}
-                    onPress={() => setShowTablePicker(false)}
-                >
-                    <View
-                        style={{
-                            marginTop: insets.top + 60,
-                            marginHorizontal: Spacing.lg,
-                            backgroundColor: palette.surfaceContainerLow,
-                            borderRadius: 16,
-                            paddingVertical: Spacing.sm,
-                            shadowColor: '#000',
-                            shadowOffset: { width: 0, height: 4 },
-                            shadowOpacity: 0.15,
-                            shadowRadius: 12,
-                            elevation: 8,
-                        }}
-                    >
-                        {tables?.map((t, i) => {
-                            const tbl = t.tables;
-                            if (!tbl) return null;
-                            const isActive = i === selectedIndex;
-                            return (
-                                <Pressable
-                                    key={tbl.id}
-                                    onPress={() => {
-                                        setSelectedIndex(i);
-                                        setShowTablePicker(false);
-                                    }}
-                                    style={({ pressed }) => ({
+                    {/* Feed */}
+                    {feedLoading ? (
+                        <ActivityIndicator
+                            color={palette.primary}
+                            style={{ marginTop: Spacing.xxl }}
+                        />
+                    ) : isFoundedEmpty ? (
+                        /* Brand-new non-personal table — founding moment */
+                        <FoundedHero
+                            tableName={tableName}
+                            foundedAt={activeTable.created_at}
+                            palette={palette}
+                        />
+                    ) : isEmpty && !isSoloOnly ? (
+                        /* Empty personal table (or named table after filtering) */
+                        <View
+                            style={{
+                                padding: Spacing.xl,
+                                alignItems: 'center',
+                                marginTop: Spacing.xxl,
+                            }}
+                        >
+                            <Text
+                                style={[
+                                    Type.headlineMedium,
+                                    { color: palette.text, textAlign: 'center' },
+                                ]}
+                            >
+                                Nothing here yet
+                            </Text>
+                            <Text
+                                style={[
+                                    Type.body,
+                                    {
+                                        color: palette.textSecondary,
+                                        textAlign: 'center',
+                                        marginTop: Spacing.sm,
+                                    },
+                                ]}
+                            >
+                                Log a meal or start a Table Night to get the conversation going.
+                            </Text>
+                        </View>
+                    ) : (
+                        <View style={{ paddingTop: Spacing.sm }}>
+                            {/* Active rounds shelf */}
+                            {activeRounds.length > 0 && (
+                                <View
+                                    style={{
                                         paddingHorizontal: Spacing.lg,
-                                        paddingVertical: Spacing.md,
-                                        flexDirection: 'row',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        backgroundColor: isActive ? palette.primaryMuted : 'transparent',
-                                        opacity: pressed ? 0.7 : 1,
-                                    })}
+                                        gap: Spacing.md,
+                                        marginBottom: Spacing.lg,
+                                    }}
                                 >
-                                    <View>
-                                        <Text
-                                            style={[
-                                                Type.titleSmall,
-                                                {
-                                                    color: isActive ? palette.primary : palette.text,
-                                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                                    fontSize: 18,
-                                                },
-                                            ]}
-                                        >
-                                            {tbl.name}
-                                        </Text>
-                                        {tbl.is_personal && (
-                                            <Text style={[Type.caption, { color: palette.textMuted }]}>
-                                                Personal journal
-                                            </Text>
-                                        )}
-                                    </View>
-                                    {isActive && (
-                                        <Text style={{ color: palette.primary, fontSize: 16 }}>✓</Text>
-                                    )}
-                                </Pressable>
-                            );
-                        })}
-                    </View>
-                </Pressable>
-            </Modal>
+                                    <Text
+                                        style={[
+                                            Type.label,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        IN PROGRESS
+                                    </Text>
+                                    {activeRounds.map((item) => (
+                                        <TableNightCard
+                                            key={`active-${item.id}`}
+                                            item={item}
+                                            palette={palette}
+                                            tableId={activeTable?.id}
+                                            lastSeenAt={lastSeenAt ?? null}
+                                        />
+                                    ))}
+                                </View>
+                            )}
+
+                            {/* Date-grouped timeline */}
+                            {feedSections.length > 0
+                                ? feedSections.map((section) => (
+                                      <View
+                                          key={section.label}
+                                          style={{ marginBottom: Spacing.md }}
+                                      >
+                                          <DateSectionHeader
+                                              title={section.label}
+                                              palette={palette}
+                                          />
+                                          <View style={styles.feedList}>
+                                              {section.items.map((item) => {
+                                                  if (item.type === 'table_night') {
+                                                      return (
+                                                          <TableNightCard
+                                                              key={`tn-${item.id}`}
+                                                              item={item}
+                                                              palette={palette}
+                                                              tableId={activeTable?.id}
+                                                              lastSeenAt={lastSeenAt ?? null}
+                                                          />
+                                                      );
+                                                  }
+                                                  const solo = item as SoloShareActivity;
+                                                  if (solo.rating == null) {
+                                                      return (
+                                                          <JournalNoteCard
+                                                              key={`note-${item.id}`}
+                                                              item={solo}
+                                                              palette={palette}
+                                                              tableId={activeTable?.id}
+                                                              lastSeenAt={lastSeenAt ?? null}
+                                                          />
+                                                      );
+                                                  }
+                                                  return (
+                                                      <SoloShareCard
+                                                          key={`solo-${item.id}`}
+                                                          item={solo}
+                                                          palette={palette}
+                                                          tableId={activeTable?.id}
+                                                          lastSeenAt={lastSeenAt ?? null}
+                                                      />
+                                                  );
+                                              })}
+                                          </View>
+                                      </View>
+                                  ))
+                                : activeFilter && (
+                                      <View
+                                          style={{
+                                              padding: Spacing.xl,
+                                              alignItems: 'center',
+                                              marginTop: Spacing.lg,
+                                          }}
+                                      >
+                                          <Text
+                                              style={[
+                                                  Type.body,
+                                                  {
+                                                      color: palette.textMuted,
+                                                      textAlign: 'center',
+                                                  },
+                                              ]}
+                                          >
+                                              No entries match this filter.
+                                          </Text>
+                                      </View>
+                                  )}
+                        </View>
+                    )}
+                </ScrollView>
+            )}
+
+            {/* Table switcher — bottom sheet replacing old top-dropdown Modal */}
+            <TableSwitcherSheet
+                tables={tables ?? []}
+                selectedIndex={selectedIndex}
+                onSelect={setSelectedIndex}
+                visible={showTablePicker}
+                onClose={() => setShowTablePicker(false)}
+                palette={palette}
+                liveRoundTableIds={liveRoundTableIds}
+                onGatherNew={() => {
+                    setShowTablePicker(false);
+                    Alert.alert(
+                        'Coming soon',
+                        'Gathering a table will be available in a future update.',
+                    );
+                }}
+            />
         </View>
     );
 }
@@ -531,11 +645,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: Spacing.xl,
-    },
-    header: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.lg,
-        paddingBottom: Spacing.md,
     },
     feedList: {
         paddingHorizontal: Spacing.lg,

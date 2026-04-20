@@ -169,11 +169,36 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: TableNigh
 
                 {/* Hero image or fallback */}
                 {photoUrl ? (
-                    <Image
-                        source={{ uri: photoUrl }}
-                        style={styles.heroImage}
-                        resizeMode="cover"
-                    />
+                    <View style={{ position: 'relative' }}>
+                        <Image
+                            source={{ uri: photoUrl }}
+                            style={styles.heroImage}
+                            resizeMode="cover"
+                        />
+                        {/* Canvas-style chip overlay — top-left corner */}
+                        <View
+                            style={[
+                                styles.heroChip,
+                                {
+                                    backgroundColor: isActive
+                                        ? palette.tertiaryFixed
+                                        : 'rgba(28,28,25,0.55)',
+                                },
+                            ]}
+                        >
+                            {isActive && (
+                                <PulseDot size={6} color={palette.tertiary} />
+                            )}
+                            <Text
+                                style={[
+                                    styles.heroChipText,
+                                    { color: isActive ? palette.tertiary : '#fff' },
+                                ]}
+                            >
+                                {isActive ? 'LIVE ROUND' : `ROUND \u00B7 ${dateLabel.toUpperCase()}`}
+                            </Text>
+                        </View>
+                    </View>
                 ) : (
                     <View
                         style={[
@@ -384,6 +409,22 @@ const styles = StyleSheet.create({
     heroImage: {
         width: '100%',
         height: 220,
+    },
+    heroChip: {
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 6,
+    },
+    heroChipText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+        letterSpacing: 1.2,
     },
     heroFallback: {
         width: '100%',

@@ -1406,11 +1406,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: Spacing.sm,
     },
-    quoteCard: {
-        padding: Spacing.md,
-        borderRadius: Radius.md,
-        borderLeftWidth: 3,
-    },
     userPhotoCaptionContainer: {
         position: 'absolute',
         bottom: Spacing.sm,

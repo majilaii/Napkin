@@ -193,7 +193,7 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: SoloShareC
                                 <Text style={{ fontFamily: 'Manrope_600SemiBold' }}>
                                     {displayName}
                                 </Text>
-                                {' tried '}
+                                {' went solo to '}
                                 <Text
                                     style={{
                                         fontFamily: 'Newsreader_400Regular_Italic',

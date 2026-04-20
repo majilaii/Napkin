@@ -282,7 +282,7 @@ export default function TableNightDetailScreen() {
                     }}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Hero image with scrim overlay */}
+                    {/* Hero image with canvas-style overlay */}
                     {heroPhotoUrl ? (
                         <View>
                             <Image
@@ -290,6 +290,7 @@ export default function TableNightDetailScreen() {
                                 style={{ width: '100%', aspectRatio: 16 / 9 }}
                                 resizeMode="cover"
                             />
+                            {/* Gradient scrim — top (nav) + bottom (text) */}
                             <View
                                 style={{
                                     position: 'absolute',
@@ -301,6 +302,17 @@ export default function TableNightDetailScreen() {
                                 }}
                             />
                             <View
+                                style={{
+                                    position: 'absolute',
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
+                                    height: 100,
+                                    backgroundColor: 'rgba(0,0,0,0.45)',
+                                }}
+                            />
+                            {/* Back button */}
+                            <View
                                 style={[
                                     styles.topBar,
                                     { position: 'absolute', top: insets.top, left: 0, right: 0 },
@@ -309,6 +321,53 @@ export default function TableNightDetailScreen() {
                                 <Pressable onPress={() => router.back()}>
                                     <Text style={[Type.body, { color: '#fff' }]}>← Back</Text>
                                 </Pressable>
+                            </View>
+                            {/* Canvas overlay: restaurant name bottom-left, rating pill bottom-right */}
+                            <View style={styles.heroOverlayRow}>
+                                <Pressable
+                                    onPress={() => {
+                                        if (nightStatus.restaurant_id) {
+                                            router.push({
+                                                pathname: '/restaurant/[id]',
+                                                params: {
+                                                    id: nightStatus.restaurant_id,
+                                                    tableId: nightStatus.table_id,
+                                                },
+                                            });
+                                        }
+                                    }}
+                                    disabled={!nightStatus.restaurant_id}
+                                    style={{ flex: 1 }}
+                                >
+                                    <Text style={[styles.heroRestaurantName]} numberOfLines={2}>
+                                        {nightStatus.restaurants?.name ?? 'Round'}
+                                    </Text>
+                                </Pressable>
+                                {overallAvg != null && (
+                                    <View
+                                        style={[
+                                            styles.heroRatingChip,
+                                            { backgroundColor: palette.tertiaryFixed },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.heroRatingValue,
+                                                { color: palette.tertiary },
+                                            ]}
+                                        >
+                                            {overallAvg.toFixed(1)}
+                                        </Text>
+                                        <Text
+                                            style={[
+                                                styles.heroRatingLabel,
+                                                { color: palette.tertiary },
+                                            ]}
+                                        >
+                                            AVG
+                                        </Text>
+                                    </View>
+                                )}
                             </View>
                         </View>
                     ) : (
@@ -319,41 +378,52 @@ export default function TableNightDetailScreen() {
                         </View>
                     )}
 
-                    {/* Header */}
-                    <View style={styles.headerSection}>
-                        <Text style={[Type.labelSmall, { color: palette.textMuted, letterSpacing: 1.5 }]}>
-                            Round · {date}
-                        </Text>
-                        <Pressable
-                            onPress={() => {
-                                if (nightStatus.restaurant_id) {
-                                    router.push({
-                                        pathname: '/restaurant/[id]',
-                                        params: {
-                                            id: nightStatus.restaurant_id,
-                                            tableId: nightStatus.table_id,
-                                        },
-                                    });
-                                }
-                            }}
-                            disabled={!nightStatus.restaurant_id}
-                        >
-                            <Text
-                                style={[
-                                    Type.displayLarge,
-                                    {
-                                        color: palette.text,
-                                        fontFamily: 'Newsreader_400Regular_Italic',
-                                        fontSize: 38,
-                                        lineHeight: 42,
-                                        marginTop: Spacing.xs,
-                                    },
-                                ]}
-                            >
-                                {nightStatus.restaurants?.name ?? 'Round'}
+                    {/* Header — only shown when there is no hero photo */}
+                    {!heroPhotoUrl && (
+                        <View style={styles.headerSection}>
+                            <Text style={[Type.labelSmall, { color: palette.textMuted, letterSpacing: 1.5 }]}>
+                                Round · {date}
                             </Text>
-                        </Pressable>
-                    </View>
+                            <Pressable
+                                onPress={() => {
+                                    if (nightStatus.restaurant_id) {
+                                        router.push({
+                                            pathname: '/restaurant/[id]',
+                                            params: {
+                                                id: nightStatus.restaurant_id,
+                                                tableId: nightStatus.table_id,
+                                            },
+                                        });
+                                    }
+                                }}
+                                disabled={!nightStatus.restaurant_id}
+                            >
+                                <Text
+                                    style={[
+                                        Type.displayLarge,
+                                        {
+                                            color: palette.text,
+                                            fontFamily: 'Newsreader_400Regular_Italic',
+                                            fontSize: 38,
+                                            lineHeight: 42,
+                                            marginTop: Spacing.xs,
+                                        },
+                                    ]}
+                                >
+                                    {nightStatus.restaurants?.name ?? 'Round'}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    )}
+
+                    {/* Date sub-label when hero photo is present */}
+                    {heroPhotoUrl && (
+                        <View style={[styles.headerSection, { marginTop: Spacing.sm }]}>
+                            <Text style={[Type.labelSmall, { color: palette.textMuted, letterSpacing: 1.5 }]}>
+                                Round · {date}
+                            </Text>
+                        </View>
+                    )}
 
                     {/* Previously here — table-scoped memory, excludes this round */}
                     {restaurantHistory && restaurantHistory.visit_count > 0 && (
@@ -451,7 +521,7 @@ export default function TableNightDetailScreen() {
                     <View style={styles.section}>
                         <SectionLabel palette={palette}>Who Said What</SectionLabel>
                         <View style={{ gap: Spacing.md }}>
-                            {nightStatus.participants.map((p) => (
+                            {nightStatus.participants.map((p, i) => (
                                 <ParticipantRow
                                     key={p.user_id}
                                     participant={p}
@@ -460,6 +530,7 @@ export default function TableNightDetailScreen() {
                                     canTapProfile={isRevealedOrClosed}
                                     palette={palette}
                                     photoUrls={participantPhotoUrls?.[p.user_id] ?? []}
+                                    rowIndex={i}
                                 />
                             ))}
                         </View>
@@ -857,6 +928,7 @@ function ParticipantRow({
     canTapProfile,
     palette,
     photoUrls,
+    rowIndex = 0,
 }: {
     participant: TableNightParticipant;
     nightId: string;
@@ -864,7 +936,10 @@ function ParticipantRow({
     canTapProfile: boolean;
     palette: Palette;
     photoUrls: string[];
+    rowIndex?: number;
 }) {
+    // Canvas WF6: alternating surfaces — even rows on card, odd rows on lower surface.
+    const cardBg = rowIndex % 2 === 0 ? palette.card : palette.surfaceContainerLow;
     const router = useRouter();
     const name = participant.profiles.display_name;
     const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2);
@@ -892,7 +967,7 @@ function ParticipantRow({
             <View
                 style={[
                     styles.participantCard,
-                    { backgroundColor: palette.card, opacity: 0.5 },
+                    { backgroundColor: cardBg, opacity: 0.5 },
                     Shadow.subtle,
                 ]}
             >
@@ -930,7 +1005,7 @@ function ParticipantRow({
             }
             style={({ pressed }) => [
                 styles.participantCard,
-                { backgroundColor: palette.card, opacity: pressed ? 0.8 : 1 },
+                { backgroundColor: cardBg, opacity: pressed ? 0.8 : 1 },
                 Shadow.subtle,
             ]}
         >
@@ -952,9 +1027,10 @@ function ParticipantRow({
                     {participant.notes ? (
                         <Text
                             style={[
-                                Type.bodySmall,
-                                { color: palette.textMuted, fontStyle: 'italic' },
+                                styles.voiceQuote,
+                                { color: palette.textSecondary },
                             ]}
+                            numberOfLines={3}
                         >
                             &ldquo;{participant.notes}&rdquo;
                         </Text>
@@ -1026,6 +1102,45 @@ const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     topBar: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
     headerSection: { paddingHorizontal: Spacing.lg },
+
+    // Canvas hero overlay — bottom strip with restaurant name + rating
+    heroOverlayRow: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        justifyContent: 'space-between',
+        paddingHorizontal: Spacing.lg,
+        paddingBottom: Spacing.md,
+        gap: Spacing.md,
+    },
+    heroRestaurantName: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 28,
+        lineHeight: 34,
+        color: '#fff',
+    },
+    heroRatingChip: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: Radius.lg,
+        alignItems: 'center',
+        flexShrink: 0,
+    },
+    heroRatingValue: {
+        fontFamily: 'Newsreader_700Bold',
+        fontSize: 22,
+        lineHeight: 26,
+    },
+    heroRatingLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 9,
+        letterSpacing: 0.8,
+        opacity: 0.7,
+        marginTop: -2,
+    },
     overallBubble: {
         alignItems: 'center',
         paddingHorizontal: Spacing.xl,
@@ -1045,6 +1160,12 @@ const styles = StyleSheet.create({
     participantCard: {
         padding: Spacing.md,
         borderRadius: Radius.lg,
+    },
+    // Canvas: italic serif pull-quote for participant voice
+    voiceQuote: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        lineHeight: 20,
     },
     participantTop: {
         flexDirection: 'row',

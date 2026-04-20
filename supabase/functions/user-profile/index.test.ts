@@ -1,14 +1,14 @@
 /**
  * Tests for user-profile edge function
- * SKELETON - not fully implemented, low priority
- * 
+ * TICKET-025 additions: diary, regulars, and profile top_four/regulars_preview stubs
+ *
  * Run with: deno test --allow-env supabase/functions/user-profile/
  */
 
 import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
-Deno.test('user-profile edge function - SKELETON', async (t) => {
+Deno.test('user-profile edge function', async (t) => {
 
     await t.step('OPTIONS should return CORS headers', () => {
         const mockHandler = (req: Request) => {
@@ -24,10 +24,53 @@ Deno.test('user-profile edge function - SKELETON', async (t) => {
         assertEquals(res.status, 200);
     });
 
-    // TODO: These tests are skipped - implement when profile feature is fleshed out
-    await t.step('GET returns profile data - TODO (skipped)', () => {
-        // Placeholder - implement when needed
+    // ── profile action ────────────────────────────────────────────────────────
+
+    await t.step('profile action returns top_four and regulars_preview fields - TODO (skipped)', () => {
+        // These fields are now present in the response payload:
+        // data.top_four: TopPick[]      — auto-derived, ≥4.0 rating, limit 4
+        // data.regulars_preview: RegularSummary[] — ≥3 visits, limit 8
+        // Implement integration test when a test DB fixture is available.
     });
+
+    await t.step('profile action returns empty arrays for tables_in_common relationship - TODO (skipped)', () => {
+        // When relationship === 'tables_in_common', top_four and regulars_preview
+        // should both be empty arrays (no palate access).
+    });
+
+    // ── diary action ──────────────────────────────────────────────────────────
+
+    await t.step('diary action requires identifier - TODO (skipped)', () => {
+        // POST { action: "diary" } with no identifier should return 400.
+    });
+
+    await t.step('diary action returns paginated rows + yearSummary - TODO (skipped)', () => {
+        // data.rows: DiaryRow[]          — up to 40 entries per page
+        // data.nextCursor: string | null — keyset cursor on visited_at
+        // data.yearSummary: YearSummary  — current year stats
+    });
+
+    await t.step('diary action gates non-self access to public profiles - TODO (skipped)', () => {
+        // For target.account_privacy === 'private' and caller !== target,
+        // should return 404 (not_found).
+    });
+
+    // ── regulars action ───────────────────────────────────────────────────────
+
+    await t.step('regulars action requires identifier - TODO (skipped)', () => {
+        // POST { action: "regulars" } with no identifier should return 400.
+    });
+
+    await t.step('regulars action returns full list sorted by visit_count desc - TODO (skipped)', () => {
+        // data.regulars: RegularSummary[] — all ≥3-visit restaurants
+    });
+
+    await t.step('regulars action gates non-self access to public profiles - TODO (skipped)', () => {
+        // For target.account_privacy === 'private' and caller !== target,
+        // should return 404 (not_found).
+    });
+
+    // ── pre-existing ─────────────────────────────────────────────────────────
 
     await t.step('Missing auth returns 401 - TODO (skipped)', () => {
         // Placeholder - implement when needed
