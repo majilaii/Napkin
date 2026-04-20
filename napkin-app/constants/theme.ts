@@ -55,6 +55,7 @@ export const Colors = {
     dividerSoft: 'rgba(221, 192, 186, 0.30)', // softer variant (feed row dividers)
     overlay: 'rgba(28, 28, 25, 0.4)',
     border: 'rgba(221, 192, 186, 0.15)',   // alias for compat
+    ruleInkSoft: 'rgba(160, 63, 40, 0.18)',  // soft terracotta rule lines
   },
   dark: {
     background: '#1a1816',
@@ -91,6 +92,7 @@ export const Colors = {
     dividerSoft: 'rgba(86, 66, 61, 0.45)',
     overlay: 'rgba(0, 0, 0, 0.6)',
     border: 'rgba(86, 66, 61, 0.3)',
+    ruleInkSoft: 'rgba(200, 140, 120, 0.20)',  // soft terracotta rule lines (dark)
   },
 };
 
