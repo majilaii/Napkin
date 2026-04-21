@@ -249,6 +249,7 @@ export default function SearchScreen() {
                 <Text style={[Type.titleLarge, styles.screenTitle, { color: palette.text }]}>
                     Search
                 </Text>
+                <SearchModeTabs mode={mode} onModeChange={setMode} />
                 <SearchInput
                     ref={inputRef}
                     value={immediateQuery}
@@ -256,7 +257,6 @@ export default function SearchScreen() {
                     onChangeDebounced={setDebouncedQuery}
                     onClear={handleClear}
                 />
-                <SearchModeTabs mode={mode} onModeChange={setMode} />
             </View>
 
             {/* People tab — unmounted when Places is active so no stale render */}
