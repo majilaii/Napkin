@@ -82,7 +82,10 @@ export const queryKeys = {
                 ? ['users', 'diary', userId, cursor] as const
                 : ['users', 'diary', userId] as const,
         regulars: (userId: string) => ['users', 'regulars', userId] as const,
-        search: (q: string) => ['users', 'search', q] as const,
+        search: (q: string, opts?: { mutualOnly?: boolean }) =>
+            opts?.mutualOnly
+                ? ['users', 'search', q, 'mutual'] as const
+                : ['users', 'search', q] as const,
         recentCompanions: (userId: string) => ['users', 'recentCompanions', userId] as const,
         following: (userId: string) => ['users', 'following', userId] as const,
     },

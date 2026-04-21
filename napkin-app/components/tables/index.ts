@@ -9,3 +9,6 @@ export { TickRow, type TickKind } from './TickRow';
 export { ActiveGatherBanner, type GatherCandidate } from './ActiveGatherBanner';
 export { SubsetCard } from './SubsetCard';
 export { PinToBoardSheet, type PinBoardTable } from './PinToBoardSheet';
+export { AddMemberSheet } from './AddMemberSheet';
+export { TableMemberRow, type TableMemberRowProps } from './TableMemberRow';
+export { WelcomeBanner } from './WelcomeBanner';

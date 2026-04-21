@@ -25,7 +25,8 @@ async function fetchTableMembers(tableId: string): Promise<TableMember[]> {
             role,
             joined_at,
             profiles:profiles!table_members_member_id_fkey (
-                display_name
+                display_name,
+                avatar_url
             )
         `)
         .eq('table_id', tableId);

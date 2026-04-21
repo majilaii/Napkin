@@ -15,6 +15,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
 import { Avatar } from '@/components/feed/Avatar';
 
@@ -30,6 +31,8 @@ export interface TableHeaderProps {
     hasMultipleTables: boolean;
     onSwitcherPress: () => void;
     palette: Palette;
+    /** When provided, a subtle settings gear icon appears right of the avatar stack (TICKET-029). */
+    onSettingsPress?: () => void;
 }
 
 const MAX_STACK_AVATARS = 3;
@@ -45,6 +48,7 @@ export function TableHeader({
     hasMultipleTables,
     onSwitcherPress,
     palette,
+    onSettingsPress,
 }: TableHeaderProps) {
     const visibleAvatars = memberNames.slice(0, MAX_STACK_AVATARS);
     const overflow = Math.max(memberNames.length - MAX_STACK_AVATARS, 0);
@@ -101,55 +105,72 @@ export function TableHeader({
                 ) : null}
             </Pressable>
 
-            {/* Right column: stacked avatars */}
-            {stackCells > 0 && (
-                <View style={[styles.avatarStack, { width: stackWidth }]}>
-                    {visibleAvatars.map((name, i) => (
-                        <View
-                            key={i}
-                            style={[
-                                styles.avatarWrapper,
-                                {
-                                    left: i * (AVATAR_SIZE - AVATAR_OVERLAP),
-                                    zIndex: MAX_STACK_AVATARS - i,
-                                    borderColor: palette.background,
-                                },
-                            ]}
-                        >
-                            <Avatar
-                                name={name}
-                                url={null}
-                                size={AVATAR_SIZE}
-                                palette={palette}
-                            />
-                        </View>
-                    ))}
-                    {overflow > 0 && (
-                        <View
-                            style={[
-                                styles.avatarWrapper,
-                                styles.overflowChip,
-                                {
-                                    left:
-                                        visibleAvatars.length *
-                                        (AVATAR_SIZE - AVATAR_OVERLAP),
-                                    borderColor: palette.background,
-                                    backgroundColor: palette.surfaceContainerHigh,
-                                },
-                            ]}
-                        >
-                            <Text
+            {/* Right column: stacked avatars + optional settings gear */}
+            <View style={styles.rightColumn}>
+                {stackCells > 0 && (
+                    <View style={[styles.avatarStack, { width: stackWidth }]}>
+                        {visibleAvatars.map((name, i) => (
+                            <View
+                                key={i}
                                 style={[
-                                    styles.overflowText,
-                                    { color: palette.textSecondary },
+                                    styles.avatarWrapper,
+                                    {
+                                        left: i * (AVATAR_SIZE - AVATAR_OVERLAP),
+                                        zIndex: MAX_STACK_AVATARS - i,
+                                        borderColor: palette.background,
+                                    },
                                 ]}
                             >
-                                +{overflow}
-                            </Text>
-                        </View>
-                    )}
-                </View>
-            )}
+                                <Avatar
+                                    name={name}
+                                    url={null}
+                                    size={AVATAR_SIZE}
+                                    palette={palette}
+                                />
+                            </View>
+                        ))}
+                        {overflow > 0 && (
+                            <View
+                                style={[
+                                    styles.avatarWrapper,
+                                    styles.overflowChip,
+                                    {
+                                        left:
+                                            visibleAvatars.length *
+                                            (AVATAR_SIZE - AVATAR_OVERLAP),
+                                        borderColor: palette.background,
+                                        backgroundColor: palette.surfaceContainerHigh,
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.overflowText,
+                                        { color: palette.textSecondary },
+                                    ]}
+                                >
+                                    +{overflow}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                )}
+                {onSettingsPress && (
+                    <Pressable
+                        onPress={onSettingsPress}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel="Table settings"
+                        style={styles.settingsButton}
+                    >
+                        <Ionicons
+                            name="settings-outline"
+                            size={18}
+                            color={palette.textMuted}
+                        />
+                    </Pressable>
+                )}
+            </View>
         </View>
     );
 }
@@ -196,10 +217,18 @@ const styles = StyleSheet.create({
         marginTop: 3,
         letterSpacing: 0.2,
     },
+    rightColumn: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        gap: 8,
+        marginBottom: 3,
+    },
     avatarStack: {
         position: 'relative',
         height: AVATAR_SIZE,
-        marginBottom: 3,
+    },
+    settingsButton: {
+        padding: 2,
     },
     avatarWrapper: {
         position: 'absolute',

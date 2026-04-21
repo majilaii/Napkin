@@ -1015,11 +1015,17 @@ serve(async (req) => {
         // ── search ───────────────────────────────────────────────────────
         // Find Napkin users by display_name (ILIKE); excludes the caller.
         // Used by CompanionPickerSheet (TICKET-027) and PeopleSearchPane (TICKET-028).
-        // Request: { action: 'search', q: string, limit?: number }
-        // Response: { data: { user_id, display_name, avatar_url, is_following }[] }
-        // Order: followed users first, then by profiles.created_at DESC, then display_name ASC
+        // Request: { action: 'search', q: string, limit?: number, mutual_only?: boolean }
+        // Response (default): { data: { user_id, display_name, avatar_url, is_following }[] }
+        // Response (mutual_only=true): all rows include is_mutual: boolean.
+        //   mutuals sort first; non-mutuals still returned but flagged is_mutual=false.
+        // Order: followed/mutual users first, then by profiles.created_at DESC, then display_name ASC
         if (action === 'search') {
-            const { q, limit: rawLimit } = body as { q?: string; limit?: number };
+            const { q, limit: rawLimit, mutual_only: mutualOnly } = body as {
+                q?: string;
+                limit?: number;
+                mutual_only?: boolean;
+            };
             if (!q || typeof q !== 'string' || q.trim().length === 0) {
                 return fail('q is required', 400);
             }
@@ -1058,6 +1064,43 @@ serve(async (req) => {
             const followingSet = new Set<string>(
                 ((followRows ?? []) as { following_id: string }[]).map((f) => f.following_id)
             );
+
+            if (mutualOnly) {
+                // Fetch which of the result-set users follow the caller back
+                const { data: reverseFollowRows } = await supabase
+                    .from('follows')
+                    .select('follower_id')
+                    .eq('following_id', user.id)
+                    .in('follower_id', resultIds);
+
+                const followsCallerSet = new Set<string>(
+                    ((reverseFollowRows ?? []) as { follower_id: string }[]).map((f) => f.follower_id)
+                );
+
+                // is_mutual iff caller→x AND x→caller both exist
+                const isMutual = (userId: string) =>
+                    followingSet.has(userId) && followsCallerSet.has(userId);
+
+                // Sort: mutuals first, then non-mutuals. Within each group: created_at DESC, display_name ASC
+                const sorted = rows.slice().sort((a, b) => {
+                    const aM = isMutual(a.user_id) ? 1 : 0;
+                    const bM = isMutual(b.user_id) ? 1 : 0;
+                    if (aM !== bM) return bM - aM;
+                    if (a.created_at > b.created_at) return -1;
+                    if (a.created_at < b.created_at) return 1;
+                    return a.display_name.localeCompare(b.display_name);
+                });
+
+                return json({
+                    data: sorted.map((r) => ({
+                        user_id: r.user_id,
+                        display_name: r.display_name,
+                        avatar_url: r.avatar_url ?? null,
+                        is_following: followingSet.has(r.user_id),
+                        is_mutual: isMutual(r.user_id),
+                    })),
+                });
+            }
 
             // Sort server-side: followed first, then by created_at DESC, then display_name ASC
             const sorted = rows.slice().sort((a, b) => {
