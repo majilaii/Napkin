@@ -13,7 +13,7 @@
  *   Tier 1/2 → /restaurant/[id]?tableId=... (persisted)
  *   Tier 3 (ghost) → /restaurant/[placeId]?placeId=... (TICKET-016 ghost shape)
  */
-import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
     View,
     Text,
@@ -44,7 +44,10 @@ import {
     SearchResultRow,
     RecentSearchesList,
     TierHeader,
+    SearchModeTabs,
+    PeopleSearchPane,
 } from '@/components/search';
+import type { SearchMode } from '@/components/search';
 
 type Palette = typeof Colors.light;
 
@@ -100,6 +103,9 @@ export default function SearchScreen() {
     const router = useRouter();
     const { user } = useAuth();
     const { data: tables } = useTables(user?.id);
+
+    // Search mode — Places (default) or People. State is local to the tab.
+    const [mode, setMode] = useState<SearchMode>('places');
 
     // Immediate display value (responsive to keystrokes)
     const [immediateQuery, setImmediateQuery] = useState(lastQuery);
@@ -250,81 +256,90 @@ export default function SearchScreen() {
                     onChangeDebounced={setDebouncedQuery}
                     onClear={handleClear}
                 />
+                <SearchModeTabs mode={mode} onModeChange={setMode} />
             </View>
 
-            {/* Content */}
-            {!hasQuery ? (
-                // Empty state
-                <View style={styles.emptyContainer}>
-                    {recentQueries.length === 0 && (
-                        <Text style={[Type.body, styles.emptyHint, { color: palette.textMuted }]}>
-                            Start typing to find any restaurant
-                        </Text>
-                    )}
-                    <RecentSearchesList
-                        queries={recentQueries}
-                        onSelect={handleRecentSelect}
-                    />
-                </View>
-            ) : isLoading && !hasResults ? (
-                // Loading state
-                <View style={styles.centeredState}>
-                    <ActivityIndicator color={palette.primary} />
-                </View>
-            ) : (
-                // Results (or error overlay)
-                <FlatList
-                    ref={listRef}
-                    data={flatData}
-                    keyExtractor={(item) => item.key}
-                    renderItem={renderItem}
-                    keyboardShouldPersistTaps="handled"
-                    onScroll={handleScroll}
-                    scrollEventThrottle={16}
-                    onContentSizeChange={() => {
-                        if (!didRestoreScrollRef.current && lastScrollOffset > 0) {
-                            didRestoreScrollRef.current = true;
-                            listRef.current?.scrollToOffset({
-                                offset: lastScrollOffset,
-                                animated: false,
-                            });
-                        }
-                    }}
-                    contentContainerStyle={[
-                        styles.listContent,
-                        { paddingBottom: insets.bottom + Spacing.lg },
-                    ]}
-                    ListEmptyComponent={
-                        !isLoading ? (
-                            <View style={styles.centeredState}>
-                                <Text
-                                    style={[Type.body, { color: palette.textMuted }]}
-                                >
-                                    {`No results for "${debouncedQuery}"`}
-                                </Text>
-                            </View>
-                        ) : null
-                    }
-                    ListFooterComponent={
-                        isPlacesError ? (
-                            <View style={styles.errorBanner}>
-                                <Text style={[Type.bodySmall, { color: palette.error }]}>
-                                    {`Couldn't reach search \u2014 try again`}
-                                </Text>
-                                <Pressable onPress={refetch} style={styles.retryButton}>
-                                    <Text
-                                        style={[
-                                            Type.caption,
-                                            { color: palette.primary },
-                                        ]}
-                                    >
-                                        Retry
-                                    </Text>
-                                </Pressable>
-                            </View>
-                        ) : null
-                    }
+            {/* People tab — unmounted when Places is active so no stale render */}
+            {mode === 'people' ? (
+                <PeopleSearchPane
+                    query={immediateQuery}
+                    debouncedQuery={debouncedQuery}
                 />
+            ) : (
+                /* Places content (unchanged) */
+                !hasQuery ? (
+                    // Empty state
+                    <View style={styles.emptyContainer}>
+                        {recentQueries.length === 0 && (
+                            <Text style={[Type.body, styles.emptyHint, { color: palette.textMuted }]}>
+                                Start typing to find any restaurant
+                            </Text>
+                        )}
+                        <RecentSearchesList
+                            queries={recentQueries}
+                            onSelect={handleRecentSelect}
+                        />
+                    </View>
+                ) : isLoading && !hasResults ? (
+                    // Loading state
+                    <View style={styles.centeredState}>
+                        <ActivityIndicator color={palette.primary} />
+                    </View>
+                ) : (
+                    // Results (or error overlay)
+                    <FlatList
+                        ref={listRef}
+                        data={flatData}
+                        keyExtractor={(item) => item.key}
+                        renderItem={renderItem}
+                        keyboardShouldPersistTaps="handled"
+                        onScroll={handleScroll}
+                        scrollEventThrottle={16}
+                        onContentSizeChange={() => {
+                            if (!didRestoreScrollRef.current && lastScrollOffset > 0) {
+                                didRestoreScrollRef.current = true;
+                                listRef.current?.scrollToOffset({
+                                    offset: lastScrollOffset,
+                                    animated: false,
+                                });
+                            }
+                        }}
+                        contentContainerStyle={[
+                            styles.listContent,
+                            { paddingBottom: insets.bottom + Spacing.lg },
+                        ]}
+                        ListEmptyComponent={
+                            !isLoading ? (
+                                <View style={styles.centeredState}>
+                                    <Text
+                                        style={[Type.body, { color: palette.textMuted }]}
+                                    >
+                                        {`No results for "${debouncedQuery}"`}
+                                    </Text>
+                                </View>
+                            ) : null
+                        }
+                        ListFooterComponent={
+                            isPlacesError ? (
+                                <View style={styles.errorBanner}>
+                                    <Text style={[Type.bodySmall, { color: palette.error }]}>
+                                        {`Couldn't reach search \u2014 try again`}
+                                    </Text>
+                                    <Pressable onPress={refetch} style={styles.retryButton}>
+                                        <Text
+                                            style={[
+                                                Type.caption,
+                                                { color: palette.primary },
+                                            ]}
+                                        >
+                                            Retry
+                                        </Text>
+                                    </Pressable>
+                                </View>
+                            ) : null
+                        }
+                    />
+                )
             )}
         </KeyboardAvoidingView>
     );
