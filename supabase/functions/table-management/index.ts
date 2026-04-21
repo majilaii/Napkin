@@ -178,6 +178,7 @@ serve(async (req) => {
                     member_id,
                     role,
                     joined_at,
+                    welcomed_at,
                     profiles (
                         display_name,
                         avatar_url
@@ -187,8 +188,214 @@ serve(async (req) => {
 
             if (membersError) throw membersError;
 
+            // Surface the caller's own welcomed_at so the client can show/hide the banner
+            const callerMembership = (members ?? []).find((m: any) => m.member_id === user.id);
+            const callerWelcomedAt = callerMembership?.welcomed_at ?? null;
+            const callerRole = callerMembership?.role ?? null;
+
             return new Response(
-                JSON.stringify({ data: { ...table, members } }),
+                JSON.stringify({ data: { ...table, members, caller_welcomed_at: callerWelcomedAt, caller_role: callerRole } }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=add_member — add a mutual-follow to the table (owner only)
+        if (req.method === 'POST' && action === 'add_member') {
+            const body = await req.json();
+            const { table_id: targetTableId, target_user_id } = body;
+
+            if (!targetTableId || typeof targetTableId !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+            if (!target_user_id || typeof target_user_id !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'target_user_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // 1. Verify caller is the table owner
+            const { data: table, error: tableErr } = await supabase
+                .from('tables')
+                .select('owner_id')
+                .eq('id', targetTableId)
+                .maybeSingle();
+
+            if (tableErr) throw tableErr;
+            if (!table) {
+                return new Response(
+                    JSON.stringify({ error: 'Table not found' }),
+                    { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+            if (table.owner_id !== user.id) {
+                return new Response(
+                    JSON.stringify({ error: 'Only the table owner can add members', error_code: 'NOT_OWNER' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // 2. Verify target user exists
+            const { data: targetProfile, error: profileErr } = await supabase
+                .from('profiles')
+                .select('user_id')
+                .eq('user_id', target_user_id)
+                .maybeSingle();
+
+            if (profileErr) throw profileErr;
+            if (!targetProfile) {
+                return new Response(
+                    JSON.stringify({ error: 'User not found' }),
+                    { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // 3. Verify mutual follow: caller→target AND target→caller must both exist
+            const [{ data: callerFollowsTarget }, { data: targetFollowsCaller }] = await Promise.all([
+                supabase
+                    .from('follows')
+                    .select('follower_id')
+                    .eq('follower_id', user.id)
+                    .eq('following_id', target_user_id)
+                    .maybeSingle(),
+                supabase
+                    .from('follows')
+                    .select('follower_id')
+                    .eq('follower_id', target_user_id)
+                    .eq('following_id', user.id)
+                    .maybeSingle(),
+            ]);
+
+            if (!callerFollowsTarget || !targetFollowsCaller) {
+                return new Response(
+                    JSON.stringify({
+                        error: 'Mutual follow required to add a member',
+                        error_code: 'NOT_MUTUAL_FOLLOW',
+                    }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // 4. Idempotent upsert — welcomed_at stays NULL so the banner fires on first view
+            const { data: existing, error: existErr } = await supabase
+                .from('table_members')
+                .select('member_id')
+                .eq('table_id', targetTableId)
+                .eq('member_id', target_user_id)
+                .maybeSingle();
+
+            if (existErr) throw existErr;
+
+            if (existing) {
+                return new Response(
+                    JSON.stringify({ data: { member_id: target_user_id, already_member: true } }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { error: insertErr } = await supabase
+                .from('table_members')
+                .insert({ table_id: targetTableId, member_id: target_user_id, role: 'member' });
+
+            if (insertErr) throw insertErr;
+
+            return new Response(
+                JSON.stringify({ data: { member_id: target_user_id, already_member: false } }),
+                { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=mark_welcomed — dismiss the "added to table" banner for the caller
+        if (req.method === 'POST' && action === 'mark_welcomed') {
+            const body = await req.json();
+            const { table_id: targetTableId } = body;
+
+            if (!targetTableId || typeof targetTableId !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Verify membership
+            const { data: membership, error: memberCheckError } = await supabase
+                .from('table_members')
+                .select('member_id')
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id)
+                .maybeSingle();
+
+            if (memberCheckError || !membership) {
+                return new Response(
+                    JSON.stringify({ error: 'Not a member of this table' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { error: updateError } = await supabase
+                .from('table_members')
+                .update({ welcomed_at: new Date().toISOString() })
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id);
+
+            if (updateError) throw updateError;
+
+            return new Response(
+                JSON.stringify({ data: { welcomed_at: new Date().toISOString() } }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=leave_table — non-owner member leaves the table
+        if (req.method === 'POST' && action === 'leave_table') {
+            const body = await req.json();
+            const { table_id: targetTableId } = body;
+
+            if (!targetTableId || typeof targetTableId !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Verify membership and role
+            const { data: membership, error: memberCheckError } = await supabase
+                .from('table_members')
+                .select('member_id, role')
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id)
+                .maybeSingle();
+
+            if (memberCheckError || !membership) {
+                return new Response(
+                    JSON.stringify({ error: 'Not a member of this table' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            if (membership.role === 'admin') {
+                return new Response(
+                    JSON.stringify({
+                        error: 'Table owners cannot leave their own table. Transfer ownership first.',
+                        error_code: 'OWNER_CANNOT_LEAVE',
+                    }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { error: deleteError } = await supabase
+                .from('table_members')
+                .delete()
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id);
+
+            if (deleteError) throw deleteError;
+
+            return new Response(
+                JSON.stringify({ data: { left: true } }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
         }

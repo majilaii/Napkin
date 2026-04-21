@@ -112,8 +112,71 @@ serve(async (req) => {
                     throw soloError;
                 }
 
+                // ── Widen for companion-tagged entries ─────────────────────
+                // Fetch entry IDs where the caller is a companion on an entry in this table.
+                // This is the "tagged-user sees it in feed" path (TICKET-027).
+                // Only applies when not filtering by a specific user.
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                let companionTaggedEntries: any[] = [];
+                if (!filterUserId) {
+                    const { data: companionLinks } = await supabase
+                        .from('entry_companions')
+                        .select('entry_id')
+                        .eq('user_id', user.id);
+
+                    const companionEntryIds = ((companionLinks ?? []) as { entry_id: string }[])
+                        .map((r) => r.entry_id);
+
+                    if (companionEntryIds.length > 0) {
+                        // Fetch those entries if they belong to this table (no cross-table bleed)
+                        const existingIds = new Set(((soloEntries ?? []) as { id: string }[]).map((e) => e.id));
+                        const newIds = companionEntryIds.filter((id) => !existingIds.has(id));
+
+                        if (newIds.length > 0) {
+                            const { data: compEntries, error: compErr } = await supabase
+                                .from('entries')
+                                .select(`
+                                    id,
+                                    user_id,
+                                    restaurant_id,
+                                    rating,
+                                    content,
+                                    dish_description,
+                                    visited_at,
+                                    created_at,
+                                    table_night_id,
+                                    photo_url,
+                                    reaction_count,
+                                    comment_count,
+                                    top_emojis,
+                                    restaurants (
+                                        id,
+                                        name,
+                                        address,
+                                        city,
+                                        photo_url
+                                    )
+                                `)
+                                .in('id', newIds)
+                                .eq('table_id', tableId)
+                                .is('table_night_id', null);
+
+                            if (!compErr) {
+                                companionTaggedEntries = compEntries ?? [];
+                            }
+                        }
+                    }
+                }
+
+                // Merge regular + companion-widened entries (deduplicated)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const allSoloEntries: any[] = [
+                    ...(soloEntries ?? []),
+                    ...companionTaggedEntries,
+                ];
+
                 // Fetch profile info for each entry's creator
-                const userIds = [...new Set((soloEntries ?? []).map((e: { user_id: string }) => e.user_id))];
+                const userIds = [...new Set(allSoloEntries.map((e: { user_id: string }) => e.user_id))];
                 const { data: profiles } = userIds.length > 0
                     ? await supabase
                         .from('profiles')
@@ -122,13 +185,13 @@ serve(async (req) => {
                     : { data: [] };
 
                 const profileMap = new Map((profiles ?? []).map((p: { user_id: string; display_name: string }) => [p.user_id, p]));
-                const entriesWithProfiles = (soloEntries ?? []).map((e: { user_id: string }) => ({
+                const entriesWithProfiles = allSoloEntries.map((e: { user_id: string }) => ({
                     ...e,
                     profiles: profileMap.get(e.user_id) ?? { display_name: 'User' },
                 }));
 
                 // Fetch entry_participants for all fetched entries
-                const entryIds = (soloEntries ?? []).map((e: { id: string }) => e.id);
+                const entryIds = allSoloEntries.map((e: { id: string }) => e.id);
                 const { data: entryParticipants } = entryIds.length > 0
                     ? await supabase
                         .from('entry_participants')
@@ -168,10 +231,39 @@ serve(async (req) => {
                     participantsByEntry.set(p.entry_id, list);
                 }
 
+                // Fetch entry_companions for all fetched entries
+                const { data: entryCompanions } = entryIds.length > 0
+                    ? await supabase
+                        .from('entry_companions')
+                        .select(`
+                            entry_id,
+                            user_id,
+                            profiles:user_id (
+                                display_name
+                            )
+                        `)
+                        .in('entry_id', entryIds)
+                    : { data: [] };
+
+                // Group companions by entry_id
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const companionsByEntry = new Map<string, any[]>();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                for (const c of (entryCompanions ?? []) as any[]) {
+                    const list = companionsByEntry.get(c.entry_id) ?? [];
+                    const profileNode = Array.isArray(c.profiles) ? c.profiles[0] : c.profiles;
+                    list.push({
+                        user_id: c.user_id,
+                        display_name: profileNode?.display_name ?? 'User',
+                    });
+                    companionsByEntry.set(c.entry_id, list);
+                }
+
                 // Tag entries: solo_share (0-1 participants) or collaborative_entry (2+)
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 taggedEntries = (entriesWithProfiles as any[]).map((entry) => {
                     const participants = participantsByEntry.get(entry.id) ?? [];
+                    const companions = companionsByEntry.get(entry.id) ?? [];
                     const photoCount = photoCountMap.get(entry.id) ?? 0;
                     if (participants.length > 1) {
                         const ratings = participants
@@ -184,6 +276,7 @@ serve(async (req) => {
                             ...entry,
                             type: 'collaborative_entry' as const,
                             participants,
+                            companions,
                             average_rating: average,
                             sort_date: entry.visited_at || entry.created_at,
                             photo_count: photoCount,
@@ -192,6 +285,7 @@ serve(async (req) => {
                     return {
                         ...entry,
                         type: 'solo_share' as const,
+                        companions,
                         sort_date: entry.visited_at || entry.created_at,
                         photo_count: photoCount,
                     };

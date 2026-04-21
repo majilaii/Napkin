@@ -107,6 +107,8 @@ export type UserProfileData = {
     top_four: TopPick[];
     regulars_preview: RegularSummary[];
     is_self: boolean;
+    /** True if the viewing user is following the target. False for self, false for unauthenticated. */
+    is_following_viewer: boolean;
     viewer_target_relationship: ViewerRelationship;
 };
 

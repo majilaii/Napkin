@@ -29,6 +29,8 @@ export interface CreateEntryInput {
     table_id?: string;
     visibility?: 'private' | 'friends' | 'table' | 'both';
     participant_ids?: string[];
+    /** Companion tagging — who was there (distinct from Round participant_ids) */
+    companion_ids?: string[];
     vibe_rating?: number | null;
     flavor_rating?: number | null;
     service_rating?: number | null;
@@ -60,6 +62,8 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
         onSuccess: () => {
             if (userId) {
                 qc.invalidateQueries({ queryKey: queryKeys.entries.list(userId) });
+                // Invalidate the cross-Table feed so tagged companions see the entry on next focus
+                qc.invalidateQueries({ queryKey: queryKeys.feed.all(userId) });
             }
             if (tableId) {
                 qc.invalidateQueries({ queryKey: queryKeys.tables.activity(tableId) });

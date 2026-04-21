@@ -49,7 +49,9 @@ import {
     ActiveGatherBanner,
     SubsetCard,
     TickRow,
+    WelcomeBanner,
 } from '@/components/tables';
+import { useTableDetail } from '@/hooks/tables/useTableDetail';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -116,6 +118,20 @@ export default function TablesScreen() {
         () => activityData?.pages?.flat() ?? [],
         [activityData],
     );
+
+    // Table detail — includes caller_welcomed_at for the welcome banner (TICKET-029)
+    const { data: tableDetail } = useTableDetail(activeTable?.id);
+
+    // Welcome banner: show when caller_welcomed_at IS NULL and role !== 'admin'
+    const showWelcomeBanner =
+        !activeTable?.is_personal &&
+        tableDetail?.caller_welcomed_at === null &&
+        tableDetail?.caller_role !== 'admin' &&
+        tableDetail?.caller_role != null;
+
+    // Find the owner's display name to use in banner copy
+    const ownerMember = tableDetail?.members?.find((m) => m.role === 'admin');
+    const ownerName = ownerMember?.profiles?.display_name ?? null;
 
     // ── Grouping logic ─────────────────────────────────────────────────
     const { data: members } = useTableMembers(activeTable?.id);
@@ -217,6 +233,12 @@ export default function TablesScreen() {
     const isFoundedEmpty =
         !activeTable.is_personal && isEmpty && !feedLoading;
 
+    const handleSettingsPress = () => {
+        if (activeTable?.id) {
+            router.push({ pathname: '/table/[id]/settings', params: { id: activeTable.id } });
+        }
+    };
+
     // Shared header + segmented control (rendered above both tabs)
     const headerAndControl = (
         <>
@@ -230,7 +252,18 @@ export default function TablesScreen() {
                 hasMultipleTables={hasMultipleTables}
                 onSwitcherPress={() => setShowTablePicker(true)}
                 palette={palette}
+                onSettingsPress={!activeTable.is_personal ? handleSettingsPress : undefined}
             />
+
+            {/* Welcome banner — shown once when a user is added to a table (TICKET-029) */}
+            {showWelcomeBanner && activeTable?.id && (
+                <WelcomeBanner
+                    tableId={activeTable.id}
+                    tableName={tableName}
+                    adderName={ownerName}
+                    palette={palette}
+                />
+            )}
 
             {/* Activity | Wishlist — editorial section-label style */}
             <View style={styles.tabRow}>

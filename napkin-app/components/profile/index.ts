@@ -11,3 +11,4 @@ export { PrivacyPicker } from './PrivacyPicker';
 export { TablesInCommonSection } from './TablesInCommonSection';
 export { TablePreviewCard } from './TablePreviewCard';
 export { NotFoundState } from './NotFoundState';
+export { FollowButton } from './FollowButton';

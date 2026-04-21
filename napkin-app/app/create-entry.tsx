@@ -42,6 +42,8 @@ import {
 } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
+import { CompanionChipsRow, CompanionPickerSheet } from '@/components/logging';
+import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -227,6 +229,23 @@ export default function CreateEntryScreen() {
     // Multi-photo upload state
     const [photos, setPhotos] = useState<PhotoSlot[]>([]);
     const uploadGenRefs = useRef(new Map<string, number>());
+
+    // Companion tagging state
+    const [selectedCompanions, setSelectedCompanions] = useState<UserSearchResult[]>([]);
+    const [companionSheetVisible, setCompanionSheetVisible] = useState(false);
+
+    const toggleCompanion = useCallback((u: UserSearchResult) => {
+        if (!user || u.user_id === user.id) return; // block self-tag
+        setSelectedCompanions(prev => {
+            const exists = prev.some(c => c.user_id === u.user_id);
+            if (exists) return prev.filter(c => c.user_id !== u.user_id);
+            return [...prev, u];
+        });
+    }, [user]);
+
+    const removeCompanion = useCallback((userId: string) => {
+        setSelectedCompanions(prev => prev.filter(c => c.user_id !== userId));
+    }, []);
 
     const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photos.some(p => p.uploading);
     const isSubmitting = createEntry.isPending || startRound.isPending;
@@ -523,6 +542,9 @@ export default function CreateEntryScreen() {
                     table_id: selectedTableId ?? undefined,
                     visibility: selectedTableId ? 'table' : 'private',
                     ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
+                    ...(selectedCompanions.length > 0 ? {
+                        companion_ids: selectedCompanions.map(c => c.user_id),
+                    } : {}),
                     ...secondaryRatings,
                 });
             }
@@ -536,7 +558,7 @@ export default function CreateEntryScreen() {
         canSubmit, rating, notes, dish, selectedPlace, query,
         selectedTableId, isPersonalTable, postMode, selectedParticipantIds,
         vibeRating, flavorRating, serviceRating, valueRating,
-        photos,
+        photos, selectedCompanions,
         createEntry, startRound, router,
     ]);
 
@@ -733,6 +755,44 @@ export default function CreateEntryScreen() {
                             fontVariant="sans"
                             size="body"
                         />
+                    </View>
+
+                    {/* Companion tagging — "Who were you with?" */}
+                    <View style={{ marginTop: Spacing.lg }}>
+                        <Pressable
+                            onPress={() => setCompanionSheetVisible(true)}
+                            style={styles.companionTrigger}
+                            accessibilityRole="button"
+                            accessibilityLabel="Tag companions"
+                        >
+                            <Ionicons
+                                name="person-add-outline"
+                                size={18}
+                                color={palette.textMuted}
+                            />
+                            <Text style={[styles.companionLabel, { color: palette.textMuted }]}>
+                                {selectedCompanions.length === 0
+                                    ? 'Who were you with?'
+                                    : `with ${selectedCompanions.map(c => c.display_name.split(' ')[0]).slice(0, 2).join(', ')}${selectedCompanions.length > 2 ? ` +${selectedCompanions.length - 2} more` : ''}`
+                                }
+                            </Text>
+                            <Ionicons
+                                name="chevron-forward"
+                                size={14}
+                                color={palette.textMuted}
+                            />
+                        </Pressable>
+                        {selectedCompanions.length > 0 ? (
+                            <View style={{ marginTop: Spacing.sm }}>
+                                <CompanionChipsRow
+                                    companions={selectedCompanions.map(c => ({
+                                        user_id: c.user_id,
+                                        display_name: c.display_name,
+                                    }))}
+                                    onRemove={removeCompanion}
+                                />
+                            </View>
+                        ) : null}
                     </View>
 
                     {/* Secondary ratings — collapsible, underline-divided */}
@@ -1166,6 +1226,15 @@ export default function CreateEntryScreen() {
                     </Pressable>
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            <CompanionPickerSheet
+                visible={companionSheetVisible}
+                onClose={() => setCompanionSheetVisible(false)}
+                selectedIds={new Set(selectedCompanions.map(c => c.user_id))}
+                onToggle={toggleCompanion}
+                currentUserId={user?.id}
+                palette={palette}
+            />
         </>
     );
 }
@@ -1290,5 +1359,17 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: Spacing.xl,
+    },
+    // Companion trigger row
+    companionTrigger: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        paddingVertical: Spacing.sm,
+    },
+    companionLabel: {
+        flex: 1,
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 14,
     },
 });

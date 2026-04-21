@@ -21,12 +21,15 @@ import type {
     UserStats,
     ViewerRelationship,
 } from '@/hooks/users/useUserProfile';
+import { FollowButton } from './FollowButton';
 
 interface Props {
     profile: UserProfileRow;
     isSelf: boolean;
     relationship: ViewerRelationship;
     stats?: UserStats | null;
+    /** Whether the viewing user is currently following the target. Used for the Follow button. */
+    isFollowingViewer?: boolean;
 }
 
 function initials(displayName: string): string {
@@ -35,7 +38,7 @@ function initials(displayName: string): string {
     return displayName.slice(0, 1).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship, stats }: Props) {
+export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowingViewer = false }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -76,7 +79,7 @@ export function ProfileHeader({ profile, isSelf, relationship, stats }: Props) {
                     ) : null}
                 </View>
 
-                {isSelf && (
+                {isSelf ? (
                     <Pressable
                         onPress={() => router.push('/settings')}
                         hitSlop={10}
@@ -88,6 +91,11 @@ export function ProfileHeader({ profile, isSelf, relationship, stats }: Props) {
                             color={palette.textMuted}
                         />
                     </Pressable>
+                ) : (
+                    <FollowButton
+                        targetUserId={profile.user_id}
+                        initialIsFollowing={isFollowingViewer}
+                    />
                 )}
             </View>
 
