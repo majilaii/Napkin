@@ -711,6 +711,7 @@ serve(async (req) => {
                         top_four: topFour,
                         regulars_preview: regularsPreview,
                         is_self: true,
+                        is_following_viewer: false, // self never follows self
                         viewer_target_relationship: 'self' as ViewerRelationship,
                     },
                 });
@@ -723,7 +724,16 @@ serve(async (req) => {
             // 3. 'none' → return not_found, stop here
             if (relationship === 'none') return notFound();
 
-            // 4. 'tables_in_common' only — no palate access
+            // 4. Check if the caller is already following the target
+            const { data: followRow } = await supabase
+                .from('follows')
+                .select('follower_id')
+                .eq('follower_id', callerId)
+                .eq('following_id', targetId)
+                .maybeSingle();
+            const isFollowingViewer = followRow !== null;
+
+            // 5. 'tables_in_common' only — no palate access
             if (relationship === 'tables_in_common') {
                 const tablePreviews = await fetchTablePreviews(supabase, targetId, sharedTableIds, 'other');
                 return json({
@@ -736,12 +746,13 @@ serve(async (req) => {
                         top_four: [],
                         regulars_preview: [],
                         is_self: false,
+                        is_following_viewer: isFollowingViewer,
                         viewer_target_relationship: relationship,
                     },
                 });
             }
 
-            // 5. public_only or public_and_tables — fetch palate
+            // 6. public_only or public_and_tables — fetch palate
             const [stats, publicLists, recentlyLogged, topFour, regularsPreview] = await Promise.all([
                 fetchStats(supabase, targetId),
                 fetchPublicLists(supabase, targetId),
@@ -765,6 +776,7 @@ serve(async (req) => {
                     top_four: topFour,
                     regulars_preview: regularsPreview,
                     is_self: false,
+                    is_following_viewer: isFollowingViewer,
                     viewer_target_relationship: relationship,
                 },
             });
@@ -1002,9 +1014,10 @@ serve(async (req) => {
 
         // ── search ───────────────────────────────────────────────────────
         // Find Napkin users by display_name (ILIKE); excludes the caller.
-        // Used by CompanionPickerSheet for tagging.
+        // Used by CompanionPickerSheet (TICKET-027) and PeopleSearchPane (TICKET-028).
         // Request: { action: 'search', q: string, limit?: number }
-        // Response: { data: { user_id, display_name, avatar_url }[] }
+        // Response: { data: { user_id, display_name, avatar_url, is_following }[] }
+        // Order: followed users first, then by profiles.created_at DESC, then display_name ASC
         if (action === 'search') {
             const { q, limit: rawLimit } = body as { q?: string; limit?: number };
             if (!q || typeof q !== 'string' || q.trim().length === 0) {
@@ -1016,19 +1029,168 @@ serve(async (req) => {
 
             const { data: results, error: searchErr } = await supabase
                 .from('profiles')
-                .select('user_id, display_name, avatar_url')
+                .select('user_id, display_name, avatar_url, created_at')
                 .ilike('display_name', pattern)
                 .neq('user_id', user.id)
                 .limit(maxResults);
 
             if (searchErr) throw searchErr;
 
+            const rows = (results ?? []) as Array<{
+                user_id: string;
+                display_name: string;
+                avatar_url: string | null;
+                created_at: string;
+            }>;
+
+            if (rows.length === 0) {
+                return json({ data: [] });
+            }
+
+            // Fetch which of the results the caller is following (single IN lookup — no N+1)
+            const resultIds = rows.map((r) => r.user_id);
+            const { data: followRows } = await supabase
+                .from('follows')
+                .select('following_id')
+                .eq('follower_id', user.id)
+                .in('following_id', resultIds);
+
+            const followingSet = new Set<string>(
+                ((followRows ?? []) as { following_id: string }[]).map((f) => f.following_id)
+            );
+
+            // Sort server-side: followed first, then by created_at DESC, then display_name ASC
+            const sorted = rows.slice().sort((a, b) => {
+                const aF = followingSet.has(a.user_id) ? 1 : 0;
+                const bF = followingSet.has(b.user_id) ? 1 : 0;
+                if (aF !== bF) return bF - aF; // followed first
+                // created_at DESC
+                if (a.created_at > b.created_at) return -1;
+                if (a.created_at < b.created_at) return 1;
+                // display_name ASC tiebreak
+                return a.display_name.localeCompare(b.display_name);
+            });
+
             return json({
-                data: (results ?? []).map((r: any) => ({
+                data: sorted.map((r) => ({
                     user_id: r.user_id,
                     display_name: r.display_name,
                     avatar_url: r.avatar_url ?? null,
+                    is_following: followingSet.has(r.user_id),
                 })),
+            });
+        }
+
+        // ── follow ───────────────────────────────────────────────────────
+        // Request: { action: 'follow', target_user_id: string }
+        // Response: { data: { following: true } }
+        if (action === 'follow') {
+            const { target_user_id } = body as { target_user_id?: string };
+            if (!target_user_id || typeof target_user_id !== 'string') {
+                return fail('target_user_id is required', 400);
+            }
+            if (target_user_id === user.id) {
+                return fail('cannot follow self', 400);
+            }
+
+            const { error: upsertErr } = await supabase
+                .from('follows')
+                .upsert(
+                    { follower_id: user.id, following_id: target_user_id },
+                    { onConflict: 'follower_id,following_id', ignoreDuplicates: true }
+                );
+
+            if (upsertErr) throw upsertErr;
+
+            return json({ data: { following: true } });
+        }
+
+        // ── unfollow ─────────────────────────────────────────────────────
+        // Request: { action: 'unfollow', target_user_id: string }
+        // Response: { data: { following: false } }
+        if (action === 'unfollow') {
+            const { target_user_id } = body as { target_user_id?: string };
+            if (!target_user_id || typeof target_user_id !== 'string') {
+                return fail('target_user_id is required', 400);
+            }
+            if (target_user_id === user.id) {
+                return fail('cannot unfollow self', 400);
+            }
+
+            const { error: deleteErr } = await supabase
+                .from('follows')
+                .delete()
+                .eq('follower_id', user.id)
+                .eq('following_id', target_user_id);
+
+            if (deleteErr) throw deleteErr;
+
+            return json({ data: { following: false } });
+        }
+
+        // ── check_follow ─────────────────────────────────────────────────
+        // Request: { action: 'check_follow', target_user_id: string }
+        // Response: { data: { is_following: boolean } }
+        if (action === 'check_follow') {
+            const { target_user_id } = body as { target_user_id?: string };
+            if (!target_user_id || typeof target_user_id !== 'string') {
+                return fail('target_user_id is required', 400);
+            }
+
+            const { data: followRow } = await supabase
+                .from('follows')
+                .select('follower_id')
+                .eq('follower_id', user.id)
+                .eq('following_id', target_user_id)
+                .maybeSingle();
+
+            return json({ data: { is_following: followRow !== null } });
+        }
+
+        // ── following_list ────────────────────────────────────────────────
+        // Returns the list of users the caller is following (with profile data).
+        // Request: { action: 'following_list', limit?: number }
+        // Response: { data: { user_id, display_name, avatar_url }[] }
+        if (action === 'following_list') {
+            const { limit: rawLimit } = body as { limit?: number };
+            const maxResults = Math.min(Math.max(rawLimit ?? 50, 1), 50);
+
+            const { data: followRows, error: followErr } = await supabase
+                .from('follows')
+                .select('following_id, created_at')
+                .eq('follower_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(maxResults);
+
+            if (followErr) throw followErr;
+
+            const rows = (followRows ?? []) as { following_id: string; created_at: string }[];
+            if (rows.length === 0) return json({ data: [] });
+
+            const ids = rows.map((r) => r.following_id);
+            const { data: profiles, error: profilesErr } = await supabase
+                .from('profiles')
+                .select('user_id, display_name, avatar_url')
+                .in('user_id', ids);
+
+            if (profilesErr) throw profilesErr;
+
+            // Return in follow-recency order
+            const byId = new Map(
+                ((profiles ?? []) as { user_id: string; display_name: string; avatar_url: string | null }[])
+                    .map((p) => [p.user_id, p])
+            );
+
+            return json({
+                data: ids
+                    .map((id) => byId.get(id))
+                    .filter(Boolean)
+                    .map((p: any) => ({
+                        user_id: p.user_id,
+                        display_name: p.display_name,
+                        avatar_url: p.avatar_url ?? null,
+                        is_following: true,
+                    })),
             });
         }
 

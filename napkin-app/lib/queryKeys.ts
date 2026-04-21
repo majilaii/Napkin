@@ -84,6 +84,7 @@ export const queryKeys = {
         regulars: (userId: string) => ['users', 'regulars', userId] as const,
         search: (q: string) => ['users', 'search', q] as const,
         recentCompanions: (userId: string) => ['users', 'recentCompanions', userId] as const,
+        following: (userId: string) => ['users', 'following', userId] as const,
     },
 
     // Feed (cross-Table chronological feed — Feed tab)

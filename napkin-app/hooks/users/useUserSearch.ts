@@ -13,6 +13,8 @@ export interface UserSearchResult {
     user_id: string;
     display_name: string;
     avatar_url: string | null;
+    /** Present when returned from people-search (TICKET-028). Undefined for companion picker usage. */
+    is_following?: boolean;
 }
 
 async function searchUsers(q: string): Promise<UserSearchResult[]> {
