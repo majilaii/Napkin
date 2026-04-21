@@ -56,7 +56,7 @@ export function FeedTerminus(_: Props = {}) {
                     style={{
                         fontFamily: 'Manrope_600SemiBold',
                         fontSize: 12,
-                        color: '#fff',
+                        color: palette.textInverse,
                         letterSpacing: 0.3,
                     }}
                 >

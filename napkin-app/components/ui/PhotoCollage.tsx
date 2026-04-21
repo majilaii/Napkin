@@ -291,7 +291,7 @@ const tileStyles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 24,
         fontWeight: '500',
-        color: '#fff',
+        color: Colors.light.textInverse,
     },
     addWrap: {
         flex: 1,

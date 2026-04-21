@@ -17,7 +17,7 @@ import {
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ export function MultiPhotoRow({
                     {/* Hero label on first photo */}
                     {index === 0 && (
                         <View style={[styles.heroLabel, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
-                            <Text style={{ color: '#fff', fontSize: 8, fontFamily: 'Manrope_600SemiBold' }}>
+                            <Text style={{ color: Colors.light.textInverse, fontSize: 8, fontFamily: 'Manrope_600SemiBold' }}>
                                 HERO
                             </Text>
                         </View>

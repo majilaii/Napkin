@@ -53,7 +53,7 @@ export function ScopePills({ scope, onChange }: Props) {
                                 fontFamily: active ? 'Manrope_600SemiBold' : 'Manrope_500Medium',
                                 fontSize: 11,
                                 letterSpacing: 0.3,
-                                color: active ? '#f6ecd9' : palette.textSecondary,
+                                color: active ? palette.cream : palette.textSecondary,
                             }}
                         >
                             {o.label}

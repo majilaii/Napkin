@@ -20,7 +20,7 @@ import {
     PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { PulseDot } from '@/components/feed/PulseDot';
 import { Avatar } from '@/components/feed/Avatar';
 import type { TableMembership } from '@/hooks/tables/useTables';
@@ -143,6 +143,7 @@ export function TableSwitcherSheet({
             <Animated.View
                 style={[
                     styles.sheet,
+                    Shadow.nav,
                     {
                         backgroundColor: palette.surfaceContainerLow,
                         paddingBottom: insets.bottom + Spacing.md,
@@ -185,7 +186,6 @@ export function TableSwitcherSheet({
                         <TableRow
                             key={tbl.id}
                             tableName={tbl.name}
-                            isPersonal={tbl.is_personal ?? false}
                             isActive={isActive}
                             hasLiveRound={hasLiveRound}
                             palette={palette}
@@ -205,7 +205,6 @@ export function TableSwitcherSheet({
 
 interface TableRowProps {
     tableName: string;
-    isPersonal: boolean;
     isActive: boolean;
     hasLiveRound: boolean;
     palette: Palette;
@@ -214,7 +213,6 @@ interface TableRowProps {
 
 function TableRow({
     tableName,
-    isPersonal,
     isActive,
     hasLiveRound,
     palette,
@@ -242,7 +240,6 @@ function TableRow({
                 list endpoint, so we approximate with a single table-initials avatar
                 plus two muted companion discs for the silhouette density. */}
             <View style={styles.avatarStack}>
-                {!isPersonal && (
                     <>
                         <View
                             style={[
@@ -259,12 +256,11 @@ function TableRow({
                             ]}
                         />
                     </>
-                )}
                 <View
                     style={[
                         styles.stackDisc,
                         styles.stackDiscFront,
-                        !isPersonal && styles.stackDiscFrontOffset,
+                        !isActive && styles.stackDiscFrontOffset,
                         { borderColor: palette.surfaceContainerLow },
                     ]}
                 >
@@ -276,15 +272,15 @@ function TableRow({
             <View style={styles.rowText}>
                 <Text
                     style={[
-                        isPersonal ? styles.rowNameSans : styles.rowNameSerif,
+                        styles.rowNameSerif,
                         { color: isActive ? palette.primary : palette.text },
                     ]}
                     numberOfLines={1}
                 >
-                    {isPersonal ? 'Your journal' : tableName}
+                    {tableName}
                 </Text>
                 <Text style={[styles.rowSub, { color: palette.textMuted }]}>
-                    {isPersonal ? 'Solo' : 'Shared table'}
+                    Table
                 </Text>
             </View>
 
@@ -321,12 +317,6 @@ const styles = StyleSheet.create({
         right: 0,
         borderTopLeftRadius: Radius.xl,
         borderTopRightRadius: Radius.xl,
-        // Ambient shadow upward
-        shadowColor: '#1c1c19',
-        shadowOffset: { width: 0, height: -8 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-        elevation: 16,
         minHeight: SHEET_HEIGHT,
     },
     handleArea: {

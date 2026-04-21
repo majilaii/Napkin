@@ -5,13 +5,14 @@
 
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, Easing } from 'react-native';
+import { Colors } from '@/constants/theme';
 
 interface PulseDotProps {
     size?: number;
     color?: string;
 }
 
-export function PulseDot({ size = 8, color = '#fff' }: PulseDotProps) {
+export function PulseDot({ size = 8, color = Colors.light.textInverse }: PulseDotProps) {
     const pulse = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {

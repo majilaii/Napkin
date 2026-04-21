@@ -23,7 +23,7 @@ import type { RestaurantPageRestaurant } from '@/hooks/restaurants/useRestaurant
 type Palette = typeof Colors.light;
 
 const HERO_HEIGHT = 340;
-const CREAM = '#f6ecd9';
+const CREAM = Colors.light.cream;
 
 function priceTierLabel(level: number | null): string {
     if (level == null) return '';

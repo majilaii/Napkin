@@ -80,7 +80,7 @@ export function RemoveConfirmationSheet({
                             { backgroundColor: palette.error, opacity: pressed ? 0.85 : 1 },
                         ]}
                     >
-                        <Text style={[Type.label, { color: '#fff' }]}>
+                        <Text style={[Type.label, { color: palette.textInverse }]}>
                             Remove from wishlist
                         </Text>
                     </Pressable>

@@ -442,7 +442,7 @@ serve(async (req) => {
             // Find all table_ids the user is a member of
             const { data: memberships, error: memberErr } = await supabase
                 .from('table_members')
-                .select('table_id, tables(id, name, is_personal)')
+                .select('table_id, tables(id, name)')
                 .eq('member_id', user.id);
             if (memberErr) throw memberErr;
 

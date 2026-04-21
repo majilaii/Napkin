@@ -353,14 +353,6 @@ export default function EntryDetailScreen() {
         entry?.id,
     );
 
-    // Personal-table detection — an entry on the viewer's personal table is a
-    // private journal entry. Reactions + replies are suppressed for those.
-    const { data: viewerTables } = useTables(viewer?.id);
-    const personalTableId = (viewerTables ?? []).find(
-        (m) => m.tables.is_personal,
-    )?.tables.id;
-    const isPersonalEntry = !!entry?.table_id && entry.table_id === personalTableId;
-
     // Reply composer — opens when user taps reply in the floating pill, or
     // when the screen was navigated to via FeedActionRow with focus=reply.
     const [replyOpen, setReplyOpen] = useState(false);
@@ -769,8 +761,8 @@ export default function EntryDetailScreen() {
             <View style={{ flex: 1, backgroundColor: palette.background }}>
                 <ScrollView
                     contentContainerStyle={{
-                        paddingBottom: insets.bottom + (isPersonalEntry ? 40 : 110),
-                        paddingTop: hasHeroDisplay ? 0 : insets.top + Spacing.md,
+                        paddingBottom: insets.bottom + 90,
+                        paddingTop: hasHeroDisplay ? 0 : insets.top + Spacing.xs,
                     }}
                     showsVerticalScrollIndicator={false}
                 >
@@ -843,7 +835,7 @@ export default function EntryDetailScreen() {
                                 ]}
                             >
                                 <Pressable onPress={() => router.back()}>
-                                    <Text style={[Type.body, { color: '#fff' }]}>← Back</Text>
+                                    <Text style={[Type.body, { color: palette.textInverse }]}>← Back</Text>
                                 </Pressable>
                                 {/* Pencil icon toggles unified photo manage mode (add + remove) */}
                                 {isOwnEntry && (
@@ -855,7 +847,7 @@ export default function EntryDetailScreen() {
                                             <Ionicons
                                                 name={photoManageMode ? 'checkmark' : 'pencil-outline'}
                                                 size={14}
-                                                color="#fff"
+                                                color={palette.textInverse}
                                             />
                                         </View>
                                     </Pressable>
@@ -951,7 +943,7 @@ export default function EntryDetailScreen() {
                                                     resizeMode="cover"
                                                 />
                                                 <View style={[styles.photoRemoveOverlay]}>
-                                                    <Ionicons name="trash-outline" size={16} color="#fff" />
+                                                    <Ionicons name="trash-outline" size={16} color={palette.textInverse} />
                                                 </View>
                                             </Pressable>
                                         ))}
@@ -1292,7 +1284,7 @@ export default function EntryDetailScreen() {
                         ) : null}
 
                         {/* ── Authorship (table entries only — your own shows no author) ── */}
-                        {!isPersonalEntry && !isOwnEntry && entry.user_id && entry.table_id && (
+                        {!isOwnEntry && entry.user_id && entry.table_id && (
                             <Pressable
                                 onPress={() =>
                                     router.push({
@@ -1355,8 +1347,8 @@ export default function EntryDetailScreen() {
                     </View>
 
                     {/* Comments — plain rows on the warm cream page, outside the note card. */}
-                    {/* Personal-table entries have no replies; hide comments too. */}
-                    {!isPersonalEntry && entry.id && entry.table_id && (interactions?.comments ?? []).length > 0 && (
+                    {/* Comments */}
+                    {entry.id && entry.table_id && (interactions?.comments ?? []).length > 0 && (
                         <View style={styles.commentsOutside}>
                             {(interactions?.comments ?? []).map((c) => (
                                 <CommentRow
@@ -1381,8 +1373,8 @@ export default function EntryDetailScreen() {
                 </ScrollView>
 
                 {/* ── Floating action pill + docked composer ── */}
-                {/* Table entries only. Personal entries are a private journal — no social UI. */}
-                {!isPersonalEntry && entry.id && entry.table_id && (
+                {/* ── Floating action pill + docked composer ── */}
+                {entry.id && entry.table_id && (
                     replyOpen ? (
                         <DockedReplyComposer
                             entryId={entry.id}
@@ -1478,7 +1470,7 @@ function InitialsAvatar({
 //
 // Instagram-story-style floating pill docked bottom-right. Holds the like
 // toggle (tap = ❤️ on/off, long-press = emoji picker) and the reply trigger.
-// Only rendered for table entries — personal-table entries have no social UI.
+// Only rendered for table entries.
 
 interface FloatingActionPillProps {
     entryId: string;
@@ -1799,28 +1791,28 @@ function DockedReplyComposer({ entryId, palette, onClose }: DockedReplyComposerP
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
-const PAGE_H = 22;
+const PAGE_H = 14;
 
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     topBar: {
-        paddingHorizontal: Spacing.lg,
-        paddingBottom: Spacing.md,
+        paddingHorizontal: PAGE_H,
+        paddingBottom: Spacing.sm,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
     },
-    section: { paddingHorizontal: PAGE_H, paddingTop: Spacing.xl },
+    section: { paddingHorizontal: PAGE_H, paddingTop: Spacing.md },
 
     // ── Body — encased note card ──
     // Brand: white `--surface-note`, radius-xl, near-invisible warm border,
     // `--shadow-note`. Floats just below the hero (slightly overlapping).
     bodyCard: {
-        marginHorizontal: 14,
-        paddingHorizontal: 20,
-        paddingTop: 24,
-        paddingBottom: 28,
-        borderRadius: Radius.xl,
+        marginHorizontal: 0,
+        paddingHorizontal: PAGE_H,
+        paddingTop: 16,
+        paddingBottom: 20,
+        borderRadius: Radius.lg,
         borderWidth: StyleSheet.hairlineWidth,
         shadowColor: '#1c1c19',
         shadowOffset: { width: 0, height: 8 },
@@ -1901,7 +1893,7 @@ const styles = StyleSheet.create({
 
     // Prose — em-dash pull-quote, Newsreader 18/1.55
     proseBlock: {
-        marginTop: Spacing.xl,
+        marginTop: Spacing.md,
     },
     prose: {
         fontFamily: 'Newsreader_400Regular',
@@ -1911,7 +1903,7 @@ const styles = StyleSheet.create({
 
     // Prose editor (tapped to edit)
     proseEditor: {
-        marginTop: Spacing.xl,
+        marginTop: Spacing.md,
     },
     proseInput: {
         fontFamily: 'Newsreader_400Regular',
@@ -1943,8 +1935,8 @@ const styles = StyleSheet.create({
 
     // Breakdown strip — "food 2.0 · vibe 1.0 · service 2.5 · value 1.5"
     breakdownStripWrap: {
-        marginTop: Spacing.lg,
-        paddingTop: Spacing.md,
+        marginTop: Spacing.md,
+        paddingTop: Spacing.sm,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: 'transparent', // filled by parent's divider if needed; keep structural
     },
@@ -1960,8 +1952,8 @@ const styles = StyleSheet.create({
 
     // Breakdown editor
     breakdownEditor: {
-        marginTop: Spacing.lg,
-        gap: Spacing.sm,
+        marginTop: Spacing.md,
+        gap: Spacing.xs,
     },
     breakdownEditorHeader: {
         flexDirection: 'row',
@@ -2007,7 +1999,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
-        marginTop: Spacing.xl,
+        marginTop: Spacing.md,
     },
     authorName: {
         fontFamily: 'Manrope_400Regular',
@@ -2032,9 +2024,9 @@ const styles = StyleSheet.create({
 
     // Comments — plain rows on warm cream, sits below the note card.
     commentsOutside: {
-        gap: Spacing.md,
+        gap: Spacing.sm,
         paddingHorizontal: PAGE_H,
-        paddingTop: Spacing.xl,
+        paddingTop: Spacing.md,
     },
 
     // Floating bottom-right action pill — Instagram story-style.
@@ -2164,9 +2156,9 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     addPhotosHero: {
-        marginHorizontal: Spacing.lg,
-        marginTop: Spacing.md,
-        paddingVertical: Spacing.xl,
+        marginHorizontal: PAGE_H,
+        marginTop: Spacing.sm,
+        paddingVertical: Spacing.lg,
         borderRadius: Radius.lg,
         alignItems: 'center',
         justifyContent: 'center',

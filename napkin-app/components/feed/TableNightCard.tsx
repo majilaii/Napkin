@@ -1,16 +1,18 @@
 /**
  * TableNightCard — canvas-faithful TRoundCard shape.
- * Reference: tables-screens.jsx → TRoundCard.
+ * Reference: tables-screens.jsx → TRoundCard (newer wireframe bundle).
  *
  * Layout:
- *   [Photo 140px with "Round · {date}" pill top-left + unseen dot top-right]
+ *   [Photo 140px with dark "Round · {date}" pill top-left + unseen dot top-right]
  *   [Content 14/16:
- *     Row: Name (italic serif 22pt) + sub (11pt muted)   Rating (24pt amber italic) + "N voices"
- *     Avatar stack (22px, -6px overlap)
+ *     Row: Name (italic serif 22pt) + sub (11pt muted)   Rating (24pt amber italic) + "N / N VOICES"
  *     FeedActionRow (after reveal)
  *   ]
  *
  * Active live-round variant: terracotta pill w/ pulse dot, reactions disabled.
+ *
+ * The wireframes drop the avatar stack from the card body — the voices
+ * label carries that weight. Member identity lives on the card detail view.
  */
 import React, { useRef, useState } from 'react';
 import {
@@ -26,11 +28,10 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { type TableNightActivity } from '@/hooks/tables/useTableActivity';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { PulseDot } from '@/components/ui/napkin/PulseDot';
-import { AvatarStack } from '@/components/ui/napkin/AvatarStack';
 import { FeedActionRow } from './FeedActionRow';
 import { ReactionPicker } from './ReactionPicker';
 
@@ -47,9 +48,10 @@ interface Props {
     palette: Palette;
     tableId?: string;
     lastSeenAt?: string | null;
+    chips?: string[];
 }
 
-export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
+export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [] }: Props) {
     const router = useRouter();
     const toggleReaction = useToggleReaction();
     const queryClient = useQueryClient();
@@ -68,9 +70,6 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
     const voiceTotal = item.participants?.length ?? 0;
     const voiceVoted =
         item.participants?.filter((p) => p.rating != null).length ?? voiceTotal;
-
-    const memberNames =
-        item.participants?.map((p) => p.profiles?.display_name ?? '?') ?? [];
 
     const cardRef = useRef<View>(null);
     const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
@@ -116,7 +115,13 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
         >
             <View
                 ref={cardRef}
-                style={[styles.card, { backgroundColor: palette.surfaceJournalLow }]}
+                style={[
+                    styles.card,
+                    {
+                        backgroundColor: palette.surfaceJournalLow,
+
+                    },
+                ]}
             >
                 {/* Hero photo */}
                 <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
@@ -128,18 +133,20 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
                         />
                     ) : null}
 
-                    {/* Pill top-left */}
+                    {/* Pill top-left — dark caption, cream text */}
                     <View
                         style={[
                             styles.heroPill,
-                            { backgroundColor: 'rgba(252,249,244,0.92)' },
+                            isActive
+                                ? { backgroundColor: palette.primary }
+                                : { backgroundColor: 'rgba(252,249,244,0.88)' },
                         ]}
                     >
-                        {isActive && <PulseDot size={6} color={palette.primary} />}
-                        <Text style={[styles.heroPillText, { color: palette.primary }]}>
+                        {isActive && <PulseDot size={6} color="#f6ecd9" />}
+                        <Text style={styles.heroPillText}>
                             {isActive
                                 ? 'LIVE ROUND'
-                                : `ROUND \u00B7 ${dateLabel.toUpperCase()}`}
+                                : `Round \u00B7 ${dateLabel}`}
                         </Text>
                     </View>
 
@@ -188,16 +195,14 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
                         )}
                     </View>
 
-                    {/* Avatar stack (subtle; canvas shows voices label — this is the supporting detail) */}
-                    {memberNames.length > 0 && (
-                        <View style={styles.avatarRow}>
-                            <AvatarStack
-                                names={memberNames}
-                                size={26}
-                                overlap={8}
-                                borderColor={palette.surfaceJournalLow}
-                                max={4}
-                            />
+                    {/* Amber chips */}
+                    {chips.length > 0 && (
+                        <View style={styles.chipsRow}>
+                            {chips.map((c, i) => (
+                                <View key={i} style={[styles.chip, { backgroundColor: palette.tertiaryFixed }]}>
+                                    <Text style={[styles.chipText, { color: palette.amberInk }]}>{c}</Text>
+                                </View>
+                            ))}
                         </View>
                     )}
 
@@ -233,29 +238,29 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt }: Props) {
 
 const styles = StyleSheet.create({
     card: {
-        borderRadius: Radius.xxl,
+        borderRadius: 24,
         overflow: 'hidden',
-        ...Shadow.ambient,
     },
     hero: {
-        height: 180,
+        height: 200,
         position: 'relative',
     },
     heroPill: {
         position: 'absolute',
-        top: 16,
-        left: 16,
+        top: 14,
+        left: 14,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: Radius.sm,
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 9999,
     },
     heroPillText: {
-        fontFamily: 'Manrope_600SemiBold',
+        fontFamily: 'Manrope_700Bold',
         fontSize: 9,
-        letterSpacing: 1.4,
+        letterSpacing: 1.2,
+        color: Colors.light.text,
         textTransform: 'uppercase',
     },
     unseenDot: {
@@ -267,9 +272,9 @@ const styles = StyleSheet.create({
         borderRadius: 3,
     },
     content: {
-        paddingHorizontal: Spacing.md,
-        paddingTop: 14,
-        paddingBottom: Spacing.md,
+        paddingHorizontal: 20,
+        paddingTop: 18,
+        paddingBottom: 20,
     },
     titleRow: {
         flexDirection: 'row',
@@ -283,10 +288,10 @@ const styles = StyleSheet.create({
     },
     name: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
+        fontSize: 28,
         fontWeight: '500',
-        lineHeight: 25,
-        letterSpacing: -0.3,
+        lineHeight: 32,
+        letterSpacing: -0.4,
     },
     sub: {
         fontFamily: 'Manrope_400Regular',
@@ -310,10 +315,24 @@ const styles = StyleSheet.create({
         marginTop: 2,
         textTransform: 'uppercase',
     },
-    avatarRow: {
-        marginTop: 10,
-    },
     actionRow: {
         marginTop: 10,
+    },
+    chipsRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
+        marginTop: 10,
+    },
+    chip: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 3,
+    },
+    chipText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
     },
 });

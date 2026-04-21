@@ -367,7 +367,7 @@ export default function TableNightDetailScreen() {
                                     <Text
                                         style={[
                                             styles.heroName,
-                                            { color: heroPhotoUrl ? '#f6ecd9' : palette.text },
+                                            { color: heroPhotoUrl ? palette.cream : palette.text },
                                         ]}
                                         numberOfLines={2}
                                     >
@@ -986,6 +986,8 @@ function PhotoLightbox({
     photo: PoolPhoto;
     onClose: () => void;
 }) {
+    const scheme = useColorScheme() ?? 'light';
+    const palette = Colors[scheme];
     return (
         <Modal visible transparent animationType="fade" onRequestClose={onClose}>
             <View style={styles.lightboxBackdrop}>
@@ -995,12 +997,12 @@ function PhotoLightbox({
                     contentFit="contain"
                 />
                 <View style={styles.lightboxFooter}>
-                    <Text style={[Type.bodySmall, { color: '#fff', fontStyle: 'italic' }]}>
+                    <Text style={[Type.bodySmall, { color: palette.textInverse, fontStyle: 'italic' }]}>
                         Photo by {photo.display_name}
                     </Text>
                 </View>
                 <Pressable onPress={onClose} style={styles.lightboxClose} hitSlop={12}>
-                    <Ionicons name="close" size={24} color="#fff" />
+                    <Ionicons name="close" size={24} color={palette.textInverse} />
                 </Pressable>
             </View>
         </Modal>
@@ -1044,7 +1046,7 @@ const styles = StyleSheet.create({
         height: 180,
         borderRadius: Radius.md - 2, // 10
         overflow: 'hidden',
-        backgroundColor: '#a03f28',
+        backgroundColor: Colors.light.primary,
         position: 'relative',
     },
     heroScrim: {
@@ -1170,7 +1172,7 @@ const styles = StyleSheet.create({
     gridThumbInitials: {
         fontSize: 7,
         fontFamily: 'Manrope_700Bold',
-        color: '#fff',
+        color: Colors.light.textInverse,
         letterSpacing: 0.3,
     },
     addPhotosButton: {

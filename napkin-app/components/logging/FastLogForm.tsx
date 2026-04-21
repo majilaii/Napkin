@@ -183,13 +183,8 @@ export function FastLogForm({
     // ── Tables ────────────────────────────────────────────────────────────
     const { data: tableMemberships } = useTables(user?.id);
     const tables = (tableMemberships ?? []).map(m => m.tables);
-    const sortedTables = [...tables].sort((a, b) => {
-        if (a.is_personal && !b.is_personal) return -1;
-        if (!a.is_personal && b.is_personal) return 1;
-        return 0;
-    });
-    const personalTable = sortedTables.find(t => t.is_personal);
-    const defaultTableId = initialTableId ?? personalTable?.id ?? sortedTables[0]?.id ?? null;
+    const sortedTables = [...tables].sort((a, b) => a.name.localeCompare(b.name));
+    const defaultTableId = initialTableId ?? sortedTables[0]?.id ?? null;
     const [selectedTableId, setSelectedTableId] = useState<string | null>(defaultTableId);
 
     useEffect(() => {
@@ -477,13 +472,13 @@ export function FastLogForm({
                 ]}
             >
                 {isSubmitting ? (
-                    <ActivityIndicator color="#fff" />
+                    <ActivityIndicator color={palette.textInverse} />
                 ) : (
                     <Text
                         style={[
                             Type.label,
                             {
-                                color: canSubmit ? '#fff' : palette.textMuted,
+                                color: canSubmit ? palette.textInverse : palette.textMuted,
                                 letterSpacing: 1.5,
                             },
                         ]}

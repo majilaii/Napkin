@@ -39,14 +39,14 @@ export function RoundBanner({
         >
             {/* Sanguine tally tile */}
             <View style={[styles.tally, { backgroundColor: palette.sanguine }]}>
-                <Text style={[styles.tallyNum, { color: '#fef6e6' }]}>
+                <Text style={[styles.tallyNum, { color: palette.sanguineOnCream }]}>
                     {tally.done}
                 </Text>
-                <Text style={[styles.tallyTotal, { color: '#fef6e6' }]}>
+                <Text style={[styles.tallyTotal, { color: palette.sanguineOnCream }]}>
                     of {tally.total}
                 </Text>
-                <View style={[styles.tallyRule, { backgroundColor: '#fef6e6' }]} />
-                <Text style={[styles.tallyLabel, { color: '#fef6e6' }]}>ROUND</Text>
+                <View style={[styles.tallyRule, { backgroundColor: palette.sanguineOnCream }]} />
+                <Text style={[styles.tallyLabel, { color: palette.sanguineOnCream }]}>ROUND</Text>
             </View>
 
             {/* Content */}

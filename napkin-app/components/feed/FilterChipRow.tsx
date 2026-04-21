@@ -64,7 +64,7 @@ export function FilterChipRow({
                                 Type.caption,
                                 {
                                     color: isActive
-                                        ? '#ffffff'
+                                        ? palette.textInverse
                                         : palette.textSecondary,
                                 },
                             ]}

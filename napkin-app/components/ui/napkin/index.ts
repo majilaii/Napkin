@@ -13,3 +13,4 @@ export { AvatarStack } from './AvatarStack';
 export { PillButton } from './PillButton';
 export { PulseDot } from './PulseDot';
 export { RoundBanner } from './RoundBanner';
+export { Icon } from './Icon';

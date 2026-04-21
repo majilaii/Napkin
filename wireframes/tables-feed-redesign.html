@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Napkin — Tables Feed Card Redesign</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Manrope:wght@400;500;600;700&display=swap');
+
+  :root {
+    /* Napkin palette */
+    --bg:            #fdf6ec;
+    --surface-note:  #fffdf8;
+    --surface-journal-low: #faf0e0;
+    --surface-journal: #f6ecdb;
+    --surface-journal-hi: #efe2ce;
+    --ink-primary:   #1c1c19;
+    --ink-secondary: #5c614d;
+    --ink-muted:     #8a726c;
+    --terracotta:    #a03f28;
+    --olive:         #5c614d;
+    --amber:         #825516;
+    --amber-cream:   #ffddb9;
+    --amber-ink:     #663e00;
+    --rule-warm-soft: rgba(221,192,186,0.30);
+    --rule-warm:     rgba(221,192,186,1);
+    --shadow-note:   0 8px 30px rgba(0,0,0,0.03);
+    --shadow-card:   0 2px 12px rgba(28,28,25,0.06);
+    --star:          #b8842a;
+    --cream:         #f6ecd9;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #e8e0d4;
+    font-family: 'Manrope', system-ui, sans-serif;
+    color: var(--ink-primary);
+    display: flex;
+    gap: 48px;
+    padding: 40px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .label-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    background: rgba(28,28,25,0.85);
+    color: #f6ecd9;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 10px 24px;
+    z-index: 100;
+    display: flex;
+    gap: 32px;
+    justify-content: center;
+  }
+  .label-bar span { opacity: 0.6; }
+  .label-bar .active { opacity: 1; border-bottom: 2px solid var(--terracotta); padding-bottom: 2px; }
+
+  /* Phone shell */
+  .phone {
+    width: 375px;
+    min-height: 780px;
+    background: var(--bg);
+    border-radius: 40px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 24px 60px rgba(28,28,25,0.14), 0 2px 8px rgba(28,28,25,0.06),
+                inset 0 0 0 1px rgba(28,28,25,0.04);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .status-bar {
+    height: 50px;
+    padding: 0 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 14px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+
+  .scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 90px;
+  }
+
+  /* Header */
+  .table-header {
+    padding: 8px 22px 14px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .table-header .kicker {
+    font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+    color: var(--ink-muted); margin-bottom: 3px;
+  }
+  .table-header .name-row {
+    display: flex; align-items: baseline; gap: 6px;
+  }
+  .table-header .table-name {
+    font-family: 'Newsreader', serif; font-style: italic; font-size: 24px;
+    font-weight: 500; line-height: 1.1; letter-spacing: -0.3px;
+  }
+  .table-header .caret { color: var(--ink-muted); font-size: 14px; }
+  .table-header .meta {
+    font-size: 11px; color: var(--ink-muted); margin-top: 3px; letter-spacing: 0.2px;
+  }
+  .avatar-stack {
+    display: flex; align-items: center; padding-bottom: 3px;
+  }
+  .avatar-dot {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2px solid var(--bg);
+  }
+  .avatar-dot + .avatar-dot { margin-left: -6px; }
+
+  /* Tabs */
+  .tab-row {
+    display: flex; gap: 22px; padding: 6px 22px 10px;
+  }
+  .tab-btn {
+    font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+    font-weight: 600; padding-bottom: 4px;
+    border-bottom: 2px solid transparent; cursor: pointer;
+  }
+  .tab-btn.active { color: var(--ink-primary); border-bottom-color: var(--terracotta); }
+  .tab-btn:not(.active) { color: var(--ink-muted); }
+
+  /* Section date label */
+  .date-label {
+    padding: 14px 22px 6px;
+    font-family: 'Newsreader', serif; font-style: italic;
+    font-size: 14px; color: var(--ink-muted);
+  }
+
+  /* Feed list */
+  .feed { padding: 0 22px; display: flex; flex-direction: column; }
+
+  /* Bottom nav */
+  .bottom-nav {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    border-top: 1px solid var(--rule-warm-soft);
+    background: var(--bg);
+    padding: 10px 14px 26px;
+    display: flex; align-items: center; justify-content: space-around;
+    flex-shrink: 0;
+  }
+  .nav-item { font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .nav-item.active { color: var(--ink-primary); font-weight: 600; }
+  .nav-item:not(.active) { color: var(--ink-muted); }
+  .nav-fab {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: var(--terracotta); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 300; line-height: 1;
+    box-shadow: 0 2px 8px rgba(160,63,40,0.35);
+  }
+
+  /* ─── CARD STYLES ─── */
+
+  /* === A: CURRENT — transparent-ish stacked cards === */
+  .card-current-round {
+    border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--rule-warm-soft);
+    background: var(--surface-journal-low);
+    margin-bottom: 20px;
+  }
+  .card-current-note {
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--rule-warm);
+    background: var(--surface-note);
+    box-shadow: var(--shadow-note);
+    margin-bottom: 14px;
+  }
+
+  /* === B: REDESIGN — solid, separated, breathing === */
+  .card-new-round {
+    border-radius: 14px; overflow: hidden;
+    background: var(--surface-note);
+    box-shadow: 0 1px 3px rgba(28,28,25,0.06), 0 6px 24px rgba(28,28,25,0.04);
+    margin-bottom: 16px;
+  }
+  .card-new-note {
+    padding: 16px 18px;
+    border-radius: 14px;
+    background: var(--surface-note);
+    box-shadow: 0 1px 3px rgba(28,28,25,0.06), 0 6px 24px rgba(28,28,25,0.04);
+    margin-bottom: 16px;
+  }
+
+  /* === C: REDESIGN ALT — divider-separated rows (no cards) === */
+  .row-round {
+    margin-bottom: 0;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--rule-warm-soft);
+  }
+  .row-round + .row-note,
+  .row-round + .row-round,
+  .row-note + .row-note,
+  .row-note + .row-round { padding-top: 16px; }
+  .row-note {
+    padding: 16px 0 16px;
+    border-bottom: 1px solid var(--rule-warm-soft);
+  }
+  .row-round .hero-img { border-radius: 10px; overflow: hidden; }
+
+  /* ─── Shared inner parts ─── */
+  .hero-img {
+    height: 140px;
+    background-size: cover; background-position: center;
+    position: relative;
+  }
+  .hero-pill {
+    position: absolute; top: 10px; left: 10px;
+    padding: 3px 8px; border-radius: 3px;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.8px;
+    text-transform: uppercase; color: var(--cream);
+    background: rgba(28,28,25,0.82);
+  }
+  .card-body {
+    padding: 14px 16px 16px;
+  }
+  .title-row {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  }
+  .restaurant-name {
+    font-family: 'Newsreader', serif; font-style: italic;
+    font-size: 22px; font-weight: 500; line-height: 1.15;
+    letter-spacing: -0.3px; color: var(--ink-primary);
+    flex: 1; min-width: 0;
+  }
+  .restaurant-sub {
+    font-size: 11px; color: var(--ink-muted); margin-top: 3px;
+  }
+  .rating-col { text-align: right; flex-shrink: 0; }
+  .rating-num {
+    font-family: 'Newsreader', serif; font-style: italic;
+    font-size: 24px; color: var(--amber); line-height: 1;
+  }
+  .voices-label {
+    font-size: 8px; letter-spacing: 0.8px; color: var(--ink-muted);
+    margin-top: 2px; text-transform: uppercase;
+  }
+  .chips {
+    display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap;
+  }
+  .chip {
+    padding: 3px 8px; border-radius: 3px;
+    background: var(--amber-cream); color: var(--amber-ink);
+    font-size: 9px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
+  }
+  .action-row {
+    display: flex; align-items: center; gap: 16px; margin-top: 10px;
+    font-size: 11px; color: var(--ink-muted);
+  }
+  .action-row span { display: flex; align-items: center; gap: 4px; }
+
+  /* Note card inner */
+  .note-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+  }
+  .note-avatar {
+    width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  }
+  .note-attribution {
+    font-size: 12px; color: var(--ink-secondary); flex: 1; min-width: 0;
+  }
+  .note-who { font-weight: 600; color: var(--ink-primary); }
+  .note-place {
+    font-family: 'Newsreader', serif; font-style: italic; font-size: 13px;
+    color: var(--ink-primary);
+  }
+  .note-time { font-size: 10px; color: var(--ink-muted); flex-shrink: 0; }
+  .note-sub {
+    font-size: 10px; color: var(--ink-muted); letter-spacing: 0.3px;
+    text-transform: uppercase; margin-bottom: 6px; font-weight: 600;
+  }
+  .note-rating {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .note-rating .stars { color: var(--star); font-size: 12px; letter-spacing: 1px; }
+  .note-rating .val {
+    font-family: 'Newsreader', serif; font-style: italic;
+    font-size: 12px; color: var(--ink-secondary);
+  }
+  .note-prose {
+    font-family: 'Newsreader', serif; font-style: italic;
+    font-size: 13px; line-height: 1.5; color: var(--ink-primary);
+  }
+
+  /* Divider between phone columns */
+  .vs-badge {
+    align-self: center;
+    background: rgba(28,28,25,0.08);
+    padding: 6px 14px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--ink-muted);
+    flex-shrink: 0;
+  }
+
+  /* Column label */
+  .phone-label {
+    text-align: center;
+    font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--ink-muted);
+    margin-bottom: 12px;
+  }
+  .phone-label em {
+    font-style: normal; color: var(--terracotta);
+  }
+
+  .column { display: flex; flex-direction: column; align-items: center; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     A: CURRENT — transparent cards stacked tightly
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="column">
+  <div class="phone-label">A · Current — <em>transparent stacked cards</em></div>
+  <div class="phone">
+    <div class="status-bar"><span>9:41</span><span style="font-size:11px;opacity:0.6">●●●●</span></div>
+    <div class="scroll-area">
+      <div class="table-header">
+        <div>
+          <div class="kicker">Table</div>
+          <div class="name-row">
+            <div class="table-name">Sunday Roast Club</div>
+            <span class="caret">▾</span>
+          </div>
+          <div class="meta">4 members · 23 rounds</div>
+        </div>
+        <div class="avatar-stack">
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#d4a57c,#8a5a3e)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#9a6a52,#5a3820)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#c9946f,#7a4a30)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#a87a58,#6a3e26);font-size:9px;font-weight:600;color:var(--ink-secondary);display:flex;align-items:center;justify-content:center">+1</div>
+        </div>
+      </div>
+
+      <div class="tab-row">
+        <div class="tab-btn active">Activity</div>
+        <div class="tab-btn">Wishlist</div>
+      </div>
+
+      <div class="date-label">This Week</div>
+      <div class="feed">
+        <!-- Round card (current) -->
+        <div class="card-current-round">
+          <div class="hero-img" style="background-image:url('https://images.unsplash.com/photo-1544025162-d76694265947?w=800&q=80')">
+            <div class="hero-pill">Round · Fri 04 Apr</div>
+          </div>
+          <div class="card-body">
+            <div class="title-row">
+              <div><div class="restaurant-name">Bavette</div><div class="restaurant-sub">Soho · Steakhouse</div></div>
+              <div class="rating-col"><div class="rating-num">4.6</div><div class="voices-label">4 / 4 voices</div></div>
+            </div>
+            <div class="chips"><span class="chip">Sunday Roast</span><span class="chip">Returning</span></div>
+            <div class="action-row"><span>❤️ 3</span><span>💬 2</span></div>
+          </div>
+        </div>
+
+        <!-- Note card (current) -->
+        <div class="card-current-note">
+          <div class="note-header">
+            <div class="note-avatar" style="background:linear-gradient(135deg,#c9946f,#7a4a30)"></div>
+            <div class="note-attribution">
+              <span class="note-who">Maya</span> went solo to <span class="note-place">Estela</span>
+            </div>
+            <span class="note-time">2d</span>
+          </div>
+          <div class="note-sub">Small plates · Nolita</div>
+          <div class="note-rating"><span class="stars">★★★★☆</span><span class="val">4.0</span></div>
+          <div class="note-prose">"The lamb shoulder was transcendent. Sitting at the bar is the move."</div>
+          <div class="action-row"><span>❤️ 1</span><span>💬</span></div>
+        </div>
+
+        <!-- Another note (current) -->
+        <div class="card-current-note">
+          <div class="note-header">
+            <div class="note-avatar" style="background:linear-gradient(135deg,#9a6a52,#5a3820)"></div>
+            <div class="note-attribution">
+              <span class="note-who">Thomas</span> noted <span class="note-place">Via Carota</span>
+            </div>
+            <span class="note-time">3d</span>
+          </div>
+          <div class="note-prose">"Walk-in only. Waited 40 mins but the cacio e pepe was worth every second."</div>
+          <div class="action-row"><span>❤️</span><span>💬</span></div>
+        </div>
+
+        <!-- Round card (current) -->
+        <div class="card-current-round">
+          <div class="hero-img" style="background-image:url('https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=80')">
+            <div class="hero-pill">Round · Thu 27 Mar</div>
+          </div>
+          <div class="card-body">
+            <div class="title-row">
+              <div><div class="restaurant-name">Tatiana</div><div class="restaurant-sub">Williamsburg · New American</div></div>
+              <div class="rating-col"><div class="rating-num">4.2</div><div class="voices-label">4 / 4 voices</div></div>
+            </div>
+            <div class="action-row"><span>❤️ 5</span><span>💬 4</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-nav">
+      <div class="nav-item">Feed</div>
+      <div class="nav-item active">Tables</div>
+      <div class="nav-fab">+</div>
+      <div class="nav-item">Search</div>
+      <div class="nav-item">You</div>
+    </div>
+  </div>
+</div>
+
+<div class="vs-badge">vs</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     B: REDESIGN — solid white cards with subtle shadow
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="column">
+  <div class="phone-label">B · Redesign — <em>solid white cards, lifted</em></div>
+  <div class="phone">
+    <div class="status-bar"><span>9:41</span><span style="font-size:11px;opacity:0.6">●●●●</span></div>
+    <div class="scroll-area">
+      <div class="table-header">
+        <div>
+          <div class="kicker">Table</div>
+          <div class="name-row">
+            <div class="table-name">Sunday Roast Club</div>
+            <span class="caret">▾</span>
+          </div>
+          <div class="meta">4 members · 23 rounds</div>
+        </div>
+        <div class="avatar-stack">
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#d4a57c,#8a5a3e)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#9a6a52,#5a3820)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#c9946f,#7a4a30)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#a87a58,#6a3e26);font-size:9px;font-weight:600;color:var(--ink-secondary);display:flex;align-items:center;justify-content:center">+1</div>
+        </div>
+      </div>
+
+      <div class="tab-row">
+        <div class="tab-btn active">Activity</div>
+        <div class="tab-btn">Wishlist</div>
+      </div>
+
+      <div class="date-label">This Week</div>
+      <div class="feed">
+        <!-- Round card (new — solid white) -->
+        <div class="card-new-round">
+          <div class="hero-img" style="background-image:url('https://images.unsplash.com/photo-1544025162-d76694265947?w=800&q=80')">
+            <div class="hero-pill">Round · Fri 04 Apr</div>
+          </div>
+          <div class="card-body">
+            <div class="title-row">
+              <div><div class="restaurant-name">Bavette</div><div class="restaurant-sub">Soho · Steakhouse</div></div>
+              <div class="rating-col"><div class="rating-num">4.6</div><div class="voices-label">4 / 4 voices</div></div>
+            </div>
+            <div class="chips"><span class="chip">Sunday Roast</span><span class="chip">Returning</span></div>
+            <div class="action-row"><span>❤️ 3</span><span>💬 2</span></div>
+          </div>
+        </div>
+
+        <!-- Note card (new — solid white) -->
+        <div class="card-new-note">
+          <div class="note-header">
+            <div class="note-avatar" style="background:linear-gradient(135deg,#c9946f,#7a4a30)"></div>
+            <div class="note-attribution">
+              <span class="note-who">Maya</span> went solo to <span class="note-place">Estela</span>
+            </div>
+            <span class="note-time">2d</span>
+          </div>
+          <div class="note-sub">Small plates · Nolita</div>
+          <div class="note-rating"><span class="stars">★★★★☆</span><span class="val">4.0</span></div>
+          <div class="note-prose">"The lamb shoulder was transcendent. Sitting at the bar is the move."</div>
+          <div class="action-row"><span>❤️ 1</span><span>💬</span></div>
+        </div>
+
+        <!-- Note (new) -->
+        <div class="card-new-note">
+          <div class="note-header">
+            <div class="note-avatar" style="background:linear-gradient(135deg,#9a6a52,#5a3820)"></div>
+            <div class="note-attribution">
+              <span class="note-who">Thomas</span> noted <span class="note-place">Via Carota</span>
+            </div>
+            <span class="note-time">3d</span>
+          </div>
+          <div class="note-prose">"Walk-in only. Waited 40 mins but the cacio e pepe was worth every second."</div>
+          <div class="action-row"><span>❤️</span><span>💬</span></div>
+        </div>
+
+        <!-- Round card (new) -->
+        <div class="card-new-round">
+          <div class="hero-img" style="background-image:url('https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=80')">
+            <div class="hero-pill">Round · Thu 27 Mar</div>
+          </div>
+          <div class="card-body">
+            <div class="title-row">
+              <div><div class="restaurant-name">Tatiana</div><div class="restaurant-sub">Williamsburg · New American</div></div>
+              <div class="rating-col"><div class="rating-num">4.2</div><div class="voices-label">4 / 4 voices</div></div>
+            </div>
+            <div class="action-row"><span>❤️ 5</span><span>💬 4</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-nav">
+      <div class="nav-item">Feed</div>
+      <div class="nav-item active">Tables</div>
+      <div class="nav-fab">+</div>
+      <div class="nav-item">Search</div>
+      <div class="nav-item">You</div>
+    </div>
+  </div>
+</div>
+
+<div class="vs-badge">vs</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     C: REDESIGN ALT — no cards, divider-separated rows
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="column">
+  <div class="phone-label">C · Alt — <em>borderless rows, divider-separated</em></div>
+  <div class="phone">
+    <div class="status-bar"><span>9:41</span><span style="font-size:11px;opacity:0.6">●●●●</span></div>
+    <div class="scroll-area">
+      <div class="table-header">
+        <div>
+          <div class="kicker">Table</div>
+          <div class="name-row">
+            <div class="table-name">Sunday Roast Club</div>
+            <span class="caret">▾</span>
+          </div>
+          <div class="meta">4 members · 23 rounds</div>
+        </div>
+        <div class="avatar-stack">
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#d4a57c,#8a5a3e)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#9a6a52,#5a3820)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#c9946f,#7a4a30)"></div>
+          <div class="avatar-dot" style="background:linear-gradient(135deg,#a87a58,#6a3e26);font-size:9px;font-weight:600;color:var(--ink-secondary);display:flex;align-items:center;justify-content:center">+1</div>
+        </div>
+      </div>
+
+      <div class="tab-row">
+        <div class="tab-btn active">Activity</div>
+        <div class="tab-btn">Wishlist</div>
+      </div>
+
+      <div class="date-label">This Week</div>
+      <div class="feed">
+        <!-- Round (row style — no card) -->
+        <div class="row-round">
+          <div class="hero-img" style="background-image:url('https://images.unsplash.com/photo-1544025162-d76694265947?w=800&q=80'); border-radius: 10px">
+            <div class="hero-pill">Round · Fri 04 Apr</div>
+          </div>
+          <div style="padding-top:12px">
+            <div class="title-row">
+              <div><div class="restaurant-name">Bavette</div><div class="restaurant-sub">Soho · Steakhouse</div></div>
+              <div class="rating-col"><div class="rating-num">4.6</div><div class="voices-label">4 / 4 voices</div></div>
+            </div>
+            <div class="chips"><span class="chip">Sunday Roast</span><span class="chip">Returning</span></div>
+            <div class="action-row"><span>❤️ 3</span><span>💬 2</span></div>
+          </div>
+        </div>
+
+        <!-- Note (row style) -->
+        <div class="row-note">
+          <div class="note-header">
+            <div class="note-avatar" style="background:linear-gradient(135deg,#c9946f,#7a4a30)"></div>
+            <div class="note-attribution">
+              <span class="note-who">Maya</span> went solo to <span class="note-place">Estela</span>
+            </div>
+            <span class="note-time">2d</span>
+          </div>
+          <div class="note-sub">Small plates · Nolita</div>
+          <div class="note-rating"><span class="stars">★★★★☆</span><span class="val">4.0</span></div>
+          <div class="note-prose">"The lamb shoulder was transcendent. Sitting at the bar is the move."</div>
+          <div class="action-row"><span>❤️ 1</span><span>💬</span></div>
+        </div>
+
+        <!-- Note (row style) -->
+        <div class="row-note">
+          <div class="note-header">
+            <div class="note-avatar" style="background:linear-gradient(135deg,#9a6a52,#5a3820)"></div>
+            <div class="note-attribution">
+              <span class="note-who">Thomas</span> noted <span class="note-place">Via Carota</span>
+            </div>
+            <span class="note-time">3d</span>
+          </div>
+          <div class="note-prose">"Walk-in only. Waited 40 mins but the cacio e pepe was worth every second."</div>
+          <div class="action-row"><span>❤️</span><span>💬</span></div>
+        </div>
+
+        <!-- Round (row style) -->
+        <div class="row-round" style="padding-top:16px">
+          <div class="hero-img" style="background-image:url('https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=80'); border-radius: 10px">
+            <div class="hero-pill">Round · Thu 27 Mar</div>
+          </div>
+          <div style="padding-top:12px">
+            <div class="title-row">
+              <div><div class="restaurant-name">Tatiana</div><div class="restaurant-sub">Williamsburg · New American</div></div>
+              <div class="rating-col"><div class="rating-num">4.2</div><div class="voices-label">4 / 4 voices</div></div>
+            </div>
+            <div class="action-row"><span>❤️ 5</span><span>💬 4</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-nav">
+      <div class="nav-item">Feed</div>
+      <div class="nav-item active">Tables</div>
+      <div class="nav-fab">+</div>
+      <div class="nav-item">Search</div>
+      <div class="nav-item">You</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

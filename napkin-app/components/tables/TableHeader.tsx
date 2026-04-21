@@ -23,7 +23,6 @@ type Palette = typeof Colors.light;
 
 export interface TableHeaderProps {
     tableName: string;
-    isPersonal: boolean;
     memberCount: number;
     roundCount?: number;
     /** Member names to show as avatar stack (first 3 render, rest counted) */
@@ -41,7 +40,6 @@ const AVATAR_OVERLAP = 6;
 
 export function TableHeader({
     tableName,
-    isPersonal,
     memberCount,
     roundCount,
     memberNames,
@@ -57,9 +55,7 @@ export function TableHeader({
         stackCells > 0 ? AVATAR_SIZE + (stackCells - 1) * (AVATAR_SIZE - AVATAR_OVERLAP) : 0;
 
     const subParts: string[] = [];
-    if (isPersonal) {
-        subParts.push('Solo');
-    } else if (memberCount > 0) {
+    if (memberCount > 0) {
         subParts.push(`${memberCount} ${memberCount === 1 ? 'member' : 'members'}`);
     }
     if (roundCount != null && roundCount > 0) {
@@ -67,7 +63,7 @@ export function TableHeader({
     }
     const subLabel = subParts.join(' \u00B7 '); // middle dot
 
-    const kicker = isPersonal ? 'YOUR JOURNAL' : 'TABLE';
+    const kicker = 'TABLE';
 
     return (
         <View style={styles.container}>

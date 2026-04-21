@@ -36,7 +36,7 @@ export function PillButton({
     const palette = Colors[scheme];
 
     const bg = filled ? palette.primary : 'transparent';
-    const fg = filled ? '#fff' : palette.primary;
+    const fg = filled ? palette.textInverse : palette.primary;
     const border = filled ? 'transparent' : palette.primary;
 
     return (

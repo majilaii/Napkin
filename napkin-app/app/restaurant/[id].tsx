@@ -132,7 +132,7 @@ export default function RestaurantScreen() {
 
     const { data: tables } = useTables(user?.id);
     const hasSocialTable = useMemo(
-        () => (tables ?? []).some((m) => !m.tables.is_personal),
+        () => (tables ?? []).length > 0,
         [tables],
     );
 

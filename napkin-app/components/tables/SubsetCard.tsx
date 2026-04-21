@@ -152,7 +152,7 @@ export function SubsetCard({
 
 const styles = StyleSheet.create({
     card: {
-        borderRadius: 12,
+        borderRadius: 10,
         overflow: 'hidden',
         borderWidth: 1,
     },

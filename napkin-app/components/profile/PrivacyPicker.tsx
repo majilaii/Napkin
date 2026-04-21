@@ -62,7 +62,7 @@ export function PrivacyPicker({ state, onSelect, disabled = false }: Props) {
                                 {
                                     fontSize: 10,
                                     letterSpacing: 0.3,
-                                    color: isActive ? '#fff' : palette.textMuted,
+                                    color: isActive ? palette.textInverse : palette.textMuted,
                                     fontWeight: isActive ? '600' : '400',
                                 },
                             ]}

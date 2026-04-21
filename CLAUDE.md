@@ -39,7 +39,7 @@ Napkin is **"Letterboxd for restaurants, with a private supper club."** A mobile
 
 **The Table is the hero and the moat.** Private feed, Rounds, who's-been on a restaurant, wishlist overlap. The Table is where trust compounds over time. Nobody else has this primitive; it's Napkin's defensible wedge.
 
-**Solo logging is first-class** via a per-user "personal Table" (auto-created, `is_personal = true`). Everything in Napkin belongs to a Table — the personal Table is just a Table of one and acts as the user's private diary.
+**Solo logging is first-class** via the user's feed. Entries can optionally be shared to a Table, or posted feed-only (no `table_id`). The feed IS the user's personal journal — there is no separate "personal Table" concept. Tables are always social/group constructs.
 
 **Rounds** (formerly "Table Night") are a **side mode**, not the hero. A Round is a group rating event where Tablemates each drop their own rating on a shared meal — sync at dinner or async after. Flavor event, not centerpiece.
 
@@ -101,7 +101,7 @@ Emergent overlap, not declared nomination.
 ## Terminology
 
 - **Round** is the product name for a group rating event. File paths, DB tables, the edge function, and some legacy components still use `table-night` / `table_night`. Treat them as aliases — new UI copy says "Round," existing code paths stay as-is unless a ticket renames them.
-- **Personal Table** = the auto-created solo Table with `is_personal = true`. Every user has exactly one. Solo logs target this.
+- **Feed-only entry** = an entry with `table_id = NULL`. Lives on the user's personal feed/journal. Not shared to any Table.
 - **Ghost restaurant** = a Places-search result not yet persisted in `restaurants`. First heart/log tap triggers upsert-from-place silently.
 
 ## Current State (as of 2026-04-17)

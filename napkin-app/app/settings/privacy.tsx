@@ -175,12 +175,12 @@ export default function PrivacyScreen() {
                     ]}
                 >
                     {updatePrivacy.isPending ? (
-                        <ActivityIndicator color={isPublic ? palette.text : '#fff'} />
+                        <ActivityIndicator color={isPublic ? palette.text : palette.textInverse} />
                     ) : (
                         <Text
                             style={[
                                 Type.titleMedium,
-                                { color: isPublic ? palette.text : '#fff' },
+                                { color: isPublic ? palette.text : palette.textInverse },
                             ]}
                         >
                             {isPublic ? 'Make profile private' : 'Make profile public'}
@@ -227,7 +227,7 @@ export default function PrivacyScreen() {
                                     <Text
                                         style={[
                                             Type.caption,
-                                            { color: isActive ? '#fff' : palette.textSecondary },
+                                            { color: isActive ? palette.textInverse : palette.textSecondary },
                                         ]}
                                     >
                                         {label}

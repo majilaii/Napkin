@@ -57,8 +57,8 @@ export function EmptyListsState({ onCreatePress }: Props) {
                     },
                 ]}
             >
-                <Ionicons name="add" size={20} color="#fff" />
-                <Text style={[Type.titleMedium, { color: '#fff', marginLeft: Spacing.xs }]}>
+                <Ionicons name="add" size={20} color={palette.textInverse} />
+                <Text style={[Type.titleMedium, { color: palette.textInverse, marginLeft: Spacing.xs }]}>
                     Create list
                 </Text>
             </Pressable>

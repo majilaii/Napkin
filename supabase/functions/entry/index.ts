@@ -340,23 +340,8 @@ serve(async (req) => {
             const visitedAtValue = visited_at ? new Date(visited_at).toISOString() : new Date().toISOString();
             const extraParticipantIds: string[] = Array.isArray(participant_ids) ? participant_ids : [];
 
-            // ── Personal-Table fallback ────────────────────────────────────
-            // When the caller omits table_id but provides a location (restaurant
-            // or place), default to the caller's personal Table so the entry is
-            // always Table-scoped. This is the solo-log path.
+            // table_id is optional — entries without one live on the user's feed only.
             let resolvedTableId: string | undefined = table_id;
-            if (!resolvedTableId && (restaurant?.external_id || place?.external_id || user_place_id || restaurantId || placeId)) {
-                const { data: personalTable } = await supabase
-                    .from('tables')
-                    .select('id')
-                    .eq('owner_id', user.id)
-                    .eq('is_personal', true)
-                    .single();
-
-                if (personalTable) {
-                    resolvedTableId = personalTable.id;
-                }
-            }
 
             // Validate all tagged participants are members of the target table
             if (resolvedTableId && extraParticipantIds.length > 0) {

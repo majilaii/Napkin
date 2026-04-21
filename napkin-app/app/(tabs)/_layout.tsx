@@ -84,7 +84,7 @@ export default function TabsLayout() {
                                 marginBottom: 8,
                             }}
                         >
-                            <Ionicons name="add" size={26} color="#fff" />
+                            <Ionicons name="add" size={26} color={palette.textInverse} />
                         </View>
                     ),
                     tabBarButton: ({ ref: _ref, ...props }) => (

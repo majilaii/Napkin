@@ -53,15 +53,6 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
     const cardRef = useRef<View>(null);
     const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
 
-    const handleAuthorPress = () => {
-        if (item.user_id && tableId) {
-            router.push({
-                pathname: '/member/[userId]',
-                params: { userId: item.user_id, tableId },
-            });
-        }
-    };
-
     const handleLongPress = () => {
         const handle = findNodeHandle(cardRef.current);
         if (handle == null) return;
@@ -97,11 +88,11 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
             delayLongPress={500}
             style={({ pressed }) => ({ opacity: pressed ? 0.95 : 1 })}
         >
-            <View
-                ref={cardRef}
-                style={[styles.timeline, { borderLeftColor: palette.ruleWarmNib }]}
-            >
-                <View style={[styles.timelineDot, { backgroundColor: palette.secondary }]} />
+            <View ref={cardRef} style={styles.timeline}>
+                {/* Olive left rule */}
+                <View style={[styles.rule, { backgroundColor: palette.oliveCream }]} />
+                <View style={[styles.dot, { backgroundColor: palette.secondary }]} />
+
                 {isUnseen && (
                     <View
                         style={[styles.unseenDot, { backgroundColor: palette.primary }]}
@@ -110,13 +101,14 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
                     />
                 )}
 
+                {/* Header */}
                 <View style={styles.headerRow}>
                     <Text
-                        style={[styles.attribution, { color: palette.text }]}
+                        style={[styles.attribution, { color: palette.textSecondary }]}
                         numberOfLines={1}
                     >
-                        <Text style={styles.who}>{displayName}</Text>
-                        <Text style={{ color: palette.textSecondary }}>{' noted'}</Text>
+                        <Text style={[styles.who, { color: palette.text }]}>{displayName}</Text>
+                        <Text>{' noted'}</Text>
                     </Text>
                     {relativeTime ? (
                         <Text style={[styles.time, { color: palette.textMuted }]}>
@@ -125,16 +117,12 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
                     ) : null}
                 </View>
 
-                <Pressable
-                    onPress={tableId ? handleAuthorPress : undefined}
-                    style={[styles.panel, { backgroundColor: palette.surfaceJournalLow }]}
-                >
-                    <Text
-                        style={[styles.place, { color: palette.secondary }]}
-                        numberOfLines={2}
-                    >
+                {/* Nested note card */}
+                <View style={[styles.noteCard, { backgroundColor: palette.surfaceJournalLow }]}>
+                    <Text style={[styles.restName, { color: palette.textSecondary }]} numberOfLines={2}>
                         {restaurantName}
                     </Text>
+
                     {item.dish_description ? (
                         <Text style={[styles.sub, { color: palette.textMuted }]} numberOfLines={1}>
                             {item.dish_description}
@@ -145,16 +133,16 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
                             {companionLine}
                         </Text>
                     ) : null}
-                </Pressable>
 
-                {highlight ? (
-                    <Text
-                        style={[styles.prose, { color: palette.text }]}
-                        numberOfLines={3}
-                    >
-                        &ldquo;{highlight}&rdquo;
-                    </Text>
-                ) : null}
+                    {highlight ? (
+                        <Text
+                            style={[styles.prose, { color: palette.text }]}
+                            numberOfLines={3}
+                        >
+                            &ldquo;{highlight}&rdquo;
+                        </Text>
+                    ) : null}
+                </View>
 
                 <View style={styles.actionRow}>
                     <FeedActionRow
@@ -184,13 +172,20 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
 
 const styles = StyleSheet.create({
     timeline: {
-        paddingLeft: 22,
-        borderLeftWidth: 2,
         position: 'relative',
+        paddingLeft: 20,
+        marginLeft: 22,
     },
-    timelineDot: {
+    rule: {
         position: 'absolute',
-        left: -5,
+        left: 0,
+        top: 0,
+        bottom: 0,
+        width: 2,
+    },
+    dot: {
+        position: 'absolute',
+        left: -3,
         top: 10,
         width: 8,
         height: 8,
@@ -198,8 +193,8 @@ const styles = StyleSheet.create({
     },
     unseenDot: {
         position: 'absolute',
-        top: 10,
-        right: 10,
+        top: 0,
+        right: 0,
         width: 6,
         height: 6,
         borderRadius: 3,
@@ -209,7 +204,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginBottom: 10,
+        marginBottom: 8,
     },
     attribution: {
         fontFamily: 'Manrope_400Regular',
@@ -226,18 +221,18 @@ const styles = StyleSheet.create({
         fontSize: 10,
         flexShrink: 0,
     },
-    panel: {
-        borderRadius: 20,
+    noteCard: {
+        borderRadius: 18,
+        padding: 14,
         paddingHorizontal: 16,
-        paddingVertical: 14,
     },
-    place: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 20,
-        lineHeight: 26,
+    restName: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 19,
+        lineHeight: 24,
     },
     sub: {
-        fontFamily: 'Manrope_500Medium',
+        fontFamily: 'Manrope_600SemiBold',
         fontSize: 10,
         letterSpacing: 0.3,
         textTransform: 'uppercase',
@@ -252,9 +247,9 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 13,
         lineHeight: 20,
-        marginTop: 10,
+        marginTop: 6,
     },
     actionRow: {
-        marginTop: 12,
+        marginTop: 8,
     },
 });
