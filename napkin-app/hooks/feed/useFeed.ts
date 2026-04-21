@@ -18,7 +18,6 @@ export interface FeedEntry {
     top_emojis: string[];
     restaurant: { id: string; name: string; photo_url: string | null } | null;
     author: { display_name: string; avatar_url: string | null };
-    companions?: { user_id: string; display_name: string }[];
 }
 
 export interface TrendingPoster {
