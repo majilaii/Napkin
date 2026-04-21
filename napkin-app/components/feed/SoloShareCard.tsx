@@ -28,6 +28,7 @@ import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { extractHighlight, formatRelativeTime } from '@/lib/textHighlight';
+import { formatCompanions } from '@/lib/companions';
 import { Avatar } from './Avatar';
 import { Rating } from '@/components/ui/napkin/Rating';
 import { FeedActionRow } from './FeedActionRow';
@@ -49,6 +50,7 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
 
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
+    const companionLine = formatCompanions(item.companions);
 
     const isUnseen =
         !lastSeenAt || (!!item.sort_date && item.sort_date > lastSeenAt);
@@ -147,6 +149,13 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
                     ) : null}
                 </View>
 
+                {/* Companion line — "with Clara · Thomas" */}
+                {companionLine ? (
+                    <Text style={[styles.companions, { color: palette.textMuted }]} numberOfLines={1}>
+                        {companionLine}
+                    </Text>
+                ) : null}
+
                 {/* Optional sub (dish) */}
                 {item.dish_description ? (
                     <Text style={[styles.sub, { color: palette.textMuted }]} numberOfLines={1}>
@@ -237,6 +246,11 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_400Regular',
         fontSize: 10,
         flexShrink: 0,
+    },
+    companions: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        marginBottom: 4,
     },
     sub: {
         fontFamily: 'Manrope_600SemiBold',

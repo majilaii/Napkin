@@ -46,6 +46,10 @@ import { CommentRow } from '@/components/posts/CommentRow';
 import { useUpdateEntry } from '@/hooks/entries/useUpdateEntry';
 import { useAddEntryPhoto, useRemoveEntryPhoto } from '@/hooks/entries/useEntryPhotoMutations';
 import { useTables } from '@/hooks/tables/useTables';
+import { CompanionPickerSheet } from '@/components/logging';
+import { CompanionChipsRow } from '@/components/logging';
+import { formatCompanions } from '@/lib/companions';
+import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 import {
     useAddComment,
     useDiscardFailedComment,
@@ -81,6 +85,7 @@ interface EntryDetail {
     service_rating: number | null;
     value_rating: number | null;
     photo_url: string | null;
+    companions?: { user_id: string; display_name: string }[];
     restaurants: {
         id: string;
         name: string;
@@ -191,6 +196,20 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
         .eq('user_id', entry.user_id)
         .single();
 
+    // Fetch companions (tagged users)
+    const { data: companionRows } = await supabase
+        .from('entry_companions')
+        .select('user_id, profiles:user_id(display_name)')
+        .eq('entry_id', entry.id);
+
+    const companions = ((companionRows ?? []) as any[]).map((c: any) => {
+        const profileNode = Array.isArray(c.profiles) ? c.profiles[0] : c.profiles;
+        return {
+            user_id: c.user_id,
+            display_name: profileNode?.display_name ?? 'User',
+        };
+    });
+
     // PostgREST returns FK-joined restaurants as object (with .single()),
     // but TS may infer it as array. Normalize:
     const restaurant = Array.isArray(entry.restaurants)
@@ -200,6 +219,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
     return {
         ...entry,
         restaurants: restaurant,
+        companions,
         profiles: profile ?? { display_name: 'User' },
     } as unknown as EntryDetail;
 }
@@ -382,6 +402,43 @@ export default function EntryDetailScreen() {
         value_rating: number;
     }>({ vibe_rating: 0, flavor_rating: 0, service_rating: 0, value_rating: 0 });
     const [breakdownErrors, setBreakdownErrors] = useState<Record<string, string>>({});
+
+    // Companion editing — owner-only
+    const [companionEditMode, setCompanionEditMode] = useState(false);
+    const [localCompanions, setLocalCompanions] = useState<UserSearchResult[]>([]);
+
+    const toggleLocalCompanion = useCallback((u: UserSearchResult) => {
+        if (!viewer || u.user_id === viewer.id) return;
+        setLocalCompanions(prev => {
+            const exists = prev.some(c => c.user_id === u.user_id);
+            if (exists) return prev.filter(c => c.user_id !== u.user_id);
+            return [...prev, u];
+        });
+    }, [viewer]);
+
+    const handleCompanionEditStart = () => {
+        if (!isOwnEntry || !entry) return;
+        setLocalCompanions(
+            (entry.companions ?? []).map(c => ({
+                user_id: c.user_id,
+                display_name: c.display_name,
+                avatar_url: null,
+            }))
+        );
+        setCompanionEditMode(true);
+    };
+
+    const handleCompanionSave = async () => {
+        if (!entry) return;
+        try {
+            await updateEntry.mutateAsync({
+                companion_ids: localCompanions.map(c => c.user_id),
+            });
+            setCompanionEditMode(false);
+        } catch {
+            Alert.alert('Error', "Couldn't update companions. Try again.");
+        }
+    };
 
     // Photo editing (for flesh-out)
     const [newPhotoSlots, setNewPhotoSlots] = useState<PhotoSlot[]>([]);
@@ -1256,6 +1313,45 @@ export default function EntryDetailScreen() {
                                 </View>
                             </Pressable>
                         )}
+
+                        {/* ── Companion row ─────────────────────────────────────── */}
+                        {/* Read view: show "with X · Y" line */}
+                        {!isOwnEntry && (entry.companions ?? []).length > 0 ? (
+                            <Text
+                                style={[styles.companionLine, { color: palette.textMuted }]}
+                                numberOfLines={1}
+                            >
+                                {formatCompanions(entry.companions)}
+                            </Text>
+                        ) : null}
+
+                        {/* Edit view (owner): chips with × + "Add companion" button */}
+                        {isOwnEntry ? (
+                            <View style={styles.companionEditBlock}>
+                                {(entry.companions ?? []).length > 0 ? (
+                                    <Text
+                                        style={[styles.companionLine, { color: palette.textMuted }]}
+                                        numberOfLines={1}
+                                    >
+                                        {formatCompanions(entry.companions)}
+                                    </Text>
+                                ) : null}
+                                <Pressable
+                                    onPress={handleCompanionEditStart}
+                                    hitSlop={8}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Edit companions"
+                                >
+                                    <Text
+                                        style={[styles.companionEditCta, { color: palette.textMuted }]}
+                                    >
+                                        {(entry.companions ?? []).length > 0
+                                            ? 'Edit companions'
+                                            : '+ Who were you with?'}
+                                    </Text>
+                                </Pressable>
+                            </View>
+                        ) : null}
                     </View>
 
                     {/* Comments — plain rows on the warm cream page, outside the note card. */}
@@ -1313,6 +1409,18 @@ export default function EntryDetailScreen() {
                     )
                 )}
             </View>
+
+            {/* Companion picker sheet — owner edit mode */}
+            {isOwnEntry ? (
+                <CompanionPickerSheet
+                    visible={companionEditMode}
+                    onClose={handleCompanionSave}
+                    selectedIds={new Set(localCompanions.map(c => c.user_id))}
+                    onToggle={toggleLocalCompanion}
+                    currentUserId={viewer?.id}
+                    palette={palette}
+                />
+            ) : null}
         </>
     );
 }
@@ -1904,6 +2012,22 @@ const styles = StyleSheet.create({
     authorName: {
         fontFamily: 'Manrope_400Regular',
         fontSize: 12,
+    },
+
+    // Companion row — "with X · Y" under attribution
+    companionLine: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        marginTop: Spacing.sm,
+    },
+    companionEditBlock: {
+        marginTop: Spacing.sm,
+        gap: Spacing.xs,
+    },
+    companionEditCta: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 12,
+        textDecorationLine: 'underline',
     },
 
     // Comments — plain rows on warm cream, sits below the note card.

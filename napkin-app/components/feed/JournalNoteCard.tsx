@@ -22,6 +22,7 @@ import { Colors } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { extractHighlight, formatRelativeTime } from '@/lib/textHighlight';
+import { formatCompanions } from '@/lib/companions';
 import { FeedActionRow } from './FeedActionRow';
 import { ReactionPicker } from './ReactionPicker';
 
@@ -41,6 +42,7 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
 
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
+    const companionLine = formatCompanions(item.companions);
 
     const sortDate = item.sort_date ?? item.created_at;
     const isUnseen = !lastSeenAt || (!!sortDate && sortDate > lastSeenAt);
@@ -136,6 +138,11 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
                     {item.dish_description ? (
                         <Text style={[styles.sub, { color: palette.textMuted }]} numberOfLines={1}>
                             {item.dish_description}
+                        </Text>
+                    ) : null}
+                    {companionLine ? (
+                        <Text style={[styles.companions, { color: palette.textMuted }]} numberOfLines={1}>
+                            {companionLine}
                         </Text>
                     ) : null}
                 </Pressable>
@@ -234,6 +241,11 @@ const styles = StyleSheet.create({
         fontSize: 10,
         letterSpacing: 0.3,
         textTransform: 'uppercase',
+        marginTop: 6,
+    },
+    companions: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
         marginTop: 6,
     },
     prose: {

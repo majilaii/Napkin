@@ -5,6 +5,11 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
 
+export interface CompanionProfile {
+    user_id: string;
+    display_name: string;
+}
+
 export interface SoloShareActivity {
     type: 'solo_share';
     id: string;
@@ -22,6 +27,7 @@ export interface SoloShareActivity {
     comment_count?: number;
     top_emojis?: Array<{ emoji: string; count: number; last_reacted_at: string }>;
     my_reactions?: string[];
+    companions?: CompanionProfile[];
     restaurants: {
         id: string;
         name: string;
@@ -74,6 +80,7 @@ export interface CollaborativeEntryActivity {
     visited_at: string;
     created_at: string;
     sort_date: string;
+    companions?: CompanionProfile[];
     restaurants: {
         id: string;
         name: string;

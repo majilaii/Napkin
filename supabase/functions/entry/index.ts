@@ -13,8 +13,13 @@ import { upsertRestaurant } from '../_shared/restaurant.ts';
  * - None: Just a meal log with no location
  *
  * POST actions:
- * - (no action): Create a new entry, optionally tagging participant_ids
+ * - (no action): Create a new entry, optionally tagging participant_ids or companion_ids
  * - add-take: Update the caller's entry_participants row with their rating/notes
+ * - update-companions: Replace the companion set for an entry the caller owns
+ *
+ * NOTE: entry_companions (companion tagging) and entry_participants (Round ratings)
+ * are DISTINCT tables. Do NOT overload entry_participants for companion tagging.
+ * participants = Round ratings/notes; companions = tagged presence on solo logs.
  */
 
 // Food establishment types from Google Places
@@ -90,6 +95,63 @@ serve(async (req) => {
                 return new Response(
                     JSON.stringify({ data: { id: restaurantId } }),
                     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
+
+            // ── update-companions action ───────────────────────────────────
+            // Replace the full companion set for an entry the caller owns.
+            // Receives: { action: 'update-companions', entry_id, companion_ids[] }
+            if (body.action === 'update-companions') {
+                const { entry_id, companion_ids } = body;
+
+                if (!entry_id || typeof entry_id !== 'string') {
+                    return new Response(
+                        JSON.stringify({ error: 'entry_id is required' }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Verify caller owns the entry
+                const { data: ownerCheck, error: ownerErr } = await supabase
+                    .from('entries')
+                    .select('id')
+                    .eq('id', entry_id)
+                    .eq('user_id', user.id)
+                    .single();
+
+                if (ownerErr || !ownerCheck) {
+                    return new Response(
+                        JSON.stringify({ error: 'Entry not found or not owned by caller' }),
+                        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Sanitize companion ids: array, exclude self, dedupe
+                const rawIds: string[] = Array.isArray(companion_ids) ? companion_ids : [];
+                const sanitized = [...new Set(rawIds.filter((id: string) => id && id !== user.id))];
+
+                // Replace: delete old rows then insert new ones (atomic enough for this use case)
+                const { error: deleteErr } = await supabase
+                    .from('entry_companions')
+                    .delete()
+                    .eq('entry_id', entry_id);
+
+                if (deleteErr) throw deleteErr;
+
+                if (sanitized.length > 0) {
+                    const rows = sanitized.map((uid: string) => ({
+                        entry_id,
+                        user_id: uid,
+                    }));
+                    const { error: insertErr } = await supabase
+                        .from('entry_companions')
+                        .insert(rows);
+                    if (insertErr) throw insertErr;
+                }
+
+                return new Response(
+                    JSON.stringify({ data: { entry_id, companion_ids: sanitized } }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 );
             }
 
@@ -190,6 +252,10 @@ serve(async (req) => {
 
                 // Collaborative (optional)
                 participant_ids,
+
+                // Companion tagging (optional; distinct from participant_ids)
+                // companion_ids = who was there; participant_ids = Round raters
+                companion_ids,
             } = body;
 
             // Validate secondary ratings if provided
@@ -394,6 +460,27 @@ serve(async (req) => {
             if (partInsertError) {
                 console.error('entry_participants insert error:', partInsertError);
                 throw partInsertError;
+            }
+
+            // Insert entry_companions (companion tagging — NOT Round participants)
+            // companion_ids: arbitrary Napkin users; no Table-membership gate (Instagram-style)
+            const rawCompanionIds: string[] = Array.isArray(companion_ids) ? companion_ids : [];
+            const sanitizedCompanionIds = [...new Set(
+                rawCompanionIds.filter((id: string) => id && id !== user.id)
+            )];
+
+            if (sanitizedCompanionIds.length > 0) {
+                const companionRows = sanitizedCompanionIds.map((uid: string) => ({
+                    entry_id: entryData.id,
+                    user_id: uid,
+                }));
+                const { error: compInsertError } = await supabase
+                    .from('entry_companions')
+                    .insert(companionRows);
+                if (compInsertError) {
+                    // Non-fatal: log but don't fail the entry creation
+                    console.error('entry_companions insert error (non-fatal):', compInsertError);
+                }
             }
 
             console.log('Entry created:', entryData.id);

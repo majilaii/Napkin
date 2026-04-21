@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { formatCompanions } from '@/lib/companions';
 import { InlineStars } from './InlineStars';
 import type { FeedEntry } from '@/hooks/feed';
 
@@ -30,6 +31,7 @@ export function FriendLogCard({ entry, time, sub }: Props) {
     const rating = entry.rating ?? 0;
     const hasContent = !!entry.content && entry.content.trim().length > 0;
     const photos = entry.photos.slice(0, 3);
+    const companionLine = formatCompanions(entry.companions);
 
     const onPress = () => router.push({ pathname: '/entry-detail', params: { entryId: entry.id } });
 
@@ -91,6 +93,21 @@ export function FriendLogCard({ entry, time, sub }: Props) {
                     {time}
                 </Text>
             </View>
+
+            {/* Companion line — "with Clara · Thomas" */}
+            {companionLine ? (
+                <Text
+                    style={{
+                        fontFamily: 'Manrope_400Regular',
+                        fontSize: 11,
+                        color: palette.textMuted,
+                        marginBottom: 8,
+                    }}
+                    numberOfLines={1}
+                >
+                    {companionLine}
+                </Text>
+            ) : null}
 
             {/* Rating + sub row */}
             {rating > 0 && (

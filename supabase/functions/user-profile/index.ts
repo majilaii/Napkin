@@ -1000,6 +1000,38 @@ serve(async (req) => {
             return json({ data: updated });
         }
 
+        // ── search ───────────────────────────────────────────────────────
+        // Find Napkin users by display_name (ILIKE); excludes the caller.
+        // Used by CompanionPickerSheet for tagging.
+        // Request: { action: 'search', q: string, limit?: number }
+        // Response: { data: { user_id, display_name, avatar_url }[] }
+        if (action === 'search') {
+            const { q, limit: rawLimit } = body as { q?: string; limit?: number };
+            if (!q || typeof q !== 'string' || q.trim().length === 0) {
+                return fail('q is required', 400);
+            }
+
+            const maxResults = Math.min(Math.max(rawLimit ?? 20, 1), 20);
+            const pattern = `%${q.trim()}%`;
+
+            const { data: results, error: searchErr } = await supabase
+                .from('profiles')
+                .select('user_id, display_name, avatar_url')
+                .ilike('display_name', pattern)
+                .neq('user_id', user.id)
+                .limit(maxResults);
+
+            if (searchErr) throw searchErr;
+
+            return json({
+                data: (results ?? []).map((r: any) => ({
+                    user_id: r.user_id,
+                    display_name: r.display_name,
+                    avatar_url: r.avatar_url ?? null,
+                })),
+            });
+        }
+
         return fail('Unknown action', 400);
 
     } catch (err) {
