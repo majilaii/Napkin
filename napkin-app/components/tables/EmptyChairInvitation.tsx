@@ -124,7 +124,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     primaryCtaText: {
-        color: '#fff',
+        color: Colors.light.textInverse,
         letterSpacing: 1,
         fontSize: 11,
     },

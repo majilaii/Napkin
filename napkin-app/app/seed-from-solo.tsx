@@ -44,10 +44,12 @@ export default function SeedFromSoloScreen() {
     const router = useRouter();
     const { user } = useAuth();
 
-    // Personal table ID = source of solo entries
+    // Get user's solo feed entries (entries without a table_id)
     const { data: tables } = useTables(user?.id);
-    const personalTable = tables?.find((t) => t.tables?.is_personal)?.tables;
-    const { data: activityData, isLoading } = useTableActivity(personalTable?.id);
+    // For seeding, we look at all the user's entries — useTableActivity still works
+    // with any table the user belongs to
+    const firstTable = tables?.[0]?.tables;
+    const { data: activityData, isLoading } = useTableActivity(firstTable?.id);
     const items = useMemo(
         () => (activityData?.pages?.flat() ?? []) as SoloShareActivity[],
         [activityData],

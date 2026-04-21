@@ -43,7 +43,7 @@ export function NapkinChip({
                 break;
             case 'sanguine':
                 bg = bg ?? palette.sanguine;
-                fg = fg ?? '#fff';
+                fg = fg ?? palette.textInverse;
                 break;
             case 'ink':
                 bg = bg ?? palette.text;

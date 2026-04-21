@@ -50,7 +50,7 @@ export function TopFour({ picks }: Props) {
                                         style={{
                                             fontFamily: 'Newsreader_400Regular_Italic',
                                             fontSize: 10,
-                                            color: '#fff',
+                                            color: palette.textInverse,
                                         }}
                                     >
                                         {pick.max_rating.toFixed(1)}

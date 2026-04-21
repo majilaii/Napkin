@@ -242,7 +242,7 @@ function PhotoGrid({ photos, total }: { photos: string[]; total: number }) {
                                 style={{
                                     fontFamily: 'Newsreader_400Regular_Italic',
                                     fontSize: 16,
-                                    color: '#fff',
+                                    color: palette.textInverse,
                                     fontWeight: '600',
                                 }}
                             >

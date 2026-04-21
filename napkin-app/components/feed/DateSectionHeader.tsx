@@ -42,7 +42,7 @@ export function DateSectionHeader({ title, palette }: DateSectionHeaderProps) {
 
 const styles = StyleSheet.create({
     container: {
-        paddingHorizontal: Spacing.lg,
+        paddingHorizontal: 22,
         paddingTop: Spacing.md,
         paddingBottom: Spacing.xs,
     },

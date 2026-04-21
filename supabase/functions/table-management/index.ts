@@ -118,11 +118,7 @@ serve(async (req) => {
         }
 
         // GET - List user's tables
-        // By default, personal tables are excluded so the Tables tab only shows
-        // social Tables. Pass ?include_personal=true to include them (used by
-        // TICKET-015/016 to surface the user's diary/personal Table).
         if (req.method === 'GET' && (!tableId || tableId === 'table-management')) {
-            const includePersonal = url.searchParams.get('include_personal') === 'true';
 
             let query = supabase
                 .from('table_members')
@@ -134,7 +130,6 @@ serve(async (req) => {
                         name,
                         avatar_url,
                         owner_id,
-                        is_personal,
                         created_at,
                         updated_at
                     )
@@ -142,22 +137,12 @@ serve(async (req) => {
                 .eq('member_id', user.id)
                 .order('joined_at', { ascending: false });
 
-            if (!includePersonal) {
-                query = query.eq('tables.is_personal', false);
-            }
-
             const { data, error } = await query;
 
             if (error) throw error;
 
-            // When filtering personal tables via PostgREST column filter, rows where
-            // the joined table doesn't match come back with tables = null. Strip them.
-            const filtered = includePersonal
-                ? data
-                : (data ?? []).filter((row: any) => row.tables !== null);
-
             return new Response(
-                JSON.stringify({ data: filtered }),
+                JSON.stringify({ data: data ?? [] }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
         }

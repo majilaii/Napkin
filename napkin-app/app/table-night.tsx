@@ -494,7 +494,7 @@ export default function TableNightScreen() {
                             style={[styles.heroContent, { paddingTop: insets.top + Spacing.md }]}
                         >
                             <Pressable onPress={() => router.back()} style={styles.closeBtn}>
-                                <Text style={{ color: '#fff', fontSize: 28, lineHeight: 28 }}>×</Text>
+                                <Text style={{ color: palette.textInverse, fontSize: 28, lineHeight: 28 }}>×</Text>
                             </Pressable>
                             <View style={styles.heroBottom}>
                                 <View
@@ -526,7 +526,7 @@ export default function TableNightScreen() {
                                     style={[
                                         Type.displayLarge,
                                         {
-                                            color: '#fff',
+                                            color: palette.textInverse,
                                             fontFamily: 'Newsreader_400Regular_Italic',
                                             fontSize: 48,
                                             lineHeight: 52,
@@ -760,12 +760,12 @@ export default function TableNightScreen() {
                         ]}
                     >
                         {isSubmitting ? (
-                            <ActivityIndicator color="#fff" />
+                            <ActivityIndicator color={palette.textInverse} />
                         ) : (
                             <Text
                                 style={[
                                     Type.label,
-                                    { color: ctaDisabled ? palette.textMuted : '#fff', letterSpacing: 2 },
+                                    { color: ctaDisabled ? palette.textMuted : palette.textInverse, letterSpacing: 2 },
                                 ]}
                             >
                                 {ctaLabel}
@@ -839,7 +839,7 @@ function VoterCard({
                 </View>
                 {isRevealed && participant.rating != null && (
                     <View style={[styles.scoreBadge, { backgroundColor: palette.tertiary }]}>
-                        <Text style={{ fontSize: 7, color: '#fff', fontWeight: '700' }}>
+                        <Text style={{ fontSize: 7, color: palette.textInverse, fontWeight: '700' }}>
                             {participant.rating.toFixed(1)}
                         </Text>
                     </View>
@@ -951,7 +951,7 @@ const styles = StyleSheet.create({
         position: 'absolute', bottom: -2, right: -2,
         width: 20, height: 20, borderRadius: 10,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 2, borderColor: '#fff',
+        borderWidth: 2, borderColor: Colors.light.card,
     },
 
     miniBreakdown: {

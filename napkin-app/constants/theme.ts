@@ -60,6 +60,16 @@ export const Colors = {
 
     // Sanguine — Round / visit-count accent
     sanguine: '#8a2a1a',
+    sanguineOnCream: '#fef6e6',       // cream text on sanguine bg
+
+    // Cream — ambient backgrounds on elevated/hero surfaces
+    cream: '#f6ecd9',
+
+    // Overlay variants
+    overlayPhoto: 'rgba(0, 0, 0, 0.35)',
+    overlayHeavy: 'rgba(0, 0, 0, 0.6)',
+    scrimFrost: 'rgba(252, 249, 244, 0.92)',
+    scrimCream: 'rgba(246, 236, 217, 0.85)',
 
     // Functional
     star: '#b8842a',                 // amber for inline stars (brighter fill)
@@ -119,6 +129,14 @@ export const Colors = {
     amberChipHi: '#7a4a12',
 
     sanguine: '#d4766a',
+    sanguineOnCream: '#fff0e0',
+
+    cream: '#3a3025',
+
+    overlayPhoto: 'rgba(0, 0, 0, 0.5)',
+    overlayHeavy: 'rgba(0, 0, 0, 0.75)',
+    scrimFrost: 'rgba(26, 24, 22, 0.92)',
+    scrimCream: 'rgba(37, 34, 32, 0.85)',
 
     star: '#f8bb73',
     success: '#c4c9b1',
@@ -156,6 +174,15 @@ export const Radius = {
   xxl: 28,   // feed hero cards
   xxxl: 32,  // large hero bubbles
   full: 9999,
+} as const;
+
+export const IconSize = {
+  xs: 12,
+  sm: 16,
+  md: 20,
+  lg: 24,
+  xl: 28,
+  xxl: 32,
 } as const;
 
 /** Ambient shadow — soft glow, not hard drop */

@@ -97,14 +97,9 @@ export default function CreateEntryScreen() {
     const { data: tableMemberships } = useTables(user?.id);
 
     const tables = (tableMemberships ?? []).map(m => m.tables);
-    const sortedTables = [...tables].sort((a, b) => {
-        if (a.is_personal && !b.is_personal) return -1;
-        if (!a.is_personal && b.is_personal) return 1;
-        return 0;
-    });
+    const sortedTables = [...tables].sort((a, b) => a.name.localeCompare(b.name));
 
-    const personalTable = sortedTables.find(t => t.is_personal);
-    const defaultTableId = tableIdParam ?? personalTable?.id ?? sortedTables[0]?.id ?? null;
+    const defaultTableId = tableIdParam ?? sortedTables[0]?.id ?? null;
     const [selectedTableId, setSelectedTableId] = useState<string | null>(defaultTableId);
 
     useEffect(() => {
@@ -114,19 +109,13 @@ export default function CreateEntryScreen() {
     }, [defaultTableId, selectedTableId]);
 
     const selectedTable = sortedTables.find(t => t.id === selectedTableId) ?? null;
-    const isPersonalTable = selectedTable?.is_personal === true;
 
     // Mode picker (group tables only)
     const [postMode, setPostMode] = useState<PostMode>(modeParam === 'round' ? 'round' : 'solo');
 
-    // Reset mode when switching to personal table
-    useEffect(() => {
-        if (isPersonalTable) setPostMode('solo');
-    }, [isPersonalTable]);
-
     // Participant tagging (Round mode on group tables)
     const { data: tableMembers, isLoading: membersLoading } = useTableMembers(
-        !isPersonalTable && postMode === 'round' ? selectedTableId : null
+        postMode === 'round' ? selectedTableId : null
     );
     const [selectedParticipantIds, setSelectedParticipantIds] = useState<Set<string>>(new Set());
 
@@ -520,7 +509,7 @@ export default function CreateEntryScreen() {
             .map(p => p.publicUrl as string);
 
         try {
-            if (!isPersonalTable && postMode === 'round') {
+            if (postMode === 'round') {
                 // Start a Round
                 await startRound.mutateAsync({
                     table_id: selectedTableId!,
@@ -556,7 +545,7 @@ export default function CreateEntryScreen() {
         }
     }, [
         canSubmit, rating, notes, dish, selectedPlace, query,
-        selectedTableId, isPersonalTable, postMode, selectedParticipantIds,
+        selectedTableId, postMode, selectedParticipantIds,
         vibeRating, flavorRating, serviceRating, valueRating,
         photos, selectedCompanions,
         createEntry, startRound, router,
@@ -564,11 +553,11 @@ export default function CreateEntryScreen() {
 
     // ── Submit label ──────────────────────────────────────────────────────
 
-    const submitLabel = isPersonalTable
-        ? 'LOG IT'
-        : postMode === 'round'
-            ? 'START THE ROUND'
-            : 'SHARE';
+    const submitLabel = postMode === 'round'
+        ? 'START THE ROUND'
+        : selectedTableId
+            ? 'SHARE'
+            : 'LOG IT';
 
     // Table picker subtitle — neutral placeholder per architect's clarification (3).
     // Do NOT fabricate wishlist/shortlist reasons — ships a lie until the lookup exists.
@@ -899,7 +888,7 @@ export default function CreateEntryScreen() {
                                                     fontFamily: 'Newsreader_400Regular_Italic',
                                                     fontSize: 14,
                                                     fontWeight: '600',
-                                                    color: isSelected ? '#fff' : palette.primary,
+                                                    color: isSelected ? palette.textInverse : palette.primary,
                                                 }}
                                             >
                                                 {tableGlyph(t.name)}
@@ -962,13 +951,13 @@ export default function CreateEntryScreen() {
                                     lineHeight: 16,
                                 }}
                             >
-                                Tables see each other&apos;s logs. Leave this on your personal Table to keep it private to your Journal.
+                                Sharing to a Table lets members see each other&apos;s logs. Post without selecting a Table to keep it on your feed only.
                             </Text>
                         </>
                     ) : null}
 
                     {/* Mode picker (group tables only) — restyled kit chrome */}
-                    {!isPersonalTable && selectedTableId ? (
+                    {selectedTableId ? (
                         <>
                             <View
                                 style={[
@@ -1087,7 +1076,7 @@ export default function CreateEntryScreen() {
                     ) : null}
 
                     {/* Attendee picker (Round mode only) */}
-                    {!isPersonalTable && postMode === 'round' && selectedTableId ? (
+                    {postMode === 'round' && selectedTableId ? (
                         <View style={{ marginTop: Spacing.lg }}>
                             <Label style={{ marginBottom: Spacing.sm }}>Who was there?</Label>
                             {membersLoading ? (
@@ -1138,7 +1127,7 @@ export default function CreateEntryScreen() {
                                                     <Text
                                                         style={{
                                                             fontSize: 11,
-                                                            color: isSelected ? '#fff' : palette.text,
+                                                            color: isSelected ? palette.textInverse : palette.text,
                                                             fontFamily: 'Manrope_600SemiBold',
                                                         }}
                                                     >
@@ -1149,7 +1138,7 @@ export default function CreateEntryScreen() {
                                                     style={[
                                                         Type.caption,
                                                         {
-                                                            color: isSelected ? '#fff' : palette.text,
+                                                            color: isSelected ? palette.textInverse : palette.text,
                                                             maxWidth: 60,
                                                         },
                                                     ]}
@@ -1209,13 +1198,13 @@ export default function CreateEntryScreen() {
                         ]}
                     >
                         {isSubmitting ? (
-                            <ActivityIndicator color="#fff" />
+                            <ActivityIndicator color={palette.textInverse} />
                         ) : (
                             <Text
                                 style={[
                                     Type.label,
                                     {
-                                        color: canSubmit ? '#fff' : palette.textMuted,
+                                        color: canSubmit ? palette.textInverse : palette.textMuted,
                                         letterSpacing: 1.5,
                                     },
                                 ]}

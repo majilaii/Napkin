@@ -20,7 +20,7 @@ interface Props {
     disabled?: boolean;
 }
 
-const CREAM = '#f6ecd9';
+const CREAM = Colors.light.cream;
 
 export function FloatingLogButton({ loggedBefore, onPress, disabled }: Props) {
     const scheme = useColorScheme() ?? 'light';

@@ -97,7 +97,7 @@ export default function SettingsScreen() {
                         },
                     ]}
                 >
-                    <Text style={[Type.label, { color: '#fff' }]}>Sign out</Text>
+                    <Text style={[Type.label, { color: palette.textInverse }]}>Sign out</Text>
                 </Pressable>
             </View>
         </View>

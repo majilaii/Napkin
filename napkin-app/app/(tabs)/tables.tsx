@@ -225,13 +225,8 @@ export default function TablesScreen() {
     const tableName = activeTable.name;
     const isEmpty = !feedLoading && items.length === 0;
 
-    // Solo-only: user's only table is their personal journal
-    const isSoloOnly =
-        (tables?.length ?? 0) === 1 && (tables?.[0]?.tables?.is_personal ?? false);
-
-    // Brand-new non-personal table with no entries yet
-    const isFoundedEmpty =
-        !activeTable.is_personal && isEmpty && !feedLoading;
+    // Brand-new table with no entries yet
+    const isFoundedEmpty = isEmpty && !feedLoading;
 
     const handleSettingsPress = () => {
         if (activeTable?.id) {
@@ -245,7 +240,6 @@ export default function TablesScreen() {
             {/* TableHeader masthead — replaces old inline header block */}
             <TableHeader
                 tableName={tableName}
-                isPersonal={activeTable.is_personal ?? false}
                 memberCount={members?.length ?? 0}
                 roundCount={totalRoundCount}
                 memberNames={memberNames}
@@ -267,61 +261,39 @@ export default function TablesScreen() {
 
             {/* Activity | Wishlist — editorial section-label style */}
             <View style={styles.tabRow}>
-                <View style={styles.tabRowInner}>
-                        {(['activity', 'wishlist'] as const).map((tab) => {
-                        const isActive = activeTab === tab;
-                        return (
-                            <Pressable
-                                key={tab}
-                                onPress={() => setActiveTab(tab)}
-                                style={styles.tabButton}
-                            >
-                                <Text
-                                    style={[
-                                        styles.tabLabel,
-                                        {
-                                            color: isActive
-                                                ? palette.text
-                                                : palette.textMuted,
-                                        },
-                                    ]}
-                                >
-                                    {tab === 'activity' ? 'Activity' : 'Wishlist'}
-                                </Text>
-                                <View
-                                    style={[
-                                        styles.tabUnderline,
-                                        {
-                                            backgroundColor: isActive
-                                                ? palette.primary
-                                                : 'transparent',
-                                        },
-                                    ]}
-                                />
-                            </Pressable>
-                        );
-                    })}
-                </View>
-                {!activeTable.is_personal && totalRoundCount > 0 && (
-                    <Pressable
-                        onPress={() =>
-                            router.push({
-                                pathname: '/looking-back',
-                                params: { tableId: activeTable.id },
-                            })
-                        }
-                        hitSlop={8}
-                    >
-                        <Text
-                            style={[
-                                styles.lookingBackText,
-                                { color: palette.primary },
-                            ]}
+                {(['activity', 'wishlist'] as const).map((tab) => {
+                    const isActive = activeTab === tab;
+                    return (
+                        <Pressable
+                            key={tab}
+                            onPress={() => setActiveTab(tab)}
+                            style={styles.tabButton}
                         >
-                            LOOKING BACK {'\u2197'}
-                        </Text>
-                    </Pressable>
-                )}
+                            <Text
+                                style={[
+                                    styles.tabLabel,
+                                    {
+                                        color: isActive
+                                            ? palette.text
+                                            : palette.textMuted,
+                                    },
+                                ]}
+                            >
+                                {tab === 'activity' ? 'Activity' : 'Wishlist'}
+                            </Text>
+                            <View
+                                style={[
+                                    styles.tabUnderline,
+                                    {
+                                        backgroundColor: isActive
+                                            ? palette.primary
+                                            : 'transparent',
+                                    },
+                                ]}
+                            />
+                        </Pressable>
+                    );
+                })}
             </View>
         </>
     );
@@ -354,8 +326,8 @@ export default function TablesScreen() {
                 >
                     {headerAndControl}
 
-                    {/* Empty-chair invitation — solo users only, dismissable */}
-                    {isSoloOnly && !invitationDismissed && (
+                    {/* Empty-chair invitation — users with a single table, dismissable */}
+                    {(tables?.length ?? 0) <= 1 && !invitationDismissed && (
                         <EmptyChairInvitation
                             palette={palette}
                             onGatherPress={() =>
@@ -375,7 +347,7 @@ export default function TablesScreen() {
                             style={{ marginTop: Spacing.xxl }}
                         />
                     ) : isFoundedEmpty ? (
-                        /* Brand-new non-personal table — founding moment */
+                        /* Brand-new table — founding moment */
                         <FoundedHero
                             tableName={tableName}
                             foundedAt={activeTable.created_at}
@@ -387,8 +359,8 @@ export default function TablesScreen() {
                                 )
                             }
                         />
-                    ) : isEmpty && !isSoloOnly ? (
-                        /* Empty personal table (or named table after filtering) */
+                    ) : isEmpty ? (
+                        /* Empty table after filtering */
                         <View
                             style={{
                                 padding: Spacing.xl,
@@ -467,11 +439,13 @@ export default function TablesScreen() {
                                     );
                                 })}
 
-                            {/* Anniversary tick — yearly milestones */}
+                            {/* Anniversary tick — fires only within a 2-week
+                                window around the table's actual anniversary.
+                                This is the ONLY entry to Looking Back; we do
+                                not surface it daily on the hero. */}
                             {(() => {
                                 if (
-                                    !activeTable?.created_at ||
-                                    activeTable.is_personal
+                                    !activeTable?.created_at
                                 ) {
                                     return null;
                                 }
@@ -480,6 +454,17 @@ export default function TablesScreen() {
                                 const years =
                                     now.getFullYear() - founded.getFullYear();
                                 if (years < 1) return null;
+                                const anniversaryThisYear = new Date(
+                                    now.getFullYear(),
+                                    founded.getMonth(),
+                                    founded.getDate(),
+                                );
+                                const daysFromAnniversary =
+                                    Math.abs(
+                                        now.getTime() -
+                                            anniversaryThisYear.getTime(),
+                                    ) / 86_400_000;
+                                if (daysFromAnniversary > 14) return null;
                                 return (
                                     <TickRow
                                         kind="anniversary"
@@ -492,6 +477,12 @@ export default function TablesScreen() {
                                             day: 'numeric',
                                         })}
                                         palette={palette}
+                                        onPress={() =>
+                                            router.push({
+                                                pathname: '/looking-back',
+                                                params: { tableId: activeTable.id },
+                                            })
+                                        }
                                     />
                                 );
                             })()}
@@ -515,7 +506,6 @@ export default function TablesScreen() {
                                                       const totalMembers =
                                                           members?.length ?? 0;
                                                       const isSubset =
-                                                          !activeTable.is_personal &&
                                                           totalMembers > 1 &&
                                                           participantCount > 0 &&
                                                           participantCount < totalMembers;
@@ -561,8 +551,7 @@ export default function TablesScreen() {
                                                               <View
                                                                   key={`subset-${tn.id}`}
                                                                   style={{
-                                                                      marginHorizontal: 22,
-                                                                      marginBottom: 20,
+                                                                      marginBottom: 14,
                                                                   }}
                                                               >
                                                                   <SubsetCard
@@ -664,26 +653,17 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.xl,
     },
     feedList: {
-        paddingHorizontal: Spacing.lg,
+        paddingHorizontal: 20,
         paddingTop: Spacing.sm,
-        gap: Spacing.xl + Spacing.md,
+        gap: 20,
     },
     tabRow: {
         flexDirection: 'row',
+        gap: Spacing.lg,
         paddingHorizontal: 22,
         paddingTop: Spacing.sm,
         paddingBottom: Spacing.xs,
         alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    tabRowInner: {
-        flexDirection: 'row',
-        gap: Spacing.lg,
-    },
-    lookingBackText: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 10,
-        letterSpacing: 0.8,
     },
     tabButton: {
         alignItems: 'flex-start',

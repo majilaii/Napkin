@@ -204,9 +204,9 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
                 ]}
             >
                 {updateList.isPending ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                    <ActivityIndicator size="small" color={palette.textInverse} />
                 ) : (
-                    <Text style={[Type.titleMedium, { color: '#fff' }]}>Save changes</Text>
+                    <Text style={[Type.titleMedium, { color: palette.textInverse }]}>Save changes</Text>
                 )}
             </Pressable>
 

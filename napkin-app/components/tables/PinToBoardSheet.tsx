@@ -31,7 +31,6 @@ export interface PinBoardTable {
     memberCount: number;
     pinCount?: number;
     memberNames: string[];
-    isPersonal?: boolean;
 }
 
 interface PinToBoardSheetProps {
@@ -59,7 +58,7 @@ export function PinToBoardSheet({
     const [selected, setSelected] = useState<Set<string>>(new Set());
 
     const sharedTables = useMemo(
-        () => tables.filter((t) => !t.isPersonal),
+        () => tables,
         [tables],
     );
 

@@ -269,7 +269,7 @@ export function CreateListSheet({
                                     },
                                 ]}
                             >
-                                <Text style={[Type.titleSmall, { color: '#fff' }]}>
+                                <Text style={[Type.titleSmall, { color: palette.textInverse }]}>
                                     {createList.isPending ? 'Creating…' : 'Create list'}
                                 </Text>
                             </Pressable>

@@ -62,7 +62,7 @@ export function Chip({
         ...padding,
     };
 
-    const textColor = active ? '#fff' : palette.textSecondary;
+    const textColor = active ? palette.textInverse : palette.textSecondary;
 
     const body = (
         <Text style={[textStyle, { color: textColor }]} numberOfLines={1}>

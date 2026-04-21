@@ -7,7 +7,7 @@
  */
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Colors, Spacing } from '@/constants/theme';
 
@@ -20,6 +20,7 @@ interface TickRowProps {
     what: string;
     when?: string;
     palette: Palette;
+    onPress?: () => void;
 }
 
 const ICON: Record<TickKind, keyof typeof Ionicons.glyphMap> = {
@@ -29,7 +30,7 @@ const ICON: Record<TickKind, keyof typeof Ionicons.glyphMap> = {
     suggestion: 'sparkles-outline',
 };
 
-export function TickRow({ kind, who, what, when, palette }: TickRowProps) {
+export function TickRow({ kind, who, what, when, palette, onPress }: TickRowProps) {
     const colorFor = (k: TickKind) => {
         switch (k) {
             case 'pin':
@@ -44,8 +45,8 @@ export function TickRow({ kind, who, what, when, palette }: TickRowProps) {
     };
     const color = colorFor(kind);
 
-    return (
-        <View style={styles.row}>
+    const content = (
+        <>
             <Ionicons name={ICON[kind]} size={14} color={color} />
             <Text style={[styles.text, { color: palette.textSecondary }]} numberOfLines={2}>
                 {who ? (
@@ -58,8 +59,21 @@ export function TickRow({ kind, who, what, when, palette }: TickRowProps) {
             {when ? (
                 <Text style={[styles.when, { color: palette.textMuted }]}>{when}</Text>
             ) : null}
-        </View>
+        </>
     );
+
+    if (onPress) {
+        return (
+            <Pressable
+                onPress={onPress}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.8 }]}
+            >
+                {content}
+            </Pressable>
+        );
+    }
+
+    return <View style={styles.row}>{content}</View>;
 }
 
 const styles = StyleSheet.create({

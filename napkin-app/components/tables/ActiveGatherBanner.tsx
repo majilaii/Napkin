@@ -14,7 +14,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { PulseDot } from '@/components/feed/PulseDot';
 
 type Palette = typeof Colors.light;
@@ -48,6 +48,7 @@ export function ActiveGatherBanner({
         <View
             style={[
                 styles.container,
+                Shadow.note,
                 {
                     backgroundColor: palette.surfaceNote,
                     shadowColor: palette.text,
@@ -141,10 +142,6 @@ const styles = StyleSheet.create({
         marginTop: Spacing.xs,
         padding: 18,
         borderRadius: 16,
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.03,
-        shadowRadius: 30,
-        elevation: 2,
     },
     kickerRow: {
         flexDirection: 'row',

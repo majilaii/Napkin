@@ -213,13 +213,13 @@ export default function MakePublicScreen() {
                         ]}
                     >
                         {updatePrivacy.isPending ? (
-                            <ActivityIndicator color="#fff" />
+                            <ActivityIndicator color={palette.textInverse} />
                         ) : (
                             <Text
                                 style={[
                                     Type.titleMedium,
                                     {
-                                        color: canConfirm ? '#fff' : palette.textMuted,
+                                        color: canConfirm ? palette.textInverse : palette.textMuted,
                                     },
                                 ]}
                             >

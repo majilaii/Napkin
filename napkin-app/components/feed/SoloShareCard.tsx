@@ -107,7 +107,7 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
         >
             <View
                 ref={cardRef}
-                style={[styles.card, { backgroundColor: palette.surfaceNote }]}
+                style={[styles.card, { backgroundColor: palette.surfaceNote, borderColor: 'rgba(221,192,186,0.08)' }]}
             >
                 {isUnseen && (
                     <View
@@ -138,7 +138,7 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
                             {displayName}
                         </Text>
                         {' went solo to '}
-                        <Text style={[styles.place, { color: palette.text }]}>
+                        <Text style={[styles.place, { color: palette.primary }]}>
                             {restaurantName}
                         </Text>
                     </Text>
@@ -210,7 +210,8 @@ const styles = StyleSheet.create({
     card: {
         padding: 16,
         paddingVertical: 14,
-        borderRadius: 20,
+        borderRadius: 18,
+        borderWidth: 1,
         ...Shadow.note,
     },
     unseenDot: {
@@ -240,7 +241,8 @@ const styles = StyleSheet.create({
     },
     place: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
+        fontSize: 15,
+        fontWeight: '500',
     },
     time: {
         fontFamily: 'Manrope_400Regular',

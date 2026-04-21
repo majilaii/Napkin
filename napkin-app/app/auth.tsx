@@ -184,9 +184,9 @@ export default function AuthScreen() {
                                 ]}
                             >
                                 {loading ? (
-                                    <ActivityIndicator color="#fff" />
+                                    <ActivityIndicator color={palette.textInverse} />
                                 ) : (
-                                    <Text style={[Type.label, { color: '#fff' }]}>{ctaLabel}</Text>
+                                    <Text style={[Type.label, { color: palette.textInverse }]}>{ctaLabel}</Text>
                                 )}
                             </Pressable>
 

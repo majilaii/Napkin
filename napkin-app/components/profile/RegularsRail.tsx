@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
         borderRadius: 3,
     },
     visitPillText: {
-        color: '#fff',
+        color: Colors.light.textInverse,
         fontSize: 9,
         fontWeight: '600',
         letterSpacing: 0.3,

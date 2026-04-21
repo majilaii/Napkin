@@ -150,7 +150,7 @@ function PrimaryOption({
             <Text
                 style={{
                     fontSize: 22,
-                    color: '#f6ecd9',
+                    color: palette.cream,
                     fontFamily: 'Manrope_400Regular',
                 }}
             >
@@ -161,7 +161,7 @@ function PrimaryOption({
                     style={{
                         fontFamily: 'Newsreader_400Regular_Italic',
                         fontSize: 17,
-                        color: '#f6ecd9',
+                        color: palette.cream,
                         lineHeight: 20,
                     }}
                 >

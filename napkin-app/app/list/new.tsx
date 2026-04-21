@@ -208,9 +208,9 @@ export default function NewListScreen() {
                             ]}
                         >
                             {createList.isPending ? (
-                                <ActivityIndicator size="small" color="#fff" />
+                                <ActivityIndicator size="small" color={palette.textInverse} />
                             ) : (
-                                <Text style={[Type.titleMedium, { color: '#fff' }]}>Create list</Text>
+                                <Text style={[Type.titleMedium, { color: palette.textInverse }]}>Create list</Text>
                             )}
                         </Pressable>
                     </ScrollView>

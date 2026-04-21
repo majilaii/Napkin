@@ -47,11 +47,6 @@ export const queryKeys = {
             ['postInteractions', targetType, targetId] as const,
     },
 
-    // Personal Table (diary table auto-created on signup)
-    personalTable: {
-        byUser: (userId: string) => ['personalTable', userId] as const,
-    },
-
     // Search (restaurant search — Places + local DB)
     search: {
         places: (q: string) => ['search', 'places', q] as const,

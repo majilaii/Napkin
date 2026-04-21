@@ -3,7 +3,7 @@ import { View, Text, ScrollView, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { TrendingPoster } from '@/hooks/feed';
 
@@ -100,11 +100,7 @@ function Poster({ poster }: { poster: TrendingPoster }) {
                     borderRadius: 6,
                     backgroundColor: palette.surfaceContainerLow,
                     overflow: 'hidden',
-                    shadowColor: '#1c1c19',
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.08,
-                    shadowRadius: 8,
-                    elevation: 2,
+                    ...Shadow.subtle,
                 }}
             >
                 {poster.restaurant.photo_url && (
@@ -133,7 +129,7 @@ function Poster({ poster }: { poster: TrendingPoster }) {
                         style={{
                             fontFamily: 'Newsreader_400Regular_Italic',
                             fontSize: 12,
-                            color: '#f6ecd9',
+                            color: palette.cream,
                             lineHeight: 14,
                         }}
                     >
@@ -157,7 +153,7 @@ function Poster({ poster }: { poster: TrendingPoster }) {
                             style={{
                                 fontFamily: 'Manrope_600SemiBold',
                                 fontSize: 10,
-                                color: '#f6ecd9',
+                                color: palette.cream,
                                 letterSpacing: 0.3,
                             }}
                         >

@@ -45,7 +45,7 @@ export function BottomActionBar({
     const palette = Colors[scheme] as Palette;
     const insets = useSafeAreaInsets();
 
-    const cream = '#f6ecd9';
+    const cream = palette.cream;
     const bg = palette.background;
 
     return (

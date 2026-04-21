@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Napkin — Tables Feed v2</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Manrope:wght@400;500;600;700&display=swap');
+
+  :root {
+    --ink: #1c1c19;
+    --ink-sec: #56423d;
+    --ink-muted: #8a726c;
+    --cream: #fdf6ec;
+    --surface-journal: #faf0e0;
+    --terracotta: #a03f28;
+    --olive: #6b7c3a;
+    --olive-cream: #e0e5cc;
+    --rule: rgba(221,192,186,0.35);
+    --serif: 'Newsreader', Georgia, serif;
+    --sans: 'Manrope', system-ui, sans-serif;
+    --shadow-ambient: 0 1px 2px rgba(28,28,25,0.04), 0 4px 16px rgba(28,28,25,0.06);
+    --shadow-note: 0 1px 3px rgba(28,28,25,0.06), 0 2px 8px rgba(28,28,25,0.04);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #e8e0d6; display: flex; justify-content: center; padding: 40px 20px; font-family: var(--sans); }
+
+  .phone {
+    width: 393px; height: 852px; background: var(--cream);
+    border-radius: 44px; overflow: hidden; position: relative;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  }
+
+  .scroll { height: 100%; overflow-y: auto; padding-bottom: 100px; scrollbar-width: none; }
+  .scroll::-webkit-scrollbar { display: none; }
+
+  /* ── Status bar ── */
+  .status-bar { height: 54px; padding: 14px 24px 0; display: flex; justify-content: space-between; align-items: center; }
+  .status-bar .time { font-weight: 600; font-size: 15px; }
+
+  /* ── Table Switcher ── */
+  .table-switcher {
+    padding: 8px 24px 6px; display: flex; align-items: center; gap: 8;
+  }
+  .table-switcher .name {
+    font-family: var(--serif); font-style: italic; font-size: 26px;
+    color: var(--ink); letter-spacing: -0.3px;
+  }
+  .table-switcher .caret { color: var(--ink-muted); font-size: 14px; }
+
+  /* ── Filter row ── */
+  .filter-row { padding: 10px 24px 18px; display: flex; gap: 10px; align-items: center; }
+  .chip-wishlist {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: #fff; border: 1px solid var(--rule); border-radius: 999px;
+    padding: 8px 14px 8px 12px; font-size: 12px; font-weight: 600;
+    color: var(--ink); cursor: pointer;
+  }
+  .chip-filter {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: transparent; border: 1px solid rgba(138,114,108,0.25);
+    border-radius: 999px; padding: 7px 12px; font-size: 11px; font-weight: 500;
+    color: var(--ink-muted); margin-left: auto; cursor: pointer;
+  }
+
+  /* ── Date section ── */
+  .date-header {
+    padding: 8px 24px 12px;
+    font-family: var(--serif); font-style: italic; font-size: 22px;
+    color: var(--ink); line-height: 26px;
+  }
+
+  /* ── TableNight card — immersive, big radius, no border ── */
+  .hero-card {
+    margin: 0 20px 36px; border-radius: 24px; overflow: hidden;
+    background: var(--surface-journal);
+    box-shadow: var(--shadow-ambient);
+  }
+  .hero-card .photo {
+    height: 200px; background-size: cover; background-position: center;
+    position: relative;
+  }
+  .hero-card .photo .group-pill {
+    position: absolute; top: 14px; left: 14px;
+    background: rgba(252,249,244,0.88); backdrop-filter: blur(8px);
+    border-radius: 999px; padding: 5px 11px;
+    font-size: 9px; font-weight: 700; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--ink);
+  }
+  .hero-card .body { padding: 18px 20px 20px; }
+  .hero-card .top-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .hero-card .restaurant-name {
+    font-family: var(--serif); font-style: italic; font-size: 28px;
+    line-height: 32px; color: var(--ink); letter-spacing: -0.4px; flex: 1;
+  }
+  .hero-card .avg-chip {
+    display: flex; flex-direction: column; align-items: center; gap: 2px; flex-shrink: 0;
+  }
+  .hero-card .avg-chip .score {
+    font-family: var(--serif); font-style: italic; font-size: 22px;
+    color: #825516; line-height: 1;
+  }
+  .hero-card .avg-chip .label {
+    font-size: 8px; font-weight: 700; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--ink-muted);
+  }
+  .hero-card .meta {
+    font-size: 11px; color: var(--ink-muted); margin-top: 5px;
+  }
+  .hero-card .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 12px; }
+  .hero-card .chip-tag {
+    padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  }
+  .hero-card .footer {
+    display: flex; align-items: center; justify-content: space-between; margin-top: 14px;
+  }
+  .avatar-stack { display: flex; }
+  .avatar-stack .av {
+    width: 26px; height: 26px; border-radius: 999px; border: 2px solid var(--surface-journal);
+    background: #d4c4b0; margin-left: -8px; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 600; color: var(--ink-sec);
+  }
+  .avatar-stack .av:first-child { margin-left: 0; }
+  .actions { display: flex; gap: 14px; align-items: center; }
+  .actions svg { color: var(--ink-muted); }
+
+  /* ── Solo share — speech bubble with tilted avatar ── */
+  .solo-row {
+    margin: 0 24px 24px; display: flex; gap: 12px; align-items: flex-start;
+  }
+  .solo-avatar {
+    width: 48px; height: 48px; border-radius: 14px; flex-shrink: 0;
+    background: #d4c4b0; transform: rotate(-4deg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--serif); font-style: italic; font-size: 20px; color: var(--ink-sec);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    overflow: hidden;
+  }
+  .solo-bubble {
+    flex: 1; background: #fff; border-radius: 18px; padding: 14px 16px;
+    box-shadow: var(--shadow-note);
+    border: 1px solid rgba(221,192,186,0.08);
+  }
+  .solo-bubble .who {
+    font-size: 13px; color: var(--ink); line-height: 19px;
+  }
+  .solo-bubble .who b { font-weight: 700; }
+  .solo-bubble .who .rest-name {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 15px; color: var(--terracotta);
+  }
+  .solo-bubble .stars { flex-shrink: 0; }
+  .solo-bubble .quote {
+    font-family: var(--serif); font-style: italic; font-size: 14px;
+    line-height: 21px; color: var(--ink-sec); margin-top: 8px;
+  }
+  .solo-bubble .quote .dash { color: var(--terracotta); font-weight: 600; margin-right: 4px; }
+  .solo-bubble .bottom-row {
+    display: flex; align-items: center; justify-content: space-between; margin-top: 10px;
+  }
+  .solo-bubble .when { font-size: 10px; color: var(--ink-muted); font-weight: 500; letter-spacing: 0.3px; }
+
+  /* ── Journal note — timeline with left rule ── */
+  .journal-row {
+    margin: 0 24px 22px 44px; position: relative;
+    padding-left: 20px;
+    border-left: 2px solid var(--olive-cream);
+  }
+  .journal-dot {
+    position: absolute; left: -5px; top: 10px;
+    width: 8px; height: 8px; border-radius: 999px; background: var(--olive);
+  }
+  .journal-header {
+    font-size: 13px; color: var(--ink); line-height: 19px;
+  }
+  .journal-header b { font-weight: 700; }
+  .journal-header .when {
+    display: inline-block; margin-left: 8px;
+    font-size: 10px; color: var(--ink-muted); font-weight: 500;
+  }
+  .journal-note-card {
+    background: var(--surface-journal); border-radius: 18px;
+    padding: 14px 16px; margin-top: 8px;
+  }
+  .journal-note-card .rest-name {
+    font-family: var(--serif); font-style: italic; font-size: 19px;
+    line-height: 24px; color: var(--ink-sec);
+  }
+  .journal-note-card .chips { display: flex; gap: 7px; margin-top: 8px; flex-wrap: wrap; }
+
+  /* ── Bottom nav ── */
+  .bottom-nav {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 88px;
+    background: rgba(255,255,255,0.82); backdrop-filter: blur(24px);
+    display: flex; align-items: flex-start; justify-content: space-around;
+    padding-top: 14px; z-index: 40;
+    border-top: 1px solid rgba(221,192,186,0.15);
+  }
+  .nav-item { display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: 0; cursor: pointer; }
+  .nav-item .label { font-size: 10px; font-weight: 500; color: var(--ink-muted); }
+  .nav-item.active .label { font-weight: 600; color: var(--terracotta); }
+  .nav-fab {
+    width: 50px; height: 50px; border-radius: 999px; border: 0;
+    background: var(--terracotta); cursor: pointer; margin-top: -6px;
+    box-shadow: 0 4px 14px rgba(160,63,40,0.3);
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ── Section title ── */
+  h2.section-label {
+    padding: 20px 0 12px;
+    text-align: center; font-family: var(--sans);
+    font-size: 11px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--ink-muted);
+  }
+</style>
+</head>
+<body>
+
+<div style="display: flex; flex-direction: column; align-items: center; gap: 40px;">
+
+<h2 class="section-label">Tables Feed — Faithful to Design Language</h2>
+
+<div class="phone">
+  <div class="scroll">
+    <!-- Status bar -->
+    <div class="status-bar">
+      <span class="time">9:41</span>
+      <span style="font-size: 13px; color: var(--ink-muted);">●●● ▶ 🔋</span>
+    </div>
+
+    <!-- Table switcher -->
+    <div class="table-switcher">
+      <span class="name">Sunday Roast Club</span>
+      <span class="caret">▾</span>
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-row">
+      <button class="chip-wishlist">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--terracotta)" stroke-width="1.8"><path d="M6 3h12v18l-6-4-6 4V3z"/></svg>
+        Wishlist
+      </button>
+      <button class="chip-filter">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
+        Filter
+      </button>
+    </div>
+
+    <!-- Date header -->
+    <div class="date-header">Saturday, Jun 14</div>
+
+    <!-- Hero card — TableNight -->
+    <div class="hero-card">
+      <div class="photo" style="background-image: url('https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600&q=80');">
+        <div class="group-pill">SUNDAY ROAST CLUB</div>
+      </div>
+      <div class="body">
+        <div class="top-row">
+          <div>
+            <div class="restaurant-name">Café Cecilia</div>
+            <div class="meta">4 reviews</div>
+          </div>
+          <div class="avg-chip">
+            <div class="score">8.2</div>
+            <div class="label">AVG</div>
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip-tag" style="background: #ffddb9; color: #2b1700;">Special Occasion</span>
+          <span class="chip-tag" style="background: var(--olive-cream); color: #3e4630;">Would Return</span>
+        </div>
+        <div class="footer">
+          <div class="avatar-stack">
+            <div class="av" style="background: #c9a98c;">J</div>
+            <div class="av" style="background: #a3b87c;">S</div>
+            <div class="av" style="background: #d4a090;">M</div>
+            <div class="av" style="background: #b8c4d4;">+2</div>
+          </div>
+          <div class="actions">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Solo share — speech bubble -->
+    <div class="solo-row">
+      <div class="solo-avatar">
+        <img src="https://i.pravatar.cc/100?img=12" style="width:100%;height:100%;object-fit:cover;" />
+      </div>
+      <div class="solo-bubble">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+          <div class="who"><b>Sarah</b> went solo to <span class="rest-name">Rochelle Canteen</span></div>
+          <span style="font-family: var(--serif); font-style: italic; font-size: 15px; color: #825516;">7.5</span>
+        </div>
+        <div class="quote"><span class="dash">—</span>Incredible burrata, but the wait was brutal. Worth it though.</div>
+        <div class="bottom-row">
+          <span class="when">2 hours ago</span>
+          <div class="actions">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Date header -->
+    <div class="date-header">Thursday, Jun 12</div>
+
+    <!-- Journal note — timeline -->
+    <div class="journal-row">
+      <div class="journal-dot"></div>
+      <div class="journal-header">
+        <b>Marcus</b> noted
+        <span class="when">4:30 PM</span>
+      </div>
+      <div class="journal-note-card">
+        <div class="rest-name">Brat</div>
+        <div class="chips">
+          <span class="chip-tag" style="background: #ffddb9; color: #2b1700;">Date Night</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Another journal note -->
+    <div class="journal-row">
+      <div class="journal-dot"></div>
+      <div class="journal-header">
+        <b>You</b> noted
+        <span class="when">1:15 PM</span>
+      </div>
+      <div class="journal-note-card">
+        <div class="rest-name">Padella</div>
+      </div>
+    </div>
+
+    <!-- Another solo -->
+    <div class="solo-row">
+      <div class="solo-avatar">
+        <img src="https://i.pravatar.cc/100?img=32" style="width:100%;height:100%;object-fit:cover;" />
+      </div>
+      <div class="solo-bubble">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+          <div class="who"><b>Alex</b> tried <span class="rest-name">St. John</span></div>
+          <span style="font-family: var(--serif); font-style: italic; font-size: 15px; color: #825516;">9.0</span>
+        </div>
+        <div class="quote"><span class="dash">—</span>The bone marrow. That's it. That's the review.</div>
+        <div class="bottom-row">
+          <span class="when">Yesterday</span>
+          <div class="actions">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--terracotta)" stroke="var(--terracotta)" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Date header -->
+    <div class="date-header">Monday, Jun 9</div>
+
+    <!-- Another hero -->
+    <div class="hero-card">
+      <div class="photo" style="background-image: url('https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600&q=80');">
+        <div class="group-pill">SUNDAY ROAST CLUB</div>
+      </div>
+      <div class="body">
+        <div class="top-row">
+          <div>
+            <div class="restaurant-name">Jolene</div>
+            <div class="meta">5 reviews</div>
+          </div>
+          <div class="avg-chip">
+            <div class="score">7.8</div>
+            <div class="label">AVG</div>
+          </div>
+        </div>
+        <div class="footer">
+          <div class="avatar-stack">
+            <div class="av" style="background: #c9a98c;">J</div>
+            <div class="av" style="background: #a3b87c;">S</div>
+            <div class="av" style="background: #d4a090;">M</div>
+          </div>
+          <div class="actions">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Bottom nav -->
+  <div class="bottom-nav">
+    <button class="nav-item">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span class="label">Journal</span>
+    </button>
+    <button class="nav-item active">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--terracotta)" stroke-width="1.5"><path d="M3 2l7 9h4l7-9"/><path d="M12 11v11"/></svg>
+      <span class="label">Tables</span>
+    </button>
+    <button class="nav-fab">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button class="nav-item">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <span class="label">Search</span>
+    </button>
+    <button class="nav-item">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ink-muted)" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="label">You</span>
+    </button>
+  </div>
+</div>
+
+</div>
+
+</body>
+</html>
