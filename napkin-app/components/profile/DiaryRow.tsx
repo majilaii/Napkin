@@ -7,6 +7,7 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -49,7 +50,14 @@ export function DiaryRow({ entry }: Props) {
 
             {/* Photo thumb — only if photo_url present */}
             {entry.photo_url ? (
-                <View style={[styles.thumb, { backgroundColor: palette.surfaceContainerHigh }]} />
+                <View style={[styles.thumb, { backgroundColor: palette.surfaceContainerHigh }]}>
+                    <Image
+                        source={{ uri: entry.photo_url }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        transition={150}
+                    />
+                </View>
             ) : null}
 
             {/* Restaurant + metadata */}
@@ -99,6 +107,7 @@ const styles = StyleSheet.create({
         height: 40,
         borderRadius: Radius.sm,
         flexShrink: 0,
+        overflow: 'hidden',
     },
     content: {
         flex: 1,

@@ -56,6 +56,8 @@ type Stats = {
     total_logs: number;
     total_restaurants: number;
     average_rating: number | null;
+    followers_count: number;
+    following_count: number;
 };
 
 type ListSummary = {
@@ -225,13 +227,25 @@ async function fetchAllCallerTableIds(
  * Deliberately does NOT select table_id — enforces "no Table identity in payload".
  */
 async function fetchStats(supabase: any, targetId: string): Promise<Stats> {
-    const { data: entries, error } = await supabase
-        .from('entries')
-        .select('id, restaurant_id, rating')
-        .eq('user_id', targetId)
-        .neq('visibility', 'private')
-        .not('rating', 'is', null);
+    const [{ data: entries, error }, followersRes, followingRes] = await Promise.all([
+        supabase
+            .from('entries')
+            .select('id, restaurant_id, rating')
+            .eq('user_id', targetId)
+            .neq('visibility', 'private')
+            .not('rating', 'is', null),
+        supabase
+            .from('follows')
+            .select('follower_id', { count: 'exact', head: true })
+            .eq('following_id', targetId),
+        supabase
+            .from('follows')
+            .select('following_id', { count: 'exact', head: true })
+            .eq('follower_id', targetId),
+    ]);
     if (error) throw error;
+    if (followersRes.error) throw followersRes.error;
+    if (followingRes.error) throw followingRes.error;
 
     const rows = (entries ?? []) as Array<{ id: string; restaurant_id: string | null; rating: number | null }>;
     const totalLogs = rows.length;
@@ -244,7 +258,13 @@ async function fetchStats(supabase: any, targetId: string): Promise<Stats> {
             ? ratedRows.reduce((sum, r) => sum + (r.rating as number), 0) / ratedRows.length
             : null;
 
-    return { total_logs: totalLogs, total_restaurants: totalRestaurants, average_rating: averageRating };
+    return {
+        total_logs: totalLogs,
+        total_restaurants: totalRestaurants,
+        average_rating: averageRating,
+        followers_count: followersRes.count ?? 0,
+        following_count: followingRes.count ?? 0,
+    };
 }
 
 /**
@@ -1233,6 +1253,107 @@ serve(async (req) => {
                         display_name: p.display_name,
                         avatar_url: p.avatar_url ?? null,
                         is_following: true,
+                    })),
+            });
+        }
+
+        // ── follow_list ───────────────────────────────────────────────────
+        // Returns followers or following for an arbitrary user, with privacy gating.
+        // Request: { action: 'follow_list', kind: 'followers' | 'following', target_user_id: string, limit?: number }
+        // Response: { data: { user_id, display_name, avatar_url, is_following }[] }
+        //   is_following = does the caller follow this listed user
+        //
+        // Gating: caller must have palate access to the target —
+        //   self OR target.account_privacy='public' OR shared tables.
+        if (action === 'follow_list') {
+            const { kind, target_user_id, limit: rawLimit } = body as {
+                kind?: 'followers' | 'following';
+                target_user_id?: string;
+                limit?: number;
+            };
+            if (kind !== 'followers' && kind !== 'following') {
+                return fail('kind must be "followers" or "following"', 400);
+            }
+            if (!target_user_id || typeof target_user_id !== 'string') {
+                return fail('target_user_id is required', 400);
+            }
+
+            const callerId = user.id;
+            const isSelf = callerId === target_user_id;
+
+            // Privacy gate — same access rules as the rest of the palate.
+            if (!isSelf) {
+                const { data: targetRow, error: targetErr } = await supabase
+                    .from('profiles')
+                    .select('account_privacy')
+                    .eq('user_id', target_user_id)
+                    .maybeSingle();
+                if (targetErr) throw targetErr;
+                if (!targetRow) return notFound();
+
+                if (targetRow.account_privacy !== 'public') {
+                    const sharedTableIds = await fetchSharedTableIds(supabase, callerId, target_user_id);
+                    if (sharedTableIds.length === 0) return notFound();
+                }
+            }
+
+            const maxResults = Math.min(Math.max(rawLimit ?? 100, 1), 200);
+
+            // Fetch follow edges — select the "other side" column based on kind.
+            const filterCol = kind === 'followers' ? 'following_id' : 'follower_id';
+            const otherCol = kind === 'followers' ? 'follower_id' : 'following_id';
+
+            const { data: followRows, error: followErr } = await supabase
+                .from('follows')
+                .select(`${filterCol}, ${otherCol}, created_at`)
+                .eq(filterCol, target_user_id)
+                .order('created_at', { ascending: false })
+                .limit(maxResults);
+            if (followErr) throw followErr;
+
+            const rows = (followRows ?? []) as Record<string, any>[];
+            if (rows.length === 0) return json({ data: [] });
+
+            const ids = rows.map((r) => r[otherCol] as string);
+            const [profilesRes, callerFollowsRes] = await Promise.all([
+                supabase
+                    .from('profiles')
+                    .select('user_id, display_name, username, avatar_url')
+                    .in('user_id', ids),
+                // Resolve is_following (caller → each listed user) in one query
+                supabase
+                    .from('follows')
+                    .select('following_id')
+                    .eq('follower_id', callerId)
+                    .in('following_id', ids),
+            ]);
+            if (profilesRes.error) throw profilesRes.error;
+            if (callerFollowsRes.error) throw callerFollowsRes.error;
+
+            const followingSet = new Set<string>(
+                ((callerFollowsRes.data ?? []) as { following_id: string }[])
+                    .map((f) => f.following_id),
+            );
+
+            const byId = new Map(
+                ((profilesRes.data ?? []) as {
+                    user_id: string;
+                    display_name: string;
+                    username: string | null;
+                    avatar_url: string | null;
+                }[]).map((p) => [p.user_id, p]),
+            );
+
+            return json({
+                data: ids
+                    .map((id) => byId.get(id))
+                    .filter(Boolean)
+                    .map((p: any) => ({
+                        user_id: p.user_id,
+                        display_name: p.display_name,
+                        username: p.username ?? null,
+                        avatar_url: p.avatar_url ?? null,
+                        is_following: followingSet.has(p.user_id),
                     })),
             });
         }

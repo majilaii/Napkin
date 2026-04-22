@@ -17,7 +17,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
@@ -49,16 +48,9 @@ export function FeedActionRow({
     palette,
     detailPathname,
     detailParams,
-    tableId,
 }: FeedActionRowProps) {
     const router = useRouter();
-    const queryClient = useQueryClient();
     const toggleReaction = useToggleReaction();
-
-    const [localLiked, setLocalLiked] = useState<string | null>(
-        myReactions.includes('❤️') ? '❤️' : myReactions[0] ?? null,
-    );
-    const [countDelta, setCountDelta] = useState(0);
 
     const anchorRef = useRef<View>(null);
     const [pickerAnchor, setPickerAnchor] = useState<{
@@ -66,53 +58,25 @@ export function FeedActionRow({
         y: number;
     } | null>(null);
 
-    const effectiveCount = Math.max(0, reactionCount + countDelta);
-    const liked = !!localLiked;
-
-    const invalidateFeed = () => {
-        if (tableId) {
-            queryClient.invalidateQueries({
-                queryKey: ['tableActivity', tableId],
-                exact: false,
-            });
-        }
-    };
+    // Display state is driven entirely by props (which come from the TanStack Query
+    // cache that useToggleReaction optimistically updates). No local deltas.
+    const likedEmoji = myReactions.includes('❤️')
+        ? '❤️'
+        : myReactions[0] ?? null;
+    const liked = !!likedEmoji;
+    const effectiveCount = reactionCount;
 
     const applyToggle = (emoji: string) => {
-        const hadThisEmoji = localLiked === emoji;
-        const wasLiked = liked;
-
-        if (hadThisEmoji) {
-            setLocalLiked(null);
-            setCountDelta((d) => d - 1);
-        } else {
-            setLocalLiked(emoji);
-            if (!wasLiked) setCountDelta((d) => d + 1);
+        // If switching from one emoji to another, remove the old one first
+        if (!myReactions.includes(emoji) && likedEmoji && likedEmoji !== emoji) {
+            toggleReaction.mutate({ targetType, targetId, emoji: likedEmoji });
         }
 
-        if (!hadThisEmoji && wasLiked && localLiked) {
-            toggleReaction.mutate(
-                { targetType, targetId, emoji: localLiked },
-                { onSuccess: invalidateFeed },
-            );
-        }
-
-        toggleReaction.mutate(
-            { targetType, targetId, emoji },
-            {
-                onSuccess: invalidateFeed,
-                onError: () => {
-                    setLocalLiked(wasLiked ? localLiked : null);
-                    setCountDelta((d) =>
-                        hadThisEmoji ? d + 1 : wasLiked ? d : d - 1,
-                    );
-                },
-            },
-        );
+        toggleReaction.mutate({ targetType, targetId, emoji });
     };
 
     const handleTapLike = () => {
-        applyToggle(liked ? localLiked! : '❤️');
+        applyToggle(liked ? likedEmoji! : '❤️');
     };
 
     const handleLongPress = () => {
@@ -137,8 +101,8 @@ export function FeedActionRow({
         if (!summaryEmojis.includes(t.emoji)) summaryEmojis.push(t.emoji);
         if (summaryEmojis.length >= 2) break;
     }
-    if (liked && localLiked && !summaryEmojis.includes(localLiked)) {
-        summaryEmojis.unshift(localLiked);
+    if (liked && likedEmoji && !summaryEmojis.includes(likedEmoji)) {
+        summaryEmojis.unshift(likedEmoji);
         summaryEmojis.splice(2);
     }
 
@@ -163,7 +127,7 @@ export function FeedActionRow({
             >
                 {liked ? (
                     <Text style={styles.likedEmoji} allowFontScaling={false}>
-                        {localLiked}
+                        {likedEmoji}
                     </Text>
                 ) : (
                     <Ionicons

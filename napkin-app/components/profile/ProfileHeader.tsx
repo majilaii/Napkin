@@ -50,6 +50,14 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
 
     const totalLogs = stats?.total_logs ?? 0;
     const totalPlaces = stats?.total_restaurants ?? 0;
+    const followersCount = stats?.followers_count ?? 0;
+    const followingCount = stats?.following_count ?? 0;
+
+    const openFollowList = (kind: 'followers' | 'following') =>
+        router.push({
+            pathname: '/follows',
+            params: { userId: profile.user_id, kind },
+        });
 
     return (
         <View style={styles.container}>
@@ -112,6 +120,26 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                     </Text>
                     {' places'}
                 </Text>
+                {stats && (
+                    <>
+                        <Pressable onPress={() => openFollowList('followers')} hitSlop={6}>
+                            <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
+                                <Text style={[styles.numberStrong, { color: palette.text }]}>
+                                    {followersCount}
+                                </Text>
+                                {' followers'}
+                            </Text>
+                        </Pressable>
+                        <Pressable onPress={() => openFollowList('following')} hitSlop={6}>
+                            <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
+                                <Text style={[styles.numberStrong, { color: palette.text }]}>
+                                    {followingCount}
+                                </Text>
+                                {' following'}
+                            </Text>
+                        </Pressable>
+                    </>
+                )}
                 {stats?.average_rating != null && (
                     <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
                         <Text style={[styles.numberStrong, { color: palette.text }]}>

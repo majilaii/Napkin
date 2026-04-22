@@ -94,13 +94,16 @@ export function useFollow() {
             }
         },
 
-        onSuccess: (_data, { targetUserId }) => {
+        onSuccess: (_data, _vars) => {
             // Invalidate search family (next search refetches with up-to-date is_following)
             queryClient.invalidateQueries({ queryKey: ['users', 'search'] });
-            // Invalidate profile (refreshes is_following_viewer from server)
-            queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
-            // Invalidate following list (adds this user to the caller's following list)
+            // Invalidate all profile caches (refreshes follower/following counts on
+            // both sides + is_following_viewer on the target)
+            queryClient.invalidateQueries({ queryKey: ['users', 'profile'] });
+            // Invalidate following list (legacy hook — caller's following list)
             queryClient.invalidateQueries({ queryKey: ['users', 'following'] });
+            // Invalidate any followers/following list screens currently mounted
+            queryClient.invalidateQueries({ queryKey: ['users', 'followList'] });
         },
     });
 }
@@ -164,10 +167,11 @@ export function useUnfollow() {
             }
         },
 
-        onSuccess: (_data, { targetUserId }) => {
+        onSuccess: (_data, _vars) => {
             queryClient.invalidateQueries({ queryKey: ['users', 'search'] });
-            queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
+            queryClient.invalidateQueries({ queryKey: ['users', 'profile'] });
             queryClient.invalidateQueries({ queryKey: ['users', 'following'] });
+            queryClient.invalidateQueries({ queryKey: ['users', 'followList'] });
         },
     });
 }

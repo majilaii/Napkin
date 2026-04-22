@@ -131,49 +131,56 @@ serve(async (req) => {
                 }
             }
 
-            // Fetch reactions with profiles
-            const { data: reactions, error: reactionsError } = await supabase
+            // Fetch reactions (no PostgREST embedding — the FK lives on auth.users,
+            // not profiles, so the join can't be auto-resolved)
+            const { data: reactionsRaw, error: reactionsError } = await supabase
                 .from('post_reactions')
-                .select(`
-                    id,
-                    user_id,
-                    emoji,
-                    created_at,
-                    profiles:user_id (
-                        display_name,
-                        avatar_url
-                    )
-                `)
+                .select('id, user_id, emoji, created_at')
                 .eq('target_type', targetType)
                 .eq('target_id', targetId)
                 .order('created_at', { ascending: true });
 
             if (reactionsError) throw reactionsError;
 
-            // Fetch comments with profiles
-            const { data: comments, error: commentsError } = await supabase
+            // Fetch comments
+            const { data: commentsRaw, error: commentsError } = await supabase
                 .from('post_comments')
-                .select(`
-                    id,
-                    user_id,
-                    body,
-                    created_at,
-                    edited_at,
-                    profiles:user_id (
-                        display_name,
-                        avatar_url
-                    )
-                `)
+                .select('id, user_id, body, created_at, edited_at')
                 .eq('target_type', targetType)
                 .eq('target_id', targetId)
                 .order('created_at', { ascending: true });
 
             if (commentsError) throw commentsError;
 
-            // Compute counts and top_emojis in the response
-            // Also read the denormalized column from the parent for the pill
-            const reactionsList = reactions ?? [];
-            const commentsList  = comments ?? [];
+            // Batch-fetch profiles for all unique user_ids referenced
+            const userIds = Array.from(new Set([
+                ...(reactionsRaw ?? []).map((r: any) => r.user_id as string),
+                ...(commentsRaw  ?? []).map((c: any) => c.user_id as string),
+            ]));
+
+            const profileById = new Map<string, { display_name: string; avatar_url: string | null }>();
+            if (userIds.length > 0) {
+                const { data: profiles, error: profilesErr } = await supabase
+                    .from('profiles')
+                    .select('user_id, display_name, avatar_url')
+                    .in('user_id', userIds);
+                if (profilesErr) throw profilesErr;
+                for (const p of (profiles ?? []) as any[]) {
+                    profileById.set(p.user_id, {
+                        display_name: p.display_name,
+                        avatar_url: p.avatar_url ?? null,
+                    });
+                }
+            }
+
+            const reactionsList = (reactionsRaw ?? []).map((r: any) => ({
+                ...r,
+                profiles: profileById.get(r.user_id) ?? null,
+            }));
+            const commentsList = (commentsRaw ?? []).map((c: any) => ({
+                ...c,
+                profiles: profileById.get(c.user_id) ?? null,
+            }));
 
             // Group reactions by emoji for counts and top_emojis
             const emojiMap = new Map<string, { count: number; last_reacted_at: string }>();
@@ -286,23 +293,22 @@ serve(async (req) => {
                         user_id: user.id,
                         body: trimmed,
                     })
-                    .select(`
-                        id,
-                        user_id,
-                        body,
-                        created_at,
-                        edited_at,
-                        profiles:user_id (
-                            display_name,
-                            avatar_url
-                        )
-                    `)
+                    .select('id, user_id, body, created_at, edited_at')
                     .single();
 
                 if (commentError) throw commentError;
 
+                const { data: authorProfile } = await supabase
+                    .from('profiles')
+                    .select('display_name, avatar_url')
+                    .eq('user_id', user.id)
+                    .maybeSingle();
+
                 return json({
                     ...comment,
+                    profiles: authorProfile
+                        ? { display_name: authorProfile.display_name, avatar_url: authorProfile.avatar_url ?? null }
+                        : null,
                     client_nonce: client_nonce ?? null,
                 }, 201);
             }
@@ -335,21 +341,23 @@ serve(async (req) => {
                     .from('post_comments')
                     .update({ body: trimmed, edited_at: new Date().toISOString() })
                     .eq('id', comment_id)
-                    .select(`
-                        id,
-                        user_id,
-                        body,
-                        created_at,
-                        edited_at,
-                        profiles:user_id (
-                            display_name,
-                            avatar_url
-                        )
-                    `)
+                    .select('id, user_id, body, created_at, edited_at')
                     .single();
 
                 if (updateError) throw updateError;
-                return json(updated);
+
+                const { data: authorProfile } = await supabase
+                    .from('profiles')
+                    .select('display_name, avatar_url')
+                    .eq('user_id', updated.user_id)
+                    .maybeSingle();
+
+                return json({
+                    ...updated,
+                    profiles: authorProfile
+                        ? { display_name: authorProfile.display_name, avatar_url: authorProfile.avatar_url ?? null }
+                        : null,
+                });
             }
 
             // ── DELETE_COMMENT ─────────────────────────────────────────────────

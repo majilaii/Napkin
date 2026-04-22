@@ -8,6 +8,7 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { InlineStars } from './InlineStars';
 import type { FeedEntry } from '@/hooks/feed';
+import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 
 interface Props {
     entry: FeedEntry;
@@ -25,13 +26,28 @@ export function FriendLogCard({ entry, time, sub }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
+    const toggleReaction = useToggleReaction();
 
     const restaurantName = entry.restaurant?.name ?? 'somewhere';
     const rating = entry.rating ?? 0;
     const hasContent = !!entry.content && entry.content.trim().length > 0;
     const photos = entry.photos.slice(0, 3);
 
+    const myReactions = entry.my_reactions ?? [];
+    const likedEmoji = myReactions.includes('❤️')
+        ? '❤️'
+        : myReactions[0] ?? null;
+    const liked = !!likedEmoji;
+
     const onPress = () => router.push({ pathname: '/entry-detail', params: { entryId: entry.id } });
+
+    const handleToggleLike = () => {
+        toggleReaction.mutate({
+            targetType: 'entry',
+            targetId: entry.id,
+            emoji: liked ? likedEmoji! : '❤️',
+        });
+    };
 
     return (
         <Pressable
@@ -148,12 +164,29 @@ export function FriendLogCard({ entry, time, sub }: Props) {
 
             {/* Footer */}
             <View style={{ flexDirection: 'row', gap: 18, marginTop: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Ionicons name="heart-outline" size={13} color={palette.textMuted} />
+                <Pressable
+                    onPress={handleToggleLike}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={liked ? 'Unlike' : 'React'}
+                    style={({ pressed }) => ({
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 4,
+                        opacity: pressed ? 0.55 : 1,
+                    })}
+                >
+                    {liked ? (
+                        <Text style={{ fontSize: 13, lineHeight: 15 }} allowFontScaling={false}>
+                            {likedEmoji}
+                        </Text>
+                    ) : (
+                        <Ionicons name="heart-outline" size={13} color={palette.textMuted} />
+                    )}
                     <Text style={{ fontSize: 11, color: palette.textMuted, fontFamily: 'Manrope_400Regular' }}>
                         {entry.reaction_count || 'React'}
                     </Text>
-                </View>
+                </Pressable>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <Ionicons name="chatbubble-outline" size={12} color={palette.textMuted} />
                     <Text style={{ fontSize: 11, color: palette.textMuted, fontFamily: 'Manrope_400Regular' }}>

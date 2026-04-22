@@ -8,6 +8,7 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -44,6 +45,14 @@ export function TopFour({ picks }: Props) {
                                     { backgroundColor: palette.surfaceContainerHigh },
                                 ]}
                             >
+                                {pick.photo_url ? (
+                                    <Image
+                                        source={{ uri: pick.photo_url }}
+                                        style={StyleSheet.absoluteFill}
+                                        contentFit="cover"
+                                        transition={150}
+                                    />
+                                ) : null}
                                 {/* Rating badge — bottom-left overlay */}
                                 <View style={styles.ratingBadge}>
                                     <Text

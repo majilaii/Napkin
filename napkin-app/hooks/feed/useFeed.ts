@@ -16,6 +16,7 @@ export interface FeedEntry {
     reaction_count: number;
     comment_count: number;
     top_emojis: string[];
+    my_reactions: string[];
     restaurant: { id: string; name: string; photo_url: string | null } | null;
     author: { display_name: string; avatar_url: string | null };
 }
