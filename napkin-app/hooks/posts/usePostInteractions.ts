@@ -130,8 +130,22 @@ export function useToggleReaction() {
         onMutate: async ({ targetType, targetId, emoji }) => {
             const key = queryKeys.postInteractions.all(targetType, targetId);
             await queryClient.cancelQueries({ queryKey: key });
+            await queryClient.cancelQueries({ queryKey: ['tableActivity'] });
+            await queryClient.cancelQueries({ queryKey: ['feed'] });
+
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
             const userId = (await supabase.auth.getUser()).data.user?.id;
+
+            // Snapshot every feed-side cache so we can roll back on error
+            const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
+            queryClient.getQueriesData<any>({ queryKey: ['tableActivity'] })
+                .forEach(([k, data]) => {
+                    if (data) feedSnapshots.push({ key: k, data });
+                });
+            queryClient.getQueriesData<any>({ queryKey: ['feed'] })
+                .forEach(([k, data]) => {
+                    if (data) feedSnapshots.push({ key: k, data });
+                });
 
             if (previous && userId) {
                 const alreadyReacted = previous.reactions.some(
@@ -161,7 +175,45 @@ export function useToggleReaction() {
                 });
             }
 
-            return { previous };
+            // Flips reaction_count + my_reactions on the matching item.
+            // Shared by both cache shapes since they use the same field names.
+            const flipItem = (item: any) => {
+                if (item?.id !== targetId) return item;
+                const currentReactions: string[] = item.my_reactions ?? [];
+                const has = currentReactions.includes(emoji);
+                return {
+                    ...item,
+                    my_reactions: has
+                        ? currentReactions.filter((e) => e !== emoji)
+                        : [...currentReactions, emoji],
+                    reaction_count: has
+                        ? Math.max(0, (item.reaction_count ?? 0) - 1)
+                        : (item.reaction_count ?? 0) + 1,
+                };
+            };
+
+            // tableActivity = useInfiniteQuery → { pages: ActivityItem[][] }
+            queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
+                { queryKey: ['tableActivity'] },
+                (data) => {
+                    if (!data?.pages) return data;
+                    return {
+                        ...data,
+                        pages: data.pages.map((page) => page.map(flipItem)),
+                    };
+                },
+            );
+
+            // feed = useQuery → { entries: FeedEntry[], trending, windowDays }
+            queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
+                { queryKey: ['feed'] },
+                (data) => {
+                    if (!data?.entries) return data;
+                    return { ...data, entries: data.entries.map(flipItem) };
+                },
+            );
+
+            return { previous, feedSnapshots };
         },
 
         onError: (_err, { targetType, targetId }, context) => {
@@ -171,6 +223,12 @@ export function useToggleReaction() {
                     context.previous
                 );
             }
+            // Roll back every feed cache we optimistically touched
+            if (context?.feedSnapshots) {
+                for (const { key, data } of context.feedSnapshots) {
+                    queryClient.setQueryData(key, data);
+                }
+            }
             toast.show("Couldn't react. Try again.");
         },
 
@@ -178,6 +236,9 @@ export function useToggleReaction() {
             queryClient.invalidateQueries({
                 queryKey: queryKeys.postInteractions.all(targetType, targetId),
             });
+            // Refetch every feed-side cache so counts reconcile with server truth
+            queryClient.invalidateQueries({ queryKey: ['tableActivity'] });
+            queryClient.invalidateQueries({ queryKey: ['feed'] });
         },
     });
 }

@@ -8,6 +8,7 @@
  */
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
@@ -77,6 +78,14 @@ function RegularCard({ regular, palette }: { regular: RegularSummary; palette: a
         <View style={[styles.card, { backgroundColor: palette.surfaceContainerLow, borderColor: palette.outlineVariant }]}>
             {/* Photo area */}
             <View style={[styles.cardPhoto, { backgroundColor: palette.surfaceContainerHigh }]}>
+                {regular.photo_url ? (
+                    <Image
+                        source={{ uri: regular.photo_url }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        transition={150}
+                    />
+                ) : null}
                 {/* Visit count pill — top right */}
                 <View style={[styles.visitPill, { backgroundColor: palette.primary }]}>
                     <Text style={styles.visitPillText}>

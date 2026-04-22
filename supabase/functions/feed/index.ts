@@ -155,6 +155,22 @@ serve(async (req) => {
             photosByEntry.set(p.entry_id, list);
         }
 
+        // 4b. Caller's reactions on these entries (powers tap-to-react state)
+        const myReactionsByEntry = new Map<string, string[]>();
+        if (entryIds.length > 0) {
+            const { data: reactRows } = await supabase
+                .from('post_reactions')
+                .select('target_id, emoji')
+                .eq('target_type', 'entry')
+                .eq('user_id', user.id)
+                .in('target_id', entryIds);
+            for (const r of (reactRows ?? []) as { target_id: string; emoji: string }[]) {
+                const list = myReactionsByEntry.get(r.target_id) ?? [];
+                list.push(r.emoji);
+                myReactionsByEntry.set(r.target_id, list);
+            }
+        }
+
         // 5. Shape response
         const shaped = entryList.map((e) => {
             const extraPhotos = photosByEntry.get(e.id) ?? [];
@@ -175,6 +191,7 @@ serve(async (req) => {
                 reaction_count: e.reaction_count ?? 0,
                 comment_count: e.comment_count ?? 0,
                 top_emojis: e.top_emojis ?? [],
+                my_reactions: myReactionsByEntry.get(e.id) ?? [],
                 restaurant: e.restaurants
                     ? {
                         id: e.restaurants.id,

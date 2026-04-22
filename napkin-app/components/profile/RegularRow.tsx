@@ -7,6 +7,7 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -37,7 +38,16 @@ export function RegularRow({ regular }: Props) {
     return (
         <View style={[styles.container, { borderBottomColor: palette.dividerSoft }]}>
             {/* Thumb */}
-            <View style={[styles.thumb, { backgroundColor: palette.surfaceContainerHigh }]} />
+            <View style={[styles.thumb, { backgroundColor: palette.surfaceContainerHigh }]}>
+                {regular.photo_url ? (
+                    <Image
+                        source={{ uri: regular.photo_url }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        transition={150}
+                    />
+                ) : null}
+            </View>
 
             {/* Details */}
             <View style={styles.content}>
@@ -94,6 +104,7 @@ const styles = StyleSheet.create({
         height: 56,
         borderRadius: Radius.sm,
         flexShrink: 0,
+        overflow: 'hidden',
     },
     content: {
         flex: 1,

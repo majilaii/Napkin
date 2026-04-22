@@ -37,6 +37,8 @@ export type UserStats = {
     total_logs: number;
     total_restaurants: number;
     average_rating: number | null;
+    followers_count: number;
+    following_count: number;
 };
 
 export type ProfileListSummary = {

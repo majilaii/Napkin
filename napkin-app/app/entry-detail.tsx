@@ -1489,68 +1489,33 @@ function FloatingActionPill({
     commentCount,
     myReactions,
     palette,
-    tableId,
     onReplyPress,
     bottomInset,
 }: FloatingActionPillProps) {
     const toggleReaction = useToggleReaction();
-    const queryClient = useQueryClient();
-
-    const [localLiked, setLocalLiked] = useState<string | null>(
-        myReactions.includes('❤️') ? '❤️' : myReactions[0] ?? null,
-    );
-    const [countDelta, setCountDelta] = useState(0);
 
     const anchorRef = useRef<View>(null);
     const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
 
-    const liked = !!localLiked;
-    const effectiveCount = Math.max(0, reactionCount + countDelta);
-
-    const invalidateFeed = () => {
-        if (tableId) {
-            queryClient.invalidateQueries({
-                queryKey: ['tableActivity', tableId],
-                exact: false,
-            });
-        }
-    };
+    // Display state is driven entirely by props (postInteractions cache is
+    // optimistically updated by useToggleReaction). No local deltas.
+    const likedEmoji = myReactions.includes('❤️')
+        ? '❤️'
+        : myReactions[0] ?? null;
+    const liked = !!likedEmoji;
+    const effectiveCount = reactionCount;
 
     const applyToggle = (emoji: string) => {
-        const hadThisEmoji = localLiked === emoji;
-        const wasLiked = liked;
-
-        if (hadThisEmoji) {
-            setLocalLiked(null);
-            setCountDelta((d) => d - 1);
-        } else {
-            setLocalLiked(emoji);
-            if (!wasLiked) setCountDelta((d) => d + 1);
+        // If switching from one emoji to another, remove the old one first
+        if (!myReactions.includes(emoji) && likedEmoji && likedEmoji !== emoji) {
+            toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji: likedEmoji });
         }
 
-        if (!hadThisEmoji && wasLiked && localLiked) {
-            toggleReaction.mutate(
-                { targetType: 'entry', targetId: entryId, emoji: localLiked },
-                { onSuccess: invalidateFeed },
-            );
-        }
-
-        toggleReaction.mutate(
-            { targetType: 'entry', targetId: entryId, emoji },
-            {
-                onSuccess: invalidateFeed,
-                onError: () => {
-                    setLocalLiked(wasLiked ? localLiked : null);
-                    setCountDelta((d) =>
-                        hadThisEmoji ? d + 1 : wasLiked ? d : d - 1,
-                    );
-                },
-            },
-        );
+        toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji });
     };
 
     const handleTapLike = () => {
-        applyToggle(liked ? localLiked! : '❤️');
+        applyToggle(liked ? likedEmoji! : '❤️');
     };
 
     const handleLongPress = () => {
@@ -1596,7 +1561,7 @@ function FloatingActionPill({
                     >
                         {liked ? (
                             <Text style={styles.pillEmoji} allowFontScaling={false}>
-                                {localLiked}
+                                {likedEmoji}
                             </Text>
                         ) : (
                             <Ionicons
