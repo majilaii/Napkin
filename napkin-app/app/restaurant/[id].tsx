@@ -51,6 +51,7 @@ import {
     LogVisitSheet,
     CommunityTab,
 } from '@/components/restaurants';
+import { AtlasCrossLinkChip } from '@/components/atlas';
 import { FastLogSheet } from '@/components/logging';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 import type { Visit } from '@/hooks/restaurants/useRestaurantHistory';
@@ -352,6 +353,19 @@ export default function RestaurantScreen() {
                         <RestaurantTabs active={activeTab} onChange={setActiveTab} />
                     ) : null}
 
+                    {/* Atlas cross-link chip — shown when Table has ≥2 logs in this city */}
+                    {restaurant?.city && hasSocialTable ? (
+                        <View style={styles.chipRow}>
+                            <AtlasCrossLinkChip
+                                tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
+                                restaurantId={persistedRestaurantId ?? null}
+                                city={restaurant.city}
+                                visitCount={pageData?.visit_count ?? 1}
+                                palette={palette}
+                            />
+                        </View>
+                    ) : null}
+
                     {/* Error degraded state */}
                     {error ? (
                         <View style={styles.section}>
@@ -595,5 +609,10 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular',
         fontSize: 15,
         lineHeight: 22,
+    },
+    chipRow: {
+        paddingHorizontal: PAGE_H,
+        marginTop: 14,
+        marginBottom: 4,
     },
 });

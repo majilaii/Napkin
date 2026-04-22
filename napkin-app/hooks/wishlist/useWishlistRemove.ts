@@ -37,6 +37,8 @@ export function useWishlistRemove(userId: string | null | undefined) {
             queryClient.invalidateQueries({
                 queryKey: ['wishlist', 'table'],
             });
+            // Invalidate all Atlas city caches — wished_by_viewer may have changed
+            queryClient.invalidateQueries({ queryKey: ['atlas'] });
         },
     });
 }

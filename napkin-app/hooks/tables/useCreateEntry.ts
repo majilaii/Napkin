@@ -67,6 +67,9 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
             }
             if (tableId) {
                 qc.invalidateQueries({ queryKey: queryKeys.tables.activity(tableId) });
+                // Invalidate Atlas — new entry may add a city or update a tile
+                qc.invalidateQueries({ queryKey: queryKeys.atlas.index(tableId) });
+                qc.invalidateQueries({ queryKey: ['atlas', tableId] });
             }
         },
     });

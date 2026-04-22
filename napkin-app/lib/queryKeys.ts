@@ -92,6 +92,12 @@ export const queryKeys = {
         all: (userId: string) => ['feed', userId] as const,
     },
 
+    // Atlas (geographic lens on a Table's dining history)
+    atlas: {
+        index: (tableId: string) => ['atlas', tableId] as const,
+        city: (tableId: string, city: string) => ['atlas', tableId, city] as const,
+    },
+
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
         tableHistory: (
