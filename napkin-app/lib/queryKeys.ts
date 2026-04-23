@@ -43,8 +43,8 @@ export const queryKeys = {
 
     // Post Interactions (reactions + comments on table_nights and entries)
     postInteractions: {
-        all: (targetType: string, targetId: string) =>
-            ['postInteractions', targetType, targetId] as const,
+        all: (targetType: string, targetId: string, scope: 'table' | 'public' = 'table') =>
+            ['postInteractions', targetType, targetId, scope] as const,
     },
 
     // Search (restaurant search — Places + local DB)

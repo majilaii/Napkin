@@ -50,6 +50,7 @@ import {
     FloatingLogButton,
     LogVisitSheet,
     CommunityTab,
+    PublicReviewsSection,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { FastLogSheet } from '@/components/logging';
@@ -395,6 +396,23 @@ export default function RestaurantScreen() {
                                     <ActivityIndicator size="small" color={palette.textMuted} />
                                 </View>
                             )}
+
+                            {/* Public reviews — below Who's-been, above Visits (per AC) */}
+                            {pageData ? (
+                                <PublicReviewsSection
+                                    reviews={pageData.public_reviews ?? []}
+                                    total={pageData.public_reviews_total ?? 0}
+                                    loading={false}
+                                    error={false}
+                                />
+                            ) : isActuallyLoading ? (
+                                <PublicReviewsSection
+                                    reviews={[]}
+                                    total={0}
+                                    loading={true}
+                                    error={false}
+                                />
+                            ) : null}
 
                             {pageData && pageData.visits.length > 0 ? (
                                 <View style={styles.voicesSection}>

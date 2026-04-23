@@ -163,6 +163,7 @@ serve(async (req) => {
                 .select('target_id, emoji')
                 .eq('target_type', 'entry')
                 .eq('user_id', user.id)
+                .eq('scope', 'table')
                 .in('target_id', entryIds);
             for (const r of (reactRows ?? []) as { target_id: string; emoji: string }[]) {
                 const list = myReactionsByEntry.get(r.target_id) ?? [];

@@ -395,6 +395,7 @@ serve(async (req) => {
                     .select('target_id, emoji')
                     .eq('target_type', 'entry')
                     .eq('user_id', user.id)
+                    .eq('scope', 'table')
                     .in('target_id', entryIdsForReactions);
                 for (const r of (myEntryReactions ?? []) as { target_id: string; emoji: string }[]) {
                     const k = targetKey('entry', r.target_id);
@@ -410,6 +411,7 @@ serve(async (req) => {
                     .select('target_id, emoji')
                     .eq('target_type', 'table_night')
                     .eq('user_id', user.id)
+                    .eq('scope', 'table')
                     .in('target_id', nightIdsForReactions);
                 for (const r of (myNightReactions ?? []) as { target_id: string; emoji: string }[]) {
                     const k = targetKey('table_night', r.target_id);

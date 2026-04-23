@@ -51,6 +51,20 @@ export type WhosBeenEntry = {
     visit_count: number;
 };
 
+export type PublicReviewCard = {
+    entry_id: string;
+    user_id: string;
+    display_name: string;
+    username: string | null;
+    avatar_url: string | null;
+    rating: number;
+    note_excerpt: string;
+    photo_url: string | null;
+    created_at: string;
+    public_reaction_count: number;
+    public_reply_count: number;
+};
+
 export type RestaurantPageData = {
     restaurant: RestaurantPageRestaurant | null;
     personal: { average: number | null; visit_count: number };
@@ -63,6 +77,8 @@ export type RestaurantPageData = {
     whos_been: WhosBeenEntry[];
     visits: PageVisit[];
     visit_count: number;
+    public_reviews: PublicReviewCard[];
+    public_reviews_total: number;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

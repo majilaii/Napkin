@@ -1,8 +1,13 @@
 /**
  * Hooks for post interactions (reactions + comments on table_nights and entries).
  *
- * Query key: ['postInteractions', targetType, targetId]
+ * Query key: ['postInteractions', targetType, targetId, scope]
  * Cache shape: { reactions: Reaction[], comments: Comment[], counts: Counts }
+ *
+ * TICKET-021: scope is REQUIRED on every read and mutation.
+ * - scope='table'  → Table-scoped reactions/replies (existing behavior)
+ * - scope='public' → Public restaurant-page reactions/replies (new)
+ * Missing scope returns 400 from the edge function; callers must always pass it.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -11,9 +16,12 @@ import { useToast } from '@/providers/ToastProvider';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+export type Scope = 'table' | 'public';
+
 export interface ReactionProfile {
     display_name: string;
     avatar_url: string | null;
+    username?: string | null;
 }
 
 export interface Reaction {
@@ -27,6 +35,7 @@ export interface Reaction {
 export interface CommentProfile {
     display_name: string;
     avatar_url: string | null;
+    username?: string | null;
 }
 
 export interface Comment {
@@ -68,12 +77,13 @@ export type TargetType = 'table_night' | 'entry';
 
 async function fetchPostInteractions(
     targetType: TargetType,
-    targetId: string
+    targetId: string,
+    scope: Scope,
 ): Promise<PostInteractionsData> {
     const { data: { session } } = await supabase.auth.getSession();
 
     const { data, error } = await supabase.functions.invoke(
-        `post-interactions?target_type=${targetType}&target_id=${targetId}`,
+        `post-interactions?target_type=${targetType}&target_id=${targetId}&scope=${scope}`,
         {
             method: 'GET',
             headers: session?.access_token
@@ -91,11 +101,12 @@ async function fetchPostInteractions(
 
 export function usePostInteractions(
     targetType: TargetType | null | undefined,
-    targetId: string | null | undefined
+    targetId: string | null | undefined,
+    scope: Scope = 'table',
 ) {
     return useQuery<PostInteractionsData, Error>({
-        queryKey: queryKeys.postInteractions.all(targetType!, targetId!),
-        queryFn: () => fetchPostInteractions(targetType!, targetId!),
+        queryKey: queryKeys.postInteractions.all(targetType!, targetId!, scope),
+        queryFn: () => fetchPostInteractions(targetType!, targetId!, scope),
         enabled: !!targetType && !!targetId,
         staleTime: 1000 * 60 * 5,
     });
@@ -107,6 +118,7 @@ interface ToggleReactionInput {
     targetType: TargetType;
     targetId: string;
     emoji: string;
+    scope: Scope;
 }
 
 export function useToggleReaction() {
@@ -114,10 +126,10 @@ export function useToggleReaction() {
     const toast = useToast();
 
     return useMutation({
-        mutationFn: async ({ targetType, targetId, emoji }: ToggleReactionInput) => {
+        mutationFn: async ({ targetType, targetId, emoji, scope }: ToggleReactionInput) => {
             const { data: { session } } = await supabase.auth.getSession();
             const { data, error } = await supabase.functions.invoke('post-interactions', {
-                body: { action: 'react', target_type: targetType, target_id: targetId, emoji },
+                body: { action: 'react', target_type: targetType, target_id: targetId, emoji, scope },
                 headers: session?.access_token
                     ? { Authorization: `Bearer ${session.access_token}` }
                     : undefined,
@@ -127,25 +139,32 @@ export function useToggleReaction() {
             return data?.data as { added: boolean; removed: boolean; reaction: Reaction | null };
         },
 
-        onMutate: async ({ targetType, targetId, emoji }) => {
-            const key = queryKeys.postInteractions.all(targetType, targetId);
+        onMutate: async ({ targetType, targetId, emoji, scope }) => {
+            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
             await queryClient.cancelQueries({ queryKey: key });
-            await queryClient.cancelQueries({ queryKey: ['tableActivity'] });
-            await queryClient.cancelQueries({ queryKey: ['feed'] });
+
+            // Only invalidate feed caches for table-scope reactions (public reactions
+            // don't affect Table feed cards)
+            if (scope === 'table') {
+                await queryClient.cancelQueries({ queryKey: ['tableActivity'] });
+                await queryClient.cancelQueries({ queryKey: ['feed'] });
+            }
 
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
             const userId = (await supabase.auth.getUser()).data.user?.id;
 
             // Snapshot every feed-side cache so we can roll back on error
             const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
-            queryClient.getQueriesData<any>({ queryKey: ['tableActivity'] })
-                .forEach(([k, data]) => {
-                    if (data) feedSnapshots.push({ key: k, data });
-                });
-            queryClient.getQueriesData<any>({ queryKey: ['feed'] })
-                .forEach(([k, data]) => {
-                    if (data) feedSnapshots.push({ key: k, data });
-                });
+            if (scope === 'table') {
+                queryClient.getQueriesData<any>({ queryKey: ['tableActivity'] })
+                    .forEach(([k, data]) => {
+                        if (data) feedSnapshots.push({ key: k, data });
+                    });
+                queryClient.getQueriesData<any>({ queryKey: ['feed'] })
+                    .forEach(([k, data]) => {
+                        if (data) feedSnapshots.push({ key: k, data });
+                    });
+            }
 
             if (previous && userId) {
                 const alreadyReacted = previous.reactions.some(
@@ -175,51 +194,53 @@ export function useToggleReaction() {
                 });
             }
 
-            // Flips reaction_count + my_reactions on the matching item.
-            // Shared by both cache shapes since they use the same field names.
-            const flipItem = (item: any) => {
-                if (item?.id !== targetId) return item;
-                const currentReactions: string[] = item.my_reactions ?? [];
-                const has = currentReactions.includes(emoji);
-                return {
-                    ...item,
-                    my_reactions: has
-                        ? currentReactions.filter((e) => e !== emoji)
-                        : [...currentReactions, emoji],
-                    reaction_count: has
-                        ? Math.max(0, (item.reaction_count ?? 0) - 1)
-                        : (item.reaction_count ?? 0) + 1,
-                };
-            };
-
-            // tableActivity = useInfiniteQuery → { pages: ActivityItem[][] }
-            queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
-                { queryKey: ['tableActivity'] },
-                (data) => {
-                    if (!data?.pages) return data;
+            if (scope === 'table') {
+                // Flips reaction_count + my_reactions on the matching item.
+                // Shared by both cache shapes since they use the same field names.
+                const flipItem = (item: any) => {
+                    if (item?.id !== targetId) return item;
+                    const currentReactions: string[] = item.my_reactions ?? [];
+                    const has = currentReactions.includes(emoji);
                     return {
-                        ...data,
-                        pages: data.pages.map((page) => page.map(flipItem)),
+                        ...item,
+                        my_reactions: has
+                            ? currentReactions.filter((e) => e !== emoji)
+                            : [...currentReactions, emoji],
+                        reaction_count: has
+                            ? Math.max(0, (item.reaction_count ?? 0) - 1)
+                            : (item.reaction_count ?? 0) + 1,
                     };
-                },
-            );
+                };
 
-            // feed = useQuery → { entries: FeedEntry[], trending, windowDays }
-            queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
-                { queryKey: ['feed'] },
-                (data) => {
-                    if (!data?.entries) return data;
-                    return { ...data, entries: data.entries.map(flipItem) };
-                },
-            );
+                // tableActivity = useInfiniteQuery → { pages: ActivityItem[][] }
+                queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
+                    { queryKey: ['tableActivity'] },
+                    (data) => {
+                        if (!data?.pages) return data;
+                        return {
+                            ...data,
+                            pages: data.pages.map((page) => page.map(flipItem)),
+                        };
+                    },
+                );
+
+                // feed = useQuery → { entries: FeedEntry[], trending, windowDays }
+                queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
+                    { queryKey: ['feed'] },
+                    (data) => {
+                        if (!data?.entries) return data;
+                        return { ...data, entries: data.entries.map(flipItem) };
+                    },
+                );
+            }
 
             return { previous, feedSnapshots };
         },
 
-        onError: (_err, { targetType, targetId }, context) => {
+        onError: (_err, { targetType, targetId, scope }, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(
-                    queryKeys.postInteractions.all(targetType, targetId),
+                    queryKeys.postInteractions.all(targetType, targetId, scope),
                     context.previous
                 );
             }
@@ -232,13 +253,15 @@ export function useToggleReaction() {
             toast.show("Couldn't react. Try again.");
         },
 
-        onSuccess: (_data, { targetType, targetId }) => {
+        onSuccess: (_data, { targetType, targetId, scope }) => {
             queryClient.invalidateQueries({
-                queryKey: queryKeys.postInteractions.all(targetType, targetId),
+                queryKey: queryKeys.postInteractions.all(targetType, targetId, scope),
             });
-            // Refetch every feed-side cache so counts reconcile with server truth
-            queryClient.invalidateQueries({ queryKey: ['tableActivity'] });
-            queryClient.invalidateQueries({ queryKey: ['feed'] });
+            if (scope === 'table') {
+                // Refetch every feed-side cache so counts reconcile with server truth
+                queryClient.invalidateQueries({ queryKey: ['tableActivity'] });
+                queryClient.invalidateQueries({ queryKey: ['feed'] });
+            }
         },
     });
 }
@@ -250,13 +273,14 @@ interface AddCommentInput {
     targetId: string;
     body: string;
     clientNonce?: string;
+    scope: Scope;
 }
 
 export function useAddComment() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ targetType, targetId, body, clientNonce }: AddCommentInput) => {
+        mutationFn: async ({ targetType, targetId, body, clientNonce, scope }: AddCommentInput) => {
             const { data: { session } } = await supabase.auth.getSession();
             const { data, error } = await supabase.functions.invoke('post-interactions', {
                 body: {
@@ -264,6 +288,7 @@ export function useAddComment() {
                     target_type: targetType,
                     target_id: targetId,
                     body,
+                    scope,
                     ...(clientNonce ? { client_nonce: clientNonce } : {}),
                 },
                 headers: session?.access_token
@@ -275,8 +300,8 @@ export function useAddComment() {
             return data?.data as Comment & { client_nonce?: string };
         },
 
-        onMutate: async ({ targetType, targetId, body, clientNonce }) => {
-            const key = queryKeys.postInteractions.all(targetType, targetId);
+        onMutate: async ({ targetType, targetId, body, clientNonce, scope }) => {
+            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
             const userId = (await supabase.auth.getUser()).data.user?.id;
@@ -306,8 +331,8 @@ export function useAddComment() {
             return { previous };
         },
 
-        onError: (_err, { targetType, targetId, clientNonce }, context) => {
-            const key = queryKeys.postInteractions.all(targetType, targetId);
+        onError: (_err, { targetType, targetId, clientNonce, scope }, context) => {
+            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
             const current = queryClient.getQueryData<PostInteractionsData>(key);
 
             // Keep the optimistic row visible but mark it as failed so the UI
@@ -332,8 +357,8 @@ export function useAddComment() {
             }
         },
 
-        onSuccess: (serverComment, { targetType, targetId }) => {
-            const key = queryKeys.postInteractions.all(targetType, targetId);
+        onSuccess: (serverComment, { targetType, targetId, scope }) => {
+            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
             const current = queryClient.getQueryData<PostInteractionsData>(key);
 
             if (current) {
@@ -367,16 +392,17 @@ interface EditCommentInput {
     targetId: string;
     commentId: string;
     body: string;
+    scope: Scope;
 }
 
 export function useEditComment() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ commentId, body }: EditCommentInput) => {
+        mutationFn: async ({ commentId, body, scope }: EditCommentInput) => {
             const { data: { session } } = await supabase.auth.getSession();
             const { data, error } = await supabase.functions.invoke('post-interactions', {
-                body: { action: 'edit_comment', comment_id: commentId, body },
+                body: { action: 'edit_comment', comment_id: commentId, body, scope },
                 headers: session?.access_token
                     ? { Authorization: `Bearer ${session.access_token}` }
                     : undefined,
@@ -386,9 +412,9 @@ export function useEditComment() {
             return data?.data as Comment;
         },
 
-        onSuccess: (_data, { targetType, targetId }) => {
+        onSuccess: (_data, { targetType, targetId, scope }) => {
             queryClient.invalidateQueries({
-                queryKey: queryKeys.postInteractions.all(targetType, targetId),
+                queryKey: queryKeys.postInteractions.all(targetType, targetId, scope),
             });
         },
     });
@@ -400,16 +426,17 @@ interface DeleteCommentInput {
     targetType: TargetType;
     targetId: string;
     commentId: string;
+    scope: Scope;
 }
 
 export function useDeleteComment() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ commentId }: DeleteCommentInput) => {
+        mutationFn: async ({ commentId, scope }: DeleteCommentInput) => {
             const { data: { session } } = await supabase.auth.getSession();
             const { data, error } = await supabase.functions.invoke('post-interactions', {
-                body: { action: 'delete_comment', comment_id: commentId },
+                body: { action: 'delete_comment', comment_id: commentId, scope },
                 headers: session?.access_token
                     ? { Authorization: `Bearer ${session.access_token}` }
                     : undefined,
@@ -419,8 +446,8 @@ export function useDeleteComment() {
             return data?.data as { id: string };
         },
 
-        onMutate: async ({ targetType, targetId, commentId }) => {
-            const key = queryKeys.postInteractions.all(targetType, targetId);
+        onMutate: async ({ targetType, targetId, commentId, scope }) => {
+            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
 
@@ -438,18 +465,18 @@ export function useDeleteComment() {
             return { previous };
         },
 
-        onError: (_err, { targetType, targetId }, context) => {
+        onError: (_err, { targetType, targetId, scope }, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(
-                    queryKeys.postInteractions.all(targetType, targetId),
+                    queryKeys.postInteractions.all(targetType, targetId, scope),
                     context.previous
                 );
             }
         },
 
-        onSuccess: (_data, { targetType, targetId }) => {
+        onSuccess: (_data, { targetType, targetId, scope }) => {
             queryClient.invalidateQueries({
-                queryKey: queryKeys.postInteractions.all(targetType, targetId),
+                queryKey: queryKeys.postInteractions.all(targetType, targetId, scope),
             });
         },
     });
@@ -464,12 +491,14 @@ export function useDiscardFailedComment() {
         targetType,
         targetId,
         clientNonce,
+        scope = 'table',
     }: {
         targetType: TargetType;
         targetId: string;
         clientNonce: string;
+        scope?: Scope;
     }) => {
-        const key = queryKeys.postInteractions.all(targetType, targetId);
+        const key = queryKeys.postInteractions.all(targetType, targetId, scope);
         const current = queryClient.getQueryData<PostInteractionsData>(key);
         if (!current) return;
         queryClient.setQueryData<PostInteractionsData>(key, {

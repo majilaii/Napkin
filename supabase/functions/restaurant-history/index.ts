@@ -44,6 +44,20 @@ type WhosBeenEntry = {
     visit_count: number;
 };
 
+type PublicReviewCard = {
+    entry_id: string;
+    user_id: string;
+    display_name: string;
+    username: string | null;
+    avatar_url: string | null;
+    rating: number;
+    note_excerpt: string;
+    photo_url: string | null;
+    created_at: string;
+    public_reaction_count: number;
+    public_reply_count: number;
+};
+
 type RestaurantPageData = {
     restaurant: {
         id: string;
@@ -63,6 +77,8 @@ type RestaurantPageData = {
     whos_been: WhosBeenEntry[];
     visits: Visit[];
     visit_count: number;
+    public_reviews: PublicReviewCard[];
+    public_reviews_total: number;
 };
 
 function json(body: unknown, status = 200): Response {
@@ -433,6 +449,8 @@ serve(async (req) => {
                         whos_been: [],
                         visits: [],
                         visit_count: 0,
+                        public_reviews: [],
+                        public_reviews_total: 0,
                     } as RestaurantPageData,
                 });
             }
@@ -645,6 +663,36 @@ serve(async (req) => {
             // Sort visits by date desc
             visitsRaw.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
+            // ── Public reviews via get_public_reviews() RPC ───────────────────────
+            // Uses is_entry_publicly_eligible() as SSOT (no JS-side predicate
+            // duplication). Filters BEFORE the LIMIT, so private-heavy restaurants
+            // don't return zero results. Returns up to 20; client shows 5 by default.
+            const { data: publicReviewRows, error: publicReviewsErr } = await supabase
+                .rpc('get_public_reviews', {
+                    p_restaurant_id: resolvedRestaurantId,
+                    p_limit: 20,
+                });
+            if (publicReviewsErr) throw publicReviewsErr;
+
+            // total_count is the same across all rows (CROSS JOIN total in the SQL fn).
+            const publicReviewsTotal: number = publicReviewRows?.length > 0
+                ? Number((publicReviewRows[0] as any).total_count ?? 0)
+                : 0;
+
+            const publicReviews: PublicReviewCard[] = ((publicReviewRows ?? []) as any[]).map((row: any) => ({
+                entry_id: row.entry_id,
+                user_id: row.user_id,
+                display_name: row.display_name ?? 'User',
+                username: row.username ?? null,
+                avatar_url: row.avatar_url ?? null,
+                rating: row.rating,
+                note_excerpt: row.content ?? '',
+                photo_url: row.photo_url ?? null,
+                created_at: row.created_at,
+                public_reaction_count: row.public_reaction_count ?? 0,
+                public_reply_count: row.public_reply_count ?? 0,
+            }));
+
             return json({
                 data: {
                     restaurant: restaurantRow,
@@ -653,6 +701,8 @@ serve(async (req) => {
                     whos_been: whosBeen,
                     visits: visitsRaw,
                     visit_count: visitsRaw.length,
+                    public_reviews: publicReviews,
+                    public_reviews_total: publicReviewsTotal,
                 } as RestaurantPageData,
             });
         }

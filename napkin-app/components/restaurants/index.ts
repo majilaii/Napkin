@@ -12,3 +12,5 @@ export { VoiceCard, type Voice } from './VoiceCard';
 export { BottomActionBar } from './BottomActionBar';
 export { FloatingLogButton } from './FloatingLogButton';
 export { CommunityTab } from './CommunityTab';
+export { PublicReviewsSection } from './PublicReviewsSection';
+export { PublicReviewCard } from './PublicReviewCard';

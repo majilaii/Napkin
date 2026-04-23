@@ -82,7 +82,7 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
     const handlePickEmoji = (emoji: string) => {
         setPickerAnchor(null);
         toggleReaction.mutate(
-            { targetType: 'entry', targetId: item.id, emoji },
+            { targetType: 'entry', targetId: item.id, emoji, scope: 'table' },
             {
                 onSuccess: () => {
                     if (tableId) {

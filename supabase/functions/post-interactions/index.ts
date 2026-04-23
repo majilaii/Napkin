@@ -3,7 +3,11 @@
  * Handles reactions and comments on table_nights and entries.
  *
  * POST actions: react, comment, edit_comment, delete_comment
- * GET: ?target_type=X&target_id=Y  →  { reactions, comments, counts }
+ * GET: ?target_type=X&target_id=Y&scope=table|public  →  { reactions, comments, counts }
+ *
+ * TICKET-021: scope is REQUIRED on GET and every mutation. Missing/invalid
+ * scope returns 400. scope='public' validates entry eligibility via
+ * is_entry_publicly_eligible() RPC and rejects ineligible targets with 403.
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
@@ -18,6 +22,10 @@ function isValidEmoji(v: unknown): v is ValidEmoji {
 
 function isValidTargetType(v: unknown): v is 'table_night' | 'entry' {
     return v === 'table_night' || v === 'entry';
+}
+
+function isValidScope(v: unknown): v is 'table' | 'public' {
+    return v === 'table' || v === 'public';
 }
 
 serve(async (req) => {
@@ -103,51 +111,84 @@ serve(async (req) => {
             return data?.status === 'revealed' || data?.status === 'closed';
         }
 
+        // ── Helper: check public eligibility via SQL function ───────────────────
+        async function checkPublicEligibility(entryId: string): Promise<boolean> {
+            const { data, error } = await supabase
+                .rpc('is_entry_publicly_eligible', { p_entry_id: entryId });
+            if (error) throw error;
+            return !!data;
+        }
+
+        // ── Helper: check if entry author allows public replies ─────────────────
+        async function checkAllowPublicReplies(entryId: string): Promise<boolean> {
+            const { data } = await supabase
+                .from('entries')
+                .select('user_id')
+                .eq('id', entryId)
+                .single();
+            if (!data) return false;
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('allow_public_replies')
+                .eq('user_id', data.user_id)
+                .single();
+            return !!profile?.allow_public_replies;
+        }
+
         // ── GET ─────────────────────────────────────────────────────────────────
         if (req.method === 'GET') {
             const url = new URL(req.url);
             const targetType = url.searchParams.get('target_type');
             const targetId   = url.searchParams.get('target_id');
+            const scope      = url.searchParams.get('scope');
 
             if (!isValidTargetType(targetType)) return fail('target_type must be table_night or entry');
             if (!targetId) return fail('target_id is required');
+            if (!isValidScope(scope)) return fail('scope must be table or public');
 
-            // Resolve table_id for membership check
-            const tableId = await resolveTableId(targetType, targetId);
-            if (!tableId) return fail('Target not found', 404);
-            if (!(await validateTableMember(tableId))) {
-                return fail('Not a member of this table', 403);
-            }
-
-            // If unrevealed round, return empty (no leaked data)
-            if (targetType === 'table_night') {
-                const isRevealed = await validateRoundRevealed(targetId);
-                if (!isRevealed) {
-                    return json({
-                        reactions: [],
-                        comments: [],
-                        counts: { reactions: 0, comments: 0, top_emojis: [] },
-                    });
+            if (scope === 'public') {
+                // Public scope: validate entry type and eligibility
+                if (targetType !== 'entry') return fail('scope=public is only valid for entry targets');
+                const eligible = await checkPublicEligibility(targetId);
+                if (!eligible) return fail('not_public', 403);
+            } else {
+                // Table scope: validate membership
+                const tableId = await resolveTableId(targetType, targetId);
+                if (!tableId) return fail('Target not found', 404);
+                if (!(await validateTableMember(tableId))) {
+                    return fail('Not a member of this table', 403);
+                }
+                // If unrevealed round, return empty (no leaked data)
+                if (targetType === 'table_night') {
+                    const isRevealed = await validateRoundRevealed(targetId);
+                    if (!isRevealed) {
+                        return json({
+                            reactions: [],
+                            comments: [],
+                            counts: { reactions: 0, comments: 0, top_emojis: [] },
+                        });
+                    }
                 }
             }
 
-            // Fetch reactions (no PostgREST embedding — the FK lives on auth.users,
-            // not profiles, so the join can't be auto-resolved)
+            // Fetch reactions filtered by scope
             const { data: reactionsRaw, error: reactionsError } = await supabase
                 .from('post_reactions')
                 .select('id, user_id, emoji, created_at')
                 .eq('target_type', targetType)
                 .eq('target_id', targetId)
+                .eq('scope', scope)
                 .order('created_at', { ascending: true });
 
             if (reactionsError) throw reactionsError;
 
-            // Fetch comments
+            // Fetch comments filtered by scope
             const { data: commentsRaw, error: commentsError } = await supabase
                 .from('post_comments')
                 .select('id, user_id, body, created_at, edited_at')
                 .eq('target_type', targetType)
                 .eq('target_id', targetId)
+                .eq('scope', scope)
                 .order('created_at', { ascending: true });
 
             if (commentsError) throw commentsError;
@@ -158,17 +199,18 @@ serve(async (req) => {
                 ...(commentsRaw  ?? []).map((c: any) => c.user_id as string),
             ]));
 
-            const profileById = new Map<string, { display_name: string; avatar_url: string | null }>();
+            const profileById = new Map<string, { display_name: string; avatar_url: string | null; username?: string | null }>();
             if (userIds.length > 0) {
                 const { data: profiles, error: profilesErr } = await supabase
                     .from('profiles')
-                    .select('user_id, display_name, avatar_url')
+                    .select('user_id, display_name, avatar_url, username')
                     .in('user_id', userIds);
                 if (profilesErr) throw profilesErr;
                 for (const p of (profiles ?? []) as any[]) {
                     profileById.set(p.user_id, {
                         display_name: p.display_name,
                         avatar_url: p.avatar_url ?? null,
+                        username: p.username ?? null,
                     });
                 }
             }
@@ -216,21 +258,31 @@ serve(async (req) => {
 
             // ── REACT (toggle) ─────────────────────────────────────────────────
             if (action === 'react') {
-                const { target_type, target_id, emoji } = body;
+                const { target_type, target_id, emoji, scope } = body;
 
                 if (!isValidTargetType(target_type)) return fail('target_type must be table_night or entry');
                 if (!target_id) return fail('target_id is required');
                 if (!isValidEmoji(emoji)) return fail('emoji must be one of: 🔥 😋 ❤️ 💯 👀');
+                if (!isValidScope(scope)) return fail('scope must be table or public');
 
-                const tableId = await resolveTableId(target_type, target_id);
-                if (!tableId) return fail('Target not found', 404);
-                if (!(await validateTableMember(tableId))) {
-                    return fail('Not a member of this table', 403);
-                }
+                let insertTableId: string | null = null;
 
-                if (target_type === 'table_night') {
-                    const isRevealed = await validateRoundRevealed(target_id);
-                    if (!isRevealed) return fail('Reactions are only allowed after reveal', 400);
+                if (scope === 'public') {
+                    if (target_type !== 'entry') return fail('scope=public is only valid for entry targets');
+                    const eligible = await checkPublicEligibility(target_id);
+                    if (!eligible) return fail('not_public', 403);
+                } else {
+                    const tableId = await resolveTableId(target_type, target_id);
+                    if (!tableId) return fail('Target not found', 404);
+                    if (!(await validateTableMember(tableId))) {
+                        return fail('Not a member of this table', 403);
+                    }
+                    insertTableId = tableId;
+
+                    if (target_type === 'table_night') {
+                        const isRevealed = await validateRoundRevealed(target_id);
+                        if (!isRevealed) return fail('Reactions are only allowed after reveal', 400);
+                    }
                 }
 
                 // Toggle: delete if exists, insert if missing
@@ -241,6 +293,7 @@ serve(async (req) => {
                     .eq('target_id', target_id)
                     .eq('user_id', user.id)
                     .eq('emoji', emoji)
+                    .eq('scope', scope)
                     .maybeSingle();
 
                 if (existing) {
@@ -251,9 +304,20 @@ serve(async (req) => {
 
                     return json({ added: false, removed: true, reaction: null });
                 } else {
+                    const insertPayload: any = {
+                        target_type,
+                        target_id,
+                        user_id: user.id,
+                        emoji,
+                        scope,
+                    };
+                    // table_id is denormalized by trigger for table scope; pass it for public too
+                    // (the trigger handles it, but we pass it if known)
+                    if (insertTableId) insertPayload.table_id = insertTableId;
+
                     const { data: reaction, error: insertError } = await supabase
                         .from('post_reactions')
-                        .insert({ target_type, target_id, user_id: user.id, emoji })
+                        .insert(insertPayload)
                         .select()
                         .single();
 
@@ -264,7 +328,7 @@ serve(async (req) => {
 
             // ── COMMENT ────────────────────────────────────────────────────────
             if (action === 'comment') {
-                const { target_type, target_id, body: commentBody, client_nonce } = body;
+                const { target_type, target_id, body: commentBody, client_nonce, scope } = body;
 
                 if (!isValidTargetType(target_type)) return fail('target_type must be table_night or entry');
                 if (!target_id) return fail('target_id is required');
@@ -272,27 +336,42 @@ serve(async (req) => {
                 const trimmed = commentBody.trim();
                 if (trimmed.length === 0) return fail('body must not be empty');
                 if (trimmed.length > 2000) return fail('body must be 2000 characters or fewer');
+                if (!isValidScope(scope)) return fail('scope must be table or public');
 
-                const tableId = await resolveTableId(target_type, target_id);
-                if (!tableId) return fail('Target not found', 404);
-                if (!(await validateTableMember(tableId))) {
-                    return fail('Not a member of this table', 403);
+                let insertTableId: string | null = null;
+
+                if (scope === 'public') {
+                    if (target_type !== 'entry') return fail('scope=public is only valid for entry targets');
+                    const eligible = await checkPublicEligibility(target_id);
+                    if (!eligible) return fail('not_public', 403);
+                    const allowReplies = await checkAllowPublicReplies(target_id);
+                    if (!allowReplies) return fail('replies_disabled', 403);
+                } else {
+                    const tableId = await resolveTableId(target_type, target_id);
+                    if (!tableId) return fail('Target not found', 404);
+                    if (!(await validateTableMember(tableId))) {
+                        return fail('Not a member of this table', 403);
+                    }
+                    insertTableId = tableId;
+
+                    if (target_type === 'table_night') {
+                        const isRevealed = await validateRoundRevealed(target_id);
+                        if (!isRevealed) return fail('Comments are only allowed after reveal', 400);
+                    }
                 }
 
-                if (target_type === 'table_night') {
-                    const isRevealed = await validateRoundRevealed(target_id);
-                    if (!isRevealed) return fail('Comments are only allowed after reveal', 400);
-                }
+                const insertPayload: any = {
+                    target_type,
+                    target_id,
+                    user_id: user.id,
+                    body: trimmed,
+                    scope,
+                };
+                if (insertTableId) insertPayload.table_id = insertTableId;
 
                 const { data: comment, error: commentError } = await supabase
                     .from('post_comments')
-                    .insert({
-                        target_type,
-                        target_id,
-                        table_id: tableId,
-                        user_id: user.id,
-                        body: trimmed,
-                    })
+                    .insert(insertPayload)
                     .select('id, user_id, body, created_at, edited_at')
                     .single();
 
@@ -300,14 +379,18 @@ serve(async (req) => {
 
                 const { data: authorProfile } = await supabase
                     .from('profiles')
-                    .select('display_name, avatar_url')
+                    .select('display_name, avatar_url, username')
                     .eq('user_id', user.id)
                     .maybeSingle();
 
                 return json({
                     ...comment,
                     profiles: authorProfile
-                        ? { display_name: authorProfile.display_name, avatar_url: authorProfile.avatar_url ?? null }
+                        ? {
+                            display_name: authorProfile.display_name,
+                            avatar_url: authorProfile.avatar_url ?? null,
+                            username: (authorProfile as any).username ?? null,
+                          }
                         : null,
                     client_nonce: client_nonce ?? null,
                 }, 201);
@@ -315,7 +398,9 @@ serve(async (req) => {
 
             // ── EDIT_COMMENT ───────────────────────────────────────────────────
             if (action === 'edit_comment') {
-                const { comment_id, body: newBody } = body;
+                const { comment_id, body: newBody, scope } = body;
+
+                if (!isValidScope(scope)) return fail('scope must be table or public');
 
                 if (!comment_id) return fail('comment_id is required');
                 if (!newBody || typeof newBody !== 'string') return fail('body is required');
@@ -348,21 +433,27 @@ serve(async (req) => {
 
                 const { data: authorProfile } = await supabase
                     .from('profiles')
-                    .select('display_name, avatar_url')
+                    .select('display_name, avatar_url, username')
                     .eq('user_id', updated.user_id)
                     .maybeSingle();
 
                 return json({
                     ...updated,
                     profiles: authorProfile
-                        ? { display_name: authorProfile.display_name, avatar_url: authorProfile.avatar_url ?? null }
+                        ? {
+                            display_name: authorProfile.display_name,
+                            avatar_url: authorProfile.avatar_url ?? null,
+                            username: (authorProfile as any).username ?? null,
+                          }
                         : null,
                 });
             }
 
             // ── DELETE_COMMENT ─────────────────────────────────────────────────
             if (action === 'delete_comment') {
-                const { comment_id } = body;
+                const { comment_id, scope } = body;
+
+                if (!isValidScope(scope)) return fail('scope must be table or public');
 
                 if (!comment_id) return fail('comment_id is required');
 

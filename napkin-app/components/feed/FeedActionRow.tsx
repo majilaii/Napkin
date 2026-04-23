@@ -69,10 +69,10 @@ export function FeedActionRow({
     const applyToggle = (emoji: string) => {
         // If switching from one emoji to another, remove the old one first
         if (!myReactions.includes(emoji) && likedEmoji && likedEmoji !== emoji) {
-            toggleReaction.mutate({ targetType, targetId, emoji: likedEmoji });
+            toggleReaction.mutate({ targetType, targetId, emoji: likedEmoji, scope: 'table' });
         }
 
-        toggleReaction.mutate({ targetType, targetId, emoji });
+        toggleReaction.mutate({ targetType, targetId, emoji, scope: 'table' });
     };
 
     const handleTapLike = () => {

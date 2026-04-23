@@ -18,14 +18,17 @@ import {
     useAddComment,
     useDiscardFailedComment,
 } from '@/hooks/posts/usePostInteractions';
-import type { Comment, TargetType } from '@/hooks/posts/usePostInteractions';
+import type { Comment, TargetType, Scope } from '@/hooks/posts/usePostInteractions';
 import { CommentRow } from './CommentRow';
 
 interface CommentThreadProps {
     targetType: TargetType;
     targetId: string;
     comments: Comment[];
+    scope?: Scope;
     autoFocusComposer?: boolean;
+    /** When true, the composer is hidden and a muted line is shown instead. */
+    repliesDisabled?: boolean;
 }
 
 const MAX_CHARS = 2000;
@@ -35,7 +38,9 @@ export function CommentThread({
     targetType,
     targetId,
     comments,
+    scope = 'table',
     autoFocusComposer,
+    repliesDisabled = false,
 }: CommentThreadProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -47,12 +52,13 @@ export function CommentThread({
     const handleRetry = (failed: Comment) => {
         const nonce = failed.client_nonce;
         if (!nonce) return;
-        discardFailed({ targetType, targetId, clientNonce: nonce });
+        discardFailed({ targetType, targetId, clientNonce: nonce, scope });
         addComment.mutate({
             targetType,
             targetId,
             body: failed.body,
             clientNonce: nonce,
+            scope,
         });
     };
 
@@ -62,6 +68,7 @@ export function CommentThread({
             targetType,
             targetId,
             clientNonce: failed.client_nonce,
+            scope,
         });
     };
 
@@ -82,7 +89,7 @@ export function CommentThread({
             .toString(36)
             .slice(2)}`;
         addComment.mutate(
-            { targetType, targetId, body: trimmed, clientNonce: nonce },
+            { targetType, targetId, body: trimmed, clientNonce: nonce, scope },
             { onSuccess: () => setBody('') },
         );
         setBody('');
@@ -113,6 +120,7 @@ export function CommentThread({
                                 comment={comment}
                                 targetType={targetType}
                                 targetId={targetId}
+                                scope={scope}
                                 onRetry={
                                     comment.failed
                                         ? () => handleRetry(comment)
@@ -129,76 +137,82 @@ export function CommentThread({
                 </View>
             )}
 
-            <View
-                style={[
-                    styles.composer,
-                    {
-                        backgroundColor: palette.surfaceContainerLow,
-                        borderColor: palette.outlineVariant,
-                    },
-                ]}
-            >
-                <TextInput
-                    ref={inputRef}
-                    value={body}
-                    onChangeText={(t) => {
-                        if (t.length <= MAX_CHARS) setBody(t);
-                    }}
-                    placeholder="Say something…"
-                    placeholderTextColor={palette.textMuted}
-                    style={[styles.input, { color: palette.text }]}
-                    multiline
-                    maxLength={MAX_CHARS}
-                    returnKeyType="default"
-                    blurOnSubmit={false}
-                    accessibilityLabel="Reply composer"
-                />
-
-                {showCounter && (
-                    <Text
-                        style={[
-                            styles.counter,
-                            {
-                                color:
-                                    body.length >= MAX_CHARS
-                                        ? palette.error
-                                        : palette.textMuted,
-                            },
-                        ]}
-                    >
-                        {body.length}/{MAX_CHARS}
-                    </Text>
-                )}
-
-                <Pressable
-                    onPress={handleSend}
-                    disabled={!canSend}
-                    accessibilityLabel="Send reply"
-                    accessibilityRole="button"
-                    style={({ pressed }) => [
-                        styles.sendBtn,
+            {repliesDisabled ? (
+                <Text style={[styles.repliesOff, { color: palette.textMuted }]}>
+                    The author has replies turned off.
+                </Text>
+            ) : (
+                <View
+                    style={[
+                        styles.composer,
                         {
-                            backgroundColor: canSend
-                                ? palette.primary
-                                : palette.surfaceContainerHigh,
-                            opacity: pressed ? 0.8 : 1,
+                            backgroundColor: palette.surfaceContainerLow,
+                            borderColor: palette.outlineVariant,
                         },
                     ]}
                 >
-                    <Text
-                        style={[
-                            styles.sendArrow,
+                    <TextInput
+                        ref={inputRef}
+                        value={body}
+                        onChangeText={(t) => {
+                            if (t.length <= MAX_CHARS) setBody(t);
+                        }}
+                        placeholder="Say something…"
+                        placeholderTextColor={palette.textMuted}
+                        style={[styles.input, { color: palette.text }]}
+                        multiline
+                        maxLength={MAX_CHARS}
+                        returnKeyType="default"
+                        blurOnSubmit={false}
+                        accessibilityLabel="Reply composer"
+                    />
+
+                    {showCounter && (
+                        <Text
+                            style={[
+                                styles.counter,
+                                {
+                                    color:
+                                        body.length >= MAX_CHARS
+                                            ? palette.error
+                                            : palette.textMuted,
+                                },
+                            ]}
+                        >
+                            {body.length}/{MAX_CHARS}
+                        </Text>
+                    )}
+
+                    <Pressable
+                        onPress={handleSend}
+                        disabled={!canSend}
+                        accessibilityLabel="Send reply"
+                        accessibilityRole="button"
+                        style={({ pressed }) => [
+                            styles.sendBtn,
                             {
-                                color: canSend
-                                    ? palette.background
-                                    : palette.textMuted,
+                                backgroundColor: canSend
+                                    ? palette.primary
+                                    : palette.surfaceContainerHigh,
+                                opacity: pressed ? 0.8 : 1,
                             },
                         ]}
                     >
-                        ↑
-                    </Text>
-                </Pressable>
-            </View>
+                        <Text
+                            style={[
+                                styles.sendArrow,
+                                {
+                                    color: canSend
+                                        ? palette.background
+                                        : palette.textMuted,
+                                },
+                            ]}
+                        >
+                            ↑
+                        </Text>
+                    </Pressable>
+                </View>
+            )}
         </View>
     );
 }
@@ -212,6 +226,12 @@ const styles = StyleSheet.create({
         fontSize: 13,
         textAlign: 'center',
         paddingVertical: Spacing.md,
+    },
+    repliesOff: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        textAlign: 'center',
+        paddingVertical: Spacing.sm,
     },
     composer: {
         flexDirection: 'row',
