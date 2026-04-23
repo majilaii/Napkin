@@ -23,9 +23,12 @@ import { useRouter } from 'expo-router';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { PublicReviewCard as PublicReviewCardType } from '@/hooks/restaurants/useRestaurantPage';
+import { CalibrationChip } from '@/components/profile/CalibrationChip';
 
 interface PublicReviewCardProps {
     review: PublicReviewCardType;
+    /** The authenticated viewer's user_id — used to suppress the chip on own cards. */
+    viewerUserId?: string | null;
 }
 
 function formatRelativeDate(dateStr: string): string {
@@ -49,7 +52,7 @@ function initials(name: string): string {
         .toUpperCase();
 }
 
-export function PublicReviewCard({ review }: PublicReviewCardProps) {
+export function PublicReviewCard({ review, viewerUserId }: PublicReviewCardProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -72,6 +75,8 @@ export function PublicReviewCard({ review }: PublicReviewCardProps) {
 
     const avatarInitials = initials(review.display_name);
     const relDate = formatRelativeDate(review.created_at);
+    // Show calibration chip iff viewer is not the card author
+    const showCalibration = review.user_id !== viewerUserId;
 
     return (
         <Pressable
@@ -120,14 +125,23 @@ export function PublicReviewCard({ review }: PublicReviewCardProps) {
                         >
                             {review.display_name}
                         </Text>
-                        {review.username ? (
-                            <Text
-                                style={[styles.username, { color: palette.textMuted }]}
-                                numberOfLines={1}
-                            >
-                                @{review.username}
-                            </Text>
-                        ) : null}
+                        {/* @username row — chip right-aligned on the same row, wraps below if too narrow */}
+                        <View style={styles.usernameRow}>
+                            {review.username ? (
+                                <Text
+                                    style={[styles.username, { color: palette.textMuted }]}
+                                    numberOfLines={1}
+                                >
+                                    @{review.username}
+                                </Text>
+                            ) : null}
+                            {showCalibration && review.calibration != null && (
+                                <CalibrationChip
+                                    calibration={review.calibration}
+                                    form="compact"
+                                />
+                            )}
+                        </View>
                     </View>
                 </Pressable>
 
@@ -217,6 +231,12 @@ const styles = StyleSheet.create({
     },
     nameStack: {
         flex: 1,
+    },
+    usernameRow: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        flexWrap: 'wrap',
+        gap: 6,
     },
     displayName: {
         fontFamily: 'Newsreader_400Regular_Italic',

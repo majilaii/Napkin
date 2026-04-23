@@ -16,6 +16,13 @@ import { queryKeys } from '@/lib/queryKeys';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+export type Calibration = {
+    match_pct: number;    // 0–100, integer
+    mae: number;          // mean absolute error, 0–5 scale
+    overlap_n: number;    // count of shared rated restaurants
+    fallback: boolean;    // true iff MAE-fallback fired (Pearson was NULL)
+};
+
 export type ViewerRelationship =
     | 'self'
     | 'tables_in_common'
@@ -112,6 +119,10 @@ export type UserProfileData = {
     /** True if the viewing user is following the target. False for self, false for unauthenticated. */
     is_following_viewer: boolean;
     viewer_target_relationship: ViewerRelationship;
+    /** Taste calibration — present only when viewer_target_relationship === 'public_only'. */
+    calibration?: Calibration | null;
+    /** Viewer's own rated-entry count — present only when viewer_target_relationship === 'public_only'. */
+    viewer_rated_entry_count?: number;
 };
 
 export type UserProfileResult = {

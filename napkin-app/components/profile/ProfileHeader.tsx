@@ -17,11 +17,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type {
+    Calibration,
     UserProfileRow,
     UserStats,
     ViewerRelationship,
 } from '@/hooks/users/useUserProfile';
 import { FollowButton } from './FollowButton';
+import { CalibrationChip } from './CalibrationChip';
+import { RateMoreToUnlockPrompt } from './RateMoreToUnlockPrompt';
 
 interface Props {
     profile: UserProfileRow;
@@ -30,6 +33,18 @@ interface Props {
     stats?: UserStats | null;
     /** Whether the viewing user is currently following the target. Used for the Follow button. */
     isFollowingViewer?: boolean;
+    /**
+     * Calibration result from user-profile endpoint.
+     * undefined = still loading, null = hidden (insufficient overlap / Tablemate / error).
+     * Only passed when relationship === 'public_only'.
+     */
+    calibration?: Calibration | null;
+    /**
+     * Viewer's own rated-entry count — used to decide whether to show the
+     * "rate more" prompt instead of the calibration chip.
+     * Only meaningful when relationship === 'public_only'.
+     */
+    viewerRatedEntryCount?: number;
 }
 
 function initials(displayName: string): string {
@@ -38,7 +53,7 @@ function initials(displayName: string): string {
     return displayName.slice(0, 1).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowingViewer = false }: Props) {
+export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowingViewer = false, calibration, viewerRatedEntryCount }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -106,6 +121,19 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                     />
                 )}
             </View>
+
+            {/* Calibration chip row — only for public_only relationship, never self */}
+            {relationship === 'public_only' && (
+                <View style={[styles.calibrationRow, { paddingHorizontal: 0 }]}>
+                    {/* Show chip when calibration is defined and non-null, or loading (undefined) */}
+                    {/* Show "rate more" prompt when viewer's count is below threshold */}
+                    {viewerRatedEntryCount !== undefined && viewerRatedEntryCount < 5 ? (
+                        <RateMoreToUnlockPrompt viewerRatedEntryCount={viewerRatedEntryCount} />
+                    ) : (
+                        <CalibrationChip calibration={calibration} form="full" />
+                    )}
+                </View>
+            )}
 
             <View style={styles.numbers}>
                 <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
@@ -207,6 +235,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginTop: -2,
+    },
+    calibrationRow: {
+        marginTop: Spacing.sm,
+        paddingHorizontal: 0,
     },
     numbers: {
         marginTop: 14,

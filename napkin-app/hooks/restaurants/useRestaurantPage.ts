@@ -1,9 +1,9 @@
 /**
- * useRestaurantPage — aggregated hook for the restaurant detail page.
+ * useRestaurantPage — aggregated hook for the restaurant detail page (v3).
  *
  * Calls restaurant-history?action=page, which returns the full page data
  * in one round-trip: restaurant row, personal avg, Table chip, Who's-been,
- * and visits feed (scoped to the viewer's Tables).
+ * visits feed, distributions, photos, place_details, footnote fields.
  *
  * Also exports `restaurantFromPlace` — synthesises the restaurant shape
  * from a Places search payload, used for ghost restaurants until the server
@@ -41,6 +41,8 @@ export type PageVisit = {
     date: string;
     user_display_names: string[];
     note?: string | null;
+    is_self?: boolean;
+    is_tablemate?: boolean;
 };
 
 export type WhosBeenEntry = {
@@ -49,6 +51,13 @@ export type WhosBeenEntry = {
     avatar_url: string | null;
     personal_average: number;
     visit_count: number;
+};
+
+export type Calibration = {
+    match_pct: number;    // 0–100, integer
+    mae: number;          // mean absolute error, 0–5 scale
+    overlap_n: number;    // count of shared rated restaurants
+    fallback: boolean;    // true iff MAE-fallback fired (Pearson was NULL)
 };
 
 export type PublicReviewCard = {
@@ -63,47 +72,68 @@ export type PublicReviewCard = {
     created_at: string;
     public_reaction_count: number;
     public_reply_count: number;
+    calibration: Calibration | null;
+};
+
+export type PhotoItem = {
+    url: string;
+    author_display_name: string;
+    author_handle: string;
+    is_tablemate: boolean;
+    is_self: boolean;
+    entry_id: string;
+};
+
+export type PlaceDetails = {
+    hours_today: string | null;
+    open_now: boolean | null;
+    hours_week: Array<{ day_range: string; range: string }> | null;
+    website: string | null;
+    phone: string | null;
+    menu_url: string | null;
+    lat: number | null;
+    lng: number | null;
 };
 
 export type RestaurantPageData = {
     restaurant: RestaurantPageRestaurant | null;
-    personal: { average: number | null; visit_count: number };
+    personal: {
+        average: number | null;
+        visit_count: number;
+        last_visit?: { date: string; rating: number | null } | null;
+    };
     table_chip: {
         table_id: string;
         table_name: string;
         average: number;
         visit_count: number;
+        member_count?: number;
     } | null;
     whos_been: WhosBeenEntry[];
     visits: PageVisit[];
     visit_count: number;
     public_reviews: PublicReviewCard[];
     public_reviews_total: number;
+    // v3 additions
+    distributions: {
+        you: number[];          // [1★ count, 2★, 3★, 4★, 5★]
+        your_table: number[] | null;
+        napkin: number[];
+    };
+    napkin_aggregate: {
+        average: number | null;
+        count: number;
+    };
+    photos: {
+        from_your_table: PhotoItem[];
+        from_others: PhotoItem[];
+    };
+    place_details: PlaceDetails;
+    tables_count_with_logs: number;
+    first_logged_at_by_your_table: string | null;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function getAuthHeaders(): Promise<Record<string, string> | undefined> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token
-        ? { Authorization: `Bearer ${session.access_token}` }
-        : undefined;
-}
-
-async function unwrapInvokeError(error: unknown): Promise<Error> {
-    const ctx = (error as { context?: Response }).context;
-    if (ctx && typeof ctx.json === 'function') {
-        try {
-            const body = await ctx.json();
-            if (body?.error) return new Error(body.error);
-        } catch {
-            // ignore
-        }
-    }
-    return error instanceof Error ? error : new Error(String(error));
-}
 
 async function fetchRestaurantPage(
     restaurantId: string,
@@ -131,13 +161,31 @@ async function fetchRestaurantPage(
 
     const json = await res.json();
     if (json.error) throw new Error(json.error);
-    return json.data;
+
+    // Back-fill v3 fields for older edge function responses (graceful degradation)
+    const data = json.data as RestaurantPageData;
+    if (!data.distributions) {
+        data.distributions = { you: [0,0,0,0,0], your_table: null, napkin: [0,0,0,0,0] };
+    }
+    if (!data.napkin_aggregate) {
+        data.napkin_aggregate = { average: null, count: 0 };
+    }
+    if (!data.photos) {
+        data.photos = { from_your_table: [], from_others: [] };
+    }
+    if (!data.place_details) {
+        data.place_details = { hours_today: null, open_now: null, hours_week: null, website: null, phone: null, menu_url: null, lat: null, lng: null };
+    }
+    if (data.tables_count_with_logs == null) data.tables_count_with_logs = 0;
+    if (data.first_logged_at_by_your_table == null) data.first_logged_at_by_your_table = null;
+
+    return data;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 /**
- * Fetches full restaurant page data.
+ * Fetches full restaurant page data (v3).
  *
  * @param restaurantId  Napkin UUID or Google Place ID (external_id). Required.
  * @param tableId       Optional — biases the Table chip to this table.

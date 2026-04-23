@@ -28,6 +28,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -786,6 +787,29 @@ serve(async (req) => {
                 tablePreviews = await fetchTablePreviews(supabase, targetId, sharedTableIds, 'other');
             }
 
+            // 7. Calibration — only for public_only relationship (not public_and_tables,
+            //    which indicates Ring 1 applies; not self; not tables_in_common).
+            //    Attach the viewer's own rated-entry count so the client can decide
+            //    whether to show the chip or the "rate more" prompt.
+            let calibration: Calibration | null = null;
+            let viewerRatedEntryCount = 0;
+
+            if (relationship === 'public_only') {
+                // Fetch viewer's own rated-entry count (all privacy levels — calibration
+                // is a viewer-side utility; privacy controls what they share, not consume).
+                const { count: ratedCount } = await supabase
+                    .from('entries')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('user_id', callerId)
+                    .not('rating', 'is', null)
+                    .not('restaurant_id', 'is', null);
+                viewerRatedEntryCount = ratedCount ?? 0;
+
+                // Compute calibration (tablemate check is inside the helper as defense-in-depth)
+                const calMap = await computeCalibrations(supabase, callerId, [targetId]);
+                calibration = calMap.get(targetId) ?? null;
+            }
+
             return json({
                 data: {
                     profile: targetProfile,
@@ -798,6 +822,8 @@ serve(async (req) => {
                     is_self: false,
                     is_following_viewer: isFollowingViewer,
                     viewer_target_relationship: relationship,
+                    calibration,
+                    viewer_rated_entry_count: viewerRatedEntryCount,
                 },
             });
         }

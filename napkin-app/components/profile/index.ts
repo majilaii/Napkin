@@ -12,3 +12,5 @@ export { TablesInCommonSection } from './TablesInCommonSection';
 export { TablePreviewCard } from './TablePreviewCard';
 export { NotFoundState } from './NotFoundState';
 export { FollowButton } from './FollowButton';
+export { CalibrationChip } from './CalibrationChip';
+export { RateMoreToUnlockPrompt } from './RateMoreToUnlockPrompt';

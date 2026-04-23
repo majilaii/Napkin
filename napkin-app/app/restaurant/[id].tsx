@@ -1,17 +1,21 @@
 /**
- * Restaurant detail page — V1 "Dossier" (Heirloom UI kit).
+ * Restaurant detail page — V3 "Signal strip + content tabs".
  *
  * Supports three arrival modes:
- *   1. Persisted restaurant — id is a Napkin UUID (arrives from feed / round / entry detail)
+ *   1. Persisted restaurant — id is a Napkin UUID
  *   2. Ghost restaurant — id is a Google Place ID AND placeId param is present
- *      (arrives from search via TICKET-017)
- *   3. Ghost deep-link — only placeId param present (cold path; shows spinner)
+ *   3. Ghost deep-link — only placeId param present
  *
  * Route: /restaurant/[id]?tableId=...&placeId=...&placePayload=...
  *
- * `tableId`     — optional; biases the Table chip in the numbers band
- * `placeId`     — present for ghost arrivals; tells the screen to treat id as external_id
- * `placePayload` — JSON-stringified Places result row from search (for immediate hero render)
+ * Layout (top → bottom):
+ *   1. Hero (photo, name, address, back, bookmark)
+ *   2. Signal strip (You / Your table / Napkin / Google)
+ *   3. Distribution histogram (tier-switchable)
+ *   4. Tabs: Visits / Photos / Info
+ *   5. Tab content
+ *
+ * Signal strip + tabs persist on all three tabs.
  */
 import React, { useState, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -27,7 +31,7 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
@@ -40,22 +44,27 @@ import {
     useRestaurantPage,
     restaurantFromPlace,
     type RestaurantPageRestaurant,
+    type PageVisit,
 } from '@/hooks/restaurants/useRestaurantPage';
 import {
     RestaurantHero,
-    RestaurantTabs,
-    type RestaurantTab,
-    TableRatingBlock,
-    VoiceCard,
+    RestaurantTabsV3,
+    type RestaurantTabV3,
     FloatingLogButton,
     LogVisitSheet,
-    CommunityTab,
+    SignalStrip,
+    type SignalTier,
+    type SignalCellData,
+    SwitchableDistribution,
+    VoicesStream,
+    YourLastKicker,
+    PhotosTab,
+    InfoTab,
     PublicReviewsSection,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { FastLogSheet } from '@/components/logging';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
-import type { Visit } from '@/hooks/restaurants/useRestaurantHistory';
 
 type Palette = typeof Colors.light;
 
@@ -96,8 +105,17 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
     });
 }
 
-// Approximate RN pixel width of ~22 (canvas) with a Spacing token (Spacing.lg = 24).
-const PAGE_H = 22;
+/** Determine the default active tier — richest available. */
+function defaultTier(
+    personalCount: number,
+    tableCount: number,
+    napkinCount: number,
+): SignalTier {
+    if (tableCount >= 3) return 'your_table';
+    if (napkinCount > 0) return 'napkin';
+    if (personalCount > 0) return 'you';
+    return 'napkin';
+}
 
 export default function RestaurantScreen() {
     const scheme = useColorScheme();
@@ -112,20 +130,16 @@ export default function RestaurantScreen() {
         placePayload?: string;
     }>();
 
-    // ── Parse ghost payload from search nav ──────────────────────────────────
+    // ── Parse ghost payload ──────────────────────────────────────────────
     const parsedPlacePayload = useMemo(() => {
         if (!placePayload) return null;
-        try {
-            return JSON.parse(placePayload);
-        } catch {
-            return null;
-        }
+        try { return JSON.parse(placePayload); } catch { return null; }
     }, [placePayload]);
 
     const restaurantId = id ?? null;
     const isGhost = !!placeId;
 
-    // ── Data ─────────────────────────────────────────────────────────────────
+    // ── Data ─────────────────────────────────────────────────────────────
     const { data: pageData, isLoading, error, fetchStatus } = useRestaurantPage(
         restaurantId,
         tableId ?? undefined,
@@ -133,18 +147,14 @@ export default function RestaurantScreen() {
     const isActuallyLoading = isLoading && fetchStatus === 'fetching';
 
     const { data: tables } = useTables(user?.id);
-    const hasSocialTable = useMemo(
-        () => (tables ?? []).length > 0,
-        [tables],
-    );
+    const hasAnyTable = useMemo(() => (tables ?? []).length > 0, [tables]);
 
     useMyWishlist(user?.id);
 
-    // ── Ghost synthesis ───────────────────────────────────────────────────────
+    // ── Ghost synthesis ───────────────────────────────────────────────────
     const ghostRestaurant: RestaurantPageRestaurant | null = useMemo(() => {
-        if (!isGhost) return null;
-        if (parsedPlacePayload) return ghostRestaurantFromPayload(parsedPlacePayload);
-        return null;
+        if (!isGhost || !parsedPlacePayload) return null;
+        return ghostRestaurantFromPayload(parsedPlacePayload);
     }, [isGhost, parsedPlacePayload]);
 
     const ghostWishlistPayload: RestaurantPayload | null = useMemo(() => {
@@ -155,7 +165,7 @@ export default function RestaurantScreen() {
     const restaurant: RestaurantPageRestaurant | null =
         pageData?.restaurant ?? ghostRestaurant ?? null;
 
-    // ── Log visit sheet state ─────────────────────────────────────────────────
+    // ── Log visit sheet state ─────────────────────────────────────────────
     const [showLogSheet, setShowLogSheet] = useState(false);
     const [showFastLogSheet, setShowFastLogSheet] = useState(false);
     const [pendingFastLog, setPendingFastLog] = useState(false);
@@ -185,12 +195,8 @@ export default function RestaurantScreen() {
                 }),
             };
         }
-        if (!isGhost && restaurantId) {
-            return { restaurantId };
-        }
-        if (placePayload) {
-            return { placePayload };
-        }
+        if (!isGhost && restaurantId) return { restaurantId };
+        if (placePayload) return { placePayload };
         return {};
     }, [pageData?.restaurant, ghostRestaurant, isGhost, restaurantId, placePayload]);
 
@@ -213,50 +219,110 @@ export default function RestaurantScreen() {
 
     const handleWriteReview = () => {
         setShowLogSheet(false);
-        router.push({
-            pathname: '/create-entry',
-            params: { ...createEntryParams, mode: 'solo' },
-        });
+        router.push({ pathname: '/create-entry', params: { ...createEntryParams, mode: 'solo' } });
     };
 
     const handleStartRound = () => {
         setShowLogSheet(false);
-        router.push({
-            pathname: '/create-entry',
-            params: { ...createEntryParams, mode: 'round' },
-        });
+        router.push({ pathname: '/create-entry', params: { ...createEntryParams, mode: 'round' } });
     };
 
-    // ── Visit navigation ──────────────────────────────────────────────────────
-    const handleVisitPress = (visit: Visit | { kind: string; table_night_id?: string; entry_id?: string }) => {
+    // ── Visit navigation ──────────────────────────────────────────────────
+    const handleVisitPress = useCallback((visit: PageVisit) => {
         if (visit.kind === 'round' && visit.table_night_id) {
-            router.push({
-                pathname: '/table-night-detail',
-                params: { nightId: visit.table_night_id },
-            });
+            router.push({ pathname: '/table-night-detail', params: { nightId: visit.table_night_id } });
         } else if (visit.kind === 'solo' && visit.entry_id) {
-            router.push({
-                pathname: '/entry-detail',
-                params: { entryId: visit.entry_id },
-            });
+            router.push({ pathname: '/entry-detail', params: { entryId: visit.entry_id } });
         }
-    };
+    }, [router]);
 
-    // ── Tab state ──────────────────────────────────────────────────────────────
-    const [activeTab, setActiveTab] = useState<RestaurantTab>('our-table');
+    // ── Tab state ──────────────────────────────────────────────────────────
+    const [activeTab, setActiveTab] = useState<RestaurantTabV3>('visits');
 
-    // ── Derived data ──────────────────────────────────────────────────────────
-    const allRatings = useMemo(
-        () =>
-            (pageData?.visits ?? [])
-                .map((v) => v.rating)
-                .filter((r): r is number => r != null),
-        [pageData?.visits],
+    // ── Signal strip + histogram state ────────────────────────────────────
+    const personalCount = pageData?.personal?.visit_count ?? 0;
+    const tableCount = pageData?.table_chip?.visit_count ?? 0;
+    const napkinCount = pageData?.napkin_aggregate?.count ?? 0;
+
+    const [activeTier, setActiveTierRaw] = useState<SignalTier>(() =>
+        defaultTier(personalCount, tableCount, napkinCount)
     );
-    const whosBeenCount = pageData?.whos_been.length ?? 0;
-    const loggedBefore = (pageData?.personal.visit_count ?? 0) > 0;
 
-    // ── Wishlist wiring for the hero bookmark ─────────────────────────────
+    // Track whether the user has manually tapped a tier — if so, never override with the default.
+    const tierUserSelectedRef = React.useRef(false);
+    const setActiveTier = React.useCallback((tier: SignalTier) => {
+        tierUserSelectedRef.current = true;
+        setActiveTierRaw(tier);
+    }, []);
+
+    // Re-derive default tier once data loads — but only if the user hasn't tapped yet.
+    const derivedDefaultTier = useMemo(
+        () => defaultTier(personalCount, tableCount, napkinCount),
+        [personalCount, tableCount, napkinCount],
+    );
+    const tierDefaultAppliedRef = React.useRef(false);
+    React.useEffect(() => {
+        if (pageData && !tierDefaultAppliedRef.current && !tierUserSelectedRef.current) {
+            tierDefaultAppliedRef.current = true;
+            setActiveTierRaw(derivedDefaultTier);
+        }
+    }, [pageData, derivedDefaultTier]);
+
+    // ── Signal cell data ──────────────────────────────────────────────────
+    const youCell = useMemo((): SignalCellData => ({
+        label: 'You',
+        value: pageData?.personal?.average ?? null,
+        sub: personalCount > 0 ? `${personalCount} visit${personalCount !== 1 ? 's' : ''}` : 'not yet',
+        hasData: personalCount > 0,
+    }), [pageData?.personal?.average, personalCount]);
+
+    const yourTableCell = useMemo((): SignalCellData => {
+        const chip = pageData?.table_chip;
+        if (!chip) {
+            return { label: 'Your table', value: null, sub: 'none been', hasData: false };
+        }
+        const memberStr = chip.member_count != null
+            ? `${chip.member_count} of you`
+            : `${chip.visit_count} visit${chip.visit_count !== 1 ? 's' : ''}`;
+        return { label: 'Your table', value: chip.average, sub: memberStr, hasData: true };
+    }, [pageData?.table_chip]);
+
+    const napkinCell = useMemo((): SignalCellData => {
+        const agg = pageData?.napkin_aggregate;
+        if (!agg || agg.count === 0) {
+            return { label: 'Napkin', value: null, sub: 'no data', hasData: false };
+        }
+        return {
+            label: 'Napkin',
+            value: agg.average,
+            sub: `${agg.count} folk${agg.count !== 1 ? 's' : ''}`,
+            hasData: true,
+        };
+    }, [pageData?.napkin_aggregate]);
+
+    const googleCell = useMemo((): SignalCellData => {
+        const r = restaurant;
+        if (!r?.google_rating) {
+            return { label: 'Google', value: null, sub: 'no data', hasData: false, inert: true };
+        }
+        const countStr = r.google_rating_count
+            ? r.google_rating_count >= 1000
+                ? `${(r.google_rating_count / 1000).toFixed(1)}k`
+                : String(r.google_rating_count)
+            : '';
+        return { label: 'Google', value: r.google_rating, sub: countStr, hasData: true, inert: true };
+    }, [restaurant]);
+
+    // ── Derived: visits split by trust ring ───────────────────────────────
+    const { selfVisits, tablemateVisits } = useMemo(() => {
+        const visits = pageData?.visits ?? [];
+        return {
+            selfVisits: visits.filter(v => v.is_self),
+            tablemateVisits: visits.filter(v => v.is_tablemate && !v.is_self),
+        };
+    }, [pageData?.visits]);
+
+    // ── Wishlist wiring ────────────────────────────────────────────────────
     const persistedRestaurantId =
         pageData?.restaurant?.id ?? (isGhost ? undefined : restaurantId ?? undefined);
     const bookmarked = useIsWishlisted(persistedRestaurantId, user?.id);
@@ -269,60 +335,37 @@ export default function RestaurantScreen() {
         if (bookmarked) {
             const rid = persistedRestaurantId ?? wishlistAdd.data?.restaurant_id;
             if (!rid) return;
-            wishlistRemove.mutate(rid, {
-                onError: () => Alert.alert("Couldn't remove", 'Try again'),
-            });
+            wishlistRemove.mutate(rid, { onError: () => Alert.alert("Couldn't remove", 'Try again') });
         } else {
             const input = persistedRestaurantId
                 ? { restaurant_id: persistedRestaurantId }
-                : { restaurant: ghostWishlistPayload ?? placePayloadToWishlistPayload({
-                    id: restaurant.external_id ?? '',
-                    name: restaurant.name,
-                    formattedAddress: restaurant.address,
-                    city: restaurant.city,
-                    country: restaurant.country,
-                    cuisine: restaurant.cuisine,
-                    priceLevel: restaurant.price_level,
-                    googleRating: restaurant.google_rating,
-                    googleRatingCount: restaurant.google_rating_count,
-                }) };
-            wishlistAdd.mutate(input as any, {
-                onError: () => Alert.alert("Couldn't save", 'Try again'),
-            });
+                : {
+                    restaurant: ghostWishlistPayload ?? placePayloadToWishlistPayload({
+                        id: restaurant.external_id ?? '',
+                        name: restaurant.name,
+                        formattedAddress: restaurant.address,
+                        city: restaurant.city,
+                        country: restaurant.country,
+                        cuisine: restaurant.cuisine,
+                        priceLevel: restaurant.price_level,
+                        googleRating: restaurant.google_rating,
+                        googleRatingCount: restaurant.google_rating_count,
+                    }),
+                };
+            wishlistAdd.mutate(input as any, { onError: () => Alert.alert("Couldn't save", 'Try again') });
         }
-    }, [
-        bookmarkDisabled,
-        bookmarked,
-        persistedRestaurantId,
-        wishlistAdd,
-        wishlistRemove,
-        ghostWishlistPayload,
-        restaurant,
-    ]);
+    }, [bookmarkDisabled, bookmarked, persistedRestaurantId, wishlistAdd, wishlistRemove, ghostWishlistPayload, restaurant]);
 
-    // ── Info tab content ─────────────────────────────────────────────────────
-    const infoRows = useMemo(() => {
-        if (!restaurant) return [] as { label: string; value: string }[];
-        const rows: { label: string; value: string }[] = [];
-        const street = [restaurant.address, restaurant.city].filter(Boolean).join(', ');
-        if (street) rows.push({ label: 'Address', value: street });
-        if (restaurant.cuisine) rows.push({ label: 'Cuisine', value: restaurant.cuisine });
-        if (restaurant.price_level != null) {
-            rows.push({ label: 'Price', value: '$'.repeat(Math.max(1, Math.min(4, restaurant.price_level))) });
-        }
-        if (restaurant.google_rating != null) {
-            const count = restaurant.google_rating_count
-                ? ` · ${restaurant.google_rating_count.toLocaleString()} ratings`
-                : '';
-            rows.push({
-                label: 'Google',
-                value: `${restaurant.google_rating.toFixed(1)}${count}`,
-            });
-        }
-        return rows;
-    }, [restaurant]);
+    const loggedBefore = personalCount > 0;
 
-    // ── Render ────────────────────────────────────────────────────────────────
+    // ── Derived: only show tap hint when ≥2 tiers have data ──────────────
+    const tiersWithData = [
+        youCell.hasData,
+        yourTableCell.hasData,
+        napkinCell.hasData,
+    ].filter(Boolean).length;
+
+    // ── Render ────────────────────────────────────────────────────────────
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
@@ -332,7 +375,7 @@ export default function RestaurantScreen() {
                     contentContainerStyle={{ paddingBottom: 120 }}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Loading state — shown only when we have nothing to display yet */}
+                    {/* Loading — shown only when we have nothing yet */}
                     {isActuallyLoading && !restaurant ? (
                         <View style={styles.loadingCenter}>
                             <ActivityIndicator color={palette.primary} />
@@ -349,13 +392,34 @@ export default function RestaurantScreen() {
                         />
                     ) : null}
 
-                    {/* Tabs */}
+                    {/* Signal strip */}
                     {restaurant ? (
-                        <RestaurantTabs active={activeTab} onChange={setActiveTab} />
+                        <SignalStrip
+                            you={youCell}
+                            yourTable={yourTableCell}
+                            napkin={napkinCell}
+                            google={googleCell}
+                            activeTier={activeTier}
+                            onTierChange={setActiveTier}
+                        />
                     ) : null}
 
-                    {/* Atlas cross-link chip — shown when Table has ≥2 logs in this city */}
-                    {restaurant?.city && hasSocialTable ? (
+                    {/* Distribution histogram */}
+                    {restaurant && pageData ? (
+                        <SwitchableDistribution
+                            activeTier={activeTier}
+                            distributions={pageData.distributions}
+                            showTapHint={tiersWithData >= 2}
+                        />
+                    ) : null}
+
+                    {/* Tabs: Visits / Photos / Info */}
+                    {restaurant ? (
+                        <RestaurantTabsV3 active={activeTab} onChange={setActiveTab} />
+                    ) : null}
+
+                    {/* Atlas cross-link chip */}
+                    {restaurant?.city && hasAnyTable && activeTab === 'visits' ? (
                         <View style={styles.chipRow}>
                             <AtlasCrossLinkChip
                                 tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
@@ -367,155 +431,79 @@ export default function RestaurantScreen() {
                         </View>
                     ) : null}
 
-                    {/* Error degraded state */}
+                    {/* Error state */}
                     {error ? (
                         <View style={styles.section}>
-                            <Text
-                                style={[
-                                    Type.bodySmall,
-                                    { color: palette.textMuted, fontStyle: 'italic' },
-                                ]}
-                            >
+                            <Text style={[styles.mutedItalic, { color: palette.textMuted }]}>
                                 Could not load visit history.
                             </Text>
                         </View>
                     ) : null}
 
-                    {/* Our Table */}
-                    {restaurant && activeTab === 'our-table' ? (
+                    {/* ── Visits tab ── */}
+                    {restaurant && activeTab === 'visits' ? (
                         <View>
-                            {pageData ? (
-                                <TableRatingBlock
-                                    personal={pageData.personal}
-                                    tableChip={pageData.table_chip}
-                                    whosBeenCount={whosBeenCount}
-                                    ratings={allRatings}
+                            {/* Last-visit kicker */}
+                            {loggedBefore && pageData?.personal?.last_visit ? (
+                                <YourLastKicker
+                                    date={pageData.personal.last_visit.date}
+                                    rating={pageData.personal.last_visit.rating}
                                 />
-                            ) : isGhost ? null : (
+                            ) : null}
+
+                            {/* Voices stream */}
+                            {pageData ? (
+                                <VoicesStream
+                                    selfVisits={selfVisits}
+                                    tablemateVisits={tablemateVisits}
+                                    publicReviews={pageData.public_reviews ?? []}
+                                    onVisitPress={handleVisitPress}
+                                />
+                            ) : isActuallyLoading ? (
                                 <View style={styles.sectionSpinner}>
                                     <ActivityIndicator size="small" color={palette.textMuted} />
                                 </View>
-                            )}
+                            ) : null}
 
-                            {/* Public reviews — below Who's-been, above Visits (per AC) */}
+                            {/* Public reviews section with "matches mine" filter (TICKET-022 Surface C) */}
                             {pageData ? (
                                 <PublicReviewsSection
                                     reviews={pageData.public_reviews ?? []}
                                     total={pageData.public_reviews_total ?? 0}
                                     loading={false}
                                     error={false}
+                                    viewerUserId={user?.id ?? null}
                                 />
-                            ) : isActuallyLoading ? (
-                                <PublicReviewsSection
-                                    reviews={[]}
-                                    total={0}
-                                    loading={true}
-                                    error={false}
-                                />
-                            ) : null}
-
-                            {pageData && pageData.visits.length > 0 ? (
-                                <View style={styles.voicesSection}>
-                                    <Text
-                                        style={[
-                                            styles.sectionLabel,
-                                            { color: palette.textMuted },
-                                        ]}
-                                    >
-                                        Voices
-                                    </Text>
-                                    <View style={{ gap: 18 }}>
-                                        {pageData.visits.slice(0, 8).map((v) => (
-                                            <VoiceCard
-                                                key={`${v.kind}-${v.id}`}
-                                                voice={{
-                                                    avatarUrl: v.avatar_url,
-                                                    displayName:
-                                                        v.user_display_names[0] ?? 'Tablemate',
-                                                    rating: v.rating,
-                                                    date: v.date,
-                                                    note: v.note,
-                                                }}
-                                                onPress={() => handleVisitPress(v)}
-                                            />
-                                        ))}
-                                    </View>
-                                </View>
-                            ) : pageData ? (
-                                <View style={styles.section}>
-                                    <Text
-                                        style={[
-                                            Type.bodySmall,
-                                            {
-                                                color: palette.textMuted,
-                                                fontFamily: 'Newsreader_400Regular_Italic',
-                                                fontSize: 14,
-                                            },
-                                        ]}
-                                    >
-                                        Nobody at your tables has been yet.
-                                    </Text>
-                                </View>
                             ) : null}
                         </View>
                     ) : null}
 
-                    {/* Everyone — V4c structure, Google as external sibling signal */}
-                    {restaurant && activeTab === 'critics' ? (
-                        <CommunityTab
-                            googleRating={restaurant.google_rating}
-                            googleRatingCount={restaurant.google_rating_count}
+                    {/* ── Photos tab ── */}
+                    {restaurant && activeTab === 'photos' ? (
+                        <PhotosTab
+                            fromYourTable={pageData?.photos?.from_your_table ?? []}
+                            fromOthers={pageData?.photos?.from_others ?? []}
+                            hasTable={hasAnyTable}
                         />
                     ) : null}
 
-                    {/* Info */}
+                    {/* ── Info tab ── */}
                     {restaurant && activeTab === 'info' ? (
-                        <View style={styles.infoSection}>
-                            {infoRows.length === 0 ? (
-                                <Text
-                                    style={[
-                                        Type.bodySmall,
-                                        {
-                                            color: palette.textMuted,
-                                            fontFamily: 'Newsreader_400Regular_Italic',
-                                        },
-                                    ]}
-                                >
-                                    No practical info on file.
-                                </Text>
-                            ) : (
-                                infoRows.map((row, i) => (
-                                    <View
-                                        key={row.label}
-                                        style={[
-                                            styles.infoRow,
-                                            i < infoRows.length - 1 && {
-                                                borderBottomColor: palette.divider,
-                                                borderBottomWidth: StyleSheet.hairlineWidth,
-                                            },
-                                        ]}
-                                    >
-                                        <Text
-                                            style={[
-                                                styles.infoLabel,
-                                                { color: palette.textMuted },
-                                            ]}
-                                        >
-                                            {row.label}
-                                        </Text>
-                                        <Text
-                                            style={[
-                                                styles.infoValue,
-                                                { color: palette.text },
-                                            ]}
-                                            numberOfLines={2}
-                                        >
-                                            {row.value}
-                                        </Text>
-                                    </View>
-                                ))
-                            )}
-                        </View>
+                        pageData ? (
+                            <InfoTab
+                                restaurant={restaurant}
+                                placeDetails={pageData.place_details}
+                                tablesCountWithLogs={pageData.tables_count_with_logs}
+                                firstLoggedAtByYourTable={pageData.first_logged_at_by_your_table}
+                            />
+                        ) : (
+                            <InfoTab
+                                restaurant={restaurant}
+                                placeDetails={{ hours_today: null, open_now: null, hours_week: null, website: null, phone: null, menu_url: null, lat: null, lng: null }}
+                                tablesCountWithLogs={0}
+                                firstLoggedAtByYourTable={null}
+                            />
+                        )
                     ) : null}
                 </ScrollView>
 
@@ -527,7 +515,7 @@ export default function RestaurantScreen() {
                     />
                 ) : null}
 
-                {/* Log visit sheet (Quick log / Write a review / Start a Round) */}
+                {/* Log visit sheet */}
                 {restaurant ? (
                     <LogVisitSheet
                         visible={showLogSheet}
@@ -536,7 +524,7 @@ export default function RestaurantScreen() {
                         onQuickLog={handleQuickLog}
                         onWriteReview={handleWriteReview}
                         onStartRound={handleStartRound}
-                        showRoundOption={hasSocialTable}
+                        showRoundOption={hasAnyTable}
                         restaurantName={restaurant.name}
                     />
                 ) : null}
@@ -588,48 +576,15 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     section: {
-        paddingHorizontal: PAGE_H,
+        paddingHorizontal: 22,
         paddingTop: Spacing.xl,
     },
-    voicesSection: {
-        paddingHorizontal: PAGE_H,
-        paddingTop: Spacing.xl,
-    },
-    sectionLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.2,
-        textTransform: 'uppercase',
-        marginBottom: 12,
-    },
-    infoSection: {
-        paddingHorizontal: PAGE_H,
-        paddingTop: Spacing.lg,
-    },
-    infoRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        paddingVertical: 14,
-        gap: 16,
-    },
-    infoLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
-        letterSpacing: 1.2,
-        textTransform: 'uppercase',
-        flexShrink: 0,
-        paddingTop: 2,
-    },
-    infoValue: {
-        flex: 1,
-        textAlign: 'right',
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 15,
-        lineHeight: 22,
+    mutedItalic: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
     },
     chipRow: {
-        paddingHorizontal: PAGE_H,
+        paddingHorizontal: 22,
         marginTop: 14,
         marginBottom: 4,
     },
