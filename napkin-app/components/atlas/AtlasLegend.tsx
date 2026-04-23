@@ -1,20 +1,15 @@
 /**
  * AtlasLegend — tiny footnote row rendered below the map.
  *
- * Three items: solo · round · mixed — each with a mini swatch + label.
- * Swatch shapes mirror the actual pin variants at reduced size.
- *
- * Wireframe: atlas-canvas.html .map-legend rules (~line 554-604).
+ * Two items:
+ *   solo   — a single colored disc with initial (example uses "J")
+ *   round  — a small cluster with the faint terracotta ring enclosing it
  */
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/theme';
 
-const TERRACOTTA = '#a03f28';
-const OLIVE = '#5c614d';
-const AMBER_DOT = '#b8842a';
-// Project forces light-only: useColorScheme() returns 'light' as const
 const CREAM = '#fdf6ec';
 
 interface Props {
@@ -23,56 +18,47 @@ interface Props {
 
 export function AtlasLegend({ palette: paletteProp }: Props) {
     const palette = paletteProp ?? Colors.light;
-    const cream = CREAM;
 
     return (
         <View style={styles.row}>
-            {/* Solo swatch */}
+            {/* Solo swatch — single disc */}
             <View style={styles.item}>
                 <View
                     style={[
-                        styles.soloSwatch,
-                        { backgroundColor: cream },
+                        styles.disc,
+                        { backgroundColor: palette.tertiaryFixed },
                     ]}
                 />
-                <Text style={[styles.label, { color: palette.textMuted }]}>solo</Text>
+                <Text style={[styles.label, { color: palette.textMuted }]}>
+                    solo
+                </Text>
             </View>
 
             <Text style={[styles.sep, { color: palette.textMuted }]}>·</Text>
 
-            {/* Round swatch */}
+            {/* Round swatch — cluster of 2 with faint ring */}
             <View style={styles.item}>
-                <View style={styles.roundSwatchOlive}>
-                    <View style={[styles.roundSwatchCreamGap, { backgroundColor: cream }]}>
+                <View style={styles.roundWrap}>
+                    <View style={styles.roundRing} />
+                    <View style={styles.clusterRow}>
                         <View
                             style={[
-                                styles.roundSwatchInner,
-                                { backgroundColor: cream },
+                                styles.miniDisc,
+                                { backgroundColor: palette.secondaryContainer },
+                            ]}
+                        />
+                        <View
+                            style={[
+                                styles.miniDisc,
+                                styles.miniDiscOverlap,
+                                { backgroundColor: palette.primaryMuted },
                             ]}
                         />
                     </View>
                 </View>
-                <Text style={[styles.label, { color: palette.textMuted }]}>round</Text>
-            </View>
-
-            <Text style={[styles.sep, { color: palette.textMuted }]}>·</Text>
-
-            {/* Mixed swatch (same ring + amber dot) */}
-            <View style={styles.item}>
-                <View style={styles.mixedSwatchWrap}>
-                    <View style={styles.roundSwatchOlive}>
-                        <View style={[styles.roundSwatchCreamGap, { backgroundColor: cream }]}>
-                            <View
-                                style={[
-                                    styles.roundSwatchInner,
-                                    { backgroundColor: cream },
-                                ]}
-                            />
-                        </View>
-                    </View>
-                    <View style={[styles.mixedDot, { borderColor: cream }]} />
-                </View>
-                <Text style={[styles.label, { color: palette.textMuted }]}>mixed</Text>
+                <Text style={[styles.label, { color: palette.textMuted }]}>
+                    round
+                </Text>
             </View>
         </View>
     );
@@ -84,7 +70,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 24,
         paddingVertical: 8,
-        gap: 8,
+        gap: 10,
     },
     item: {
         flexDirection: 'row',
@@ -102,55 +88,44 @@ const styles = StyleSheet.create({
         opacity: 0.55,
     },
 
-    // Solo: 10px circle with 1.2px terracotta border
-    soloSwatch: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        borderWidth: 1.2,
-        borderColor: TERRACOTTA,
+    disc: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: CREAM,
     },
 
-    // Round double-ring: olive outer → cream gap → terracotta inner
-    // 14px total
-    roundSwatchOlive: {
-        width: 14,
-        height: 14,
-        borderRadius: 7,
-        backgroundColor: OLIVE,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    roundSwatchCreamGap: {
-        width: 11.2,
-        height: 11.2,
-        borderRadius: 5.6,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    roundSwatchInner: {
-        width: 9.6,
-        height: 9.6,
-        borderRadius: 4.8,
-        borderWidth: 0.8,
-        borderColor: TERRACOTTA,
-    },
-
-    // Mixed: same ring + small amber dot
-    mixedSwatchWrap: {
+    roundWrap: {
         position: 'relative',
         alignItems: 'center',
         justifyContent: 'center',
+        width: 22,
+        height: 14,
     },
-    mixedDot: {
+    roundRing: {
         position: 'absolute',
-        width: 4,
-        height: 4,
-        borderRadius: 2,
-        backgroundColor: AMBER_DOT,
+        left: -2,
         right: -2,
-        bottom: 1,
-        borderWidth: 0.8,
+        top: -2,
+        bottom: -2,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(160, 63, 40, 0.4)',
+    },
+    clusterRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    miniDisc: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        borderWidth: 1,
+        borderColor: CREAM,
+    },
+    miniDiscOverlap: {
+        marginLeft: -3,
     },
 });
 

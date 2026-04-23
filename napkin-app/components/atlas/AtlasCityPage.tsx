@@ -79,11 +79,7 @@ function AtlasPeekStrip({ tiles, palette, onCardPress }: PeekStripProps) {
         >
             {tiles.map((tile) => {
                 const ratingStr =
-                    tile.rating != null
-                        ? tile.rating % 1 === 0
-                            ? `${tile.rating}`
-                            : `${tile.rating}`
-                        : '—';
+                    tile.rating != null ? tile.rating.toFixed(1) : '—';
 
                 return (
                     <PressableScale
@@ -108,12 +104,13 @@ function AtlasPeekStrip({ tiles, palette, onCardPress }: PeekStripProps) {
                                 {tile.photo_url ? (
                                     <Image
                                         source={{ uri: tile.photo_url }}
-                                        style={StyleSheet.absoluteFillObject}
+                                        style={[
+                                            StyleSheet.absoluteFillObject,
+                                            styles.peekPhotoImg,
+                                        ]}
                                         resizeMode="cover"
                                     />
                                 ) : null}
-                                {/* Image outline */}
-                                <View style={styles.imgOutline} />
                                 {/* Round chip overlay */}
                                 {tile.tile_type !== 'solo' && (
                                     <View
@@ -273,9 +270,141 @@ export function AtlasCityPage({
     const { city, city_stats } = data;
     const metaLine = `${city_stats.spot_count} spot${city_stats.spot_count !== 1 ? 's' : ''} · ${city_stats.member_count} of us`;
 
+    // ── Shared controls (scope pills + sort/view toggle) ─────────────────────
+    // Rendered identically in both modes — lives outside any vertical ScrollView
+    // so it's always pinned below the header.
+    const controls = (
+        <>
+            {/* ── Scope pills ── */}
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.scopeRow}
+                style={styles.scopeScroll}
+            >
+                {scopePills.map((pill) => {
+                    const isActive = selectedScope === pill.id;
+                    return (
+                        <PressableScale
+                            key={pill.id}
+                            onPress={() => setSelectedScope(pill.id)}
+                            haptic="selection"
+                            scaleTo={0.96}
+                        >
+                            <View
+                                style={[
+                                    styles.scopePill,
+                                    {
+                                        backgroundColor: isActive
+                                            ? palette.primary
+                                            : 'rgba(250,240,224,0.8)',
+                                        shadowColor: palette.outlineVariant,
+                                    },
+                                    !isActive && {
+                                        borderWidth: 1,
+                                        borderColor: 'rgba(221,192,186,0.35)',
+                                    },
+                                ]}
+                            >
+                                {pill.id !== 'everyone' && (
+                                    <View
+                                        style={[
+                                            styles.miniAv,
+                                            {
+                                                backgroundColor: isActive
+                                                    ? 'rgba(253,246,236,0.22)'
+                                                    : '#d4c4b0',
+                                            },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.miniAvInitial,
+                                                {
+                                                    color: isActive
+                                                        ? '#fdf6ec'
+                                                        : palette.textSecondary,
+                                                },
+                                            ]}
+                                        >
+                                            {pill.label.slice(0, 1).toUpperCase()}
+                                        </Text>
+                                    </View>
+                                )}
+                                <Text
+                                    style={[
+                                        styles.pillLabel,
+                                        {
+                                            color: isActive
+                                                ? palette.background
+                                                : palette.text,
+                                        },
+                                    ]}
+                                >
+                                    {pill.label}
+                                </Text>
+                            </View>
+                        </PressableScale>
+                    );
+                })}
+            </ScrollView>
+
+            {/* ── Sort + view toggle row ── */}
+            <View style={styles.sortRow}>
+                <Pressable onPress={toggleSort} style={styles.sortBtn}>
+                    <Text style={[styles.sortLabel, { color: palette.textSecondary }]}>
+                        {sortLabel}
+                    </Text>
+                    <Ionicons
+                        name="chevron-down"
+                        size={14}
+                        color={palette.textSecondary}
+                    />
+                </Pressable>
+
+                <View style={[styles.viewToggle, { backgroundColor: 'rgba(250,240,224,0.6)' }]}>
+                    {/* Grid button */}
+                    <Pressable
+                        onPress={() => setViewMode('grid')}
+                        style={[
+                            styles.viewBtn,
+                            viewMode === 'grid' && [
+                                styles.viewBtnActive,
+                                { backgroundColor: palette.background },
+                            ],
+                        ]}
+                    >
+                        <Ionicons
+                            name="grid-outline"
+                            size={18}
+                            color={viewMode === 'grid' ? palette.primary : palette.textMuted}
+                        />
+                    </Pressable>
+                    {/* Map button */}
+                    <Pressable
+                        onPress={() => setViewMode('map')}
+                        style={[
+                            styles.viewBtn,
+                            viewMode === 'map' && [
+                                styles.viewBtnActive,
+                                { backgroundColor: palette.background },
+                            ],
+                        ]}
+                    >
+                        <Ionicons
+                            name="map-outline"
+                            size={18}
+                            color={viewMode === 'map' ? palette.primary : palette.textMuted}
+                        />
+                    </Pressable>
+                </View>
+            </View>
+        </>
+    );
+
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
-            {/* ── Header ── */}
+            {/* ── Header — always pinned, never scrolls ── */}
             <View style={styles.header}>
                 <PressableScale onPress={onBack} haptic="light" scaleTo={0.96}>
                     <View style={styles.backBtn}>
@@ -291,177 +420,71 @@ export function AtlasCityPage({
                 </View>
             </View>
 
-            <ScrollView
-                showsVerticalScrollIndicator={false}
-                refreshControl={
-                    onRefresh ? (
-                        <RefreshControl
-                            refreshing={isRefreshing}
-                            onRefresh={onRefresh}
-                            tintColor={palette.primary}
-                        />
-                    ) : undefined
-                }
-            >
-                {/* ── Scope pills ── */}
+            {viewMode === 'grid' ? (
+                /* ── Grid mode: controls + grid inside a single vertical ScrollView ── */
                 <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.scopeRow}
+                    showsVerticalScrollIndicator={false}
+                    refreshControl={
+                        onRefresh ? (
+                            <RefreshControl
+                                refreshing={isRefreshing}
+                                onRefresh={onRefresh}
+                                tintColor={palette.primary}
+                            />
+                        ) : undefined
+                    }
                 >
-                    {scopePills.map((pill) => {
-                        const isActive = selectedScope === pill.id;
-                        return (
-                            <PressableScale
-                                key={pill.id}
-                                onPress={() => setSelectedScope(pill.id)}
-                                haptic="selection"
-                                scaleTo={0.96}
-                            >
-                                <View
-                                    style={[
-                                        styles.scopePill,
-                                        {
-                                            backgroundColor: isActive
-                                                ? palette.primary
-                                                : 'rgba(250,240,224,0.8)',
-                                            shadowColor: palette.outlineVariant,
-                                        },
-                                        !isActive && {
-                                            borderWidth: 1,
-                                            borderColor: 'rgba(221,192,186,0.35)',
-                                        },
-                                    ]}
-                                >
-                                    {pill.id !== 'everyone' && (
-                                        <View
-                                            style={[
-                                                styles.miniAv,
-                                                {
-                                                    backgroundColor: isActive
-                                                        ? 'rgba(253,246,236,0.22)'
-                                                        : '#d4c4b0',
-                                                },
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    styles.miniAvInitial,
-                                                    {
-                                                        color: isActive
-                                                            ? '#fdf6ec'
-                                                            : palette.textSecondary,
-                                                    },
-                                                ]}
-                                            >
-                                                {pill.label.slice(0, 1).toUpperCase()}
-                                            </Text>
-                                        </View>
-                                    )}
-                                    <Text
-                                        style={[
-                                            styles.pillLabel,
-                                            {
-                                                color: isActive
-                                                    ? palette.background
-                                                    : palette.text,
-                                            },
-                                        ]}
-                                    >
-                                        {pill.label}
-                                    </Text>
-                                </View>
-                            </PressableScale>
-                        );
-                    })}
-                </ScrollView>
+                    {controls}
 
-                {/* ── Sort + view toggle row ── */}
-                <View style={styles.sortRow}>
-                    <Pressable onPress={toggleSort} style={styles.sortBtn}>
-                        <Text style={[styles.sortLabel, { color: palette.textSecondary }]}>
-                            {sortLabel}
-                        </Text>
-                        <Ionicons
-                            name="chevron-down"
-                            size={14}
-                            color={palette.textSecondary}
+                    {/* ── Grid content ── */}
+                    {isLoading ? (
+                        <ActivityIndicator
+                            color={palette.primary}
+                            style={{ marginTop: Spacing.xxl }}
                         />
-                    </Pressable>
-
-                    <View style={[styles.viewToggle, { backgroundColor: 'rgba(250,240,224,0.6)' }]}>
-                        {/* Grid button */}
-                        <Pressable
-                            onPress={() => setViewMode('grid')}
-                            style={[
-                                styles.viewBtn,
-                                viewMode === 'grid' && [
-                                    styles.viewBtnActive,
-                                    { backgroundColor: palette.background },
-                                ],
-                            ]}
-                        >
-                            <Ionicons
-                                name="grid-outline"
-                                size={18}
-                                color={viewMode === 'grid' ? palette.primary : palette.textMuted}
-                            />
-                        </Pressable>
-                        {/* Map button */}
-                        <Pressable
-                            onPress={() => setViewMode('map')}
-                            style={[
-                                styles.viewBtn,
-                                viewMode === 'map' && [
-                                    styles.viewBtnActive,
-                                    { backgroundColor: palette.background },
-                                ],
-                            ]}
-                        >
-                            <Ionicons
-                                name="map-outline"
-                                size={18}
-                                color={viewMode === 'map' ? palette.primary : palette.textMuted}
-                            />
-                        </Pressable>
-                    </View>
-                </View>
-
-                {/* ── Content ── */}
-                {isLoading ? (
-                    <ActivityIndicator
-                        color={palette.primary}
-                        style={{ marginTop: Spacing.xxl }}
-                    />
-                ) : sortedTiles.length === 0 ? (
-                    <AtlasEmptyState palette={palette} />
-                ) : viewMode === 'grid' ? (
-                    <AtlasGridView
-                        tiles={sortedTiles}
-                        onTilePress={onRestaurantPress}
-                        palette={palette}
-                    />
-                ) : (
-                    /* ── Map view ── */
-                    <View>
-                        <AtlasMapView
-                            ref={mapRef}
-                            restaurants={filteredTiles}
-                            onPinPress={handlePinPress}
-                            palette={palette}
-                            mapHeight={340}
-                        />
-
-                        <AtlasLegend palette={palette} />
-
-                        <AtlasPeekStrip
+                    ) : sortedTiles.length === 0 ? (
+                        <AtlasEmptyState palette={palette} />
+                    ) : (
+                        <AtlasGridView
                             tiles={sortedTiles}
+                            onTilePress={onRestaurantPress}
                             palette={palette}
-                            onCardPress={handlePeekCardPress}
                         />
-                    </View>
-                )}
-            </ScrollView>
+                    )}
+                </ScrollView>
+            ) : (
+                /* ── Map mode: controls pinned, map+legend+strip as flex View (no vertical ScrollView) ── */
+                <View style={styles.mapModeContainer}>
+                    {controls}
+
+                    {isLoading ? (
+                        <ActivityIndicator
+                            color={palette.primary}
+                            style={{ marginTop: Spacing.xxl }}
+                        />
+                    ) : sortedTiles.length === 0 ? (
+                        <AtlasEmptyState palette={palette} />
+                    ) : (
+                        <View style={styles.mapContent}>
+                            <AtlasMapView
+                                ref={mapRef}
+                                restaurants={filteredTiles}
+                                onPinPress={handlePinPress}
+                                palette={palette}
+                                mapHeight={340}
+                            />
+
+                            <AtlasLegend palette={palette} />
+
+                            <AtlasPeekStrip
+                                tiles={sortedTiles}
+                                palette={palette}
+                                onCardPress={handlePeekCardPress}
+                            />
+                        </View>
+                    )}
+                </View>
+            )}
 
             {/* ── Peek sheet (modal, outside scroll) ── */}
             <AtlasPeekSheet
@@ -513,6 +536,13 @@ const styles = StyleSheet.create({
         letterSpacing: 0.2,
         marginTop: 3,
         fontVariant: ['tabular-nums'],
+    },
+    scopeScroll: {
+        // Prevents horizontal ScrollView from stretching vertically when its
+        // ancestor is `flex: 1` (map mode). Without this, RN's default flex
+        // behavior expands the ScrollView to fill available vertical space.
+        flexGrow: 0,
+        flexShrink: 0,
     },
     scopeRow: {
         paddingHorizontal: 20,
@@ -587,6 +617,16 @@ const styles = StyleSheet.create({
         elevation: 2,
     },
 
+    // ── Map mode container ────────────────────────────────────────────────────
+    // No vertical ScrollView — map must be free of ancestor vertical scroll
+    // so native pan/zoom gestures don't conflict.
+    mapModeContainer: {
+        flex: 1,
+    },
+    mapContent: {
+        flex: 1,
+    },
+
     // ── Peek strip ────────────────────────────────────────────────────────────
     peekStrip: {
         marginTop: 4,
@@ -611,13 +651,10 @@ const styles = StyleSheet.create({
         height: 80,
         position: 'relative',
     },
-    imgOutline: {
-        ...StyleSheet.absoluteFillObject,
-        borderRadius: 0,
-        borderWidth: 0,
-        // CSS: inset 0 0 0 1px rgba(0,0,0,0.08)
-        // In RN we render as an overlay with borderWidth inside
-        borderColor: 'rgba(0,0,0,0.08)',
+    peekPhotoImg: {
+        // Inset outline per AC 20: rgba(0,0,0,0.10) — matches Avatar border treatment
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.08)',
     },
     peekChip: {
         position: 'absolute',

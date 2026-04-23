@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
@@ -76,10 +77,12 @@ export function FeedActionRow({
     };
 
     const handleTapLike = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         applyToggle(liked ? likedEmoji! : '❤️');
     };
 
     const handleLongPress = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         if (!anchorRef.current) return;
         const handle = findNodeHandle(anchorRef.current);
         if (handle == null) return;
@@ -89,6 +92,7 @@ export function FeedActionRow({
     };
 
     const handlePick = (emoji: string) => {
+        Haptics.selectionAsync();
         setPickerAnchor(null);
         applyToggle(emoji);
     };
@@ -235,10 +239,12 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 13,
         marginLeft: 6,
+        fontVariant: ['tabular-nums'],
     },
     replyCount: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 11,
         letterSpacing: 0.1,
+        fontVariant: ['tabular-nums'],
     },
 });

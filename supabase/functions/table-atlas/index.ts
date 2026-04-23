@@ -36,17 +36,36 @@ type CityIndexResponse = {
     cities: CityRow[];
 };
 
-type VisitRow = {
-    kind: 'round' | 'solo';
-    id: string;
+type RoundParticipant = {
     user_id: string;
     display_name: string;
     avatar_url: string | null;
-    rating: number | null;
-    date: string;
-    table_night_id?: string;
-    entry_id?: string;
 };
+
+type VisitRow =
+    | {
+          kind: 'round';
+          id: string;
+          /** Lead user_id (first participant) — kept for backward compat */
+          user_id: string;
+          display_name: string;
+          avatar_url: string | null;
+          rating: number | null;
+          date: string;
+          table_night_id: string;
+          /** All participants for the peek sheet */
+          round_participants: RoundParticipant[];
+      }
+    | {
+          kind: 'solo';
+          id: string;
+          user_id: string;
+          display_name: string;
+          avatar_url: string | null;
+          rating: number | null;
+          date: string;
+          entry_id: string;
+      };
 
 type RestaurantTile = {
     id: string;
@@ -153,7 +172,7 @@ async function handleCityIndex(
     if (memberErr) throw memberErr;
     const totalMembers = (memberRows ?? []).length;
 
-    // ── Solo entries for this table ───────────────────────────────────────────
+    // ── Solo entries for this table (exclude Round-generated entry rows) ────────
     const { data: entries, error: entryErr } = await supabase
         .from('entries')
         .select(`
@@ -168,11 +187,12 @@ async function handleCityIndex(
                 name,
                 city,
                 photo_url,
-                latitude,
-                longitude
+                lat,
+                lng
             )
         `)
         .eq('table_id', tableId)
+        .is('table_night_id', null)
         .not('restaurants.city', 'is', null);
     if (entryErr) throw entryErr;
 
@@ -182,7 +202,6 @@ async function handleCityIndex(
         .select(`
             id,
             restaurant_id,
-            average_rating,
             revealed_at,
             created_at,
             restaurants (
@@ -190,8 +209,8 @@ async function handleCityIndex(
                 name,
                 city,
                 photo_url,
-                latitude,
-                longitude
+                lat,
+                lng
             ),
             table_night_participants (
                 user_id,
@@ -204,15 +223,16 @@ async function handleCityIndex(
 
     // ── Aggregate by city ─────────────────────────────────────────────────────
     // Map: city → { restaurant_ids: Set, user_ids: Set, last_visit_at, photo }
-    const cityMap = new Map<
-        string,
-        {
-            restaurant_ids: Set<string>;
-            user_ids: Set<string>;
-            last_visit_at: string;
-            hero_photo_url: string | null;
-        }
-    >();
+    type CityEntry = {
+        restaurant_ids: Set<string>;
+        user_ids: Set<string>;
+        last_visit_at: string;
+        // hero photo tracks the most-recent dated photo across all restaurants in the city
+        hero_photo_url: string | null;
+        hero_photo_date: string;
+    };
+
+    const cityMap = new Map<string, CityEntry>();
 
     function upsertCity(
         city: string,
@@ -229,12 +249,17 @@ async function handleCityIndex(
                 user_ids: new Set(userId ? [userId] : []),
                 last_visit_at: date,
                 hero_photo_url: photo,
+                hero_photo_date: photo ? date : '',
             });
         } else {
             existing.restaurant_ids.add(restaurantId);
             if (userId) existing.user_ids.add(userId);
             if (date > existing.last_visit_at) existing.last_visit_at = date;
-            if (!existing.hero_photo_url && photo) existing.hero_photo_url = photo;
+            // Pick photo from the most-recent visit that has one
+            if (photo && date >= existing.hero_photo_date) {
+                existing.hero_photo_url = photo;
+                existing.hero_photo_date = date;
+            }
         }
     }
 
@@ -270,9 +295,7 @@ async function handleCityIndex(
     const stats: AtlasStats = {
         members: totalMembers,
         cities: sortedCities.length,
-        spots: new Set(
-            sortedCities.flatMap(() => []),
-        ).size || sortedCities.reduce((sum, c) => sum + c.spot_count, 0),
+        spots: sortedCities.reduce((sum, c) => sum + c.spot_count, 0),
         founded_at: tableRow?.created_at ?? null,
     };
 
@@ -288,7 +311,7 @@ async function handleCityPage(
     tableId: string,
     city: string,
 ): Promise<Response> {
-    // ── Solo entries in this city ─────────────────────────────────────────────
+    // ── Solo entries in this city (exclude Round-generated entry rows) ──────────
     const { data: entries, error: entryErr } = await supabase
         .from('entries')
         .select(`
@@ -298,20 +321,36 @@ async function handleCityPage(
             rating,
             visited_at,
             created_at,
-            companion_ids,
             restaurants (
                 id,
                 name,
                 cuisine,
                 city,
                 photo_url,
-                latitude,
-                longitude
+                lat,
+                lng
             )
         `)
         .eq('table_id', tableId)
+        .is('table_night_id', null)
         .eq('restaurants.city', city);
     if (entryErr) throw entryErr;
+
+    // Companion join-table lookup — keyed by entry_id
+    const entryIds = ((entries ?? []) as any[]).map((e) => e.id as string);
+    const companionsByEntry = new Map<string, string[]>();
+    if (entryIds.length > 0) {
+        const { data: companionRows, error: companionErr } = await supabase
+            .from('entry_companions')
+            .select('entry_id, user_id')
+            .in('entry_id', entryIds);
+        if (companionErr) throw companionErr;
+        for (const c of (companionRows ?? []) as any[]) {
+            const list = companionsByEntry.get(c.entry_id) ?? [];
+            list.push(c.user_id);
+            companionsByEntry.set(c.entry_id, list);
+        }
+    }
 
     // ── Rounds in this city ────────────────────────────────────────────────────
     const { data: nights, error: nightErr } = await supabase
@@ -319,7 +358,6 @@ async function handleCityPage(
         .select(`
             id,
             restaurant_id,
-            average_rating,
             revealed_at,
             created_at,
             restaurants (
@@ -328,8 +366,8 @@ async function handleCityPage(
                 cuisine,
                 city,
                 photo_url,
-                latitude,
-                longitude
+                lat,
+                lng
             ),
             table_night_participants (
                 user_id,
@@ -392,8 +430,8 @@ async function handleCityPage(
                 name: r.name,
                 cuisine: r.cuisine ?? null,
                 photo_url: r.photo_url ?? null,
-                lat: r.latitude ?? null,
-                lng: r.longitude ?? null,
+                lat: r.lat ?? null,
+                lng: r.lng ?? null,
                 round_visits: [],
                 solo_visits: [],
                 companion_ids_union: new Set(),
@@ -412,7 +450,7 @@ async function handleCityPage(
             rating: e.rating ?? null,
             date: e.visited_at ?? e.created_at,
         });
-        for (const cId of (e.companion_ids ?? []) as string[]) {
+        for (const cId of (companionsByEntry.get(e.id) ?? [])) {
             agg.companion_ids_union.add(cId);
         }
     }
@@ -421,12 +459,18 @@ async function handleCityPage(
         const r = n.restaurants;
         if (!r || r.city !== city) continue;
         const agg = ensureRestaurant(r);
-        const participantUserIds = (n.table_night_participants ?? []).map(
-            (p: any) => p.user_id as string,
-        );
+        const participants = (n.table_night_participants ?? []) as {
+            user_id: string;
+            rating: number | null;
+        }[];
+        const participantUserIds = participants.map((p) => p.user_id);
+        const rated = participants.filter((p) => p.rating != null);
+        const average = rated.length > 0
+            ? rated.reduce((sum, p) => sum + (p.rating as number), 0) / rated.length
+            : null;
         agg.round_visits.push({
             night_id: n.id,
-            average_rating: n.average_rating ?? null,
+            average_rating: average,
             date: n.revealed_at ?? n.created_at,
             participant_user_ids: participantUserIds,
         });
@@ -502,20 +546,30 @@ async function handleCityPage(
         const visits: VisitRow[] = [
             ...agg.round_visits
                 .sort((a, b) => b.date.localeCompare(a.date))
-                .map((rv) => ({
-                    kind: 'round' as const,
-                    id: rv.night_id,
-                    user_id: rv.participant_user_ids[0] ?? '',
-                    display_name:
-                        profiles.get(rv.participant_user_ids[0] ?? '')
-                            ?.display_name ?? 'Tablemate',
-                    avatar_url:
-                        profiles.get(rv.participant_user_ids[0] ?? '')
-                            ?.avatar_url ?? null,
-                    rating: rv.average_rating,
-                    date: rv.date,
-                    table_night_id: rv.night_id,
-                })),
+                .map((rv) => {
+                    const roundParticipants: RoundParticipant[] =
+                        rv.participant_user_ids.map((uid) => ({
+                            user_id: uid,
+                            display_name:
+                                profiles.get(uid)?.display_name ?? 'Tablemate',
+                            avatar_url:
+                                profiles.get(uid)?.avatar_url ?? null,
+                        }));
+                    const leadUid = rv.participant_user_ids[0] ?? '';
+                    return {
+                        kind: 'round' as const,
+                        id: rv.night_id,
+                        user_id: leadUid,
+                        display_name:
+                            profiles.get(leadUid)?.display_name ?? 'Tablemate',
+                        avatar_url:
+                            profiles.get(leadUid)?.avatar_url ?? null,
+                        rating: rv.average_rating,
+                        date: rv.date,
+                        table_night_id: rv.night_id,
+                        round_participants: roundParticipants,
+                    };
+                }),
             ...agg.solo_visits
                 .sort((a, b) => b.date.localeCompare(a.date))
                 .map((sv) => ({

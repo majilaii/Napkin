@@ -42,9 +42,17 @@ export default function AtlasCityScreen() {
         isLoading,
         isRefetching,
         refetch,
+        error,
     } = useTableAtlasCity(tableId, city);
 
     const { data: members } = useTableMembers(tableId);
+
+    // AC 18: redirect on error (403 non-member or any failure) — avoid blank screen
+    React.useEffect(() => {
+        if (error) {
+            router.replace('/tables');
+        }
+    }, [error, router]);
 
     const memberList = useMemo(
         () =>

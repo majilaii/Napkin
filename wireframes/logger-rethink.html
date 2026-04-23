@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Napkin — Logger Rethink</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500;1,6..72,600&family=Manrope:wght@400;500;600;700&display=swap');
+
+  :root {
+    --ink: #1c1c19;
+    --ink-sec: #56423d;
+    --ink-muted: #8a726c;
+    --cream: #fdf6ec;
+    --paper: #faf0e0;
+    --paper-deep: #f5e8d2;
+    --terracotta: #a03f28;
+    --terracotta-soft: #c97557;
+    --olive: #6b7c3a;
+    --amber: #c38817;
+    --rule: rgba(221,192,186,0.45);
+    --rule-soft: rgba(221,192,186,0.25);
+    --serif: 'Newsreader', Georgia, serif;
+    --sans: 'Manrope', system-ui, sans-serif;
+    --shadow-ambient: 0 1px 2px rgba(28,28,25,0.04), 0 4px 16px rgba(28,28,25,0.06);
+    --shadow-phone: 0 1px 2px rgba(28,28,25,0.04), 0 8px 24px rgba(28,28,25,0.08), 0 24px 60px rgba(28,28,25,0.12);
+    --shadow-note: 0 2px 4px rgba(28,28,25,0.06), 0 8px 16px rgba(28,28,25,0.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #e8e0d6;
+    font-family: var(--sans);
+    color: var(--ink);
+    padding: 56px 40px 120px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .tab-nums { font-variant-numeric: tabular-nums; }
+
+  /* ── Masthead ── */
+  .masthead {
+    max-width: 1440px; margin: 0 auto 56px;
+    padding: 36px 44px;
+    background: var(--cream);
+    border-radius: 18px;
+    box-shadow: var(--shadow-ambient);
+  }
+  .masthead .kicker {
+    font-size: 11px; font-weight: 700; letter-spacing: 2.4px;
+    text-transform: uppercase; color: var(--terracotta);
+    margin-bottom: 14px;
+  }
+  .masthead h1 {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 44px; line-height: 50px; letter-spacing: -0.6px;
+    color: var(--ink); max-width: 920px; margin-bottom: 14px;
+  }
+  .masthead p {
+    font-size: 15px; line-height: 23px; color: var(--ink-sec);
+    max-width: 760px;
+  }
+
+  /* ── Concept section ── */
+  .concept {
+    max-width: 1440px; margin: 0 auto 72px;
+  }
+  .concept-head {
+    display: flex; align-items: baseline; gap: 20px;
+    margin-bottom: 28px; padding: 0 8px;
+  }
+  .concept-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 2.4px;
+    text-transform: uppercase; color: var(--terracotta);
+  }
+  .concept-title {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 28px; color: var(--ink);
+  }
+  .concept-body {
+    font-size: 14px; line-height: 22px; color: var(--ink-sec);
+    max-width: 640px; margin-left: auto;
+  }
+
+  .frames {
+    display: flex; gap: 56px; justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* ── Phone frame ── */
+  .phone {
+    width: 390px;
+    background: var(--paper);
+    border-radius: 44px;
+    padding: 12px;
+    box-shadow: var(--shadow-phone);
+    flex-shrink: 0;
+  }
+  .phone-inner {
+    border-radius: 34px;
+    background: var(--paper);
+    overflow: hidden;
+    position: relative;
+    min-height: 780px;
+  }
+  .status {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 24px 8px; font-size: 12px; font-weight: 600;
+    color: var(--ink);
+  }
+  .caption {
+    font-size: 12px; line-height: 18px; color: var(--ink-muted);
+    max-width: 390px; margin-top: 14px; padding: 0 8px;
+  }
+  .caption strong { color: var(--terracotta); font-weight: 600; }
+
+  /* ── Sheet header ── */
+  .sheet-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 22px 18px;
+  }
+  .sheet-head .btn-text {
+    font-size: 14px; font-weight: 500; color: var(--ink-sec);
+  }
+  .sheet-head .btn-text.primary {
+    color: var(--terracotta); font-weight: 600;
+  }
+  .sheet-head .btn-text.disabled { color: var(--ink-muted); opacity: 0.5; }
+  .sheet-head .title {
+    font-family: var(--serif); font-style: italic;
+    font-size: 15px; color: var(--ink-muted);
+  }
+
+  /* ── Composer body — Concept A ── */
+  .compose-wrap { padding: 0 26px 32px; }
+
+  .compose-masthead {
+    padding: 8px 0 24px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .compose-kicker {
+    font-size: 10px; font-weight: 700; letter-spacing: 2.2px;
+    text-transform: uppercase; color: var(--ink-muted);
+    margin-bottom: 10px;
+  }
+  .compose-kicker .dot { color: var(--rule); margin: 0 6px; }
+  .compose-restaurant-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px;
+  }
+  .compose-restaurant {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 32px; line-height: 36px; letter-spacing: -0.4px;
+    color: var(--ink); flex: 1; min-width: 0;
+  }
+  .inline-stars {
+    display: flex; align-items: center; gap: 3px;
+    flex-shrink: 0;
+  }
+  .inline-stars .star { width: 16px; height: 16px; }
+  .inline-stars .rating-num {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 18px; color: var(--ink); margin-left: 6px;
+  }
+  .inline-stars.empty .star { color: var(--rule); }
+  .compose-meta {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 10px; font-size: 12px; color: var(--ink-muted);
+  }
+  .compose-meta .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 11px; border: 1px solid var(--rule);
+    border-radius: 999px; background: transparent;
+    font-size: 11px; font-weight: 500; color: var(--ink-sec);
+  }
+  .compose-meta .pill.muted { color: var(--ink-muted); }
+  .compose-meta .pill svg { width: 11px; height: 11px; }
+
+  .write-area {
+    padding: 28px 0 20px;
+    min-height: 280px;
+  }
+  .write-area .prose {
+    font-family: var(--serif); font-weight: 400;
+    font-size: 20px; line-height: 32px; letter-spacing: -0.1px;
+    color: var(--ink);
+  }
+  .write-area .prose.ghost { color: var(--ink-muted); font-style: italic; }
+  .write-area .prose .cursor {
+    display: inline-block; width: 1.5px; height: 22px;
+    background: var(--terracotta); vertical-align: -4px;
+    animation: blink 1.1s infinite;
+    margin-left: 1px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .stars { display: flex; gap: 4px; }
+  .star {
+    width: 22px; height: 22px;
+    color: var(--rule);
+  }
+  .star.filled { color: var(--amber); }
+  .star svg { width: 100%; height: 100%; display: block; }
+  .rating-num {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 22px; color: var(--ink);
+  }
+
+  .attach-row {
+    display: flex; gap: 10px; padding: 16px 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .chip-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 999px;
+    background: transparent; border: 1px solid var(--rule);
+    font-size: 12px; font-weight: 500; color: var(--ink-sec);
+  }
+  .chip-btn.active {
+    background: rgba(160,63,40,0.08);
+    border-color: rgba(160,63,40,0.3);
+    color: var(--terracotta);
+  }
+  .chip-btn svg { width: 13px; height: 13px; }
+
+  .drawer {
+    margin-top: 14px; padding: 16px 0 4px;
+    border-top: 1px solid var(--rule-soft);
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer;
+  }
+  .drawer .drawer-label {
+    font-family: var(--serif); font-style: italic;
+    font-size: 14px; color: var(--ink-muted);
+  }
+  .drawer .drawer-chev {
+    color: var(--ink-muted); font-size: 14px;
+  }
+
+  .share-footer {
+    margin-top: 22px; padding: 14px 18px;
+    background: rgba(107,124,58,0.08);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .share-footer .share-l {
+    font-family: var(--serif); font-style: italic;
+    font-size: 13px; color: var(--olive);
+  }
+  .share-footer .share-r {
+    font-size: 12px; font-weight: 600;
+    color: var(--olive); text-transform: uppercase;
+    letter-spacing: 1.2px;
+  }
+
+  /* ── Concept B — Memory Object feed card ── */
+  .feed-wrap { padding: 12px 20px 32px; }
+  .feed-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 8px 6px 18px;
+  }
+  .feed-head h2 {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 26px; color: var(--ink);
+  }
+  .feed-head .sort {
+    font-size: 11px; letter-spacing: 1.8px; text-transform: uppercase;
+    color: var(--ink-muted); font-weight: 600;
+  }
+
+  .date-band {
+    padding: 10px 6px 6px;
+    font-family: var(--serif); font-style: italic;
+    font-size: 13px; color: var(--ink-muted);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .date-band::after {
+    content: ''; flex: 1; height: 1px;
+    background: var(--rule-soft);
+  }
+
+  .memory-card {
+    background: var(--cream);
+    border-radius: 16px;
+    padding: 22px 22px 18px;
+    margin: 10px 0 20px;
+    box-shadow: var(--shadow-note);
+    position: relative;
+  }
+  .memory-card .kicker {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: 2.2px;
+    text-transform: uppercase; color: var(--ink-muted);
+    margin-bottom: 10px;
+  }
+  .memory-card .kicker .verb { color: var(--terracotta); }
+  .memory-card .kicker .sep { color: var(--rule); }
+  .memory-card .title {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 22px; line-height: 27px; color: var(--ink);
+    letter-spacing: -0.3px;
+  }
+  .memory-card .meta {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 6px; font-size: 12px; color: var(--ink-muted);
+  }
+  .memory-card .meta .dot { opacity: 0.5; }
+  .memory-card .pull {
+    margin-top: 18px;
+    padding: 6px 0 6px 14px;
+    border-left: 2px solid var(--terracotta-soft);
+    font-family: var(--serif); font-weight: 400;
+    font-size: 17px; line-height: 26px; color: var(--ink);
+    font-style: italic;
+  }
+  .memory-card .pull::before {
+    content: '—'; margin-right: 8px; color: var(--terracotta-soft);
+    font-style: normal;
+  }
+  .memory-card .foot {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 16px; padding-top: 14px;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .memory-card .rating-numeral {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 28px; color: var(--ink);
+    line-height: 1;
+  }
+  .memory-card .rating-numeral .of {
+    font-size: 14px; color: var(--ink-muted); margin-left: 2px;
+  }
+  .memory-card .foot-right {
+    display: flex; align-items: center; gap: 14px;
+    font-size: 12px; color: var(--ink-muted);
+  }
+  .memory-card .foot-right .reaction {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 9px; background: var(--paper-deep);
+    border-radius: 999px; font-size: 12px;
+  }
+  .memory-card .photo-strip {
+    display: flex; gap: 4px; margin-top: 14px;
+    height: 84px; border-radius: 10px; overflow: hidden;
+  }
+  .memory-card .photo-strip .ph {
+    flex: 1; background: var(--paper-deep);
+    position: relative;
+  }
+  .memory-card .photo-strip .ph::after {
+    content: ''; position: absolute; inset: 0;
+    background:
+      linear-gradient(135deg, rgba(160,63,40,0.15), rgba(195,136,23,0.12));
+  }
+  .memory-card.compact .title { font-size: 19px; line-height: 24px; }
+  .memory-card.compact .pull { font-size: 15px; line-height: 23px; }
+
+  /* Card variant: no-note (rating-only) — still feels like a memory */
+  .memory-card.ratingonly .pull { display: none; }
+  .memory-card.ratingonly .no-note {
+    margin-top: 14px;
+    font-family: var(--serif); font-style: italic;
+    font-size: 13px; color: var(--ink-muted);
+  }
+
+  /* ── Concept C — Day logger (backfill) ── */
+  .backfill-wrap { padding: 18px 24px 24px; }
+  .backfill-head {
+    text-align: center; padding: 18px 0 26px;
+  }
+  .backfill-head .date-kicker {
+    font-size: 10px; font-weight: 700; letter-spacing: 2.4px;
+    text-transform: uppercase; color: var(--terracotta);
+    margin-bottom: 8px;
+  }
+  .backfill-head h3 {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 26px; color: var(--ink);
+    margin-bottom: 6px;
+  }
+  .backfill-head .sub {
+    font-size: 12px; color: var(--ink-muted);
+  }
+
+  .day-nav {
+    display: flex; align-items: center; justify-content: center;
+    gap: 18px; margin-bottom: 26px;
+  }
+  .day-nav .arrow {
+    color: var(--ink-muted); font-size: 18px;
+    padding: 4px 8px;
+  }
+  .day-nav .day {
+    font-family: var(--serif); font-style: italic;
+    font-size: 14px; color: var(--ink-sec);
+  }
+  .day-nav .day.today {
+    color: var(--terracotta);
+    border-bottom: 1px dotted var(--terracotta-soft);
+    padding-bottom: 2px;
+  }
+
+  .day-entries {
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .day-entry {
+    padding: 16px 18px;
+    background: var(--cream);
+    border-radius: 14px;
+    box-shadow: var(--shadow-ambient);
+  }
+  .day-entry .time {
+    font-size: 10px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--ink-muted);
+    margin-bottom: 6px;
+  }
+  .day-entry .rest {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 19px; color: var(--ink); line-height: 24px;
+  }
+  .day-entry .line {
+    margin-top: 8px;
+    font-family: var(--serif); font-size: 14px;
+    line-height: 21px; color: var(--ink-sec);
+    font-style: italic;
+  }
+  .day-entry .foot-mini {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 10px;
+  }
+  .day-entry .rating-mini {
+    font-family: var(--serif); font-style: italic;
+    font-size: 15px; color: var(--ink);
+  }
+  .day-entry .who-mini {
+    font-size: 11px; color: var(--ink-muted);
+  }
+
+  .day-empty {
+    padding: 22px 18px;
+    border: 1px dashed var(--rule);
+    border-radius: 14px;
+    display: flex; align-items: center; gap: 12px;
+    cursor: pointer;
+  }
+  .day-empty .plus {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--terracotta); color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 400;
+  }
+  .day-empty .empty-txt {
+    font-family: var(--serif); font-style: italic;
+    font-size: 14px; color: var(--ink-muted);
+  }
+
+  /* ── Callouts ── */
+  .notes {
+    max-width: 1440px; margin: 0 auto;
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 28px;
+  }
+  .note {
+    background: var(--cream);
+    border-radius: 14px;
+    padding: 22px 24px;
+    box-shadow: var(--shadow-ambient);
+  }
+  .note h4 {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: 18px; color: var(--ink); margin-bottom: 10px;
+  }
+  .note ul { list-style: none; }
+  .note li {
+    font-size: 13px; line-height: 22px; color: var(--ink-sec);
+    padding-left: 16px; position: relative;
+  }
+  .note li::before {
+    content: '·'; position: absolute; left: 4px; top: -2px;
+    color: var(--terracotta); font-size: 18px;
+  }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="kicker">Napkin — Logger Rethink · v0</div>
+  <h1><em>From form to page.</em> The composer should feel like writing, not like filing.</h1>
+  <p>Three concepts exploring how to make solo logging feel like a journaling ritual instead of a rating workflow. The rating survives, but it sits beneath the writing — a by-product of the act, not the act itself.</p>
+</div>
+
+<!-- ─────────────────────────────────────────────────────── -->
+<!-- CONCEPT A — The Page -->
+<!-- ─────────────────────────────────────────────────────── -->
+<div class="concept">
+  <div class="concept-head">
+    <div class="concept-label">Concept A</div>
+    <div class="concept-title">the page</div>
+    <div class="concept-body">Restaurant name becomes an italic masthead. The writing surface is the hero — 60% of the screen, serif prose, no field chrome. Rating sits quietly beneath. Dish, companions, breakdown, table all collapse into a single <em>add details</em> drawer.</div>
+  </div>
+
+  <div class="frames">
+
+    <!-- Frame A1: empty -->
+    <div>
+      <div class="phone">
+        <div class="phone-inner">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="sheet-head">
+            <span class="btn-text">Cancel</span>
+            <span class="title">a new entry</span>
+            <span class="btn-text disabled">Save</span>
+          </div>
+          <div class="compose-wrap">
+
+            <div class="compose-masthead">
+              <div class="compose-kicker">Fri · Apr 19 <span class="dot">·</span> Dinner</div>
+              <div class="compose-restaurant-row">
+                <div class="compose-restaurant">Kono</div>
+                <div class="inline-stars empty">
+                  <span class="star"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="star"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="star"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="star"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="star"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                </div>
+              </div>
+              <div class="compose-meta">
+                <span class="pill">East Village</span>
+                <span class="pill muted">tap to change</span>
+              </div>
+            </div>
+
+            <div class="write-area">
+              <div class="prose ghost">Say something about this one.<span class="cursor"></span></div>
+            </div>
+
+            <div class="attach-row">
+              <div class="chip-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="3"/><path d="M5 7h3l2-3h4l2 3h3v12H5z"/></svg>
+                Photos
+              </div>
+              <div class="chip-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 11a4 4 0 1 0-8 0"/><circle cx="12" cy="7" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
+                With…
+              </div>
+              <div class="chip-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
+                Dish
+              </div>
+            </div>
+
+            <div class="drawer">
+              <span class="drawer-label">add details</span>
+              <span class="drawer-chev">⌄</span>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <div class="caption"><strong>A1 — empty.</strong> Restaurant masthead carries the date. Writing surface dominates. No visible "table picker," no breakdown stars. The box says <em>"say something about this one"</em> — not a prompt, a posture.</div>
+    </div>
+
+    <!-- Frame A2: mid-write -->
+    <div>
+      <div class="phone">
+        <div class="phone-inner">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="sheet-head">
+            <span class="btn-text">Cancel</span>
+            <span class="title">a new entry</span>
+            <span class="btn-text primary">Save</span>
+          </div>
+          <div class="compose-wrap">
+
+            <div class="compose-masthead">
+              <div class="compose-kicker">Fri · Apr 19 <span class="dot">·</span> Dinner</div>
+              <div class="compose-restaurant-row">
+                <div class="compose-restaurant">Kono</div>
+                <div class="inline-stars">
+                  <span class="star filled"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="star filled"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="star filled"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="star filled"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="star" style="color:var(--rule)"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.3 5.82 21l1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z"/></svg></span>
+                  <span class="rating-num">4</span>
+                </div>
+              </div>
+              <div class="compose-meta">
+                <span class="pill">East Village</span>
+                <span class="pill muted">with Clara, Thomas</span>
+              </div>
+            </div>
+
+            <div class="write-area">
+              <div class="prose">The chawanmushi was the whole meal. Everything else orbited it. Thomas had two.<span class="cursor"></span></div>
+            </div>
+
+            <div class="attach-row">
+              <div class="chip-btn active">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="3"/><path d="M5 7h3l2-3h4l2 3h3v12H5z"/></svg>
+                3 photos
+              </div>
+              <div class="chip-btn active">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/></svg>
+                Clara, Thomas
+              </div>
+              <div class="chip-btn">+ Dish</div>
+            </div>
+
+            <div class="share-footer">
+              <span class="share-l">keep to yourself, or send to <em>The Wedge</em>?</span>
+              <span class="share-r">Share →</span>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <div class="caption"><strong>A2 — mid-write.</strong> Rating is now a small numeral to the right of the stars. The "send to Table?" affordance is a quiet olive footer — only surfaces when a Table exists. Solo users never see it.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────── -->
+<!-- CONCEPT B — The Memory Object -->
+<!-- ─────────────────────────────────────────────────────── -->
+<div class="concept">
+  <div class="concept-head">
+    <div class="concept-label">Concept B</div>
+    <div class="concept-title">the memory object</div>
+    <div class="concept-body">The feed card is the reward for writing. Your own line becomes a pull-quote. Rating is a serif italic numeral, not five small stars. Date and restaurant carry the masthead. Scrolling your own feed should feel like flipping through a journal.</div>
+  </div>
+
+  <div class="frames">
+
+    <!-- Frame B1: solo feed -->
+    <div>
+      <div class="phone">
+        <div class="phone-inner">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="feed-wrap">
+
+            <div class="feed-head">
+              <h2>Your year in bites</h2>
+              <span class="sort">2026</span>
+            </div>
+
+            <div class="date-band">Fri · Apr 19</div>
+
+            <div class="memory-card">
+              <div class="kicker">
+                <span class="verb">Noted</span>
+                <span class="sep">·</span>
+                <span>Dinner</span>
+                <span class="sep">·</span>
+                <span>with Clara, Thomas</span>
+              </div>
+              <div class="title">Kono</div>
+              <div class="meta"><span>East Village</span><span class="dot">·</span><span>Japanese</span></div>
+              <div class="pull">The chawanmushi was the whole meal. Everything else orbited it. Thomas had two.</div>
+              <div class="photo-strip">
+                <div class="ph"></div><div class="ph"></div><div class="ph"></div>
+              </div>
+              <div class="foot">
+                <span class="rating-numeral tab-nums">4<span class="of">/5</span></span>
+                <div class="foot-right">
+                  <span class="reaction">🔥 2</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="date-band">Wed · Apr 17</div>
+
+            <div class="memory-card compact ratingonly">
+              <div class="kicker"><span class="verb">Noted</span><span class="sep">·</span><span>Lunch, alone</span></div>
+              <div class="title">Fairfax</div>
+              <div class="meta"><span>West Village</span><span class="dot">·</span><span>Café</span></div>
+              <div class="no-note">— no note. the egg sandwich spoke for itself.</div>
+              <div class="foot">
+                <span class="rating-numeral tab-nums">3.5<span class="of">/5</span></span>
+                <div class="foot-right"><span>·</span></div>
+              </div>
+            </div>
+
+            <div class="date-band">Sun · Apr 13</div>
+
+            <div class="memory-card compact">
+              <div class="kicker"><span class="verb">Noted</span><span class="sep">·</span><span>Brunch</span></div>
+              <div class="title">Golden Diner</div>
+              <div class="meta"><span>Two Bridges</span></div>
+              <div class="pull">Worth the wait, once. Not twice.</div>
+              <div class="foot">
+                <span class="rating-numeral tab-nums">3<span class="of">/5</span></span>
+                <div class="foot-right"><span class="reaction">😂 1</span></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <div class="caption"><strong>B1 — solo journal feed.</strong> Each card is a memory object. Pull-quote is the user's own writing, styled like a book epigraph. Cards with no note still feel intentional — <em>"no note. the egg sandwich spoke for itself"</em> — instead of looking incomplete.</div>
+    </div>
+
+    <!-- Frame B2: entry detail -->
+    <div>
+      <div class="phone">
+        <div class="phone-inner">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="sheet-head">
+            <span class="btn-text">‹ Feed</span>
+            <span class="title"></span>
+            <span class="btn-text">Edit</span>
+          </div>
+          <div class="feed-wrap">
+            <div style="padding:10px 4px 22px">
+              <div style="font-size:10px;font-weight:700;letter-spacing:2.2px;text-transform:uppercase;color:var(--ink-muted);margin-bottom:10px">Fri · Apr 19, 2026 <span style="color:var(--rule)">·</span> Dinner <span style="color:var(--rule)">·</span> with Clara &amp; Thomas</div>
+              <div style="font-family:var(--serif);font-style:italic;font-weight:500;font-size:38px;line-height:42px;color:var(--ink);letter-spacing:-0.5px">Kono</div>
+              <div style="margin-top:10px;display:flex;gap:8px;font-size:12px;color:var(--ink-muted)">
+                <span>East Village</span><span>·</span><span>Japanese · kaiseki</span>
+              </div>
+            </div>
+
+            <div style="padding:6px 4px 22px;border-top:1px solid var(--rule-soft);border-bottom:1px solid var(--rule-soft)">
+              <div style="padding:22px 0 16px;font-family:var(--serif);font-size:20px;line-height:32px;color:var(--ink)">
+                The chawanmushi was the whole meal. Everything else orbited it. Thomas had two.
+              </div>
+              <div style="padding:14px 0 0;display:flex;justify-content:space-between;align-items:baseline">
+                <span class="rating-numeral tab-nums" style="font-family:var(--serif);font-style:italic;font-size:44px;color:var(--terracotta);line-height:1">4<span style="font-size:18px;color:var(--ink-muted);margin-left:3px">/5</span></span>
+                <span style="font-family:var(--serif);font-style:italic;font-size:13px;color:var(--ink-muted)">your second visit · last time, 3.5</span>
+              </div>
+            </div>
+
+            <div class="photo-strip" style="margin-top:18px;height:200px;border-radius:12px;display:flex;gap:4px;overflow:hidden">
+              <div style="flex:2;background:linear-gradient(135deg,#c97557,#6b7c3a)"></div>
+              <div style="display:flex;flex-direction:column;flex:1;gap:4px">
+                <div style="flex:1;background:linear-gradient(135deg,#c38817,#a03f28)"></div>
+                <div style="flex:1;background:linear-gradient(135deg,#6b7c3a,#56423d)"></div>
+              </div>
+            </div>
+
+            <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--rule-soft)">
+              <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink-muted);margin-bottom:10px">Reactions</div>
+              <div style="display:flex;gap:8px">
+                <span class="reaction" style="padding:6px 12px;background:var(--paper-deep);border-radius:999px;font-size:13px">🔥 Clara</span>
+                <span class="reaction" style="padding:6px 12px;background:var(--paper-deep);border-radius:999px;font-size:13px">🙏 Thomas</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption"><strong>B2 — entry detail.</strong> The writing is the body copy. Rating becomes a large italic numeral — one of the few places numerals appear large. "Your second visit · last time, 3.5" is a subtle return hook: your past self in conversation with your current self.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────── -->
+<!-- CONCEPT C — The Day Logger (backfill) -->
+<!-- ─────────────────────────────────────────────────────── -->
+<div class="concept">
+  <div class="concept-head">
+    <div class="concept-label">Concept C</div>
+    <div class="concept-title">the day logger</div>
+    <div class="concept-body">Instead of "what did you eat <em>right now</em>," the + action opens on <strong>today</strong> as a day-page. Swipe back through days to catch up on meals you didn't log in the moment. This is the retroactive journaling use case — sit down Sunday morning and log the week.</div>
+  </div>
+
+  <div class="frames">
+
+    <!-- Frame C1: today with one logged -->
+    <div>
+      <div class="phone">
+        <div class="phone-inner">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="sheet-head">
+            <span class="btn-text">Done</span>
+            <span class="title">your week</span>
+            <span class="btn-text"></span>
+          </div>
+          <div class="backfill-wrap">
+
+            <div class="day-nav">
+              <span class="arrow">‹</span>
+              <span class="day">Wed</span>
+              <span class="day">Thu</span>
+              <span class="day today">Fri · today</span>
+              <span class="arrow" style="opacity:0.3">›</span>
+            </div>
+
+            <div class="backfill-head">
+              <div class="date-kicker">Apr 19 · Friday</div>
+              <h3>What did you eat today?</h3>
+              <div class="sub">tap a slot or start typing</div>
+            </div>
+
+            <div class="day-entries">
+              <div class="day-empty">
+                <div class="plus">+</div>
+                <div class="empty-txt">breakfast?</div>
+              </div>
+              <div class="day-empty">
+                <div class="plus">+</div>
+                <div class="empty-txt">lunch?</div>
+              </div>
+              <div class="day-entry">
+                <div class="time">Dinner · 8:20pm</div>
+                <div class="rest">Kono</div>
+                <div class="line">The chawanmushi was the whole meal…</div>
+                <div class="foot-mini">
+                  <span class="rating-mini tab-nums">4/5</span>
+                  <span class="who-mini">with Clara, Thomas</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <div class="caption"><strong>C1 — today.</strong> Opens on the day-page. Meal slots are gentle empty states, not required fields. Breakfast and lunch can stay empty — the page doesn't judge. Tap any slot → open Concept A composer, prefilled with the meal slot.</div>
+    </div>
+
+    <!-- Frame C2: scroll back two days -->
+    <div>
+      <div class="phone">
+        <div class="phone-inner">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="sheet-head">
+            <span class="btn-text">Done</span>
+            <span class="title">your week</span>
+            <span class="btn-text"></span>
+          </div>
+          <div class="backfill-wrap">
+
+            <div class="day-nav">
+              <span class="arrow">‹</span>
+              <span class="day today">Wed · 2 days ago</span>
+              <span class="day">Thu</span>
+              <span class="day">Fri</span>
+              <span class="arrow">›</span>
+            </div>
+
+            <div class="backfill-head">
+              <div class="date-kicker">Apr 17 · Wednesday</div>
+              <h3>Anything you forgot?</h3>
+              <div class="sub">backfill past meals — they land at the right date</div>
+            </div>
+
+            <div class="day-entries">
+              <div class="day-empty">
+                <div class="plus">+</div>
+                <div class="empty-txt">breakfast?</div>
+              </div>
+              <div class="day-entry">
+                <div class="time">Lunch · ~1pm</div>
+                <div class="rest">Fairfax</div>
+                <div class="line">— no note. the egg sandwich spoke for itself.</div>
+                <div class="foot-mini">
+                  <span class="rating-mini tab-nums">3.5/5</span>
+                  <span class="who-mini">alone</span>
+                </div>
+              </div>
+              <div class="day-empty">
+                <div class="plus">+</div>
+                <div class="empty-txt">dinner?</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <div class="caption"><strong>C2 — backfill.</strong> Swipe back two days. The copy changes to <em>"anything you forgot?"</em>. Existing entries persist in place. Missing slots invite the retroactive log. This is the Sunday-morning catch-up pattern.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────── -->
+<!-- CONCEPT D — Two scales of the same memory -->
+<!-- ─────────────────────────────────────────────────────── -->
+<div class="concept">
+  <div class="concept-head">
+    <div class="concept-label">Concept D</div>
+    <div class="concept-title">two scales</div>
+    <div class="concept-body">The existing profile <strong>Diary</strong> ledger (day rail · thumb · rating ticks) stays as-is — it's the flip-through index. The new memory-object card lives on the <strong>journal feed</strong> tab — lingering scale. Same meal, two zoom levels. Letterboxd does exactly this: compact diary list + full review page.</div>
+  </div>
+
+  <div class="frames">
+
+    <!-- Diary (profile) — existing, untouched -->
+    <div>
+      <div class="phone">
+        <div class="phone-inner">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="sheet-head">
+            <span class="btn-text">‹ Profile</span>
+            <span class="title">diary</span>
+            <span class="btn-text"></span>
+          </div>
+          <div style="padding:6px 0">
+            <div style="padding:16px 24px 10px;font-family:var(--serif);font-style:italic;font-size:13px;color:var(--ink-muted);letter-spacing:0.4px">April 2026</div>
+
+            <div style="display:flex;align-items:center;gap:14px;padding:10px 24px;border-bottom:1px solid var(--rule-soft)">
+              <div style="width:36px;text-align:center;flex-shrink:0">
+                <div style="font-family:var(--serif);font-style:italic;font-size:22px;font-weight:500">19</div>
+                <div style="font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-muted);margin-top:2px">Fri</div>
+              </div>
+              <div style="width:40px;height:40px;border-radius:6px;background:linear-gradient(135deg,#c97557,#6b7c3a);flex-shrink:0"></div>
+              <div style="flex:1;min-width:0">
+                <div style="font-family:var(--serif);font-style:italic;font-size:15px;line-height:19px">Kono</div>
+                <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">East Village</div>
+              </div>
+              <div style="display:flex;gap:2px">
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--rule)"></span>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:14px;padding:10px 24px;border-bottom:1px solid var(--rule-soft)">
+              <div style="width:36px;text-align:center;flex-shrink:0">
+                <div style="font-family:var(--serif);font-style:italic;font-size:22px;font-weight:500">17</div>
+                <div style="font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-muted);margin-top:2px">Wed</div>
+              </div>
+              <div style="width:40px;height:40px;border-radius:6px;background:linear-gradient(135deg,#c38817,#a03f28);flex-shrink:0"></div>
+              <div style="flex:1;min-width:0">
+                <div style="font-family:var(--serif);font-style:italic;font-size:15px;line-height:19px">Fairfax</div>
+                <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">West Village</div>
+              </div>
+              <div style="display:flex;gap:2px">
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber);opacity:0.5"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--rule)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--rule)"></span>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:14px;padding:10px 24px;border-bottom:1px solid var(--rule-soft)">
+              <div style="width:36px;text-align:center;flex-shrink:0">
+                <div style="font-family:var(--serif);font-style:italic;font-size:22px;font-weight:500">13</div>
+                <div style="font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-muted);margin-top:2px">Sun</div>
+              </div>
+              <div style="flex:1;min-width:0;padding-left:54px">
+                <div style="font-family:var(--serif);font-style:italic;font-size:15px;line-height:19px">Golden Diner</div>
+                <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">Two Bridges</div>
+              </div>
+              <div style="display:flex;gap:2px">
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--rule)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--rule)"></span>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:14px;padding:10px 24px;border-bottom:1px solid var(--rule-soft)">
+              <div style="width:36px;text-align:center;flex-shrink:0">
+                <div style="font-family:var(--serif);font-style:italic;font-size:22px;font-weight:500">09</div>
+                <div style="font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-muted);margin-top:2px">Wed</div>
+              </div>
+              <div style="width:40px;height:40px;border-radius:6px;background:linear-gradient(135deg,#6b7c3a,#56423d);flex-shrink:0"></div>
+              <div style="flex:1;min-width:0">
+                <div style="font-family:var(--serif);font-style:italic;font-size:15px;line-height:19px">Laser Wolf</div>
+                <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">Williamsburg</div>
+              </div>
+              <div style="display:flex;gap:2px">
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption"><strong>D1 — Diary ledger (unchanged).</strong> The existing <code>DiaryRow</code> on the profile. Flip-through scale: scan a month of meals in one glance. Rating is 5 ticks — compact, comparable. This surface stays exactly as it is.</div>
+    </div>
+
+    <!-- Arrow / zoom -->
+    <div style="align-self:center;padding:40px 0;max-width:220px">
+      <div style="font-family:var(--serif);font-style:italic;font-size:44px;color:var(--terracotta);line-height:1;margin-bottom:18px">tap →</div>
+      <div style="font-size:13px;line-height:20px;color:var(--ink-sec)">Tap any diary row, or pull up the same entry from the journal feed, and the memory object on the right is what you get. Same meal. Different posture.</div>
+    </div>
+
+    <!-- Memory card — journal feed scale -->
+    <div>
+      <div class="phone">
+        <div class="phone-inner">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="feed-wrap">
+            <div class="feed-head">
+              <h2>Journal</h2>
+              <span class="sort">your feed</span>
+            </div>
+
+            <div class="date-band">Fri · Apr 19</div>
+            <div class="memory-card">
+              <div class="kicker">
+                <span class="verb">Noted</span>
+                <span class="sep">·</span>
+                <span>Dinner</span>
+                <span class="sep">·</span>
+                <span>with Clara, Thomas</span>
+              </div>
+              <div class="title">Kono</div>
+              <div class="meta"><span>East Village</span><span class="dot">·</span><span>Japanese</span></div>
+              <div class="pull">The chawanmushi was the whole meal. Everything else orbited it. Thomas had two.</div>
+              <div class="photo-strip">
+                <div class="ph"></div><div class="ph"></div><div class="ph"></div>
+              </div>
+              <div class="foot">
+                <span class="rating-numeral tab-nums">4<span class="of">/5</span></span>
+                <div class="foot-right"><span class="reaction">🔥 2</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption"><strong>D2 — Journal feed memory card.</strong> Same entry as the Apr 19 Kono row on the left, rendered at the lingering scale. Your own sentence as a pull-quote. Rating as a serif italic numeral. This is the loop's reward.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────── -->
+<!-- NOTES -->
+<!-- ─────────────────────────────────────────────────────── -->
+<div class="notes">
+  <div class="note">
+    <h4>What shifts</h4>
+    <ul>
+      <li>Writing surface is the hero, not a field</li>
+      <li>Rating is a by-product, shown as a serif numeral</li>
+      <li>Dish / breakdown / Table → one "add details" drawer</li>
+      <li>Solo users never see Table chrome on day one</li>
+      <li>Date &amp; meal-slot are first-class (backfill)</li>
+    </ul>
+  </div>
+  <div class="note">
+    <h4>What stays</h4>
+    <ul>
+      <li>5-star rating (hidden but present)</li>
+      <li>Secondary breakdown ratings — as drawer option</li>
+      <li>Companion tagging (the Moment-2 primitive)</li>
+      <li>Table share — but only as a quiet footer</li>
+      <li>Photo upload flow untouched</li>
+    </ul>
+  </div>
+  <div class="note">
+    <h4>Open questions</h4>
+    <ul>
+      <li>Does the day-logger replace the + action, or sit beside it?</li>
+      <li>Should the composer default to the last-eaten-at time, or "now"?</li>
+      <li>Pull-quote extraction: first sentence, or user-selected line?</li>
+      <li>How does "your second visit · last time 3.5" feel if rating drops?</li>
+      <li>Is "Noted" still the right verb for solo, or something quieter?</li>
+    </ul>
+  </div>
+</div>
+
+</body>
+</html>

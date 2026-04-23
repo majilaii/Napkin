@@ -72,8 +72,10 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontWeight: '400',
         lineHeight: undefined,
+        fontVariant: ['tabular-nums'],
     },
     denom: {
         fontFamily: 'Newsreader_400Regular_Italic',
+        fontVariant: ['tabular-nums'],
     },
 });

@@ -8,8 +8,8 @@ export { AtlasEmptyState } from './AtlasEmptyState';
 export { AtlasCrossLinkChip } from './AtlasCrossLinkChip';
 export { CityCard } from './CityCard';
 export { RestaurantTile } from './RestaurantTile';
-export { SoloPin, RoundPin, MixedPin } from './AtlasPinMarker';
+export { PersonCluster, PersonDisc, SimplePin, SoloPin, RoundPin, MixedPin } from './AtlasPinMarker';
 
 export type { SortOrder } from './AtlasCityPage';
 export type { AtlasMapViewRef } from './AtlasMapView';
-export type { PinProps, PinType } from './AtlasPinMarker';
+export type { PinType, PersonMember, PersonClusterProps } from './AtlasPinMarker';

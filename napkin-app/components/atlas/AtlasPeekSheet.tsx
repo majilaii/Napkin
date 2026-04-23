@@ -63,7 +63,13 @@ function buildRoundWho(
     if (!participants || participants.length === 0) {
         return `${visit.display_name}`;
     }
-    const names = participants.map((p) =>
+    // Sort current user to end so label reads "Clara · Thomas · you"
+    const sorted = [...participants].sort((a, b) => {
+        const aIsMe = a.user_id === currentUserId ? 1 : 0;
+        const bIsMe = b.user_id === currentUserId ? 1 : 0;
+        return aIsMe - bIsMe;
+    });
+    const names = sorted.map((p) =>
         p.user_id === currentUserId ? 'you' : p.display_name,
     );
     const count = names.length;

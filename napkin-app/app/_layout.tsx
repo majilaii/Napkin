@@ -218,6 +218,26 @@ function RootLayoutNav() {
             name="table/[id]/atlas/[city]"
             options={{ headerShown: false }}
           />
+          <Stack.Screen
+            name="seed-from-solo"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="diary"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="follows"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="looking-back"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="regulars"
+            options={{ headerShown: false }}
+          />
         </Stack>
         <BottomNavBar />
       </View>

@@ -23,6 +23,7 @@ import { Colors, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { PressableScale } from '@/components/ui/napkin';
 import { Ionicons } from '@expo/vector-icons';
+import { Avatar } from '@/components/feed/Avatar';
 import type { AtlasRestaurantTile } from '@/hooks/tables/useTableAtlasCity';
 
 // Warm gradient fallbacks
@@ -80,12 +81,17 @@ export function RestaurantTile({
     // Micro-line text
     let microLine = '';
     if (isMixed) {
-        microLine = `${tile.round_count} round · ${tile.solo_count} solo${tile.solo_count !== 1 ? 's' : ''}`;
+        microLine = `${tile.round_count} round${tile.round_count !== 1 ? 's' : ''} · ${tile.solo_count} solo${tile.solo_count !== 1 ? 's' : ''}`;
     } else if (isRound) {
         microLine = `${tile.member_ids.length} of us · ${dateLabel}`;
     } else {
-        microLine = dateLabel;
+        // solo: "· Mar 12" — name+avatar rendered separately in Overlays
+        microLine = dateLabel ? `· ${dateLabel}` : '';
     }
+
+    // Solo tile: first visitor's name + avatar
+    const soloName = !isRound ? (tile.member_names[0] ?? '') : '';
+    const soloAvatarUrl = !isRound ? (tile.member_avatar_urls[0] ?? null) : null;
 
     // Rating string
     const ratingText = tile.rating != null ? tile.rating.toFixed(1) : null;
@@ -109,6 +115,8 @@ export function RestaurantTile({
                             isMixed={isMixed}
                             microLine={microLine}
                             ratingText={ratingText}
+                            soloName={soloName}
+                            soloAvatarUrl={soloAvatarUrl}
                             palette={palette}
                         />
                     </ImageBackground>
@@ -130,6 +138,8 @@ export function RestaurantTile({
                             isMixed={isMixed}
                             microLine={microLine}
                             ratingText={ratingText}
+                            soloName={soloName}
+                            soloAvatarUrl={soloAvatarUrl}
                             palette={palette}
                         />
                     </View>
@@ -147,6 +157,10 @@ interface OverlayProps {
     isMixed: boolean;
     microLine: string;
     ratingText: string | null;
+    /** Solo tile: visitor's name */
+    soloName: string;
+    /** Solo tile: visitor's avatar URL */
+    soloAvatarUrl: string | null;
     palette: typeof Colors.light;
 }
 
@@ -156,6 +170,8 @@ function Overlays({
     isMixed,
     microLine,
     ratingText,
+    soloName,
+    soloAvatarUrl,
     palette,
 }: OverlayProps) {
     const visibleMembers = tile.member_names.slice(0, 3);
@@ -190,7 +206,7 @@ function Overlays({
                 </Text>
 
                 <View style={styles.whoRow}>
-                    {/* Avatar stack */}
+                    {/* Round/mixed: avatar stack of blanks */}
                     {isRound ? (
                         <View style={styles.avStack}>
                             {visibleMembers.map((_, i) => (
@@ -215,7 +231,22 @@ function Overlays({
                                 </View>
                             )}
                         </View>
-                    ) : null}
+                    ) : (
+                        /* Solo: mini avatar + display name */
+                        soloName ? (
+                            <View style={styles.soloWho}>
+                                <Avatar
+                                    name={soloName}
+                                    url={soloAvatarUrl}
+                                    size={14}
+                                    palette={palette}
+                                />
+                                <Text style={styles.soloName} numberOfLines={1}>
+                                    {soloName}
+                                </Text>
+                            </View>
+                        ) : null
+                    )}
 
                     <Text style={styles.microText} numberOfLines={1}>
                         {microLine}
@@ -322,6 +353,20 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 7,
         color: '#56423d',
+    },
+    soloWho: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    soloName: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.92)',
+        textShadowColor: 'rgba(0,0,0,0.55)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
+        maxWidth: 60,
     },
     microText: {
         fontFamily: 'Manrope_500Medium',

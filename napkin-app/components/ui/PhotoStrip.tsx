@@ -131,6 +131,8 @@ const styles = StyleSheet.create({
         width: TILE,
         height: TILE,
         borderRadius: RADIUS,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.08)',
     },
     overlay: {
         ...StyleSheet.absoluteFillObject,

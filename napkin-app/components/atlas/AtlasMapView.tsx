@@ -17,7 +17,13 @@
  * cleanly but will error at runtime until `npx expo prebuild` + `pod install`.
  */
 
-import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
+import React, {
+    useRef,
+    useEffect,
+    useState,
+    forwardRef,
+    useImperativeHandle,
+} from 'react';
 import {
     View,
     StyleSheet,
@@ -33,7 +39,8 @@ import MapView, {
 
 import type MapViewType from 'react-native-maps';
 
-import { SoloPin, RoundPin, MixedPin } from './AtlasPinMarker';
+import { PersonCluster, SimplePin } from './AtlasPinMarker';
+import { useAuth } from '@/providers/AuthProvider';
 import { Colors } from '@/constants/theme';
 import type { AtlasRestaurantTile } from '@/hooks/tables/useTableAtlasCity';
 
@@ -61,6 +68,12 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
 ) {
     const palette = paletteProp ?? Colors.light;
     const mapRef = useRef<MapViewType>(null);
+    const { user } = useAuth();
+
+    // Detail threshold — latitudeDelta < 0.05 ~ city-block zoom. Below that
+    // we show PersonCluster (identities); above that we show SimplePin (type only).
+    const DETAIL_THRESHOLD = 0.05;
+    const [detail, setDetail] = useState(false);
 
     // Forward imperative handle so parent can animateCamera
     useImperativeHandle(ref, () => ({
@@ -77,7 +90,12 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
         (r) => r.lat != null && r.lng != null,
     ) as (AtlasRestaurantTile & { lat: number; lng: number })[];
 
-    // fitToCoordinates after mount
+    // Stable key: re-fit whenever the set of pinned restaurants changes, not just
+    // the count. Prevents stale bbox when a scope-pill filter swaps restaurants
+    // while keeping the same count.
+    const pinKey = validPins.map((r) => r.id).sort().join(',');
+
+    // fitToCoordinates when pin set changes
     useEffect(() => {
         if (validPins.length < 2) return;
         const timer = setTimeout(() => {
@@ -88,7 +106,7 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
         }, 300);
         return () => clearTimeout(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [validPins.length]);
+    }, [pinKey]);
 
     // Fallback region: single pin or center-of-gravity
     const initialRegion: Region | undefined = (() => {
@@ -118,6 +136,10 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
                 showsBuildings={false}
                 pitchEnabled={false}
                 rotateEnabled={false}
+                onRegionChangeComplete={(region) => {
+                    const nextDetail = region.latitudeDelta < DETAIL_THRESHOLD;
+                    if (nextDetail !== detail) setDetail(nextDetail);
+                }}
             >
                 {validPins.map((restaurant) => (
                     <PinMarker
@@ -125,6 +147,8 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
                         restaurant={restaurant}
                         palette={palette}
                         onPress={onPinPress}
+                        currentUserId={user?.id}
+                        detail={detail}
                     />
                 ))}
             </MapView>
@@ -138,31 +162,66 @@ interface PinMarkerProps {
     restaurant: AtlasRestaurantTile & { lat: number; lng: number };
     palette: typeof Colors.light;
     onPress: (r: AtlasRestaurantTile) => void;
+    currentUserId?: string;
+    /** True when the map is zoomed in enough to show per-person identity */
+    detail: boolean;
 }
 
-function PinMarker({ restaurant, palette, onPress }: PinMarkerProps) {
+function PinMarker({
+    restaurant,
+    palette,
+    onPress,
+    currentUserId,
+    detail,
+}: PinMarkerProps) {
     const coordinate: LatLng = {
         latitude: restaurant.lat,
         longitude: restaurant.lng,
     };
 
-    const pinProps = {
-        rating: restaurant.rating,
-        wishedByViewer: restaurant.wished_by_viewer,
-        palette,
-    };
+    const members = (restaurant.member_ids ?? []).map((uid, i) => ({
+        user_id: uid,
+        display_name: restaurant.member_names?.[i] ?? 'Member',
+    }));
+    const sortedMembers = currentUserId
+        ? [
+              ...members.filter((m) => m.user_id !== currentUserId),
+              ...members.filter((m) => m.user_id === currentUserId),
+          ]
+        : members;
+
+    // Re-snapshot briefly whenever detail flips so the native Marker captures
+    // the new child. Otherwise the zoom change would leave stale pins.
+    const [tracking, setTracking] = useState(true);
+    useEffect(() => {
+        setTracking(true);
+        const t = setTimeout(() => setTracking(false), 400);
+        return () => clearTimeout(t);
+    }, [detail]);
 
     return (
         <Marker
             coordinate={coordinate}
             onPress={() => onPress(restaurant)}
-            tracksViewChanges={false}
-            // Remove default callout
+            tracksViewChanges={tracking}
             anchor={{ x: 0.5, y: 0.5 }}
         >
-            {restaurant.tile_type === 'solo' && <SoloPin {...pinProps} />}
-            {restaurant.tile_type === 'round' && <RoundPin {...pinProps} />}
-            {restaurant.tile_type === 'mixed' && <MixedPin {...pinProps} />}
+            {detail ? (
+                <PersonCluster
+                    members={sortedMembers}
+                    hasRound={
+                        restaurant.tile_type === 'round' ||
+                        restaurant.tile_type === 'mixed'
+                    }
+                    wishedByViewer={restaurant.wished_by_viewer}
+                    palette={palette}
+                />
+            ) : (
+                <SimplePin
+                    type={restaurant.tile_type}
+                    wishedByViewer={restaurant.wished_by_viewer}
+                />
+            )}
         </Marker>
     );
 }

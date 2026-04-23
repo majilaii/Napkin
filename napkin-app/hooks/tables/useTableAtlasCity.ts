@@ -12,17 +12,34 @@ import { queryKeys } from '@/lib/queryKeys';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type AtlasVisitRow = {
-    kind: 'round' | 'solo';
-    id: string;
+export type AtlasRoundParticipant = {
     user_id: string;
     display_name: string;
     avatar_url: string | null;
-    rating: number | null;
-    date: string;
-    table_night_id?: string;
-    entry_id?: string;
 };
+
+export type AtlasVisitRow =
+    | {
+          kind: 'round';
+          id: string;
+          user_id: string;
+          display_name: string;
+          avatar_url: string | null;
+          rating: number | null;
+          date: string;
+          table_night_id: string;
+          round_participants: AtlasRoundParticipant[];
+      }
+    | {
+          kind: 'solo';
+          id: string;
+          user_id: string;
+          display_name: string;
+          avatar_url: string | null;
+          rating: number | null;
+          date: string;
+          entry_id: string;
+      };
 
 export type AtlasRestaurantTile = {
     id: string;
@@ -61,13 +78,8 @@ async function fetchTableAtlasCity(
     tableId: string,
     city: string,
 ): Promise<TableAtlasCityData> {
-    const { data: { session } } = await supabase.auth.getSession();
-
     const { data, error } = await supabase.functions.invoke('table-atlas', {
         body: { action: 'city-page', table_id: tableId, city },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
     });
 
     if (error) throw error;

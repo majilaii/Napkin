@@ -35,13 +35,8 @@ export type TableAtlasData = {
 // ── Fetcher ───────────────────────────────────────────────────────────────────
 
 async function fetchTableAtlas(tableId: string): Promise<TableAtlasData> {
-    const { data: { session } } = await supabase.auth.getSession();
-
     const { data, error } = await supabase.functions.invoke('table-atlas', {
         body: { action: 'city-index', table_id: tableId },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
     });
 
     if (error) throw error;

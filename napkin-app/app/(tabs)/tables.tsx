@@ -273,7 +273,7 @@ export default function TablesScreen() {
 
             {/* Activity | Wishlist | Atlas — editorial section-label style */}
             <View style={styles.tabRow}>
-                {((['activity', 'wishlist', ...(isSocialTable ? ['atlas'] : [])] as const) as ('activity' | 'wishlist' | 'atlas')[]).map((tab) => {
+                {(['activity', 'wishlist', ...(isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'atlas')[]).map((tab) => {
                     const isActive = activeTab === tab;
                     const tabLabel =
                         tab === 'activity'
@@ -344,7 +344,7 @@ export default function TablesScreen() {
                                         pathname: '/table/[id]/atlas/[city]',
                                         params: {
                                             id: activeTable.id,
-                                            city: encodeURIComponent(cityName),
+                                            city: cityName,
                                         },
                                     });
                                 }

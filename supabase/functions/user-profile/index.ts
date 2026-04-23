@@ -629,7 +629,7 @@ async function fetchDiary(
 ): Promise<{ rows: DiaryRow[]; nextCursor: string | null }> {
     let query = supabase
         .from('entries')
-        .select('id, restaurant_id, rating, note, visited_at, created_at, restaurants(name, city, photo_url)')
+        .select('id, restaurant_id, rating, content, photo_url, visited_at, created_at, restaurants(name, city, photo_url)')
         .eq('user_id', userId)
         .not('restaurant_id', 'is', null)
         .order('visited_at', { ascending: false })
@@ -653,9 +653,9 @@ async function fetchDiary(
             restaurant_id: e.restaurant_id,
             restaurant_name: rest?.name ?? 'Unknown',
             city: rest?.city ?? null,
-            photo_url: rest?.photo_url ?? null,
+            photo_url: e.photo_url ?? rest?.photo_url ?? null,
             rating: e.rating,
-            note: e.note ?? null,
+            note: e.content ?? null,
             visited_at: e.visited_at ?? e.created_at,
             created_at: e.created_at,
         };
