@@ -95,6 +95,19 @@ export type PlaceDetails = {
     lng: number | null;
 };
 
+// TICKET-026: Professional critic review type
+export type ProfessionalCritic = {
+    id: string;
+    publication: 'nyt' | 'infatuation' | 'eater' | string;  // enum-loose
+    kind: 'stars' | 'score' | 'essential' | 'feature';
+    score: string | null;
+    score_out_of: string | null;
+    author: string | null;
+    published_date: string | null;  // 'YYYY-MM-DD' ISO
+    excerpt: string | null;          // server-blanked when scrape_confidence < 70
+    source_url: string | null;
+};
+
 export type RestaurantPageData = {
     restaurant: RestaurantPageRestaurant | null;
     personal: {
@@ -131,6 +144,8 @@ export type RestaurantPageData = {
     place_details: PlaceDetails;
     tables_count_with_logs: number;
     first_logged_at_by_your_table: string | null;
+    // TICKET-026: professional critics
+    professional_critics: ProfessionalCritic[];
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -178,6 +193,8 @@ async function fetchRestaurantPage(
     }
     if (data.tables_count_with_logs == null) data.tables_count_with_logs = 0;
     if (data.first_logged_at_by_your_table == null) data.first_logged_at_by_your_table = null;
+    // TICKET-026: graceful degradation for older edge function responses
+    if (!data.professional_critics) data.professional_critics = [];
 
     return data;
 }

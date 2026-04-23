@@ -83,6 +83,18 @@ type PlaceDetails = {
     lng: number | null;
 };
 
+type ProfessionalCritic = {
+    id: string;
+    publication: string;
+    kind: 'stars' | 'score' | 'essential' | 'feature';
+    score: string | null;
+    score_out_of: string | null;
+    author: string | null;
+    published_date: string | null;
+    excerpt: string | null;  // server-blanked when scrape_confidence < 70
+    source_url: string | null;
+};
+
 type RestaurantPageData = {
     restaurant: {
         id: string;
@@ -121,6 +133,8 @@ type RestaurantPageData = {
     place_details: PlaceDetails;
     tables_count_with_logs: number;
     first_logged_at_by_your_table: string | null;
+    // TICKET-026: professional critic reviews
+    professional_critics: ProfessionalCritic[];
 };
 
 function json(body: unknown, status = 200): Response {
@@ -497,6 +511,7 @@ serve(async (req) => {
                         place_details: emptyPlaceDetails,
                         tables_count_with_logs: 0,
                         first_logged_at_by_your_table: null,
+                        professional_critics: [],
                     } as RestaurantPageData,
                 });
             }
@@ -913,6 +928,41 @@ serve(async (req) => {
                 }
             }
 
+            // ── TICKET-026: Professional critic reviews ────────────────────────────
+            let professionalCritics: ProfessionalCritic[] = [];
+            {
+                const { data: criticRows, error: criticErr } = await supabase
+                    .from('professional_critic_reviews')
+                    .select('id, publication, kind, score, score_out_of, author, published_date, excerpt, source_url, scrape_confidence')
+                    .eq('restaurant_id', resolvedRestaurantId)
+                    .eq('suppressed', false);
+
+                if (criticErr) {
+                    // Non-fatal: critic failure should not degrade the page
+                    console.error('restaurant-history critics error:', criticErr.message);
+                } else {
+                    professionalCritics = ((criticRows ?? []) as any[])
+                        // Filter out rows missing publication
+                        .filter((r: any) => !!r.publication)
+                        // Filter rows that have excerpt but no source_url (licensing defense)
+                        .filter((r: any) => !(r.excerpt && !r.source_url))
+                        .map((r: any): ProfessionalCritic => ({
+                            id: r.id,
+                            publication: r.publication,
+                            kind: r.kind,
+                            score: r.score ?? null,
+                            score_out_of: r.score_out_of ?? null,
+                            author: r.author ?? null,
+                            published_date: r.published_date ?? null,
+                            // Blank excerpt when scrape_confidence < 70
+                            excerpt: (r.scrape_confidence != null && r.scrape_confidence < 70)
+                                ? null
+                                : (r.excerpt ?? null),
+                            source_url: r.source_url ?? null,
+                        }));
+                }
+            }
+
             // Napkin average and count for the signal strip
             // (napkinAverage and napkinCount computed above from all entries)
 
@@ -947,6 +997,7 @@ serve(async (req) => {
                     place_details: placeDetails,
                     tables_count_with_logs: tablesCountWithLogs,
                     first_logged_at_by_your_table: firstLoggedAtByYourTable,
+                    professional_critics: professionalCritics,
                 } as RestaurantPageData,
             });
         }
