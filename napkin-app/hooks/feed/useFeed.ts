@@ -19,6 +19,8 @@ export interface FeedEntry {
     my_reactions: string[];
     restaurant: { id: string; name: string; photo_url: string | null } | null;
     author: { display_name: string; avatar_url: string | null };
+    /** Belt-and-suspenders: optional, only present for viewer's own entries with prior visits */
+    prior_visit?: { count: number; last_rating: number | null } | null;
 }
 
 export interface TrendingPoster {

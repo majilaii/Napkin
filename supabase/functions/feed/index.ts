@@ -172,6 +172,49 @@ serve(async (req) => {
             }
         }
 
+        // 4c. prior_visit — for the caller's own entries, fetch prior visit count + last rating.
+        // Only runs for entries where user_id === caller's id (avoids privacy leak).
+        // "Prior" = strictly earlier than the target entry's visited_at — future visits
+        // must not be counted for older entries.
+        const myOwnEntries = entryList.filter((e) => e.user_id === user.id && e.restaurant_id != null);
+        const priorVisitMap = new Map<string, { count: number; last_rating: number | null }>();
+
+        if (myOwnEntries.length > 0) {
+            const myRestaurantIds = [...new Set(myOwnEntries.map((e) => e.restaurant_id as string))];
+
+            const { data: priorRows } = await supabase
+                .from('entries')
+                .select('id, restaurant_id, rating, visited_at')
+                .eq('user_id', user.id)
+                .in('restaurant_id', myRestaurantIds)
+                .order('visited_at', { ascending: false });
+
+            // Group all the caller's entries by restaurant (sorted desc by visited_at).
+            const byRestaurant = new Map<string, { id: string; rating: number | null; visited_at: string | null }[]>();
+            for (const row of (priorRows ?? []) as { id: string; restaurant_id: string | null; rating: number | null; visited_at: string | null }[]) {
+                if (!row.restaurant_id) continue;
+                const list = byRestaurant.get(row.restaurant_id) ?? [];
+                list.push({ id: row.id, rating: row.rating, visited_at: row.visited_at });
+                byRestaurant.set(row.restaurant_id, list);
+            }
+
+            // Per target entry, filter strictly-earlier rows.
+            for (const e of myOwnEntries) {
+                const rows = byRestaurant.get(e.restaurant_id as string) ?? [];
+                const targetVisitedAt = e.visited_at ?? '';
+                const earlier = rows.filter((r) =>
+                    r.id !== e.id && r.visited_at != null && targetVisitedAt !== '' && r.visited_at < targetVisitedAt,
+                );
+                if (earlier.length > 0) {
+                    const lastRated = earlier.find((r) => r.rating != null);
+                    priorVisitMap.set(e.id, {
+                        count: earlier.length,
+                        last_rating: lastRated?.rating ?? null,
+                    });
+                }
+            }
+        }
+
         // 5. Shape response
         const shaped = entryList.map((e) => {
             const extraPhotos = photosByEntry.get(e.id) ?? [];
@@ -202,6 +245,8 @@ serve(async (req) => {
                     : null,
                 author: profileMap.get(e.user_id) ?? { display_name: 'Someone', avatar_url: null },
                 sort_date: e.visited_at || e.created_at,
+                // prior_visit: nullable — only present for caller's own entries with prior history
+                prior_visit: priorVisitMap.get(e.id) ?? null,
             };
         });
 

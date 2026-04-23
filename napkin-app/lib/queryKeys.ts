@@ -24,6 +24,8 @@ export const queryKeys = {
         list: (userId: string) => ['entries', userId] as const,
         detail: (entryId: string) => ['entry', entryId] as const,
         participants: (entryId: string) => ['entry', entryId, 'participants'] as const,
+        forDay: (userId: string, date: string) => ['entriesForDay', userId, date] as const,
+        mySolo: (userId: string) => ['entries', 'mySolo', userId] as const,
     },
 
     // Table Night (real-time group rating sessions)

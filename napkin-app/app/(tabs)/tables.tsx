@@ -40,7 +40,6 @@ import {
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
 import { SoloShareCard } from '@/components/feed/SoloShareCard';
-import { JournalNoteCard } from '@/components/feed/JournalNoteCard';
 import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
 import { useRouter } from 'expo-router';
 import {
@@ -640,17 +639,6 @@ export default function TablesScreen() {
                                                       );
                                                   }
                                                   const solo = item as SoloShareActivity;
-                                                  if (solo.rating == null) {
-                                                      return (
-                                                          <JournalNoteCard
-                                                              key={`note-${item.id}`}
-                                                              item={solo}
-                                                              palette={palette}
-                                                              tableId={activeTable?.id}
-                                                              lastSeenAt={lastSeenAt ?? null}
-                                                          />
-                                                      );
-                                                  }
                                                   return (
                                                       <SoloShareCard
                                                           key={`solo-${item.id}`}
