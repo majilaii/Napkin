@@ -13,6 +13,7 @@ export type {
     InteractionCounts,
     PostInteractionsData,
     TargetType,
+    Scope,
     ReactionProfile,
     CommentProfile,
 } from './usePostInteractions';

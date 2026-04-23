@@ -161,6 +161,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 relationship={relationship}
                 stats={stats}
                 isFollowingViewer={profileData.is_following_viewer ?? false}
+                calibration={profileData.calibration}
+                viewerRatedEntryCount={profileData.viewer_rated_entry_count}
             />
 
             {/* Hairline divider */}

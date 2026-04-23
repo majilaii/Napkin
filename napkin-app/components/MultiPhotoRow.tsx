@@ -143,6 +143,8 @@ const styles = StyleSheet.create({
         width: 80,
         height: 80,
         borderRadius: Radius.md,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.08)',
     },
     heroLabel: {
         position: 'absolute',

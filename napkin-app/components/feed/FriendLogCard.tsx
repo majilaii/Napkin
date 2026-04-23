@@ -46,6 +46,7 @@ export function FriendLogCard({ entry, time, sub }: Props) {
             targetType: 'entry',
             targetId: entry.id,
             emoji: liked ? likedEmoji! : '❤️',
+            scope: 'table',
         });
     };
 

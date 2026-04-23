@@ -229,10 +229,12 @@ export default function TableNightDetailScreen() {
     const { data: interactions } = usePostInteractions(
         isRevealedOrClosed ? 'table_night' : null,
         isRevealedOrClosed ? nightId : null,
+        'table',
     );
     usePostInteractionsRealtime({
         targetType: isRevealedOrClosed ? 'table_night' : null,
         targetId: isRevealedOrClosed ? nightId : null,
+        scope: 'table',
     });
     const { data: participantPhotoUrls } = useNightEntryPhotos(
         isRevealedOrClosed ? nightId : null
@@ -537,6 +539,7 @@ export default function TableNightDetailScreen() {
                                 targetType="table_night"
                                 targetId={nightId}
                                 comments={interactions?.comments ?? []}
+                                scope="table"
                                 autoFocusComposer={focus === 'reply'}
                             />
                         </View>

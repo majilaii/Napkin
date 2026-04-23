@@ -21,6 +21,8 @@ import {
     Alert,
 } from 'react-native';
 import { WishlistGrid } from '@/components/wishlist';
+import { AtlasCityIndex } from '@/components/atlas';
+import { useTableAtlas } from '@/hooks/tables/useTableAtlas';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 
@@ -84,7 +86,7 @@ export default function TablesScreen() {
     // Real data
     const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
-    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist'>('activity');
+    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'atlas'>('activity');
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const hasMultipleTables = (tables?.length ?? 0) > 1;
     const [showTablePicker, setShowTablePicker] = useState(false);
@@ -121,6 +123,16 @@ export default function TablesScreen() {
 
     // Table detail — includes caller_welcomed_at for the welcome banner (TICKET-029)
     const { data: tableDetail } = useTableDetail(activeTable?.id);
+
+    // Atlas data — only fetched when the active table is a social table
+    // is_personal is a runtime DB field not reflected in the Table type
+    const isSocialTable = activeTable && !(activeTable as any).is_personal;
+    const {
+        data: atlasData,
+        isLoading: atlasLoading,
+        isRefetching: atlasRefetching,
+        refetch: atlasRefetch,
+    } = useTableAtlas(isSocialTable ? activeTable?.id : null);
 
     // Welcome banner: show when caller_welcomed_at IS NULL and role !== 'admin'
     const showWelcomeBanner =
@@ -259,10 +271,16 @@ export default function TablesScreen() {
                 />
             )}
 
-            {/* Activity | Wishlist — editorial section-label style */}
+            {/* Activity | Wishlist | Atlas — editorial section-label style */}
             <View style={styles.tabRow}>
-                {(['activity', 'wishlist'] as const).map((tab) => {
+                {(['activity', 'wishlist', ...(isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'atlas')[]).map((tab) => {
                     const isActive = activeTab === tab;
+                    const tabLabel =
+                        tab === 'activity'
+                            ? 'Activity'
+                            : tab === 'wishlist'
+                            ? 'Wishlist'
+                            : 'Atlas';
                     return (
                         <Pressable
                             key={tab}
@@ -279,7 +297,7 @@ export default function TablesScreen() {
                                     },
                                 ]}
                             >
-                                {tab === 'activity' ? 'Activity' : 'Wishlist'}
+                                {tabLabel}
                             </Text>
                             <View
                                 style={[
@@ -307,6 +325,35 @@ export default function TablesScreen() {
                     {activeTable && (
                         <WishlistGrid mode="table" tableId={activeTable.id} />
                     )}
+                </View>
+            ) : activeTab === 'atlas' ? (
+                /* Atlas tab — AtlasCityIndex owns its own ScrollView */
+                <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
+                    {headerAndControl}
+                    {atlasLoading && !atlasData ? (
+                        <ActivityIndicator
+                            color={palette.primary}
+                            style={{ marginTop: Spacing.xxl }}
+                        />
+                    ) : atlasData ? (
+                        <AtlasCityIndex
+                            data={atlasData}
+                            onCityPress={(cityName) => {
+                                if (activeTable?.id) {
+                                    router.push({
+                                        pathname: '/table/[id]/atlas/[city]',
+                                        params: {
+                                            id: activeTable.id,
+                                            city: cityName,
+                                        },
+                                    });
+                                }
+                            }}
+                            onRefresh={atlasRefetch}
+                            isRefreshing={atlasRefetching}
+                            palette={palette}
+                        />
+                    ) : null}
                 </View>
             ) : (
                 <ScrollView

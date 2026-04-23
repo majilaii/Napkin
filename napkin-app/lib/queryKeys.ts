@@ -43,8 +43,8 @@ export const queryKeys = {
 
     // Post Interactions (reactions + comments on table_nights and entries)
     postInteractions: {
-        all: (targetType: string, targetId: string) =>
-            ['postInteractions', targetType, targetId] as const,
+        all: (targetType: string, targetId: string, scope: 'table' | 'public' = 'table') =>
+            ['postInteractions', targetType, targetId, scope] as const,
     },
 
     // Search (restaurant search — Places + local DB)
@@ -90,6 +90,12 @@ export const queryKeys = {
     // Feed (cross-Table chronological feed — Feed tab)
     feed: {
         all: (userId: string) => ['feed', userId] as const,
+    },
+
+    // Atlas (geographic lens on a Table's dining history)
+    atlas: {
+        index: (tableId: string) => ['atlas', tableId] as const,
+        city: (tableId: string, city: string) => ['atlas', tableId, city] as const,
     },
 
     // Restaurants (accumulated Table + user memory per venue)

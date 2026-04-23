@@ -260,6 +260,8 @@ const tileStyles = StyleSheet.create({
         position: 'relative',
         overflow: 'hidden',
         borderRadius: RADIUS,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.08)',
     },
     image: {
         width: '100%',

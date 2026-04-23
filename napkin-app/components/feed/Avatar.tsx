@@ -7,8 +7,9 @@
  */
 
 import React from 'react';
-import { View, Text, Image, Pressable } from 'react-native';
+import { View, Text, Image } from 'react-native';
 import { Colors } from '@/constants/theme';
+import { PressableScale } from '@/components/ui/napkin/PressableScale';
 
 type Palette = typeof Colors.light;
 
@@ -44,11 +45,18 @@ export function Avatar({ name, url, size, palette, onPress }: AvatarProps) {
         justifyContent: 'center' as const,
     };
 
+    // Subtle hairline outline so images read as consistent depth against warm paper.
+    const outlineStyle = {
+        ...baseStyle,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.08)',
+    };
+
     // Ensure tap target is at least 44x44pt via hitSlop
     const hitSlop = size < 44 ? Math.ceil((44 - size) / 2) : 0;
 
     const visual = url ? (
-        <Image source={{ uri: url }} style={baseStyle} />
+        <Image source={{ uri: url }} style={outlineStyle} />
     ) : (
         <View style={baseStyle}>
             <Text
@@ -65,13 +73,14 @@ export function Avatar({ name, url, size, palette, onPress }: AvatarProps) {
 
     if (onPress) {
         return (
-            <Pressable
+            <PressableScale
                 onPress={onPress}
                 hitSlop={hitSlop}
-                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                haptic="selection"
+                scaleTo={0.94}
             >
                 {visual}
-            </Pressable>
+            </PressableScale>
         );
     }
 

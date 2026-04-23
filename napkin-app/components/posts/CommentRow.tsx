@@ -18,12 +18,13 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useEditComment, useDeleteComment } from '@/hooks/posts/usePostInteractions';
-import type { Comment, TargetType } from '@/hooks/posts/usePostInteractions';
+import type { Comment, TargetType, Scope } from '@/hooks/posts/usePostInteractions';
 
 interface CommentRowProps {
     comment: Comment;
     targetType: TargetType;
     targetId: string;
+    scope?: Scope;
     onRetry?: () => void;
     onDiscard?: () => void;
 }
@@ -48,6 +49,7 @@ export function CommentRow({
     comment,
     targetType,
     targetId,
+    scope = 'table',
     onRetry,
     onDiscard,
 }: CommentRowProps) {
@@ -118,14 +120,14 @@ export function CommentRow({
     };
 
     const handleDelete = () => {
-        deleteComment.mutate({ targetType, targetId, commentId: comment.id });
+        deleteComment.mutate({ targetType, targetId, commentId: comment.id, scope });
     };
 
     const handleSaveEdit = () => {
         const trimmed = editBody.trim();
         if (!trimmed) return;
         editComment.mutate(
-            { targetType, targetId, commentId: comment.id, body: trimmed },
+            { targetType, targetId, commentId: comment.id, body: trimmed, scope },
             {
                 onSuccess: () => setIsEditing(false),
                 onError: () => setIsEditing(false),

@@ -12,6 +12,7 @@ import {
     StyleSheet,
     FlatList,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Reaction } from '@/hooks/posts/usePostInteractions';
@@ -20,11 +21,14 @@ interface ReactorsSheetProps {
     emoji: string;
     reactors: Reaction[];
     onClose: () => void;
+    /** scope='public': rows are tappable and route to /u/[username]. scope='table': existing behavior. */
+    scope?: 'table' | 'public';
 }
 
-export function ReactorsSheet({ emoji, reactors, onClose }: ReactorsSheetProps) {
+export function ReactorsSheet({ emoji, reactors, onClose, scope = 'table' }: ReactorsSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const router = useRouter();
 
     return (
         <Modal
@@ -62,6 +66,7 @@ export function ReactorsSheet({ emoji, reactors, onClose }: ReactorsSheetProps) 
                     contentContainerStyle={styles.list}
                     renderItem={({ item }) => {
                         const name = item.profiles?.display_name ?? 'Unknown';
+                        const username = item.profiles?.username;
                         const initials = name
                             .split(' ')
                             .map((n) => n[0])
@@ -69,8 +74,12 @@ export function ReactorsSheet({ emoji, reactors, onClose }: ReactorsSheetProps) 
                             .slice(0, 2)
                             .toUpperCase();
 
-                        return (
-                            <View style={styles.reactorRow}>
+                        // Public scope: rows are tappable → /u/[username].
+                        // Defensive: if username is missing, render as non-tappable.
+                        const isPublicTappable = scope === 'public' && !!username;
+
+                        const rowContent = (
+                            <>
                                 <View
                                     style={[
                                         styles.avatar,
@@ -86,11 +95,34 @@ export function ReactorsSheet({ emoji, reactors, onClose }: ReactorsSheetProps) 
                                         {initials}
                                     </Text>
                                 </View>
-                                <Text style={[Type.body, { color: palette.text, flex: 1 }]}>
-                                    {name}
-                                </Text>
-                            </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[Type.body, { color: palette.text }]}>
+                                        {name}
+                                    </Text>
+                                    {scope === 'public' && username ? (
+                                        <Text style={[Type.caption, { color: palette.textMuted }]}>
+                                            {'@' + username}
+                                        </Text>
+                                    ) : null}
+                                </View>
+                            </>
                         );
+
+                        if (isPublicTappable) {
+                            return (
+                                <Pressable
+                                    style={styles.reactorRow}
+                                    onPress={() => {
+                                        onClose();
+                                        router.push({ pathname: '/u/[identifier]', params: { identifier: username } });
+                                    }}
+                                >
+                                    {rowContent}
+                                </Pressable>
+                            );
+                        }
+
+                        return <View style={styles.reactorRow}>{rowContent}</View>;
                     }}
                     showsVerticalScrollIndicator={false}
                 />

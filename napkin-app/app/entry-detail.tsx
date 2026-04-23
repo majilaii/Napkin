@@ -56,6 +56,7 @@ import {
     useToggleReaction,
 } from '@/hooks/posts/usePostInteractions';
 import { ReactionPicker } from '@/components/feed/ReactionPicker';
+import { ReactorsSheet } from '@/components/posts/ReactorsSheet';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -77,6 +78,7 @@ interface EntryDetail {
     dish_description: string | null;
     visited_at: string;
     created_at: string;
+    allow_public_replies: boolean;
     table_id: string | null;
     table_night_id: string | null;
     visibility: string;
@@ -189,10 +191,10 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
         throw new Error('Either entryId or nightId+userId required');
     }
 
-    // Fetch profile
+    // Fetch profile (includes allow_public_replies for reply-gate in public view)
     const { data: profile } = await supabase
         .from('profiles')
-        .select('display_name')
+        .select('display_name, allow_public_replies')
         .eq('user_id', entry.user_id)
         .single();
 
@@ -220,7 +222,8 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
         ...entry,
         restaurants: restaurant,
         companions,
-        profiles: profile ?? { display_name: 'User' },
+        profiles: profile ?? { display_name: 'User', allow_public_replies: false },
+        allow_public_replies: (profile as any)?.allow_public_replies ?? false,
     } as unknown as EntryDetail;
 }
 
@@ -324,24 +327,33 @@ export default function EntryDetailScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const { entryId, nightId, userId, focus } = useLocalSearchParams<{
+    const { entryId, nightId, userId, focus, viewAs } = useLocalSearchParams<{
         entryId?: string;
         nightId?: string;
         userId?: string;
         focus?: string;
+        viewAs?: 'public';
     }>();
+    const isPublicView = viewAs === 'public';
     const { data: entry, isLoading, error } = useEntryDetail(entryId, nightId, userId);
+    // In public view, replies are only allowed when the entry author has opted in.
+    // False while entry is loading; safe default.
+    const repliesDisabled = isPublicView && !(entry?.allow_public_replies ?? false);
     // Round context for banner — enabled only once we know the entry's table_night_id
     const { data: roundContext } = useRoundContext(entry?.table_night_id ?? null);
 
-    // Post interactions — available immediately on entries (no reveal gate)
+    // Post interactions — scope determined by viewAs param
+    // Table scope = default (existing behavior); public scope = restaurant-page review view
+    const interactionScope = isPublicView ? 'public' : 'table' as const;
     const { data: interactions } = usePostInteractions(
         entry?.id ? 'entry' : null,
         entry?.id ?? null,
+        interactionScope,
     );
     usePostInteractionsRealtime({
         targetType: entry?.id ? 'entry' : null,
         targetId: entry?.id ?? null,
+        scope: interactionScope,
     });
     // entry_photos for carousel (resolved after entry loads) — now returns full rows with id
     const { data: entryPhotoRows } = useEntryPhotos(entry?.id);
@@ -676,15 +688,17 @@ export default function EntryDetailScreen() {
                 targetType: 'entry',
                 targetId: entry.id,
                 clientNonce: failed.client_nonce,
+                scope: interactionScope,
             });
             addCommentForRetry.mutate({
                 targetType: 'entry',
                 targetId: entry.id,
                 body: failed.body,
                 clientNonce: failed.client_nonce,
+                scope: interactionScope,
             });
         },
-        [entry?.id, addCommentForRetry, discardFailedComment],
+        [entry?.id, addCommentForRetry, discardFailedComment, interactionScope],
     );
 
     const handleCommentDiscard = useCallback(
@@ -694,10 +708,34 @@ export default function EntryDetailScreen() {
                 targetType: 'entry',
                 targetId: entry.id,
                 clientNonce: failed.client_nonce,
+                scope: interactionScope,
             });
         },
-        [entry?.id, discardFailedComment],
+        [entry?.id, discardFailedComment, interactionScope],
     );
+
+    // ── Public eligibility pre-check (viewAs=public, non-author viewer) ─────────
+    // RPC gate per TICKET-021 AC: if the entry is not publicly eligible AND the
+    // viewer is not the author, render "This review isn't available" instead of
+    // the full screen. Authors always see their own entry regardless of eligibility
+    // (owner preview after flipping private).
+    const viewerId = viewer?.id;
+    const isNonAuthorPublicView = isPublicView && !!entry && entry.user_id !== viewerId;
+    const {
+        data: isEligible,
+        isLoading: eligibilityLoading,
+    } = useQuery({
+        queryKey: ['entry-public-eligibility', entry?.id],
+        queryFn: async () => {
+            const { data, error: rpcError } = await supabase.rpc('is_entry_publicly_eligible', {
+                p_entry_id: entry!.id,
+            });
+            if (rpcError) throw rpcError;
+            return data as boolean;
+        },
+        enabled: isNonAuthorPublicView,
+        staleTime: 1000 * 60 * 5,
+    });
 
     // ── Loading / error states ────────────────────────────────────────────────
 
@@ -722,6 +760,40 @@ export default function EntryDetailScreen() {
                     </Text>
                     <Pressable onPress={() => router.back()} style={{ marginTop: Spacing.md }}>
                         <Text style={[Type.body, { color: palette.primary }]}>← Go back</Text>
+                    </Pressable>
+                </View>
+            </>
+        );
+    }
+
+    // Show loading while eligibility RPC is in-flight (non-author public view only)
+    if (isNonAuthorPublicView && eligibilityLoading) {
+        return (
+            <>
+                <Stack.Screen options={{ headerShown: false }} />
+                <View style={[styles.center, { backgroundColor: palette.background }]}>
+                    <ActivityIndicator color={palette.primary} />
+                </View>
+            </>
+        );
+    }
+
+    // Entry is not publicly eligible and viewer is not the author
+    if (isNonAuthorPublicView && isEligible === false) {
+        return (
+            <>
+                <Stack.Screen options={{ headerShown: false }} />
+                <View style={[styles.center, { backgroundColor: palette.background, paddingTop: insets.top }]}>
+                    <Text
+                        style={[
+                            Type.headlineMedium,
+                            { color: palette.text, textAlign: 'center', paddingHorizontal: Spacing.xl },
+                        ]}
+                    >
+                        {"This review isn’t available."}
+                    </Text>
+                    <Pressable onPress={() => router.back()} style={{ marginTop: Spacing.lg }}>
+                        <Text style={[Type.body, { color: palette.primary }]}>{'← Back'}</Text>
                     </Pressable>
                 </View>
             </>
@@ -1074,8 +1146,8 @@ export default function EntryDetailScreen() {
                             </View>
                         ) : null}
 
-                        {/* Previously-here banner — viewer's cross-Table history */}
-                        {userHistory && userHistory.visit_count > 0 && (
+                        {/* Previously-here banner — viewer's cross-Table history (hidden in public view) */}
+                        {!isPublicView && userHistory && userHistory.visit_count > 0 && (
                             <View style={{ marginTop: Spacing.lg }}>
                                 <PreviouslyHereBanner
                                     voice="user"
@@ -1098,8 +1170,8 @@ export default function EntryDetailScreen() {
                             </View>
                         )}
 
-                        {/* Round context banner */}
-                        {isRoundEntry && roundContext && (
+                        {/* Round context banner — hidden in public view */}
+                        {!isPublicView && isRoundEntry && roundContext && (
                             <Pressable
                                 onPress={() =>
                                     router.push({
@@ -1347,8 +1419,8 @@ export default function EntryDetailScreen() {
                     </View>
 
                     {/* Comments — plain rows on the warm cream page, outside the note card. */}
-                    {/* Comments */}
-                    {entry.id && entry.table_id && (interactions?.comments ?? []).length > 0 && (
+                    {/* Comments — shown for table scope (existing) and public scope (viewAs=public) */}
+                    {entry.id && (isPublicView || entry.table_id) && (interactions?.comments ?? []).length > 0 && (
                         <View style={styles.commentsOutside}>
                             {(interactions?.comments ?? []).map((c) => (
                                 <CommentRow
@@ -1356,6 +1428,7 @@ export default function EntryDetailScreen() {
                                     comment={c}
                                     targetType="entry"
                                     targetId={entry.id}
+                                    scope={interactionScope}
                                     onRetry={
                                         c.failed && c.client_nonce
                                             ? () => handleCommentRetry(c)
@@ -1370,15 +1443,33 @@ export default function EntryDetailScreen() {
                             ))}
                         </View>
                     )}
+
+                    {/* "Replies off" notice — shown below comments in public view when author
+                        has allow_public_replies = false. Reactions still work; only replies hidden. */}
+                    {isPublicView && repliesDisabled && (
+                        <View style={{ paddingHorizontal: 14, paddingTop: 8 }}>
+                            <Text
+                                style={{
+                                    fontFamily: 'Manrope_400Regular',
+                                    fontSize: 12,
+                                    color: palette.textMuted,
+                                }}
+                            >
+                                The author has replies turned off.
+                            </Text>
+                        </View>
+                    )}
                 </ScrollView>
 
                 {/* ── Floating action pill + docked composer ── */}
-                {/* ── Floating action pill + docked composer ── */}
-                {entry.id && entry.table_id && (
-                    replyOpen ? (
+                {/* Public view: pill always shown (reactions allowed); reply button/composer
+                    hidden when the entry author has allow_public_replies = false. */}
+                {entry.id && (isPublicView || entry.table_id) && (
+                    replyOpen && !repliesDisabled ? (
                         <DockedReplyComposer
                             entryId={entry.id}
                             palette={palette}
+                            scope={interactionScope}
                             onClose={() => setReplyOpen(false)}
                         />
                     ) : (
@@ -1393,8 +1484,11 @@ export default function EntryDetailScreen() {
                                           .map((r) => r.emoji)
                                     : []
                             }
+                            allReactions={interactions?.reactions ?? []}
                             palette={palette}
+                            scope={interactionScope}
                             tableId={entry.table_id ?? undefined}
+                            repliesDisabled={repliesDisabled}
                             onReplyPress={() => setReplyOpen(true)}
                             bottomInset={insets.bottom}
                         />
@@ -1477,8 +1571,11 @@ interface FloatingActionPillProps {
     reactionCount: number;
     commentCount: number;
     myReactions: string[];
+    allReactions?: import('@/hooks/posts/usePostInteractions').Reaction[];
     palette: Palette;
     tableId?: string;
+    scope?: 'table' | 'public';
+    repliesDisabled?: boolean;
     onReplyPress: () => void;
     bottomInset: number;
 }
@@ -1488,7 +1585,10 @@ function FloatingActionPill({
     reactionCount,
     commentCount,
     myReactions,
+    allReactions = [],
     palette,
+    scope = 'table',
+    repliesDisabled = false,
     onReplyPress,
     bottomInset,
 }: FloatingActionPillProps) {
@@ -1496,6 +1596,8 @@ function FloatingActionPill({
 
     const anchorRef = useRef<View>(null);
     const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+    // ReactorsSheet state — public scope long-press on reaction chip
+    const [reactorsEmoji, setReactorsEmoji] = useState<string | null>(null);
 
     // Display state is driven entirely by props (postInteractions cache is
     // optimistically updated by useToggleReaction). No local deltas.
@@ -1508,10 +1610,10 @@ function FloatingActionPill({
     const applyToggle = (emoji: string) => {
         // If switching from one emoji to another, remove the old one first
         if (!myReactions.includes(emoji) && likedEmoji && likedEmoji !== emoji) {
-            toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji: likedEmoji });
+            toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji: likedEmoji, scope });
         }
 
-        toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji });
+        toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji, scope });
     };
 
     const handleTapLike = () => {
@@ -1519,6 +1621,12 @@ function FloatingActionPill({
     };
 
     const handleLongPress = () => {
+        if (scope === 'public') {
+            // Public scope: long-press shows ReactorsSheet (who reacted)
+            setReactorsEmoji(likedEmoji ?? '❤️');
+            return;
+        }
+        // Table scope: long-press opens emoji picker
         if (!anchorRef.current) return;
         const handle = findNodeHandle(anchorRef.current);
         if (handle == null) return;
@@ -1582,39 +1690,43 @@ function FloatingActionPill({
                         ) : null}
                     </Pressable>
 
-                    <View
-                        style={[
-                            styles.pillSep,
-                            { backgroundColor: 'rgba(28, 28, 25, 0.12)' },
-                        ]}
-                    />
-
-                    <Pressable
-                        onPress={onReplyPress}
-                        hitSlop={6}
-                        style={styles.pillBtn}
-                        accessibilityRole="button"
-                        accessibilityLabel="Reply"
-                    >
-                        <Ionicons
-                            name="chatbubble-outline"
-                            size={16}
-                            color={palette.textSecondary}
-                        />
-                        <Text style={[styles.pillLabel, { color: palette.text }]}>
-                            reply
-                        </Text>
-                        {commentCount > 0 ? (
-                            <Text
+                    {!repliesDisabled && (
+                        <>
+                            <View
                                 style={[
-                                    styles.pillCount,
-                                    { color: palette.textSecondary },
+                                    styles.pillSep,
+                                    { backgroundColor: 'rgba(28, 28, 25, 0.12)' },
                                 ]}
+                            />
+
+                            <Pressable
+                                onPress={onReplyPress}
+                                hitSlop={6}
+                                style={styles.pillBtn}
+                                accessibilityRole="button"
+                                accessibilityLabel="Reply"
                             >
-                                {commentCount}
-                            </Text>
-                        ) : null}
-                    </Pressable>
+                                <Ionicons
+                                    name="chatbubble-outline"
+                                    size={16}
+                                    color={palette.textSecondary}
+                                />
+                                <Text style={[styles.pillLabel, { color: palette.text }]}>
+                                    reply
+                                </Text>
+                                {commentCount > 0 ? (
+                                    <Text
+                                        style={[
+                                            styles.pillCount,
+                                            { color: palette.textSecondary },
+                                        ]}
+                                    >
+                                        {commentCount}
+                                    </Text>
+                                ) : null}
+                            </Pressable>
+                        </>
+                    )}
                 </View>
             </View>
 
@@ -1624,6 +1736,16 @@ function FloatingActionPill({
                 onPick={handlePick}
                 onClose={() => setPickerAnchor(null)}
             />
+
+            {/* ReactorsSheet — public scope long-press on reaction chip */}
+            {reactorsEmoji !== null && (
+                <ReactorsSheet
+                    emoji={reactorsEmoji}
+                    reactors={allReactions.filter((r) => r.emoji === reactorsEmoji)}
+                    onClose={() => setReactorsEmoji(null)}
+                    scope={scope}
+                />
+            )}
         </>
     );
 }
@@ -1637,10 +1759,11 @@ function FloatingActionPill({
 interface DockedReplyComposerProps {
     entryId: string;
     palette: Palette;
+    scope?: 'table' | 'public';
     onClose: () => void;
 }
 
-function DockedReplyComposer({ entryId, palette, onClose }: DockedReplyComposerProps) {
+function DockedReplyComposer({ entryId, palette, scope = 'table', onClose }: DockedReplyComposerProps) {
     const [body, setBody] = useState('');
     const [sendError, setSendError] = useState<string | null>(null);
     const addComment = useAddComment();
@@ -1660,7 +1783,7 @@ function DockedReplyComposer({ entryId, palette, onClose }: DockedReplyComposerP
         const pendingBody = trimmed;
         const nonce = `nonce-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         addComment.mutate(
-            { targetType: 'entry', targetId: entryId, body: pendingBody, clientNonce: nonce },
+            { targetType: 'entry', targetId: entryId, body: pendingBody, clientNonce: nonce, scope },
             {
                 onSuccess: () => {
                     setBody('');

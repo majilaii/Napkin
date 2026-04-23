@@ -87,7 +87,7 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [] 
     const handlePickEmoji = (emoji: string) => {
         setPickerAnchor(null);
         toggleReaction.mutate(
-            { targetType: 'table_night', targetId: item.id, emoji },
+            { targetType: 'table_night', targetId: item.id, emoji, scope: 'table' },
             {
                 onSuccess: () => {
                     if (tableId) {

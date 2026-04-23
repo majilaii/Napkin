@@ -8,9 +8,10 @@
  * Canvas reference: primitives.jsx → PillButton.
  */
 import React from 'react';
-import { Pressable, Text, StyleSheet, ViewStyle } from 'react-native';
+import { Text, StyleSheet, ViewStyle } from 'react-native';
 import { Colors, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { PressableScale } from './PressableScale';
 
 interface Props {
     children: string;
@@ -40,20 +41,21 @@ export function PillButton({
     const border = filled ? 'transparent' : palette.primary;
 
     return (
-        <Pressable
+        <PressableScale
             onPress={onPress}
             disabled={disabled}
-            style={({ pressed }) => [
+            haptic={disabled ? 'none' : 'light'}
+            style={[
                 styles.base,
                 small ? styles.smallBase : styles.largeBase,
-                fullWidth && styles.fullWidth,
+                fullWidth ? styles.fullWidth : null,
                 {
                     backgroundColor: bg,
                     borderColor: border,
-                    opacity: disabled ? 0.5 : pressed ? 0.85 : 1,
+                    opacity: disabled ? 0.5 : 1,
                 },
                 style,
-            ]}
+            ] as ViewStyle[]}
         >
             <Text
                 style={[
@@ -63,7 +65,7 @@ export function PillButton({
             >
                 {small ? children : children.toUpperCase()}
             </Text>
-        </Pressable>
+        </PressableScale>
     );
 }
 

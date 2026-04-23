@@ -43,7 +43,9 @@ import {
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
 import { CompanionChipsRow, CompanionPickerSheet } from '@/components/logging';
+import { PublicVisibilityChip } from '@/components/create-entry/PublicVisibilityChip';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
+import { useQuery } from '@tanstack/react-query';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -94,6 +96,23 @@ export default function CreateEntryScreen() {
     }>();
 
     // Tables data
+    // Fetch viewer's account_privacy for the PublicVisibilityChip
+    const { data: viewerPrivacy } = useQuery({
+        queryKey: ['viewerPrivacy', user?.id],
+        queryFn: async () => {
+            if (!user?.id) return null;
+            const { data } = await supabase
+                .from('profiles')
+                .select('account_privacy')
+                .eq('user_id', user.id)
+                .maybeSingle();
+            return (data?.account_privacy ?? 'private') as 'public' | 'private';
+        },
+        enabled: !!user?.id,
+        staleTime: 1000 * 60 * 5,
+    });
+    const isAccountPublic = viewerPrivacy === 'public';
+
     const { data: tableMemberships } = useTables(user?.id);
 
     const tables = (tableMemberships ?? []).map(m => m.tables);
@@ -731,6 +750,12 @@ export default function CreateEntryScreen() {
                             value={notes}
                             onChangeText={setNotes}
                             multiline
+                        />
+                        {/* Public visibility chip — appears when draft qualifies for public surface */}
+                        <PublicVisibilityChip
+                            isAccountPublic={isAccountPublic}
+                            rating={rating || null}
+                            note={notes}
                         />
                     </View>
 

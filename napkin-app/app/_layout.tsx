@@ -30,6 +30,7 @@ import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
 import { Colors, Type } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
+import { PressableScale } from '@/components/ui/napkin';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -68,14 +69,16 @@ function BottomNavBar() {
       </Pressable>
 
       {/* Center + button */}
-      <Pressable
+      <PressableScale
         onPress={() => router.push('/create-entry')}
         style={navStyles.addButton}
+        haptic="medium"
+        scaleTo={0.92}
       >
         <View style={[navStyles.addCircle, { backgroundColor: palette.primary }]}>
           <Ionicons name="add" size={28} color="#fff" />
         </View>
-      </Pressable>
+      </PressableScale>
 
       {/* Search tab */}
       <Pressable
@@ -128,10 +131,10 @@ const navStyles = StyleSheet.create({
     borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowColor: '#1c1c19',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.14,
+    shadowRadius: 20,
     elevation: 4,
   },
 });
@@ -205,6 +208,34 @@ function RootLayoutNav() {
           />
           <Stack.Screen
             name="entry-detail"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="table/[id]/settings"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="table/[id]/atlas/[city]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="seed-from-solo"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="diary"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="follows"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="looking-back"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="regulars"
             options={{ headerShown: false }}
           />
         </Stack>
