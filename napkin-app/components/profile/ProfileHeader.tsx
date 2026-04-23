@@ -122,18 +122,24 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                 )}
             </View>
 
-            {/* Calibration chip row — only for public_only relationship, never self */}
-            {relationship === 'public_only' && (
-                <View style={[styles.calibrationRow, { paddingHorizontal: 0 }]}>
-                    {/* Show chip when calibration is defined and non-null, or loading (undefined) */}
-                    {/* Show "rate more" prompt when viewer's count is below threshold */}
-                    {viewerRatedEntryCount !== undefined && viewerRatedEntryCount < 5 ? (
-                        <RateMoreToUnlockPrompt viewerRatedEntryCount={viewerRatedEntryCount} />
-                    ) : (
-                        <CalibrationChip calibration={calibration} form="full" />
-                    )}
-                </View>
-            )}
+            {/* Calibration chip row — only for public_only, and only when there's something to show.
+                 Outer row is gated so its margin collapses when both the chip and the prompt would be empty. */}
+            {(() => {
+                if (relationship !== 'public_only') return null;
+                const showPrompt =
+                    viewerRatedEntryCount !== undefined && viewerRatedEntryCount < 5;
+                const showChip = !showPrompt && calibration !== null;
+                if (!showPrompt && !showChip) return null;
+                return (
+                    <View style={[styles.calibrationRow, { paddingHorizontal: 0 }]}>
+                        {showPrompt ? (
+                            <RateMoreToUnlockPrompt viewerRatedEntryCount={viewerRatedEntryCount!} />
+                        ) : (
+                            <CalibrationChip calibration={calibration} />
+                        )}
+                    </View>
+                );
+            })()}
 
             <View style={styles.numbers}>
                 <Text style={[styles.numbersText, { color: palette.textSecondary }]}>

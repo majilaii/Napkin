@@ -60,7 +60,6 @@ import {
     YourLastKicker,
     PhotosTab,
     InfoTab,
-    PublicReviewsSection,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { FastLogSheet } from '@/components/logging';
@@ -236,8 +235,15 @@ export default function RestaurantScreen() {
         }
     }, [router]);
 
+    const handlePublicReviewPress = useCallback((entryId: string) => {
+        router.push({ pathname: '/entry-detail', params: { entryId, viewAs: 'public' } });
+    }, [router]);
+
     // ── Tab state ──────────────────────────────────────────────────────────
     const [activeTab, setActiveTab] = useState<RestaurantTabV3>('visits');
+
+    // ── "matches mine" filter for public reviews (TICKET-022 Surface C) ────
+    const [matchFilterOn, setMatchFilterOn] = useState(false);
 
     // ── Signal strip + histogram state ────────────────────────────────────
     const personalCount = pageData?.personal?.visit_count ?? 0;
@@ -457,23 +463,16 @@ export default function RestaurantScreen() {
                                     selfVisits={selfVisits}
                                     tablemateVisits={tablemateVisits}
                                     publicReviews={pageData.public_reviews ?? []}
+                                    viewerUserId={user?.id ?? null}
+                                    matchFilterOn={matchFilterOn}
+                                    onToggleMatchFilter={() => setMatchFilterOn((v) => !v)}
                                     onVisitPress={handleVisitPress}
+                                    onPublicReviewPress={handlePublicReviewPress}
                                 />
                             ) : isActuallyLoading ? (
                                 <View style={styles.sectionSpinner}>
                                     <ActivityIndicator size="small" color={palette.textMuted} />
                                 </View>
-                            ) : null}
-
-                            {/* Public reviews section with "matches mine" filter (TICKET-022 Surface C) */}
-                            {pageData ? (
-                                <PublicReviewsSection
-                                    reviews={pageData.public_reviews ?? []}
-                                    total={pageData.public_reviews_total ?? 0}
-                                    loading={false}
-                                    error={false}
-                                    viewerUserId={user?.id ?? null}
-                                />
                             ) : null}
                         </View>
                     ) : null}

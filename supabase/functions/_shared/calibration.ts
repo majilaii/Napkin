@@ -144,8 +144,12 @@ export async function computeCalibrations(
     // The RPC approach is preferred for maintainability; the fallback keeps
     // the function working even before the migration is deployed.
     if (error) {
-        // Fallback: run the batched CTE directly.
-        const batchResult = await runBatchCalibrationSQL(supabase, viewer_id, eligibleTargets);
+        const batchResult = await runBatchCalibrationSQL(
+            supabase,
+            viewer_id,
+            eligibleTargets,
+            min_overlap,
+        );
         for (const [id, cal] of batchResult) {
             result.set(id, cal);
         }
@@ -174,105 +178,116 @@ export async function computeCalibrations(
 }
 
 /**
- * Fallback: runs the batched calibration SQL directly as a Postgres query.
- * Used when the compute_calibration_batch RPC is not available.
+ * Fallback path — used when the `compute_calibration_batch` RPC is not deployed.
+ *
+ * Executes three supabase-js queries (NOT one-per-target): viewer's entries,
+ * targets' `account_privacy` filter, and all targets' entries in a single
+ * `.in('user_id', eligibleTargets)` fetch. Then bucket pairs in Deno.
+ *
+ * Why not `profiles!inner(account_privacy)` on the entries query: `entries.user_id`
+ * and `profiles.user_id` both reference `auth.users.id`; there is no direct FK
+ * between entries and profiles, so PostgREST cannot resolve the embedded join.
+ * A separate profile fetch avoids that pitfall.
  */
 async function runBatchCalibrationSQL(
     supabase: any,
     viewer_id: string,
     target_ids: string[],
+    min_overlap: number,
 ): Promise<Map<string, Calibration | null>> {
     const result = new Map<string, Calibration | null>();
 
-    // We use supabase-js's from() to run the batched join.
-    // Since supabase-js doesn't support raw CTEs, we simulate via
-    // individual-pair queries for each target — acceptable since target_ids
-    // is typically small (1 for profile, up to 20 for restaurant page).
-    for (const target_id of target_ids) {
-        try {
-            // Viewer's rated entries at any restaurant
-            const { data: viewerEntries, error: ve } = await supabase
-                .from('entries')
-                .select('restaurant_id, rating')
-                .eq('user_id', viewer_id)
-                .not('rating', 'is', null)
-                .not('restaurant_id', 'is', null);
+    // 1. Viewer's rated entries (once — same for every target).
+    const { data: viewerEntries, error: ve } = await supabase
+        .from('entries')
+        .select('restaurant_id, rating')
+        .eq('user_id', viewer_id)
+        .not('rating', 'is', null)
+        .not('restaurant_id', 'is', null);
 
-            if (ve || !viewerEntries?.length) {
-                result.set(target_id, null);
-                continue;
-            }
+    if (ve || !viewerEntries?.length) {
+        for (const id of target_ids) result.set(id, null);
+        return result;
+    }
 
-            // Target's public rated entries
-            const { data: targetEntries, error: te } = await supabase
-                .from('entries')
-                .select('restaurant_id, rating, profiles!inner(account_privacy)')
-                .eq('user_id', target_id)
-                .not('rating', 'is', null)
-                .not('restaurant_id', 'is', null)
-                .neq('visibility', 'private');
+    const viewerMap = new Map<string, number>();
+    for (const e of viewerEntries as { restaurant_id: string; rating: number }[]) {
+        viewerMap.set(e.restaurant_id, e.rating);
+    }
 
-            if (te || !targetEntries?.length) {
-                result.set(target_id, null);
-                continue;
-            }
+    // 2. Which of the targets are account_privacy='public' right now?
+    const { data: profilesRows, error: pe } = await supabase
+        .from('profiles')
+        .select('user_id, account_privacy')
+        .in('user_id', target_ids);
 
-            // Filter target entries to public-account only
-            const publicTargetEntries = (targetEntries as any[]).filter(
-                (e: any) => {
-                    const prof = Array.isArray(e.profiles) ? e.profiles[0] : e.profiles;
-                    return prof?.account_privacy === 'public';
-                }
-            );
+    if (pe) {
+        for (const id of target_ids) result.set(id, null);
+        return result;
+    }
 
-            if (!publicTargetEntries.length) {
-                result.set(target_id, null);
-                continue;
-            }
+    const publicTargetIds = new Set<string>(
+        (profilesRows ?? [])
+            .filter((r: { account_privacy: string }) => r.account_privacy === 'public')
+            .map((r: { user_id: string }) => r.user_id),
+    );
 
-            // Build overlap map
-            const viewerMap = new Map<string, number>();
-            for (const e of viewerEntries as any[]) {
-                viewerMap.set(e.restaurant_id as string, e.rating as number);
-            }
+    for (const id of target_ids) {
+        if (!publicTargetIds.has(id)) result.set(id, null);
+    }
 
-            const overlapPairs: { vr: number; tr: number }[] = [];
-            for (const e of publicTargetEntries) {
-                const rid = e.restaurant_id as string;
-                if (viewerMap.has(rid)) {
-                    overlapPairs.push({ vr: viewerMap.get(rid)!, tr: e.rating as number });
-                }
-            }
+    if (publicTargetIds.size === 0) return result;
 
-            if (overlapPairs.length === 0) {
-                result.set(target_id, null);
-                continue;
-            }
+    // 3. All eligible targets' rated entries in one batch.
+    const { data: targetEntries, error: te } = await supabase
+        .from('entries')
+        .select('user_id, restaurant_id, rating')
+        .in('user_id', Array.from(publicTargetIds))
+        .not('rating', 'is', null)
+        .not('restaurant_id', 'is', null)
+        .neq('visibility', 'private');
 
-            // Compute stats in Deno
-            const n = overlapPairs.length;
-            const vMean = overlapPairs.reduce((s, p) => s + p.vr, 0) / n;
-            const tMean = overlapPairs.reduce((s, p) => s + p.tr, 0) / n;
+    if (te) {
+        for (const id of publicTargetIds) result.set(id, null);
+        return result;
+    }
 
-            let covSum = 0, vVarSum = 0, tVarSum = 0, maeSum = 0;
-            for (const { vr, tr } of overlapPairs) {
-                const vd = vr - vMean, td = tr - tMean;
-                covSum += vd * td;
-                vVarSum += vd * vd;
-                tVarSum += td * td;
-                maeSum += Math.abs(vr - tr);
-            }
+    // Bucket target entries by user, computing overlap pairs inline.
+    const pairsByTarget = new Map<string, { vr: number; tr: number }[]>();
+    for (const id of publicTargetIds) pairsByTarget.set(id, []);
 
-            const mae = maeSum / n;
-            const pearsonR = (vVarSum === 0 || tVarSum === 0)
-                ? null
-                : covSum / Math.sqrt(vVarSum * tVarSum);
+    for (const e of (targetEntries ?? []) as { user_id: string; restaurant_id: string; rating: number }[]) {
+        const vr = viewerMap.get(e.restaurant_id);
+        if (vr == null) continue;
+        const bucket = pairsByTarget.get(e.user_id);
+        if (bucket) bucket.push({ vr, tr: e.rating });
+    }
 
-            const cal = computeCalibrationFromRow(n, pearsonR, mae, OVERLAP_MIN);
-            result.set(target_id, cal);
-        } catch {
+    for (const [target_id, pairs] of pairsByTarget) {
+        if (pairs.length === 0) {
             result.set(target_id, null);
+            continue;
         }
+
+        const n = pairs.length;
+        const vMean = pairs.reduce((s, p) => s + p.vr, 0) / n;
+        const tMean = pairs.reduce((s, p) => s + p.tr, 0) / n;
+
+        let covSum = 0, vVarSum = 0, tVarSum = 0, maeSum = 0;
+        for (const { vr, tr } of pairs) {
+            const vd = vr - vMean, td = tr - tMean;
+            covSum += vd * td;
+            vVarSum += vd * vd;
+            tVarSum += td * td;
+            maeSum += Math.abs(vr - tr);
+        }
+
+        const mae = maeSum / n;
+        const pearsonR = (vVarSum === 0 || tVarSum === 0)
+            ? null
+            : covSum / Math.sqrt(vVarSum * tVarSum);
+
+        result.set(target_id, computeCalibrationFromRow(n, pearsonR, mae, min_overlap));
     }
 
     return result;
