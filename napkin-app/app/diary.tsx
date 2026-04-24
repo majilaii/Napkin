@@ -47,9 +47,6 @@ export default function DiaryScreen() {
     const allRows: DiaryEntryRow[] = data?.pages.flatMap((p) => p.rows) ?? [];
     const monthGroups = groupDiaryByMonth(allRows);
 
-    // Year summary from first page
-    const yearSummary = data?.pages[0]?.yearSummary;
-
     const sections = monthGroups.map((g) => ({
         title: g.monthLabel,
         data: g.rows,
@@ -67,35 +64,6 @@ export default function DiaryScreen() {
                     <Text style={[styles.title, { color: palette.text }]}>Diary</Text>
                     <View style={{ width: 24 }} />
                 </View>
-
-                {/* Year summary band */}
-                {yearSummary && (
-                    <View style={[styles.yearBand, { backgroundColor: palette.surfaceContainerLow, borderBottomColor: palette.dividerSoft }]}>
-                        <Text
-                            style={[
-                                styles.yearNumber,
-                                { color: palette.text, fontFamily: 'Newsreader_400Regular_Italic' },
-                            ]}
-                        >
-                            {yearSummary.year}
-                        </Text>
-                        <View style={{ flex: 1 }}>
-                            <Text style={[Type.caption, { color: palette.textSecondary, lineHeight: 18 }]}>
-                                <Text style={{ color: palette.text, fontWeight: '600' }}>{yearSummary.logs}</Text>
-                                {' logs · '}
-                                <Text style={{ color: palette.text, fontWeight: '600' }}>{yearSummary.places}</Text>
-                                {' places'}
-                            </Text>
-                            <Text style={[Type.caption, { color: palette.textSecondary, lineHeight: 18 }]}>
-                                {'avg '}
-                                <Text style={{ fontFamily: 'Newsreader_400Regular_Italic', fontSize: 12, color: palette.text }}>
-                                    {yearSummary.avgRating != null ? `${yearSummary.avgRating.toFixed(1)} / 5` : '—'}
-                                </Text>
-                                {yearSummary.reviews > 0 ? ` · ${yearSummary.reviews} reviews` : ''}
-                            </Text>
-                        </View>
-                    </View>
-                )}
 
                 {/* Loading */}
                 {isLoading && (
@@ -188,19 +156,6 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 18,
         fontWeight: '500',
-    },
-    yearBand: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: 12,
-        gap: Spacing.md,
-        borderBottomWidth: 1,
-    },
-    yearNumber: {
-        fontSize: 26,
-        fontWeight: '500',
-        lineHeight: 30,
     },
     monthHeader: {
         paddingHorizontal: Spacing.lg,

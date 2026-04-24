@@ -74,10 +74,8 @@ export const queryKeys = {
     // Users (public / merged profile surface — TICKET-020, TICKET-025)
     users: {
         profile: (identifier: string) => ['users', 'profile', identifier] as const,
-        diary: (userId: string, cursor?: string) =>
-            cursor
-                ? ['users', 'diary', userId, cursor] as const
-                : ['users', 'diary', userId] as const,
+        diary: (userId: string) =>
+            ['users', 'diary', userId] as const,
         regulars: (userId: string) => ['users', 'regulars', userId] as const,
         search: (q: string, opts?: { mutualOnly?: boolean }) =>
             opts?.mutualOnly

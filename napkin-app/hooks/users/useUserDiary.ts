@@ -1,40 +1,27 @@
 /**
  * useUserDiary — paginated chronological diary for a user.
- * TICKET-025
+ * TICKET-025 / TICKET-035
  *
- * Pages backward by visited_at cursor. Groups by month on the client.
+ * Pages backward by (visited_at, id) cursor (opaque base64 string).
+ * Groups by month on the client.
  * Gated: self always accessible; stranger requires public profile (server-enforced).
  */
-import { useInfiniteQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
 import type { DiaryEntryRow } from './useUserProfile';
 
-export type YearSummary = {
-    year: number;
-    logs: number;
-    places: number;
-    avgRating: number | null;
-    reviews: number;
-};
-
-export type DiaryPage = {
-    rows: DiaryEntryRow[];
-    nextCursor: string | null;
-    yearSummary: YearSummary;
-};
-
-async function fetchDiaryPage(identifier: string, cursor?: string | null): Promise<DiaryPage> {
-    const { data: { session } } = await supabase.auth.getSession();
-
+async function fetchDiaryPage(
+    identifier: string,
+    cursor: string | null,
+    token: string | null,
+): Promise<Page<DiaryEntryRow>> {
     const body: Record<string, unknown> = { action: 'diary', identifier };
     if (cursor) body.cursor = cursor;
 
     const { data, error } = await supabase.functions.invoke('user-profile', {
         body,
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
 
     if (error) {
@@ -49,19 +36,21 @@ async function fetchDiaryPage(identifier: string, cursor?: string | null): Promi
     }
     if (data?.error) throw new Error(data.error);
 
-    return data?.data as DiaryPage;
+    return data?.data as Page<DiaryEntryRow>;
 }
 
 export function useUserDiary(identifier: string | null | undefined) {
-    return useInfiniteQuery<DiaryPage, Error>({
+    return useCursorPagedQuery<DiaryEntryRow>({
         queryKey: queryKeys.users.diary(identifier ?? ''),
-        queryFn: ({ pageParam }) =>
-            fetchDiaryPage(identifier!, pageParam as string | null | undefined),
-        initialPageParam: null as string | null,
-        getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+        fetchPage: (cursor, token) => fetchDiaryPage(identifier!, cursor, token),
         enabled: !!identifier,
         staleTime: 1000 * 60 * 5,
     });
+}
+
+/** Flatten all pages into a flat array of DiaryEntryRow. */
+export function flattenDiary(data: ReturnType<typeof useUserDiary>['data']) {
+    return flattenPages(data);
 }
 
 /**
