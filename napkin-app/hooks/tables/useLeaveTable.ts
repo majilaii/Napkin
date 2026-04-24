@@ -7,7 +7,7 @@
  * On success: invalidates tables list so the table disappears from the tab.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface LeaveTableInput {
@@ -19,22 +19,11 @@ export interface LeaveTableResult {
 }
 
 async function leaveTable(input: LeaveTableInput): Promise<LeaveTableResult> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke(
-        'table-management?action=leave_table',
-        {
-            method: 'POST',
-            body: { table_id: input.tableId },
-            headers: session?.access_token
-                ? { Authorization: `Bearer ${session.access_token}` }
-                : undefined,
-        }
-    );
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data as LeaveTableResult;
+    return callEdgeFn<LeaveTableResult>('table-management', {
+        method: 'POST',
+        params: { action: 'leave_table' },
+        body: { table_id: input.tableId },
+    });
 }
 
 export function useLeaveTable(userId: string | null | undefined) {

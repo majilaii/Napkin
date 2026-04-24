@@ -6,7 +6,7 @@
  * on blur or button press, not on every keystroke.
  */
 import { useMutation } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 
 type CheckUsernameResult = {
     available: boolean;
@@ -14,18 +14,10 @@ type CheckUsernameResult = {
 };
 
 async function checkUsername(username: string): Promise<CheckUsernameResult> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('user-profile', {
-        body: { action: 'check_username', username },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    return callEdgeFn<CheckUsernameResult>('user-profile', {
+        action: 'check_username',
+        body: { username },
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data as CheckUsernameResult;
 }
 
 export function useCheckUsername() {

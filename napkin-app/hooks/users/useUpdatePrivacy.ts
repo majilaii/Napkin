@@ -8,7 +8,7 @@
  * On success, invalidates the caller's own profile query.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { UserProfileRow } from './useUserProfile';
 
@@ -18,18 +18,10 @@ type UpdatePrivacyPayload = {
 };
 
 async function updatePrivacy(payload: UpdatePrivacyPayload): Promise<UserProfileRow> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('user-profile', {
-        body: { action: 'update_privacy', ...payload },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    return callEdgeFn<UserProfileRow>('user-profile', {
+        action: 'update_privacy',
+        body: payload,
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data as UserProfileRow;
 }
 
 export function useUpdatePrivacy(userId: string | null | undefined) {

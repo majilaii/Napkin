@@ -3,7 +3,7 @@
  * Cursor: before_created_at (ISO8601). Each page returns up to `limit` items.
  */
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface WishlistRestaurant {
@@ -36,24 +36,19 @@ const PAGE_LIMIT = 40;
 async function fetchPersonalWishlist(
     before_created_at: string | null,
 ): Promise<PersonalWishlistPage> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const body: Record<string, unknown> = {
-        action: 'list_personal',
-        limit: PAGE_LIMIT,
-    };
+    const body: Record<string, unknown> = { limit: PAGE_LIMIT };
     if (before_created_at) body.before_created_at = before_created_at;
 
-    const { data, error } = await supabase.functions.invoke('wishlist', {
-        body,
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return { data: data?.data ?? [], next_cursor: data?.next_cursor ?? null };
+    // The wishlist edge function returns { data: PersonalWishlistItem[], next_cursor: string | null }
+    // at the response root. callEdgeFn unwraps `data` already; we ask for the
+    // full payload by reading what's after the unwrap and shape it ourselves.
+    const raw = await callEdgeFn<
+        { data?: PersonalWishlistItem[]; next_cursor?: string | null } | PersonalWishlistItem[]
+    >('wishlist', { action: 'list_personal', body });
+    if (Array.isArray(raw)) {
+        return { data: raw, next_cursor: null };
+    }
+    return { data: raw?.data ?? [], next_cursor: raw?.next_cursor ?? null };
 }
 
 export function useMyWishlist(userId: string | null | undefined) {

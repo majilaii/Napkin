@@ -13,9 +13,8 @@
  * AddMemberError.error_code still exposed for UI branching.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-import { unwrapInvokeError } from '@/lib/edgeInvoke';
 
 export interface AddMemberInput {
     tableId: string;
@@ -39,34 +38,21 @@ export class AddMemberError extends Error {
 }
 
 async function addMember(input: AddMemberInput): Promise<AddMemberResult> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke(
-        'table-management?action=add_member',
-        {
+    try {
+        return await callEdgeFn<AddMemberResult>('table-management', {
             method: 'POST',
+            params: { action: 'add_member' },
             body: { table_id: input.tableId, target_user_id: input.targetUserId },
-            headers: session?.access_token
-                ? { Authorization: `Bearer ${session.access_token}` }
-                : undefined,
-        }
-    );
-
-    if (error) {
-        const unwrapped = await unwrapInvokeError(error);
-        // Support both new envelope shape (error.code) and legacy flat shape (error_code)
-        const code = unwrapped.code !== 'LEGACY' && unwrapped.code !== 'UNKNOWN'
-            ? unwrapped.code
-            : (data?.error_code as string | undefined);
-        throw new AddMemberError(unwrapped.message, code, unwrapped.status);
+        });
+    } catch (err) {
+        // Surface typed AddMemberError so the UI can branch on error_code.
+        const cause = (err as { cause?: { code?: string; message?: string; status?: number } }).cause;
+        const code = cause?.code && cause.code !== 'LEGACY' && cause.code !== 'UNKNOWN'
+            ? cause.code
+            : undefined;
+        const message = cause?.message ?? (err instanceof Error ? err.message : 'Unknown error');
+        throw new AddMemberError(message, code, cause?.status);
     }
-
-    if (data?.error) {
-        // Legacy flat error shape from table-management (still returns { error, error_code })
-        throw new AddMemberError(data.error, data.error_code);
-    }
-
-    return data?.data as AddMemberResult;
 }
 
 export function useAddMember(userId: string | null | undefined) {

@@ -11,6 +11,7 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useToast } from '@/providers/ToastProvider';
 
@@ -80,21 +81,11 @@ async function fetchPostInteractions(
     targetId: string,
     scope: Scope,
 ): Promise<PostInteractionsData> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke(
-        `post-interactions?target_type=${targetType}&target_id=${targetId}&scope=${scope}`,
-        {
-            method: 'GET',
-            headers: session?.access_token
-                ? { Authorization: `Bearer ${session.access_token}` }
-                : undefined,
-        }
-    );
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data ?? { reactions: [], comments: [], counts: { reactions: 0, comments: 0, top_emojis: [] } };
+    const data = await callEdgeFn<PostInteractionsData | null>('post-interactions', {
+        method: 'GET',
+        params: { target_type: targetType, target_id: targetId, scope },
+    });
+    return data ?? { reactions: [], comments: [], counts: { reactions: 0, comments: 0, top_emojis: [] } };
 }
 
 // ── Query hook ───────────────────────────────────────────────────────────────
@@ -127,16 +118,13 @@ export function useToggleReaction() {
 
     return useMutation({
         mutationFn: async ({ targetType, targetId, emoji, scope }: ToggleReactionInput) => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke('post-interactions', {
-                body: { action: 'react', target_type: targetType, target_id: targetId, emoji, scope },
-                headers: session?.access_token
-                    ? { Authorization: `Bearer ${session.access_token}` }
-                    : undefined,
-            });
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
-            return data?.data as { added: boolean; removed: boolean; reaction: Reaction | null };
+            return callEdgeFn<{ added: boolean; removed: boolean; reaction: Reaction | null }>(
+                'post-interactions',
+                {
+                    action: 'react',
+                    body: { target_type: targetType, target_id: targetId, emoji, scope },
+                },
+            );
         },
 
         onMutate: async ({ targetType, targetId, emoji, scope }) => {
@@ -281,23 +269,16 @@ export function useAddComment() {
 
     return useMutation({
         mutationFn: async ({ targetType, targetId, body, clientNonce, scope }: AddCommentInput) => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke('post-interactions', {
+            return callEdgeFn<Comment & { client_nonce?: string }>('post-interactions', {
+                action: 'comment',
                 body: {
-                    action: 'comment',
                     target_type: targetType,
                     target_id: targetId,
                     body,
                     scope,
                     ...(clientNonce ? { client_nonce: clientNonce } : {}),
                 },
-                headers: session?.access_token
-                    ? { Authorization: `Bearer ${session.access_token}` }
-                    : undefined,
             });
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
-            return data?.data as Comment & { client_nonce?: string };
         },
 
         onMutate: async ({ targetType, targetId, body, clientNonce, scope }) => {
@@ -305,6 +286,21 @@ export function useAddComment() {
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
             const userId = (await supabase.auth.getUser()).data.user?.id;
+
+            // TICKET-036 P1-10 (symmetry with delete): increment feed-card
+            // comment_count optimistically so the count pill reflects the new
+            // comment immediately. Snapshot for rollback.
+            const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
+            if (scope === 'table') {
+                queryClient.getQueriesData<any>({ queryKey: queryKeys.tables.activityAll() })
+                    .forEach(([k, data]) => {
+                        if (data) feedSnapshots.push({ key: k, data });
+                    });
+                queryClient.getQueriesData<any>({ queryKey: queryKeys.feed.rootAll() })
+                    .forEach(([k, data]) => {
+                        if (data) feedSnapshots.push({ key: k, data });
+                    });
+            }
 
             if (previous && userId) {
                 const optimisticComment: Comment = {
@@ -328,7 +324,32 @@ export function useAddComment() {
                 });
             }
 
-            return { previous };
+            if (scope === 'table') {
+                const incrementItem = (item: any) => {
+                    if (item?.id !== targetId) return item;
+                    return { ...item, comment_count: (item.comment_count ?? 0) + 1 };
+                };
+                queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
+                    { queryKey: queryKeys.tables.activityAll() },
+                    (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
+                        if (!data?.pages) return data;
+                        return { ...data, pages: data.pages.map((page) => page.map(incrementItem)) };
+                    },
+                );
+                queryClient.setQueriesData<any>(
+                    { queryKey: queryKeys.feed.rootAll() },
+                    (data: any) => {
+                        if (!data) return data;
+                        if (data.pages) {
+                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(incrementItem) ?? p.rows })) };
+                        }
+                        if (data.entries) return { ...data, entries: data.entries.map(incrementItem) };
+                        return data;
+                    },
+                );
+            }
+
+            return { previous, feedSnapshots };
         },
 
         onError: (_err, { targetType, targetId, clientNonce, scope }, context) => {
@@ -354,6 +375,13 @@ export function useAddComment() {
                 });
             } else if (context?.previous) {
                 queryClient.setQueryData(key, context.previous);
+            }
+
+            // Roll back feed-card increments
+            if (context?.feedSnapshots) {
+                for (const { key: feedKey, data } of context.feedSnapshots) {
+                    queryClient.setQueryData(feedKey, data);
+                }
             }
         },
 
@@ -400,16 +428,10 @@ export function useEditComment() {
 
     return useMutation({
         mutationFn: async ({ commentId, body, scope }: EditCommentInput) => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke('post-interactions', {
-                body: { action: 'edit_comment', comment_id: commentId, body, scope },
-                headers: session?.access_token
-                    ? { Authorization: `Bearer ${session.access_token}` }
-                    : undefined,
+            return callEdgeFn<Comment>('post-interactions', {
+                action: 'edit_comment',
+                body: { comment_id: commentId, body, scope },
             });
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
-            return data?.data as Comment;
         },
 
         onSuccess: (_data, { targetType, targetId, scope }) => {
@@ -434,22 +456,30 @@ export function useDeleteComment() {
 
     return useMutation({
         mutationFn: async ({ commentId, scope }: DeleteCommentInput) => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke('post-interactions', {
-                body: { action: 'delete_comment', comment_id: commentId, scope },
-                headers: session?.access_token
-                    ? { Authorization: `Bearer ${session.access_token}` }
-                    : undefined,
+            return callEdgeFn<{ id: string }>('post-interactions', {
+                action: 'delete_comment',
+                body: { comment_id: commentId, scope },
             });
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
-            return data?.data as { id: string };
         },
 
         onMutate: async ({ targetType, targetId, commentId, scope }) => {
             const key = queryKeys.postInteractions.all(targetType, targetId, scope);
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
+
+            // TICKET-036 P1-10: snapshot feed-side caches too so we can
+            // decrement comment_count on the matching card and roll back.
+            const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
+            if (scope === 'table') {
+                queryClient.getQueriesData<any>({ queryKey: queryKeys.tables.activityAll() })
+                    .forEach(([k, data]) => {
+                        if (data) feedSnapshots.push({ key: k, data });
+                    });
+                queryClient.getQueriesData<any>({ queryKey: queryKeys.feed.rootAll() })
+                    .forEach(([k, data]) => {
+                        if (data) feedSnapshots.push({ key: k, data });
+                    });
+            }
 
             if (previous) {
                 queryClient.setQueryData<PostInteractionsData>(key, {
@@ -462,7 +492,34 @@ export function useDeleteComment() {
                 });
             }
 
-            return { previous };
+            // Decrement comment_count on the matching feed card so the count
+            // pill updates instantly. Only meaningful for table-scope.
+            if (scope === 'table') {
+                const decrementItem = (item: any) => {
+                    if (item?.id !== targetId) return item;
+                    return { ...item, comment_count: Math.max(0, (item.comment_count ?? 0) - 1) };
+                };
+                queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
+                    { queryKey: queryKeys.tables.activityAll() },
+                    (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
+                        if (!data?.pages) return data;
+                        return { ...data, pages: data.pages.map((page) => page.map(decrementItem)) };
+                    },
+                );
+                queryClient.setQueriesData<any>(
+                    { queryKey: queryKeys.feed.rootAll() },
+                    (data: any) => {
+                        if (!data) return data;
+                        if (data.pages) {
+                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(decrementItem) ?? p.rows })) };
+                        }
+                        if (data.entries) return { ...data, entries: data.entries.map(decrementItem) };
+                        return data;
+                    },
+                );
+            }
+
+            return { previous, feedSnapshots };
         },
 
         onError: (_err, { targetType, targetId, scope }, context) => {
@@ -471,6 +528,11 @@ export function useDeleteComment() {
                     queryKeys.postInteractions.all(targetType, targetId, scope),
                     context.previous
                 );
+            }
+            if (context?.feedSnapshots) {
+                for (const { key, data } of context.feedSnapshots) {
+                    queryClient.setQueryData(key, data);
+                }
             }
         },
 

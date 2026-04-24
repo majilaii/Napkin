@@ -6,7 +6,7 @@
  * affordance can read the necessary state without extra fetches.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { Table } from './useTables';
 
@@ -30,16 +30,8 @@ export interface TableDetail extends Table {
 }
 
 async function fetchTableDetail(tableId: string): Promise<TableDetail> {
-    const { data: { session } } = await supabase.auth.getSession();
-    const { data, error } = await supabase.functions.invoke(`table-management/${tableId}`, {
-        method: 'GET',
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) throw error;
-    return data?.data;
+    // Path-segment routing: edge function reads tableId from URL pathname.
+    return callEdgeFn<TableDetail>(`table-management/${tableId}`, { method: 'GET' });
 }
 
 export function useTableDetail(tableId: string | null | undefined) {

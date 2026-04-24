@@ -5,7 +5,7 @@
  * Backed by fn_table_activity_page RPC — a UNION of entries + table_nights
  * sorted by sort_date DESC, id DESC. No more duplicates or gaps.
  */
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
 
@@ -114,21 +114,13 @@ async function fetchTableActivityPage(
     tableId: string,
     cursor: string | null,
     filters: TableActivityFilters | undefined,
-    token: string | null,
+    _token: string | null,
 ): Promise<Page<ActivityItem>> {
     const body: Record<string, unknown> = { table_id: tableId };
     if (cursor) body.cursor = cursor;
     if (filters?.filterType) body.filter_type = filters.filterType;
     if (filters?.filterUserId) body.filter_user_id = filters.filterUserId;
-
-    const { data, error } = await supabase.functions.invoke('table-activity', {
-        method: 'POST',
-        body,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    });
-
-    if (error) throw error;
-    return data?.data as Page<ActivityItem>;
+    return callEdgeFn<Page<ActivityItem>>('table-activity', { body });
 }
 
 export function useTableActivity(

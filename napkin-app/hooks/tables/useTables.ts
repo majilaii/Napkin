@@ -2,7 +2,7 @@
  * Hook to fetch user's tables
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface Table {
@@ -20,13 +20,11 @@ export interface TableMembership {
     tables: Table;
 }
 
-async function fetchUserTables(userId: string): Promise<TableMembership[]> {
-    const { data, error } = await supabase.functions.invoke('table-management', {
+async function fetchUserTables(_userId: string): Promise<TableMembership[]> {
+    const data = await callEdgeFn<TableMembership[]>('table-management', {
         method: 'GET',
     });
-
-    if (error) throw error;
-    return data?.data || [];
+    return data ?? [];
 }
 
 export function useTables(userId: string | null | undefined) {

@@ -3,22 +3,15 @@
  * Drives checkmark state in AddToListSheet.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 async function fetchListsContaining(restaurantId: string): Promise<string[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('lists', {
-        body: { action: 'lists_containing', restaurant_id: restaurantId },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    const data = await callEdgeFn<string[]>('lists', {
+        action: 'lists_containing',
+        body: { restaurant_id: restaurantId },
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data ?? [];
+    return data ?? [];
 }
 
 export function useListsContainingRestaurant(

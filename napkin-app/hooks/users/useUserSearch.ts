@@ -12,7 +12,7 @@
  * results don't collide in the cache.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 /** Result when mutualOnly is false (or omitted) */
@@ -34,27 +34,17 @@ interface SearchOptions {
 async function searchUsers(q: string, options: SearchOptions): Promise<UserSearchResult[]> {
     if (!q || q.trim().length === 0) return [];
 
-    const { data: { session } } = await supabase.auth.getSession();
-
     const body: Record<string, unknown> = {
-        action: 'search',
         q: q.trim(),
         limit: 20,
     };
-    if (options.mutualOnly) {
-        body.mutual_only = true;
-    }
+    if (options.mutualOnly) body.mutual_only = true;
 
-    const { data, error } = await supabase.functions.invoke('user-profile', {
+    const data = await callEdgeFn<UserSearchResult[]>('user-profile', {
+        action: 'search',
         body,
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return (data?.data ?? []) as UserSearchResult[];
+    return (data ?? []) as UserSearchResult[];
 }
 
 /**

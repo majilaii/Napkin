@@ -15,24 +15,8 @@
  * Backed by the `restaurant-history` edge function.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-
-// Helper — mirrors the pattern in useTableNight.ts
-async function getAuthHeaders() {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token
-        ? { Authorization: `Bearer ${session.access_token}` }
-        : undefined;
-}
-
-// TICKET-037: promote local copy to the shared helper
-async function unwrapInvokeError(error: unknown): Promise<Error> {
-    // Import is done inline to avoid circular deps; re-uses the shared implementation
-    const { unwrapInvokeError: shared } = await import('@/lib/edgeInvoke');
-    const unwrapped = await shared(error);
-    return new Error(unwrapped.message);
-}
 
 export type Visit = {
     kind: 'round' | 'solo';
@@ -73,41 +57,29 @@ async function fetchTableHistory(
     tableId: string,
     excludeNightId?: string,
 ): Promise<TableRestaurantHistory> {
-    const params = new URLSearchParams({
-        action: 'table_history',
+    const params: Record<string, string> = {
         restaurant_id: restaurantId,
         table_id: tableId,
+    };
+    if (excludeNightId) params.exclude_night_id = excludeNightId;
+    return callEdgeFn<TableRestaurantHistory>('restaurant-history', {
+        method: 'GET',
+        action: 'table_history',
+        params,
     });
-    if (excludeNightId) params.set('exclude_night_id', excludeNightId);
-
-    const headers = await getAuthHeaders();
-    const { data, error } = await supabase.functions.invoke(
-        `restaurant-history?${params.toString()}`,
-        { method: 'GET', headers },
-    );
-    if (error) throw await unwrapInvokeError(error);
-    if ((data as any)?.error) throw new Error((data as any).error);
-    return (data as { data: TableRestaurantHistory }).data;
 }
 
 async function fetchUserHistory(
     restaurantId: string,
     excludeEntryId?: string,
 ): Promise<UserRestaurantHistory> {
-    const params = new URLSearchParams({
+    const params: Record<string, string> = { restaurant_id: restaurantId };
+    if (excludeEntryId) params.exclude_entry_id = excludeEntryId;
+    return callEdgeFn<UserRestaurantHistory>('restaurant-history', {
+        method: 'GET',
         action: 'user_history',
-        restaurant_id: restaurantId,
+        params,
     });
-    if (excludeEntryId) params.set('exclude_entry_id', excludeEntryId);
-
-    const headers = await getAuthHeaders();
-    const { data, error } = await supabase.functions.invoke(
-        `restaurant-history?${params.toString()}`,
-        { method: 'GET', headers },
-    );
-    if (error) throw await unwrapInvokeError(error);
-    if ((data as any)?.error) throw new Error((data as any).error);
-    return (data as { data: UserRestaurantHistory }).data;
 }
 
 /**

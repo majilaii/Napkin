@@ -2,9 +2,8 @@
  * Hooks for Table Night — real-time group rating sessions
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
-import { unwrapInvokeError } from '@/lib/edgeInvoke';
+import { callEdgeFn, unwrapInvokeError } from '@/lib/edgeInvoke';
 
 // Types
 export interface TableNight {
@@ -53,24 +52,10 @@ export interface TableNightStatus extends TableNight {
     participants: TableNightParticipant[];
 }
 
-// Helper to get auth headers
-async function getAuthHeaders() {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token
-        ? { Authorization: `Bearer ${session.access_token}` }
-        : undefined;
-}
-
-// Helper to invoke the edge function (POST)
+// Helper to invoke the table-night edge function (POST). Thin wrapper for
+// the action-based mutations below — GET reads call callEdgeFn directly.
 async function invokeTableNight(body: Record<string, unknown>) {
-    const headers = await getAuthHeaders();
-    const { data, error } = await supabase.functions.invoke('table-night', {
-        body,
-        headers,
-    });
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data;
+    return callEdgeFn('table-night', { body });
 }
 
 // ─── Queries ───
@@ -79,13 +64,12 @@ export function useActiveTableNight(tableId: string | null | undefined) {
     return useQuery<TableNight | null, Error>({
         queryKey: queryKeys.tableNight.active(tableId!),
         queryFn: async () => {
-            const headers = await getAuthHeaders();
-            const { data, error } = await supabase.functions.invoke(
-                'table-night?action=active&table_id=' + tableId,
-                { method: 'GET', headers }
-            );
-            if (error) throw error;
-            return data?.data ?? null;
+            const data = await callEdgeFn<TableNight | null>('table-night', {
+                method: 'GET',
+                action: 'active',
+                params: { table_id: tableId! },
+            });
+            return data ?? null;
         },
         enabled: !!tableId,
         staleTime: 1000 * 60 * 5,
@@ -95,16 +79,12 @@ export function useActiveTableNight(tableId: string | null | undefined) {
 export function useTableNightStatus(nightId: string | null | undefined) {
     return useQuery<TableNightStatus, Error>({
         queryKey: queryKeys.tableNight.status(nightId!),
-        queryFn: async () => {
-            const headers = await getAuthHeaders();
-            const { data, error } = await supabase.functions.invoke(
-                'table-night?action=status&table_night_id=' + nightId,
-                { method: 'GET', headers }
-            );
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
-            return data?.data;
-        },
+        queryFn: async () =>
+            callEdgeFn<TableNightStatus>('table-night', {
+                method: 'GET',
+                action: 'status',
+                params: { table_night_id: nightId! },
+            }),
         enabled: !!nightId,
         staleTime: 1000 * 30, // 30 seconds — realtime supplements this
     });
@@ -190,40 +170,33 @@ export function useRoundContext(tableNightId: string | null | undefined) {
     return useQuery<RoundContext | null, Error>({
         queryKey: queryKeys.tableNight.roundContext(tableNightId!),
         queryFn: async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke(
-                `table-night?action=round_context&table_night_id=${tableNightId!}`,
-                {
+            try {
+                const result = await callEdgeFn<{
+                    nightId: string;
+                    participantCount: number;
+                    status: string;
+                    groupAverage: number | null;
+                } | null>('table-night', {
                     method: 'GET',
-                    headers: session?.access_token
-                        ? { Authorization: `Bearer ${session.access_token}` }
-                        : undefined,
-                },
-            );
-
-            if (error) {
-                const unwrapped = await unwrapInvokeError(error);
+                    action: 'round_context',
+                    params: { table_night_id: tableNightId! },
+                });
+                if (!result) return null;
+                return {
+                    nightId: result.nightId,
+                    participantCount: result.participantCount,
+                    groupAverage: result.groupAverage,
+                    status: result.status,
+                };
+            } catch (err) {
                 // NOT_FOUND or FORBIDDEN → silently return null (banner hidden)
+                const cause = (err as Error & { cause?: { code?: string } })?.cause;
+                if (cause?.code === 'NOT_FOUND' || cause?.code === 'FORBIDDEN') return null;
+                // Fallback: also unwrap any legacy error shape
+                const unwrapped = await unwrapInvokeError(err);
                 if (unwrapped.code === 'NOT_FOUND' || unwrapped.code === 'FORBIDDEN') return null;
-                throw new Error(unwrapped.message);
+                throw err instanceof Error ? err : new Error(unwrapped.message);
             }
-
-            if ((data as any)?.error) return null;
-
-            const result = (data as any)?.data as {
-                nightId: string;
-                participantCount: number;
-                status: string;
-                groupAverage: number | null;
-            } | null;
-
-            if (!result) return null;
-            return {
-                nightId: result.nightId,
-                participantCount: result.participantCount,
-                groupAverage: result.groupAverage,
-                status: result.status,
-            };
         },
         enabled: !!tableNightId,
         staleTime: 1000 * 60 * 5,

@@ -11,7 +11,7 @@
  * isNotFound=true maps to the privacy-safe 404 screen.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -133,39 +133,23 @@ export type UserProfileResult = {
 // ── Fetch ──────────────────────────────────────────────────────────────────
 
 async function fetchUserProfile(identifier: string): Promise<UserProfileResult> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('user-profile', {
-        body: { action: 'profile', identifier },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) {
-        // Try to extract body from the FunctionsHttpError
-        let details = error.message;
-        try {
-            if (error.context && typeof error.context.json === 'function') {
-                const body = await error.context.json();
-                details = JSON.stringify(body);
-            }
-        } catch (_) { /* ignore */ }
-
-        const status = (error as any).context?.status;
-        if (status === 404) return { data: null, isNotFound: true };
-        throw new Error(details);
+    try {
+        const data = await callEdgeFn<UserProfileData | null>('user-profile', {
+            action: 'profile',
+            body: { identifier },
+        });
+        return { data: data ?? null, isNotFound: false };
+    } catch (err) {
+        // 404 → not found is a normal UX state, not an error
+        const cause = (err as Error & { cause?: { status?: number; code?: string; message?: string } })?.cause;
+        if (cause?.status === 404 || cause?.code === 'NOT_FOUND') {
+            return { data: null, isNotFound: true };
+        }
+        if (cause?.message === 'not_found') {
+            return { data: null, isNotFound: true };
+        }
+        throw err;
     }
-
-    if (data?.error === 'not_found') {
-        return { data: null, isNotFound: true };
-    }
-
-    if (data?.error) {
-        throw new Error(data.error);
-    }
-
-    return { data: data?.data ?? null, isNotFound: false };
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────

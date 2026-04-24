@@ -14,9 +14,8 @@
  * (see isPending on the returned mutation).
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-import { unwrapInvokeError } from '@/lib/edgeInvoke';
 import type { ListDetailData, ListEntry } from './useList';
 
 export interface ReorderEntryInput {
@@ -29,27 +28,11 @@ export interface ReorderEntryInput {
 }
 
 async function reorderEntry(input: ReorderEntryInput): Promise<void> {
-    const { data: { session } } = await supabase.auth.getSession();
-
     const { list_id, entry_id, new_index } = input;
-
-    const { data, error } = await supabase.functions.invoke('lists', {
-        body: {
-            action: 'reorder_entry',
-            list_id,
-            entry_id,
-            new_index,
-        },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    await callEdgeFn<void>('lists', {
+        action: 'reorder_entry',
+        body: { list_id, entry_id, new_index },
     });
-
-    if (error) {
-        const unwrapped = await unwrapInvokeError(error);
-        throw new Error(unwrapped.message);
-    }
-    if (data?.error) throw new Error(data.error);
 }
 
 export function useReorderListEntry(listId: string) {

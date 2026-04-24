@@ -14,6 +14,7 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 // ── Module-level debounce map ───────────────────────────────────────────────
@@ -34,21 +35,17 @@ const DEBOUNCE_MS = 30_000; // 30 seconds
 
 async function fetchLastSeenAt(
     tableId: string,
-    userId: string
+    _userId: string
 ): Promise<string | null> {
-    const { data: { session } } = await supabase.auth.getSession();
-    const { data, error } = await supabase.functions.invoke(
-        `table-management?action=last_seen&table_id=${encodeURIComponent(tableId)}`,
+    const data = await callEdgeFn<{ last_seen_at: string | null } | null>(
+        'table-management',
         {
             method: 'GET',
-            headers: session?.access_token
-                ? { Authorization: `Bearer ${session.access_token}` }
-                : undefined,
+            action: 'last_seen',
+            params: { table_id: tableId },
         }
     );
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data?.last_seen_at ?? null;
+    return data?.last_seen_at ?? null;
 }
 
 export function useLastSeenAt(
@@ -77,7 +74,7 @@ interface MarkSeenResult {
 export function useMarkSeen() {
     const queryClient = useQueryClient();
 
-    return useMutation<MarkSeenResult, Error, MarkSeenInput>({
+    return useMutation<MarkSeenResult, Error, MarkSeenInput, { previous: string | null | undefined; userId: string } | undefined>({
         mutationFn: async ({ tableId }) => {
             // Debounce: if we fired for this tableId within the last 30s, skip.
             const last = _lastMarkSeenAt.get(tableId) ?? 0;
@@ -89,20 +86,11 @@ export function useMarkSeen() {
 
             _lastMarkSeenAt.set(tableId, Date.now());
 
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke(
-                'table-management?action=mark_seen',
-                {
-                    method: 'POST',
-                    body: { table_id: tableId },
-                    headers: session?.access_token
-                        ? { Authorization: `Bearer ${session.access_token}` }
-                        : undefined,
-                }
-            );
-            if (error) throw error;
-            if (data?.error) throw new Error(data.error);
-            return data?.data as MarkSeenResult;
+            return await callEdgeFn<MarkSeenResult>('table-management', {
+                method: 'POST',
+                params: { action: 'mark_seen' },
+                body: { table_id: tableId },
+            });
         },
 
         onMutate: async ({ tableId }) => {

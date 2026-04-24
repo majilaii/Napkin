@@ -5,7 +5,7 @@
  * Gated server-side: requires palate access (self / public / shared tables).
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export type FollowListKind = 'followers' | 'following';
@@ -22,18 +22,11 @@ async function fetchFollowList(
     targetUserId: string,
     kind: FollowListKind,
 ): Promise<FollowListRow[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('user-profile', {
-        body: { action: 'follow_list', kind, target_user_id: targetUserId, limit: 200 },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    const data = await callEdgeFn<FollowListRow[]>('user-profile', {
+        action: 'follow_list',
+        body: { kind, target_user_id: targetUserId, limit: 200 },
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return (data?.data ?? []) as FollowListRow[];
+    return (data ?? []) as FollowListRow[];
 }
 
 export function useFollowList(

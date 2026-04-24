@@ -4,7 +4,7 @@
  * Read-only; this is a derived view — there is no "add to Table wishlist" path.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { WishlistRestaurant } from './useMyWishlist';
 
@@ -21,18 +21,11 @@ export interface TableWishlistItem {
 }
 
 async function fetchTableWishlist(tableId: string): Promise<TableWishlistItem[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('wishlist', {
-        body: { action: 'list_table', table_id: tableId },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    const data = await callEdgeFn<TableWishlistItem[]>('wishlist', {
+        action: 'list_table',
+        body: { table_id: tableId },
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data ?? [];
+    return data ?? [];
 }
 
 export function useTableWishlist(tableId: string | null | undefined) {

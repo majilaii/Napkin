@@ -3,7 +3,7 @@
  * Updates the caller's entry_participants row with their rating and notes.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface AddTakeInput {
@@ -14,21 +14,14 @@ export interface AddTakeInput {
 }
 
 async function addTake(input: AddTakeInput) {
-    const { data: { session } } = await supabase.auth.getSession();
-    const { data, error } = await supabase.functions.invoke('entry', {
+    return callEdgeFn('entry', {
+        action: 'add-take',
         body: {
-            action: 'add-take',
             entry_id: input.entry_id,
             rating: input.rating,
             notes: input.notes,
         },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
     });
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data;
 }
 
 export function useAddTake() {

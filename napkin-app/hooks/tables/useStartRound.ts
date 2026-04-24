@@ -8,9 +8,8 @@
  * so callers receive status/revealed_at as before.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-import { unwrapInvokeError } from '@/lib/edgeInvoke';
 
 export interface StartRoundInput {
     table_id: string;
@@ -36,11 +35,9 @@ export interface StartRoundInput {
 }
 
 async function startRound(input: StartRoundInput) {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('table-night', {
+    return callEdgeFn('table-night', {
+        action: 'start',
         body: {
-            action: 'start',
             table_id: input.table_id,
             restaurant: input.restaurant,
             participant_ids: input.participant_ids,
@@ -55,18 +52,7 @@ async function startRound(input: StartRoundInput) {
             service_rating: input.service_rating,
             value_rating: input.value_rating,
         },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
     });
-
-    if (error) {
-        const unwrapped = await unwrapInvokeError(error);
-        throw new Error(unwrapped.message);
-    }
-    if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : (data.error?.message ?? 'Unknown error'));
-    // Edge function returns the full night row after start_round RPC
-    return data?.data;
 }
 
 export function useStartRound(userId?: string | null, tableId?: string | null) {
