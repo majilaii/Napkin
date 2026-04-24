@@ -2,7 +2,7 @@
  * Mutation hook: update list metadata (title, description, ranked, privacy).
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { CreatedList } from './useCreateList';
 
@@ -15,18 +15,7 @@ export interface UpdateListInput {
 }
 
 async function updateList(input: UpdateListInput): Promise<CreatedList> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('lists', {
-        body: { action: 'update', ...input },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data;
+    return callEdgeFn<CreatedList>('lists', { action: 'update', body: input });
 }
 
 export function useUpdateList(userId: string | null | undefined) {

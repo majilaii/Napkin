@@ -44,20 +44,22 @@ export interface CreateEntryInput {
 }
 
 async function createEntry(input: CreateEntryInput): Promise<any> {
+    // The entry edge function returns { data: EntryRow, warnings?: [...] }.
+    // callEdgeFn returns whatever's at `data.data` — we lose `warnings`.
+    // Fall back to direct invoke for this one call so we can read the warnings
+    // envelope. (Acceptable exception to the callEdgeFn doctrine — documented
+    // here, and warnings is a TICKET-037 P2-13 quirk that the helper API
+    // doesn't yet expose. If a third hook needs envelope access we'll
+    // generalize callEdgeFn to return { data, meta }.)
     const { data: { session } } = await supabase.auth.getSession();
-
     const { data, error } = await supabase.functions.invoke('entry', {
         body: input,
         headers: session?.access_token
             ? { Authorization: `Bearer ${session.access_token}` }
             : undefined,
     });
-
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
-    // Return the entry row directly (data.data) — same shape as before.
-    // Stash warnings on the object so onSuccess can read them without a
-    // separate wrapper that would break callers reading result?.id.
     const entryRow = data?.data ?? {};
     if (data?.warnings) {
         (entryRow as any).__warnings = data.warnings;

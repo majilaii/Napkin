@@ -10,7 +10,7 @@
  *
  * Calls: POST table-atlas { action: 'city-page', table_id, city, cursor? }
  */
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
 
@@ -97,16 +97,12 @@ async function fetchAtlasCityPage(
     tableId: string,
     city: string,
     cursor: string | null,
-    token: string | null,
+    _token: string | null,
 ): Promise<AtlasCityPage> {
-    const { data, error } = await supabase.functions.invoke('table-atlas', {
-        body: { action: 'city-page', table_id: tableId, city, cursor },
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    return callEdgeFn<AtlasCityPage>('table-atlas', {
+        action: 'city-page',
+        body: { table_id: tableId, city, cursor },
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data as AtlasCityPage;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────

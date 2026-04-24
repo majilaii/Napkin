@@ -9,7 +9,7 @@
  * target must be current or historical member.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 // ── Public types ──────────────────────────────────────────────────────────
@@ -51,51 +51,17 @@ export interface MemberProfileData {
     recent_activity: RecentActivityItem[];
 }
 
-// ── Auth helper — mirrors useRestaurantHistory.ts ─────────────────────────
-
-async function getAuthHeaders(): Promise<Record<string, string> | undefined> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token
-        ? { Authorization: `Bearer ${session.access_token}` }
-        : undefined;
-}
-
 // ── Fetch ─────────────────────────────────────────────────────────────────
 
 async function fetchMemberProfile(
     userId: string,
     tableId: string,
 ): Promise<MemberProfileData> {
-    const params = new URLSearchParams({
+    return callEdgeFn<MemberProfileData>('member-profile', {
+        method: 'GET',
         action: 'profile',
-        user_id: userId,
-        table_id: tableId,
+        params: { user_id: userId, table_id: tableId },
     });
-
-    const headers = await getAuthHeaders();
-    const { data, error } = await supabase.functions.invoke(
-        `member-profile?${params.toString()}`,
-        { method: 'GET', headers },
-    );
-    if (error) {
-        // FunctionsHttpError keeps the response body on .context — surface
-        // the server-side error message instead of a generic "non-2xx".
-        const ctx = (error as { context?: Response }).context;
-        let serverMessage: string | null = null;
-        if (ctx && typeof ctx.json === 'function') {
-            try {
-                const body = await ctx.json();
-                if (body?.error) serverMessage = body.error;
-            } catch {
-                // ignore — fall through to original error
-            }
-        }
-        throw serverMessage ? new Error(serverMessage) : error;
-    }
-    if ((data as any)?.error) throw new Error((data as any).error);
-    return (data as { data: MemberProfileData }).data;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────

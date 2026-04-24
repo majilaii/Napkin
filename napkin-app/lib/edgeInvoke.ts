@@ -117,12 +117,26 @@ export async function callEdgeFn<T = unknown>(
         return (json?.data ?? json) as T;
     }
 
-    // POST via supabase-js invoke (auto-attaches auth)
+    // POST via supabase-js invoke (auto-attaches auth).
+    // If `params` is provided, append them as a query string on the function
+    // name — supabase-js preserves query strings in the function name. This
+    // is required by edge functions that route on `?action=` instead of body
+    // (e.g. table-management mark_seen / add_member / leave_table).
     const invokeBody = action
         ? { action, ...((body as object | undefined) ?? {}) }
         : body;
-    const { data, error } = await supabase.functions.invoke(name, {
-        body: invokeBody,
+    let invokeName = name;
+    if (params) {
+        const qs = new URLSearchParams();
+        for (const [k, v] of Object.entries(params)) {
+            if (v === undefined || v === null) continue;
+            qs.set(k, String(v));
+        }
+        const queryStr = qs.toString();
+        if (queryStr) invokeName = `${name}?${queryStr}`;
+    }
+    const { data, error } = await supabase.functions.invoke(invokeName, {
+        body: invokeBody as Record<string, unknown> | undefined,
     });
     if (error) {
         const wrapped = await unwrapInvokeError(error);

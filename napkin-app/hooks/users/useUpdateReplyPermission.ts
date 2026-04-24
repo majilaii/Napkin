@@ -6,7 +6,7 @@
  * setQueryData for optimistic patching instead of invalidate-only.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 interface ProfileShape {
@@ -20,18 +20,10 @@ interface ProfileShape {
 }
 
 async function updateReplyPermission(allow_public_replies: boolean): Promise<ProfileShape> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('user-profile', {
-        body: { action: 'update_reply_permission', allow_public_replies },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    return callEdgeFn<ProfileShape>('user-profile', {
+        action: 'update_reply_permission',
+        body: { allow_public_replies },
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data as ProfileShape;
 }
 
 export function useUpdateReplyPermission(userId: string | null | undefined) {

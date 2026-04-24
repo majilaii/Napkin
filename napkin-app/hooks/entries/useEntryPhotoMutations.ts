@@ -13,7 +13,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
-import { unwrapInvokeError } from '@/lib/edgeInvoke';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { useUpdateEntry } from './useUpdateEntry';
 
 // Local query key for the entry-photos list (mirrors entry-detail's useEntryPhotos)
@@ -36,32 +36,20 @@ export function useAddEntryPhoto(entryId: string) {
             const publicUrl = await compressAndUpload(localUri, userId);
 
             // 2. Delegate sort_order computation to the server RPC via edge function
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke('entry', {
-                body: {
-                    action: 'append_entry_photo',
-                    entry_id: entryId,
-                    photo_url: publicUrl,
-                },
-                headers: session?.access_token
-                    ? { Authorization: `Bearer ${session.access_token}` }
-                    : undefined,
-            });
-
-            if (error) {
+            try {
+                const row = await callEdgeFn<{ sort_order: number; photo_url: string } | null>(
+                    'entry',
+                    {
+                        action: 'append_entry_photo',
+                        body: { entry_id: entryId, photo_url: publicUrl },
+                    },
+                );
+                return { publicUrl, sortOrder: row?.sort_order ?? 0 };
+            } catch (err) {
                 // Clean up orphaned storage on insert failure
-                removeUploadedPhoto(publicUrl).catch(() => {});
-                const unwrapped = await unwrapInvokeError(error);
-                throw new Error(unwrapped.message);
+                removeUploadedPhoto(publicUrl).catch(() => { });
+                throw err;
             }
-
-            if (data?.error) {
-                removeUploadedPhoto(publicUrl).catch(() => {});
-                throw new Error(typeof data.error === 'string' ? data.error : (data.error?.message ?? 'Unknown error'));
-            }
-
-            const row = data?.data as { sort_order: number; photo_url: string } | null;
-            return { publicUrl, sortOrder: row?.sort_order ?? 0 };
         },
 
         onSuccess: async ({ publicUrl, sortOrder }) => {

@@ -2,7 +2,7 @@
  * Mutation hook: update the per-entry note on a list entry (optimistic).
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { ListDetailData } from './useList';
 
@@ -13,17 +13,7 @@ export interface UpdateEntryNoteInput {
 }
 
 async function updateEntryNote(input: UpdateEntryNoteInput): Promise<void> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('lists', {
-        body: { action: 'update_entry', ...input },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
+    await callEdgeFn<void>('lists', { action: 'update_entry', body: input });
 }
 
 export function useUpdateListEntryNote() {

@@ -9,24 +9,18 @@
  * Edge function: user-profile action=follow | action=unfollow
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { UserProfileResult } from './useUserProfile';
 import type { UserSearchResult } from './useUserSearch';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function invokeFollow(targetUserId: string, action: 'follow' | 'unfollow') {
-    const { data: { session } } = await supabase.auth.getSession();
-    const { data, error } = await supabase.functions.invoke('user-profile', {
-        body: { action, target_user_id: targetUserId },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    return callEdgeFn<{ following: boolean }>('user-profile', {
+        action,
+        body: { target_user_id: targetUserId },
     });
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data as { following: boolean };
 }
 
 // ── useFollow ─────────────────────────────────────────────────────────────────

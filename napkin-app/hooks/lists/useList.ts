@@ -4,7 +4,7 @@
  * Returns null data with isNotFound=true when server returns 404.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface ListEntryRestaurant {
@@ -62,30 +62,21 @@ export interface FetchResult {
 }
 
 async function fetchList(listId: string): Promise<FetchResult> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('lists', {
-        body: { action: 'get', list_id: listId },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) {
-        // supabase-js throws FunctionsHttpError for non-2xx. Surface 404 as the
-        // "not found" UI state (indistinguishable from "private + not owner" by design).
-        const status = (error as { context?: { status?: number } }).context?.status;
-        if (status === 404) {
+    try {
+        const data = await callEdgeFn<ListDetailData | null>('lists', {
+            action: 'get',
+            body: { list_id: listId },
+        });
+        return { data: data ?? null, isNotFound: !data };
+    } catch (err) {
+        // 404 from supabase.functions.invoke is the privacy-safe "not found" UI state
+        // (indistinguishable from "private + not owner" by design).
+        const cause = (err as Error & { cause?: { status?: number; code?: string } })?.cause;
+        if (cause?.status === 404 || cause?.code === 'NOT_FOUND') {
             return { data: null, isNotFound: true };
         }
-        throw error;
+        throw err;
     }
-
-    if (data?.error) {
-        return { data: null, isNotFound: true };
-    }
-
-    return { data: data?.data ?? null, isNotFound: false };
 }
 
 export function useList(listId: string | null | undefined) {

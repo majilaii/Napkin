@@ -3,7 +3,7 @@
  * Drives the Lists tab and the AddToListSheet.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface MyList {
@@ -20,18 +20,8 @@ export interface MyList {
 }
 
 async function fetchMyLists(): Promise<MyList[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('lists', {
-        body: { action: 'list_mine' },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data ?? [];
+    const data = await callEdgeFn<MyList[]>('lists', { action: 'list_mine' });
+    return data ?? [];
 }
 
 export function useMyLists(userId: string | null | undefined) {

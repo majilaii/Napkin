@@ -6,7 +6,7 @@
  * it disappears without waiting for the server round-trip.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface MarkWelcomedInput {
@@ -14,21 +14,10 @@ export interface MarkWelcomedInput {
 }
 
 async function markWelcomed(input: MarkWelcomedInput): Promise<void> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke(
-        'table-management?action=mark_welcomed',
-        {
-            method: 'POST',
-            body: { table_id: input.tableId },
-            headers: session?.access_token
-                ? { Authorization: `Bearer ${session.access_token}` }
-                : undefined,
-        }
-    );
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
+    await callEdgeFn<void>('table-management', {
+        action: 'mark_welcomed',
+        body: { table_id: input.tableId },
+    });
 }
 
 export function useMarkWelcomed() {

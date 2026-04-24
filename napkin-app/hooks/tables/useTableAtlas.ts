@@ -7,7 +7,7 @@
  * Calls: POST table-atlas { action: 'city-index', table_id }
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -35,13 +35,10 @@ export type TableAtlasData = {
 // ── Fetcher ───────────────────────────────────────────────────────────────────
 
 async function fetchTableAtlas(tableId: string): Promise<TableAtlasData> {
-    const { data, error } = await supabase.functions.invoke('table-atlas', {
-        body: { action: 'city-index', table_id: tableId },
+    return callEdgeFn<TableAtlasData>('table-atlas', {
+        action: 'city-index',
+        body: { table_id: tableId },
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data as TableAtlasData;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────

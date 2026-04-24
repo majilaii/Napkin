@@ -6,37 +6,19 @@
  * Groups by month on the client.
  * Gated: self always accessible; stranger requires public profile (server-enforced).
  */
-import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
 import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import type { DiaryEntryRow } from './useUserProfile';
 
 async function fetchDiaryPage(
     identifier: string,
     cursor: string | null,
-    token: string | null,
+    _token: string | null,
 ): Promise<Page<DiaryEntryRow>> {
-    const body: Record<string, unknown> = { action: 'diary', identifier };
+    const body: Record<string, unknown> = { identifier };
     if (cursor) body.cursor = cursor;
-
-    const { data, error } = await supabase.functions.invoke('user-profile', {
-        body,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    });
-
-    if (error) {
-        let details = error.message;
-        try {
-            if (error.context && typeof error.context.json === 'function') {
-                const b = await error.context.json();
-                details = JSON.stringify(b);
-            }
-        } catch (_) { /* ignore */ }
-        throw new Error(details);
-    }
-    if (data?.error) throw new Error(data.error);
-
-    return data?.data as Page<DiaryEntryRow>;
+    return callEdgeFn<Page<DiaryEntryRow>>('user-profile', { action: 'diary', body });
 }
 
 export function useUserDiary(identifier: string | null | undefined) {

@@ -17,7 +17,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { searchCache, type PlacesResult, type PersistedRow, type VisitedRow } from './searchCache';
 
@@ -55,44 +55,23 @@ async function fetchPlaces(
     query: string,
     coords?: { latitude: number; longitude: number } | null,
 ): Promise<PlacesResult[]> {
-    const { data: { session } } = await supabase.auth.getSession();
     const body: any = { query, limit: 15 };
     if (coords) {
         body.latitude = coords.latitude;
         body.longitude = coords.longitude;
         body.radius = 10000; // 10 km bias
     }
-    const { data, error } = await supabase.functions.invoke('places-search', {
-        body,
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-    if (error) throw error;
-    return data?.data ?? [];
+    const data = await callEdgeFn<PlacesResult[]>('places-search', { body });
+    return data ?? [];
 }
 
 async function fetchPersistedDirect(
     query: string,
 ): Promise<{ visitedByMyTables: VisitedRow[]; onNapkin: PersistedRow[] }> {
-    const { data: { session } } = await supabase.auth.getSession();
-    const supabaseUrl = (supabase as any).supabaseUrl as string;
-    const encodedQ = encodeURIComponent(query);
-    const url = `${supabaseUrl}/functions/v1/restaurant-history?action=search&q=${encodedQ}`;
-    const res = await fetch(url, {
-        method: 'GET',
-        headers: {
-            Authorization: `Bearer ${session?.access_token ?? ''}`,
-            'Content-Type': 'application/json',
-        },
-    });
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`restaurant-history search failed: ${res.status} ${text}`);
-    }
-    const json = await res.json();
-    if (json.error) throw new Error(json.error);
-    return json.data;
+    return callEdgeFn<{ visitedByMyTables: VisitedRow[]; onNapkin: PersistedRow[] }>(
+        'restaurant-history',
+        { method: 'GET', action: 'search', params: { q: query } },
+    );
 }
 
 function mergeResults(
