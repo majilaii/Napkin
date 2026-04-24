@@ -55,6 +55,7 @@ import {
     useAddComment,
     useDiscardFailedComment,
     useToggleReaction,
+    effectiveCommentCount,
 } from '@/hooks/posts/usePostInteractions';
 import { ReactionPicker } from '@/components/feed/ReactionPicker';
 import { ReactorsSheet } from '@/components/posts/ReactorsSheet';
@@ -1484,7 +1485,7 @@ export default function EntryDetailScreen() {
                         <FloatingActionPill
                             entryId={entry.id}
                             reactionCount={interactions?.counts.reactions ?? 0}
-                            commentCount={interactions?.counts.comments ?? 0}
+                            commentCount={effectiveCommentCount(interactions)}
                             myReactions={
                                 viewer
                                     ? (interactions?.reactions ?? [])

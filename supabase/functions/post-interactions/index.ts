@@ -157,6 +157,32 @@ serve(async (req) => {
             return !!profile?.allow_public_replies;
         }
 
+        // ── Helper: read trigger-maintained reaction counts post-mutation ──────
+        // After a react insert/delete, the sync_post_counts_and_top_emojis
+        // trigger has updated the parent row. Read it back so the client can
+        // reconcile counts.reactions + counts.top_emojis exactly without an
+        // extra round-trip and without invalidating the postInteractions query.
+        // (TICKET-036 P0-5)
+        async function readReactionCounts(
+            targetType: 'table_night' | 'entry',
+            targetId: string,
+            scope: 'table' | 'public',
+        ): Promise<{ reactions: number; top_emojis: Array<{ emoji: string; count: number; last_reacted_at: string }> }> {
+            const table = targetType === 'table_night' ? 'table_nights' : 'entries';
+            const countCol = scope === 'public' ? 'public_reaction_count' : 'reaction_count';
+            const topCol = scope === 'public' ? 'public_top_emojis' : 'top_emojis';
+            const { data } = await supabase
+                .from(table)
+                .select(`${countCol}, ${topCol}`)
+                .eq('id', targetId)
+                .maybeSingle();
+            const row = (data ?? {}) as Record<string, unknown>;
+            return {
+                reactions: (row[countCol] as number) ?? 0,
+                top_emojis: (row[topCol] as Array<{ emoji: string; count: number; last_reacted_at: string }>) ?? [],
+            };
+        }
+
         // ── GET ─────────────────────────────────────────────────────────────────
         if (req.method === 'GET') {
             const url = new URL(req.url);
@@ -324,7 +350,8 @@ serve(async (req) => {
                         .delete()
                         .eq('id', existing.id);
 
-                    return json({ added: false, removed: true, reaction: null });
+                    const counts = await readReactionCounts(target_type, target_id, scope);
+                    return json({ added: false, removed: true, reaction: null, counts });
                 } else {
                     const insertPayload: any = {
                         target_type,
@@ -344,7 +371,22 @@ serve(async (req) => {
                         .single();
 
                     if (insertError) throw insertError;
-                    return json({ added: true, removed: false, reaction });
+
+                    // Hydrate the reactor's profile so the client can render
+                    // avatar/name without a follow-up fetch.
+                    const { data: reactorProfile } = await supabase
+                        .from('profiles')
+                        .select('display_name, avatar_url, username')
+                        .eq('user_id', user.id)
+                        .maybeSingle();
+
+                    const counts = await readReactionCounts(target_type, target_id, scope);
+                    return json({
+                        added: true,
+                        removed: false,
+                        reaction: { ...reaction, profiles: reactorProfile ?? null },
+                        counts,
+                    });
                 }
             }
 

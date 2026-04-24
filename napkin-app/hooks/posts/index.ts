@@ -4,6 +4,8 @@ export {
     useAddComment,
     useEditComment,
     useDeleteComment,
+    useDiscardFailedComment,
+    effectiveCommentCount,
 } from './usePostInteractions';
 
 export type {

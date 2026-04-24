@@ -54,7 +54,7 @@ import { useTableRestaurantHistory } from '@/hooks/restaurants/useRestaurantHist
 import { PreviouslyHereBanner, DeltaChip } from '@/components/restaurants';
 import { OnTheTableList } from '@/components/table-night';
 import { InlineStars } from '@/components/feed/InlineStars';
-import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
+import { usePostInteractions, usePostInteractionsRealtime, effectiveCommentCount } from '@/hooks/posts';
 import { CommentThread } from '@/components/posts';
 import { FeedActionRow } from '@/components/feed';
 
@@ -519,7 +519,7 @@ export default function TableNightDetailScreen() {
                                 targetId={nightId}
                                 topEmojis={interactions?.counts.top_emojis ?? []}
                                 reactionCount={interactions?.counts.reactions ?? 0}
-                                commentCount={interactions?.counts.comments ?? 0}
+                                commentCount={effectiveCommentCount(interactions)}
                                 myReactions={
                                     user
                                         ? (interactions?.reactions ?? [])
