@@ -61,13 +61,15 @@ export function useStartRound(userId?: string | null, tableId?: string | null) {
     return useMutation({
         mutationFn: startRound,
         onSuccess: () => {
-            if (userId) {
-                qc.invalidateQueries({ queryKey: queryKeys.entries.list(userId) });
-            }
+            // P0-6: dropped the entries.list invalidate — no useQuery is keyed
+            // ['entries', userId] (mySolo uses ['entries', 'mySolo', userId],
+            // a sibling subtree, not a descendant). It was a dead invalidate.
             if (tableId) {
                 qc.invalidateQueries({ queryKey: queryKeys.tables.activity(tableId) });
                 qc.invalidateQueries({ queryKey: queryKeys.tableNight.active(tableId) });
             }
+            // userId is consumed indirectly via the active-night refetch.
+            void userId;
         },
     });
 }
