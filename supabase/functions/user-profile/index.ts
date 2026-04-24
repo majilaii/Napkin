@@ -29,6 +29,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
+import { buildPage, decodeCursor, applyKeysetFilter, type Page } from '../_shared/pagination.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -626,27 +627,27 @@ async function fetchDiary(
     includePrivate: boolean,
     cursor: string | null,
     limit: number = 30,
-): Promise<{ rows: DiaryRow[]; nextCursor: string | null }> {
+): Promise<Page<DiaryRow>> {
+    const decoded = decodeCursor(cursor);
+
     let query = supabase
         .from('entries')
         .select('id, restaurant_id, rating, content, photo_url, visited_at, created_at, restaurants(name, city, photo_url)')
         .eq('user_id', userId)
         .not('restaurant_id', 'is', null)
         .order('visited_at', { ascending: false })
-        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(limit + 1);
 
     if (!includePrivate) query = query.neq('visibility', 'private');
-    if (cursor) query = query.lt('visited_at', cursor);
+    if (decoded) query = applyKeysetFilter(query, { sort_date: decoded.sort_date, id: decoded.id });
 
     const { data: entries, error } = await query;
     if (error) throw error;
 
-    const rows = (entries ?? []) as any[];
-    const hasMore = rows.length > limit;
-    const page = hasMore ? rows.slice(0, limit) : rows;
+    const raw = (entries ?? []) as any[];
 
-    const mapped: DiaryRow[] = page.map((e) => {
+    const mapped: DiaryRow[] = raw.map((e) => {
         const rest = Array.isArray(e.restaurants) ? e.restaurants[0] : e.restaurants;
         return {
             entry_id: e.id,
@@ -661,8 +662,10 @@ async function fetchDiary(
         };
     });
 
-    const nextCursor = hasMore ? (mapped[mapped.length - 1]?.visited_at ?? null) : null;
-    return { rows: mapped, nextCursor };
+    return buildPage(mapped, limit, (r) => ({
+        sort_date: r.visited_at,
+        id: r.entry_id,
+    }));
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -858,8 +861,8 @@ serve(async (req) => {
                 }
             }
 
-            const pageLimit = Math.min(Math.max(limit ?? 30, 1), 100);
-            const { rows, nextCursor } = await fetchDiary(
+            const pageLimit = Math.min(Math.max(limit ?? 30, 1), 50);
+            const page = await fetchDiary(
                 supabase,
                 targetId,
                 isSelf,
@@ -867,7 +870,7 @@ serve(async (req) => {
                 pageLimit,
             );
 
-            return json({ data: { rows, next_cursor: nextCursor } });
+            return json({ data: page });
         }
 
         // ── regulars (read) ────────────────────────────────────────────────
@@ -1047,11 +1050,13 @@ serve(async (req) => {
                 return fail('allow_public_replies must be a boolean', 400);
             }
 
+            // TICKET-037 (P2-14): return full profile shape so optimistic patching
+            // is consistent with other profile-update paths.
             const { data: updated, error } = await supabase
                 .from('profiles')
                 .update({ allow_public_replies })
                 .eq('user_id', user.id)
-                .select('user_id, allow_public_replies, account_privacy')
+                .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
                 .single();
             if (error) throw error;
 

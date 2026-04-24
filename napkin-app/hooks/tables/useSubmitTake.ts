@@ -1,11 +1,14 @@
 /**
  * Hook for Round attendees to submit their impression ("Add Your Take").
- * Calls table-night edge function with action: 'rate', which also creates
- * the attendee's journal entry and auto-completes the Round if all are in.
+ * Calls table-night edge function with action: 'rate', which delegates to
+ * the rate_round RPC (atomic participant update + entry insert + reveal).
+ *
+ * TICKET-037: response shape is now { entry_id, round_status, revealed }.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { unwrapInvokeError } from '@/lib/edgeInvoke';
 
 export interface SubmitTakeInput {
     table_night_id: string;
@@ -21,7 +24,13 @@ export interface SubmitTakeInput {
     value_rating?: number | null;
 }
 
-async function submitTake(input: SubmitTakeInput) {
+export interface SubmitTakeResult {
+    entry_id: string;
+    round_status: string;
+    revealed: boolean;
+}
+
+async function submitTake(input: SubmitTakeInput): Promise<SubmitTakeResult> {
     const { data: { session } } = await supabase.auth.getSession();
 
     const { data, error } = await supabase.functions.invoke('table-night', {
@@ -43,15 +52,18 @@ async function submitTake(input: SubmitTakeInput) {
             : undefined,
     });
 
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data;
+    if (error) {
+        const unwrapped = await unwrapInvokeError(error);
+        throw new Error(unwrapped.message);
+    }
+    if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : (data.error?.message ?? 'Unknown error'));
+    return data?.data as SubmitTakeResult;
 }
 
 export function useSubmitTake(tableId?: string | null) {
     const qc = useQueryClient();
 
-    return useMutation({
+    return useMutation<SubmitTakeResult, Error, SubmitTakeInput>({
         mutationFn: submitTake,
         onSuccess: (_data, variables) => {
             qc.invalidateQueries({

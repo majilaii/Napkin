@@ -2,10 +2,14 @@
  * Hook to create a meal log entry.
  * Calls the entry edge function which handles restaurant upsert,
  * table sharing, and user_restaurant_status updates.
+ *
+ * TICKET-037 (P2-13): reads optional `warnings` from response and surfaces
+ * a toast when companion tagging partially fails.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { useToast } from '@/providers/ToastProvider';
 
 export interface CreateEntryInput {
     restaurant?: {
@@ -39,7 +43,7 @@ export interface CreateEntryInput {
     photo_urls?: string[];
 }
 
-async function createEntry(input: CreateEntryInput) {
+async function createEntry(input: CreateEntryInput): Promise<any> {
     const { data: { session } } = await supabase.auth.getSession();
 
     const { data, error } = await supabase.functions.invoke('entry', {
@@ -51,15 +55,29 @@ async function createEntry(input: CreateEntryInput) {
 
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
-    return data?.data;
+    // Return the entry row directly (data.data) — same shape as before.
+    // Stash warnings on the object so onSuccess can read them without a
+    // separate wrapper that would break callers reading result?.id.
+    const entryRow = data?.data ?? {};
+    if (data?.warnings) {
+        (entryRow as any).__warnings = data.warnings;
+    }
+    return entryRow;
 }
 
 export function useCreateEntry(userId?: string | null, tableId?: string | null) {
     const qc = useQueryClient();
+    const toast = useToast();
 
     return useMutation({
         mutationFn: createEntry,
-        onSuccess: () => {
+        onSuccess: (result) => {
+            // Surface companion tag failures as a non-blocking toast (TICKET-037 P2-13)
+            const warnings: Array<{ type: string }> | undefined = (result as any)?.__warnings;
+            if (warnings?.some((w) => w.type === 'companion_tag_failed')) {
+                toast.show("Couldn't tag some friends.");
+            }
+
             if (userId) {
                 qc.invalidateQueries({ queryKey: queryKeys.entries.list(userId) });
                 qc.invalidateQueries({ queryKey: queryKeys.entries.mySolo(userId) });

@@ -1,9 +1,13 @@
 /**
  * Mutation hook: reorder an entry in a ranked list (optimistic).
  *
- * Client passes the new index in the entries array; the hook:
+ * TICKET-037: client now sends only { list_id, entry_id, new_index }.
+ * Server reads the authoritative list order and resolves neighbour positions,
+ * eliminating stale-cache snap-back (P2-17).
+ *
+ * The hook:
  *   1. Optimistically splices the entry into its new slot in the cached data
- *   2. Fires `reorder_entry` with before/after IDs derived from the new neighbours
+ *   2. Fires `reorder_entry` with { list_id, entry_id, new_index }
  *   3. On error, restores the snapshot
  *
  * The drag handle should disable while a reorder mutation is in flight
@@ -12,6 +16,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { unwrapInvokeError } from '@/lib/edgeInvoke';
 import type { ListDetailData, ListEntry } from './useList';
 
 export interface ReorderEntryInput {
@@ -19,40 +24,31 @@ export interface ReorderEntryInput {
     entry_id: string;
     /** New index (0-based) in the entries array after reorder */
     new_index: number;
-    /** Current entries array (before reorder) — used to derive before/after IDs */
+    /** Current entries array (before reorder) — used for optimistic update only */
     currentEntries: ListEntry[];
 }
 
 async function reorderEntry(input: ReorderEntryInput): Promise<void> {
     const { data: { session } } = await supabase.auth.getSession();
 
-    const { list_id, entry_id, new_index, currentEntries } = input;
-
-    // Derive before/after entry IDs from the target position
-    // Remove the moved entry from the array to find its new neighbours
-    const withoutMoved = currentEntries.filter((e) => e.id !== entry_id);
-    const before_entry_id = new_index > 0 ? withoutMoved[new_index - 1]?.id : undefined;
-    const after_entry_id = new_index < withoutMoved.length ? withoutMoved[new_index]?.id : undefined;
-
-    if (!before_entry_id && !after_entry_id) {
-        // Only one entry in list — nothing to do
-        return;
-    }
+    const { list_id, entry_id, new_index } = input;
 
     const { data, error } = await supabase.functions.invoke('lists', {
         body: {
             action: 'reorder_entry',
             list_id,
             entry_id,
-            before_entry_id,
-            after_entry_id,
+            new_index,
         },
         headers: session?.access_token
             ? { Authorization: `Bearer ${session.access_token}` }
             : undefined,
     });
 
-    if (error) throw error;
+    if (error) {
+        const unwrapped = await unwrapInvokeError(error);
+        throw new Error(unwrapped.message);
+    }
     if (data?.error) throw new Error(data.error);
 }
 

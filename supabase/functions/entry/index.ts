@@ -2,6 +2,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
+import { errorResponse, mapPgError } from '../_shared/errors.ts';
 
 /**
  * Entry Edge Function
@@ -95,6 +96,47 @@ serve(async (req) => {
                 return new Response(
                     JSON.stringify({ data: { id: restaurantId } }),
                     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
+
+            // ── append_entry_photo action ──────────────────────────────────
+            // Delegates to append_entry_photo RPC for server-side sort_order
+            // computation. Eliminates the client read-then-write race (P1-1).
+            // Storage orphan cleanup is performed here (not in the RPC) because
+            // RPCs cannot call HTTP APIs.
+            if (body.action === 'append_entry_photo') {
+                const { entry_id, photo_url: appendPhotoUrl } = body;
+
+                if (!entry_id || typeof entry_id !== 'string') {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'entry_id is required' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+                if (!appendPhotoUrl || typeof appendPhotoUrl !== 'string') {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'photo_url is required' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                let rpcResult: unknown;
+                try {
+                    const { data: rpcData, error: rpcErr } = await supabase.rpc('append_entry_photo', {
+                        p_entry_id:  entry_id,
+                        p_user_id:   user.id,
+                        p_photo_url: appendPhotoUrl,
+                    });
+                    if (rpcErr) throw rpcErr;
+                    rpcResult = rpcData;
+                } catch (err: any) {
+                    const { code, status } = mapPgError(err);
+                    return errorResponse(code, err.message ?? 'append_entry_photo failed', status);
+                }
+
+                return new Response(
+                    JSON.stringify({ data: rpcResult }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 );
             }
 
@@ -256,6 +298,9 @@ serve(async (req) => {
                 // Companion tagging (optional; distinct from participant_ids)
                 // companion_ids = who was there; participant_ids = Round raters
                 companion_ids,
+
+                // Idempotency key (TICKET-036 wires client; minimal support here)
+                client_nonce,
             } = body;
 
             // Validate secondary ratings if provided
@@ -365,6 +410,22 @@ serve(async (req) => {
             const photoUrlsArray: string[] = Array.isArray(photo_urls) ? photo_urls : [];
             const heroPhotoUrl = photo_url || photoUrlsArray[0] || null;
 
+            // Check for duplicate submission via client_nonce (TICKET-036 hook)
+            if (client_nonce) {
+                const { data: existing, error: nonceErr } = await supabase
+                    .from('entries')
+                    .select()
+                    .eq('user_id', user.id)
+                    .eq('client_nonce', client_nonce)
+                    .maybeSingle();
+                if (!nonceErr && existing) {
+                    return new Response(
+                        JSON.stringify({ data: existing, warnings: [{ type: 'duplicate_submission' }] }),
+                        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+            }
+
             // Create entry
             const { data: entryData, error: entryError } = await supabase
                 .from('entries')
@@ -386,6 +447,7 @@ serve(async (req) => {
                     ...(heroPhotoUrl ? { photo_url: heroPhotoUrl } : {}),
                     ...(resolvedTableId ? { table_id: resolvedTableId } : {}),
                     ...(visibility ? { visibility } : {}),
+                    ...(client_nonce ? { client_nonce } : {}),
                 })
                 .select()
                 .single();
@@ -449,10 +511,22 @@ serve(async (req) => {
 
             // Insert entry_companions (companion tagging — NOT Round participants)
             // companion_ids: arbitrary Napkin users; no Table-membership gate (Instagram-style)
+            // TICKET-037 (P1-11): explicitly exclude allParticipantIds so a user can't appear
+            // in both the "6 ratings" strip and the "with X" companions list.
             const rawCompanionIds: string[] = Array.isArray(companion_ids) ? companion_ids : [];
             const sanitizedCompanionIds = [...new Set(
-                rawCompanionIds.filter((id: string) => id && id !== user.id)
+                rawCompanionIds.filter((id: string) => id && id !== user.id && !allParticipantIds.includes(id))
             )];
+
+            if (sanitizedCompanionIds.length !== rawCompanionIds.length) {
+                console.warn(
+                    'entry: dropped',
+                    rawCompanionIds.length - sanitizedCompanionIds.length,
+                    'duplicate companion ids (overlapped with self or participant_ids)'
+                );
+            }
+
+            const warnings: Array<{ type: string; failed_ids?: string[]; reason?: string }> = [];
 
             if (sanitizedCompanionIds.length > 0) {
                 const companionRows = sanitizedCompanionIds.map((uid: string) => ({
@@ -463,15 +537,23 @@ serve(async (req) => {
                     .from('entry_companions')
                     .insert(companionRows);
                 if (compInsertError) {
-                    // Non-fatal: log but don't fail the entry creation
+                    // Non-fatal: log and surface as a warning in the response (TICKET-037 P2-13)
                     console.error('entry_companions insert error (non-fatal):', compInsertError);
+                    warnings.push({
+                        type: 'companion_tag_failed',
+                        failed_ids: sanitizedCompanionIds,
+                        reason: compInsertError.message,
+                    });
                 }
             }
 
             console.log('Entry created:', entryData.id);
 
             return new Response(
-                JSON.stringify({ data: entryData }),
+                JSON.stringify({
+                    data: entryData,
+                    ...(warnings.length > 0 ? { warnings } : {}),
+                }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
         }

@@ -2,7 +2,8 @@
  * useAddEntryPhoto / useRemoveEntryPhoto
  *
  * Photo add/remove for existing entries (flesh-out flow on entry-detail).
- * Uses the existing compressAndUpload pipeline + entry_photos insert/delete.
+ * Uses the existing compressAndUpload pipeline + append_entry_photo RPC via
+ * the entry edge function (server-side sort_order computation — TICKET-037 P1-1).
  * No reorder in v1 (sort_order is immutable per migration comment).
  *
  * Hero denorm: entries.photo_url is kept in sync via useUpdateEntry PATCH
@@ -12,6 +13,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
+import { unwrapInvokeError } from '@/lib/edgeInvoke';
 import { useUpdateEntry } from './useUpdateEntry';
 
 // Local query key for the entry-photos list (mirrors entry-detail's useEntryPhotos)
@@ -33,29 +35,33 @@ export function useAddEntryPhoto(entryId: string) {
             // 1. Compress + upload to storage
             const publicUrl = await compressAndUpload(localUri, userId);
 
-            // 2. Get max sort_order for this entry
-            const { data: existing } = await supabase
-                .from('entry_photos')
-                .select('sort_order')
-                .eq('entry_id', entryId)
-                .order('sort_order', { ascending: false })
-                .limit(1);
+            // 2. Delegate sort_order computation to the server RPC via edge function
+            const { data: { session } } = await supabase.auth.getSession();
+            const { data, error } = await supabase.functions.invoke('entry', {
+                body: {
+                    action: 'append_entry_photo',
+                    entry_id: entryId,
+                    photo_url: publicUrl,
+                },
+                headers: session?.access_token
+                    ? { Authorization: `Bearer ${session.access_token}` }
+                    : undefined,
+            });
 
-            const maxOrder = existing && existing.length > 0 ? existing[0].sort_order : -1;
-            const nextOrder = (maxOrder ?? -1) + 1;
-
-            // 3. Insert entry_photos row
-            const { error: insertError } = await supabase
-                .from('entry_photos')
-                .insert({ entry_id: entryId, photo_url: publicUrl, sort_order: nextOrder });
-
-            if (insertError) {
+            if (error) {
                 // Clean up orphaned storage on insert failure
                 removeUploadedPhoto(publicUrl).catch(() => {});
-                throw insertError;
+                const unwrapped = await unwrapInvokeError(error);
+                throw new Error(unwrapped.message);
             }
 
-            return { publicUrl, sortOrder: nextOrder };
+            if (data?.error) {
+                removeUploadedPhoto(publicUrl).catch(() => {});
+                throw new Error(typeof data.error === 'string' ? data.error : (data.error?.message ?? 'Unknown error'));
+            }
+
+            const row = data?.data as { sort_order: number; photo_url: string } | null;
+            return { publicUrl, sortOrder: row?.sort_order ?? 0 };
         },
 
         onSuccess: async ({ publicUrl, sortOrder }) => {
