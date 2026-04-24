@@ -26,17 +26,12 @@ async function getAuthHeaders() {
         : undefined;
 }
 
+// TICKET-037: promote local copy to the shared helper
 async function unwrapInvokeError(error: unknown): Promise<Error> {
-    const ctx = (error as { context?: Response }).context;
-    if (ctx && typeof ctx.json === 'function') {
-        try {
-            const body = await ctx.json();
-            if (body?.error) return new Error(body.error);
-        } catch {
-            // ignore — fall through
-        }
-    }
-    return error instanceof Error ? error : new Error(String(error));
+    // Import is done inline to avoid circular deps; re-uses the shared implementation
+    const { unwrapInvokeError: shared } = await import('@/lib/edgeInvoke');
+    const unwrapped = await shared(error);
+    return new Error(unwrapped.message);
 }
 
 export type Visit = {

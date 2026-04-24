@@ -4,6 +4,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { unwrapInvokeError } from '@/lib/edgeInvoke';
 
 // Types
 export interface TableNight {
@@ -38,6 +39,7 @@ export interface RoundContext {
     nightId: string;
     participantCount: number;
     groupAverage: number | null;
+    status?: string;
 }
 
 export interface TableNightStatus extends TableNight {
@@ -192,42 +194,48 @@ export function useRevealTableNight() {
 
 /**
  * Lightweight query for entry page round context banner.
- * Only fetches participant count + group average — avoids pulling full night payload.
- * Shows banner without average if the night is not yet revealed.
+ * TICKET-037 (P1-13): routes through the table-night edge function
+ * (action=round_context) which validates membership server-side.
+ * Replaces the direct DB fetch that bypassed membership checks.
  */
 export function useRoundContext(tableNightId: string | null | undefined) {
     return useQuery<RoundContext | null, Error>({
         queryKey: queryKeys.tableNight.roundContext(tableNightId!),
         queryFn: async () => {
-            // Fetch night status to check if revealed
-            const { data: night, error: nightError } = await supabase
-                .from('table_nights')
-                .select('id, status')
-                .eq('id', tableNightId!)
-                .single();
+            const { data: { session } } = await supabase.auth.getSession();
+            const { data, error } = await supabase.functions.invoke(
+                `table-night?action=round_context&table_night_id=${tableNightId!}`,
+                {
+                    method: 'GET',
+                    headers: session?.access_token
+                        ? { Authorization: `Bearer ${session.access_token}` }
+                        : undefined,
+                },
+            );
 
-            if (nightError || !night) return null;
-
-            // Fetch participant count and ratings
-            const { data: participants, error: partError } = await supabase
-                .from('table_night_participants')
-                .select('rating')
-                .eq('table_night_id', tableNightId!);
-
-            if (partError || !participants) return null;
-
-            const participantCount = participants.length;
-
-            // Only compute group average if the night is revealed
-            let groupAverage: number | null = null;
-            if (night.status === 'revealed') {
-                const rated = participants.filter((p) => p.rating != null).map((p) => p.rating as number);
-                if (rated.length > 0) {
-                    groupAverage = rated.reduce((a, b) => a + b, 0) / rated.length;
-                }
+            if (error) {
+                const unwrapped = await unwrapInvokeError(error);
+                // NOT_FOUND or FORBIDDEN → silently return null (banner hidden)
+                if (unwrapped.code === 'NOT_FOUND' || unwrapped.code === 'FORBIDDEN') return null;
+                throw new Error(unwrapped.message);
             }
 
-            return { nightId: tableNightId!, participantCount, groupAverage };
+            if ((data as any)?.error) return null;
+
+            const result = (data as any)?.data as {
+                nightId: string;
+                participantCount: number;
+                status: string;
+                groupAverage: number | null;
+            } | null;
+
+            if (!result) return null;
+            return {
+                nightId: result.nightId,
+                participantCount: result.participantCount,
+                groupAverage: result.groupAverage,
+                status: result.status,
+            };
         },
         enabled: !!tableNightId,
         staleTime: 1000 * 60 * 5,

@@ -8,10 +8,14 @@
  *
  * On success: invalidates tableMembers + tableDetail caches.
  * On error: typed error_code is surfaced so the UI can render specific copy.
+ *
+ * TICKET-037: uses shared unwrapInvokeError helper instead of local unwrap.
+ * AddMemberError.error_code still exposed for UI branching.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { unwrapInvokeError } from '@/lib/edgeInvoke';
 
 export interface AddMemberInput {
     tableId: string;
@@ -48,10 +52,20 @@ async function addMember(input: AddMemberInput): Promise<AddMemberResult> {
         }
     );
 
-    if (error) throw error;
+    if (error) {
+        const unwrapped = await unwrapInvokeError(error);
+        // Support both new envelope shape (error.code) and legacy flat shape (error_code)
+        const code = unwrapped.code !== 'LEGACY' && unwrapped.code !== 'UNKNOWN'
+            ? unwrapped.code
+            : (data?.error_code as string | undefined);
+        throw new AddMemberError(unwrapped.message, code, unwrapped.status);
+    }
+
     if (data?.error) {
+        // Legacy flat error shape from table-management (still returns { error, error_code })
         throw new AddMemberError(data.error, data.error_code);
     }
+
     return data?.data as AddMemberResult;
 }
 

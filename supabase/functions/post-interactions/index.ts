@@ -8,6 +8,28 @@
  * TICKET-021: scope is REQUIRED on GET and every mutation. Missing/invalid
  * scope returns 400. scope='public' validates entry eligibility via
  * is_entry_publicly_eligible() RPC and rejects ineligible targets with 403.
+ *
+ * ── DB trigger dependencies (TICKET-037 P2-12) ──────────────────────────────
+ * This function relies on the following triggers/functions being in place.
+ * Do NOT drop or rename these without updating this function accordingly:
+ *
+ *   1. set_post_interaction_table_id (function + triggers set_post_reaction_table_id,
+ *      set_post_comment_table_id) — defined in 20260418000000_post_interactions.sql,
+ *      patched in 20260430010000_public_scope_feed_only_support.sql.
+ *      Denorms `table_id` from the parent entry/table_night onto each
+ *      post_reaction / post_comment row on INSERT. Tolerates NULL table_id
+ *      (feed-only entries) as of the patch migration.
+ *
+ *   2. sync_counts_on_reaction / sync_counts_on_comment (triggers) + the
+ *      sync_post_counts() function — defined in 20260418000000_post_interactions.sql,
+ *      extended in 20260430000000_dual_scope_post_interactions.sql.
+ *      Maintain reaction_count, comment_count, and top_emojis on both
+ *      table_nights and entries after every reaction/comment change.
+ *      Branched on scope ('table' vs 'public') as of the dual-scope migration.
+ *
+ * These triggers fire on the DB side; the edge function does not replicate their
+ * logic. If the triggers are removed, counts will drift silently.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';

@@ -276,15 +276,17 @@ serve(async (req) => {
             }
 
             const visitedIds = visitedRestaurants.map((r: any) => r.id as string);
-            let onNapkinQuery = supabase
+            const visitedSet = new Set(visitedIds);
+            // TICKET-037 (P2-16): fetch unfiltered, then JS-filter to avoid string-injection
+            // risk from building a raw `NOT IN (uuid, uuid, ...)` SQL string.
+            const { data: onNapkinRaw, error: onNapkinErr } = await supabase
                 .from('restaurants')
                 .select('id, name, city, cuisine, photo_url, external_id')
                 .ilike('name', `%${q}%`)
-                .limit(20);
-            if (visitedIds.length > 0) {
-                onNapkinQuery = onNapkinQuery.not('id', 'in', `(${visitedIds.join(',')})`);
-            }
-            const { data: onNapkin, error: onNapkinErr } = await onNapkinQuery;
+                .limit(30); // fetch extra to account for JS-side filter
+            const onNapkin = onNapkinRaw
+                ? onNapkinRaw.filter((r: any) => !visitedSet.has(r.id)).slice(0, 10)
+                : [];
             if (onNapkinErr) throw onNapkinErr;
 
             return json({
@@ -621,11 +623,15 @@ serve(async (req) => {
             // ── Who's been ──
             let whosBeen: WhosBeenEntry[] = [];
             if (sharedUserIds.length > 0) {
+                // TICKET-034: exclude private entries from "who's been" — a tablemate's
+                // feed-only private visit must not surface on a restaurant page they
+                // didn't explicitly share to a shared Table.
                 const { data: sharedEntries, error: sharedEntriesErr } = await supabase
                     .from('entries')
                     .select('user_id, rating')
                     .in('user_id', sharedUserIds)
                     .eq('restaurant_id', resolvedRestaurantId)
+                    .neq('visibility', 'private')
                     .not('rating', 'is', null);
                 if (sharedEntriesErr) throw sharedEntriesErr;
 
@@ -666,13 +672,17 @@ serve(async (req) => {
             {
                 // Always fetch the viewer's own entries — regardless of table membership.
                 // For users with tables, also fetch tablemates' entries in the same query.
+                // TICKET-034: exclude private entries from cross-user results, but preserve
+                // the viewer's own private entries (they want to see their own visit history
+                // regardless of privacy setting). Use an OR filter: self OR non-private.
                 const { data: feedEntries, error: feedEntriesErr } = await supabase
                     .from('entries')
-                    .select('id, user_id, rating, visited_at, created_at, content, table_night_id')
+                    .select('id, user_id, rating, visited_at, created_at, content, table_night_id, visibility')
                     .in('user_id', allVisibleUserIds)
                     .eq('restaurant_id', resolvedRestaurantId)
                     .is('table_night_id', null)
                     .not('rating', 'is', null)
+                    .or(`user_id.eq.${user.id},visibility.neq.private`)
                     .order('visited_at', { ascending: false });
                 if (feedEntriesErr) throw feedEntriesErr;
 
@@ -810,13 +820,21 @@ serve(async (req) => {
             // "your_table" distribution — all entries from the chip table
             const yourTableDist: number[] | null = tableChip ? buildDistribution(tableRatings) : null;
 
-            // "napkin" distribution — all public entries at this restaurant
+            // "napkin" distribution — non-private entries at this restaurant.
+            // TICKET-034: private logs must never contribute to the aggregate number
+            // (doctrine: "logs default private; surface on public profile only when …").
+            // We intentionally include visibility='table' and 'friends' entries because
+            // those represent signals shared within some circle — not fully private.
+            // The stricter is_entry_publicly_eligible filter (which also gates on profile
+            // public + content length) is out of scope for this ticket; see TICKET-034
+            // build log for the documented looser-than-public-eligible behavior.
             let napkinRatings: number[] = [];
             {
                 const { data: napkinEntries, error: napkinErr } = await supabase
                     .from('entries')
                     .select('rating')
                     .eq('restaurant_id', resolvedRestaurantId)
+                    .neq('visibility', 'private')
                     .not('rating', 'is', null);
                 if (!napkinErr) {
                     napkinRatings = (napkinEntries ?? []).map((e: any) => e.rating as number);
@@ -838,9 +856,12 @@ serve(async (req) => {
                 // so the subsequent limit(48) is applied after the restaurant filter — not before it.
                 // ARCHITECT-REVIEW: adding restaurant_id directly to entry_photos would allow a
                 // simpler indexed query; for now the inner join on entries is correct and sufficient.
+                //
+                // TICKET-034: also select visibility so we can post-filter private entries from
+                // cross-user photo results. We preserve the viewer's own private photos (isSelf).
                 const { data: entryPhotoRows, error: photoErr } = await supabase
                     .from('entry_photos')
-                    .select('photo_url, entry_id, entries!inner(user_id, restaurant_id, table_id)')
+                    .select('photo_url, entry_id, entries!inner(user_id, restaurant_id, table_id, visibility)')
                     .eq('entries.restaurant_id', resolvedRestaurantId)
                     .not('photo_url', 'is', null)
                     .limit(48);
@@ -851,7 +872,16 @@ serve(async (req) => {
 
                 if (!photoErr && entryPhotoRows) {
                     // All rows are already filtered to this restaurant by the server-side join.
-                    const relevantPhotos = entryPhotoRows as any[];
+                    // TICKET-034: post-filter: exclude photos from private entries unless the viewer
+                    // is the author. This preserves the viewer's own private visit photos while
+                    // preventing a tablemate's feed-only private entry photos from leaking here.
+                    const allPhotos = entryPhotoRows as any[];
+                    const relevantPhotos = allPhotos.filter((p: any) => {
+                        const entryUserId = p.entries?.user_id as string;
+                        const visibility = p.entries?.visibility as string | null;
+                        const isSelf = entryUserId === user.id;
+                        return isSelf || visibility !== 'private';
+                    });
 
                     // Collect all user IDs to fetch profiles
                     const photoUserIds = [...new Set(relevantPhotos.map((p: any) => p.entries?.user_id as string).filter(Boolean))];

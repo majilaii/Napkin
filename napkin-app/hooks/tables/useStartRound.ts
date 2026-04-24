@@ -1,10 +1,16 @@
 /**
  * Hook to start an async Round (group rating session).
- * Creates a table_nights row, host participant + entry, and empty attendee rows.
+ * Calls table-night edge function with action: 'start', which delegates to
+ * the start_round RPC (atomic round + participant + entry creation).
+ *
+ * TICKET-037: response shape is now { night_id, entry_id }.
+ * The edge function fetches + returns the full night row after the RPC
+ * so callers receive status/revealed_at as before.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { unwrapInvokeError } from '@/lib/edgeInvoke';
 
 export interface StartRoundInput {
     table_id: string;
@@ -54,8 +60,12 @@ async function startRound(input: StartRoundInput) {
             : undefined,
     });
 
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
+    if (error) {
+        const unwrapped = await unwrapInvokeError(error);
+        throw new Error(unwrapped.message);
+    }
+    if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : (data.error?.message ?? 'Unknown error'));
+    // Edge function returns the full night row after start_round RPC
     return data?.data;
 }
 

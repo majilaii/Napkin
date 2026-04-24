@@ -496,8 +496,11 @@ serve(async (req) => {
         }
 
         // ── reorder_entry ──────────────────────────────────────────────────
+        // TICKET-037: accepts { entry_id, list_id, new_index } — server resolves
+        // neighbours from authoritative DB state, eliminating stale-cache snapping.
+        // Still accepts legacy before_entry_id/after_entry_id for backwards compat.
         if (action === 'reorder_entry') {
-            const { list_id, entry_id, before_entry_id, after_entry_id } = body;
+            const { list_id, entry_id, new_index, before_entry_id: legacyBefore, after_entry_id: legacyAfter } = body;
             if (!list_id || !entry_id) {
                 return jsonResponse({ error: 'list_id and entry_id are required' }, 400);
             }
@@ -511,26 +514,42 @@ serve(async (req) => {
                 .maybeSingle();
             if (!list) return jsonResponse({ error: 'Not found' }, 404);
 
-            if (!before_entry_id && !after_entry_id) {
-                return jsonResponse({ error: 'before_entry_id or after_entry_id is required' }, 400);
+            let prevPos: number | null = null;
+            let nextPos: number | null = null;
+
+            if (typeof new_index === 'number') {
+                // Server-authoritative path: read all entries, derive neighbours from new_index
+                const { data: allEntries, error: allErr } = await supabase
+                    .from('list_entries')
+                    .select('id, position')
+                    .eq('list_id', list_id)
+                    .order('position', { ascending: true });
+                if (allErr) throw allErr;
+
+                // Remove the moved entry to find its new neighbours
+                const withoutMoved = (allEntries ?? []).filter((e: { id: string; position: number }) => e.id !== entry_id);
+                const clampedIndex = Math.max(0, Math.min(new_index, withoutMoved.length));
+                const beforeEntry = clampedIndex > 0 ? withoutMoved[clampedIndex - 1] : null;
+                const afterEntry = clampedIndex < withoutMoved.length ? withoutMoved[clampedIndex] : null;
+                prevPos = beforeEntry?.position ?? null;
+                nextPos = afterEntry?.position ?? null;
+            } else if (legacyBefore || legacyAfter) {
+                // Legacy path: client-supplied neighbour ids
+                const neighbourIds = [legacyBefore, legacyAfter].filter(Boolean) as string[];
+                const { data: neighbours, error: fetchErr } = await supabase
+                    .from('list_entries')
+                    .select('id, position')
+                    .eq('list_id', list_id)
+                    .in('id', neighbourIds);
+                if (fetchErr) throw fetchErr;
+                const byId = new Map(
+                    (neighbours as Array<{ id: string; position: number }>).map((e) => [e.id, e.position]),
+                );
+                prevPos = legacyBefore ? byId.get(legacyBefore) ?? null : null;
+                nextPos = legacyAfter ? byId.get(legacyAfter) ?? null : null;
+            } else {
+                return jsonResponse({ error: 'new_index or before_entry_id/after_entry_id is required' }, 400);
             }
-
-            // Client contract: before_entry_id = entry immediately before the drop position
-            // (excluding the moved entry); after_entry_id = entry immediately after. Either
-            // may be null for head/tail drops. We just fetch those two positions directly.
-            const neighbourIds = [before_entry_id, after_entry_id].filter(Boolean) as string[];
-            const { data: neighbours, error: fetchErr } = await supabase
-                .from('list_entries')
-                .select('id, position')
-                .eq('list_id', list_id)
-                .in('id', neighbourIds);
-            if (fetchErr) throw fetchErr;
-
-            const byId = new Map(
-                (neighbours as Array<{ id: string; position: number }>).map((e) => [e.id, e.position]),
-            );
-            const prevPos: number | null = before_entry_id ? byId.get(before_entry_id) ?? null : null;
-            const nextPos: number | null = after_entry_id ? byId.get(after_entry_id) ?? null : null;
 
             let newPosition: number;
             if (prevPos !== null && nextPos !== null) {

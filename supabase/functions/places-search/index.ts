@@ -11,6 +11,14 @@ serve(async req => {
         return new Response('ok', { headers: corsHeaders });
     }
 
+    // TICKET-037 (P2-8): guard against non-POST methods to prevent quota burn
+    if (req.method !== 'POST') {
+        return new Response(
+            JSON.stringify({ error: { code: 'METHOD_NOT_ALLOWED', message: 'POST only' } }),
+            { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json', Allow: 'POST, OPTIONS' } },
+        );
+    }
+
     try {
         // ── Auth gate ──────────────────────────────────────────────────────
         const authHeader = req.headers.get('Authorization');
