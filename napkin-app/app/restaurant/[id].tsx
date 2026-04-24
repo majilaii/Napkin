@@ -60,6 +60,7 @@ import {
     YourLastKicker,
     PhotosTab,
     InfoTab,
+    ProfessionalTakesBand,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { FastLogSheet } from '@/components/logging';
@@ -474,6 +475,11 @@ export default function RestaurantScreen() {
                                     <ActivityIndicator size="small" color={palette.textMuted} />
                                 </View>
                             ) : null}
+
+                            {/* Professional takes band — TICKET-026 */}
+                            <ProfessionalTakesBand
+                                critics={pageData?.professional_critics ?? []}
+                            />
                         </View>
                     ) : null}
 

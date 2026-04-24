@@ -1,8 +1,13 @@
 /**
- * Create Entry — unified logger for solo shares, journal entries, and Rounds.
+ * Create Entry — Concept A "The Page" composer.
  *
- * Flow: Restaurant search → Table picker → [Mode picker if group] →
- *       [Attendee picker if Round] → Impression form → Submit
+ * Layout: masthead (restaurant name + inline stars) / writing surface / chip row / drawer.
+ * Table share footer appears only when user has ≥1 Table — defaults OFF.
+ * Breakdown ratings live inside the AddDetailsDrawer, off the primary surface.
+ * Round mode still reachable via `mode=round` URL param.
+ *
+ * Submit labels: Save (solo) / Share (Table share ON) / Start Round (round mode).
+ * "LOG IT" is removed.
  */
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
@@ -31,19 +36,21 @@ import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useTables } from '@/hooks/tables/useTables';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { useStartRound } from '@/hooks/tables/useStartRound';
-import { StarRating } from '@/components/StarRating';
 import {
     SheetHeader,
-    RestaurantHeader,
     FieldUnderline,
     PhotoCollage,
-    Label,
-    LabelSmall,
 } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
 import { CompanionChipsRow, CompanionPickerSheet } from '@/components/logging';
-import { PublicVisibilityChip } from '@/components/create-entry/PublicVisibilityChip';
+import {
+    ComposerMasthead,
+    WritingSurface,
+    ChipRow,
+    AddDetailsDrawer,
+    TableShareFooter,
+} from '@/components/create-entry';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 import { useQuery } from '@tanstack/react-query';
 
@@ -87,50 +94,42 @@ export default function CreateEntryScreen() {
         placePayload: placePayloadParam,
         mode: modeParam,
         rating: ratingParam,
+        visitedAt: visitedAtParam,
     } = useLocalSearchParams<{
         tableId?: string;
         restaurantId?: string;
         placePayload?: string;
         mode?: 'solo' | 'round';
         rating?: string;
+        visitedAt?: string;
     }>();
 
     // Tables data
-    // Fetch viewer's account_privacy for the PublicVisibilityChip
-    const { data: viewerPrivacy } = useQuery({
-        queryKey: ['viewerPrivacy', user?.id],
-        queryFn: async () => {
-            if (!user?.id) return null;
-            const { data } = await supabase
-                .from('profiles')
-                .select('account_privacy')
-                .eq('user_id', user.id)
-                .maybeSingle();
-            return (data?.account_privacy ?? 'private') as 'public' | 'private';
-        },
-        enabled: !!user?.id,
-        staleTime: 1000 * 60 * 5,
-    });
-    const isAccountPublic = viewerPrivacy === 'public';
-
     const { data: tableMemberships } = useTables(user?.id);
-
     const tables = (tableMemberships ?? []).map(m => m.tables);
     const sortedTables = [...tables].sort((a, b) => a.name.localeCompare(b.name));
 
-    const defaultTableId = tableIdParam ?? sortedTables[0]?.id ?? null;
-    const [selectedTableId, setSelectedTableId] = useState<string | null>(defaultTableId);
-
-    useEffect(() => {
-        if (!selectedTableId && defaultTableId) {
-            setSelectedTableId(defaultTableId);
-        }
-    }, [defaultTableId, selectedTableId]);
-
-    const selectedTable = sortedTables.find(t => t.id === selectedTableId) ?? null;
-
-    // Mode picker (group tables only)
+    // Mode picker (round mode reachable via `mode=round` param — not surfaced in solo chrome)
     const [postMode, setPostMode] = useState<PostMode>(modeParam === 'round' ? 'round' : 'solo');
+
+    // Table share state — defaults OFF per Q9 (solo-is-default posture).
+    // EXCEPTION: callers that pass an explicit `tableId` URL param have signalled
+    // share intent (e.g. FastLogSheet from a Table); honor it by defaulting ON.
+    const [shareToTable, setShareToTable] = useState(!!tableIdParam);
+    const [selectedTableId, setSelectedTableId] = useState<string | null>(
+        tableIdParam ?? null
+    );
+
+    // When toggling share ON, default to first table if none selected
+    const handleToggleShare = (enabled: boolean) => {
+        setShareToTable(enabled);
+        if (enabled && !selectedTableId && sortedTables.length > 0) {
+            setSelectedTableId(sortedTables[0].id);
+        }
+        if (!enabled) {
+            // Keep selectedTableId so next toggle-on remembers the pick
+        }
+    };
 
     // Participant tagging (Round mode on group tables)
     const { data: tableMembers, isLoading: membersLoading } = useTableMembers(
@@ -138,16 +137,14 @@ export default function CreateEntryScreen() {
     );
     const [selectedParticipantIds, setSelectedParticipantIds] = useState<Set<string>>(new Set());
 
-    // Reset participants when table or mode changes
     useEffect(() => {
         setSelectedParticipantIds(new Set());
     }, [selectedTableId, postMode]);
 
-    const createEntry = useCreateEntry(user?.id, selectedTableId);
+    const createEntry = useCreateEntry(user?.id, shareToTable ? selectedTableId : null);
     const startRound = useStartRound(user?.id, selectedTableId);
 
     // ── Prefill from route params ─────────────────────────────────────────────
-    // Parse placePayload (ghost arrivals from the restaurant page) into a PlaceResult
     const prefillPlace = React.useMemo<PlaceResult | null>(() => {
         if (placePayloadParam) {
             try {
@@ -168,22 +165,21 @@ export default function CreateEntryScreen() {
         return null;
     }, [placePayloadParam]);
 
-    // Search state
     const [query, setQuery] = useState(prefillPlace?.name ?? '');
     const [results, setResults] = useState<PlaceResult[]>([]);
     const [searching, setSearching] = useState(false);
     const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(prefillPlace);
+    const [showSearch, setShowSearch] = useState(!prefillPlace && !restaurantIdParam);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // When prefillPlace resolves (from parsed param on first render), ensure it's selected
     useEffect(() => {
         if (prefillPlace && !selectedPlace) {
             setSelectedPlace(prefillPlace);
             setQuery(prefillPlace.name);
+            setShowSearch(false);
         }
     }, [prefillPlace]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Fetch restaurant by Napkin UUID when restaurantId param is present but no placePayload
     useEffect(() => {
         if (!restaurantIdParam || prefillPlace) return;
         (async () => {
@@ -209,8 +205,8 @@ export default function CreateEntryScreen() {
                 };
                 setSelectedPlace(place);
                 setQuery(place.name);
+                setShowSearch(false);
             } catch {
-                // Best-effort: at minimum the id is known; submit will still work
                 setSelectedPlace({
                     id: restaurantIdParam,
                     name: '',
@@ -220,19 +216,32 @@ export default function CreateEntryScreen() {
                     categories: [],
                     photoReference: null,
                 });
+                setShowSearch(false);
             }
         })();
     }, [restaurantIdParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Impression form state — seed rating from fast-log "Add details" path
+    // Impression form state
     const [rating, setRating] = useState(Number(ratingParam) || 0);
-    const [vibeRating, setVibeRating] = useState(0);
-    const [flavorRating, setFlavorRating] = useState(0);
-    const [serviceRating, setServiceRating] = useState(0);
-    const [valueRating, setValueRating] = useState(0);
-    const [showDetails, setShowDetails] = useState(false);
     const [notes, setNotes] = useState('');
+
+    // Breakdown ratings (inside drawer)
+    const [breakdown, setBreakdown] = useState({ vibe: 0, flavor: 0, service: 0, value: 0 });
+    const handleBreakdownChange = (key: keyof typeof breakdown, value: number) => {
+        setBreakdown(prev => ({ ...prev, [key]: value }));
+    };
+
+    // Dish (inside drawer)
     const [dish, setDish] = useState('');
+
+    // visited_at state — prefilled from day-logger route param (ISO string) or defaults to now
+    const [visitedAt, setVisitedAt] = useState<Date>(() => {
+        if (visitedAtParam) {
+            const d = new Date(visitedAtParam);
+            if (!isNaN(d.getTime())) return d;
+        }
+        return new Date();
+    });
 
     // Multi-photo upload state
     const [photos, setPhotos] = useState<PhotoSlot[]>([]);
@@ -242,8 +251,11 @@ export default function CreateEntryScreen() {
     const [selectedCompanions, setSelectedCompanions] = useState<UserSearchResult[]>([]);
     const [companionSheetVisible, setCompanionSheetVisible] = useState(false);
 
+    // Dish picker sheet — we show the drawer inline via the chip tap
+    const [dishSheetVisible, setDishSheetVisible] = useState(false);
+
     const toggleCompanion = useCallback((u: UserSearchResult) => {
-        if (!user || u.user_id === user.id) return; // block self-tag
+        if (!user || u.user_id === user.id) return;
         setSelectedCompanions(prev => {
             const exists = prev.some(c => c.user_id === u.user_id);
             if (exists) return prev.filter(c => c.user_id !== u.user_id);
@@ -258,7 +270,7 @@ export default function CreateEntryScreen() {
     const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photos.some(p => p.uploading);
     const isSubmitting = createEntry.isPending || startRound.isPending;
 
-    // ── Device location for search bias ──────────────────────────────────
+    // Device location for search bias
     const [deviceLocation, setDeviceLocation] = useState<{ latitude: number; longitude: number } | null>(null);
     useEffect(() => {
         (async () => {
@@ -269,10 +281,10 @@ export default function CreateEntryScreen() {
         })();
     }, []);
 
-    // ── Debounced search ──────────────────────────────────────────────────
-
+    // Debounced search
     useEffect(() => {
         if (selectedPlace) return;
+        if (!showSearch) return;
         if (query.trim().length < 2) {
             setResults([]);
             return;
@@ -280,7 +292,7 @@ export default function CreateEntryScreen() {
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => searchPlaces(query.trim()), 350);
         return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-    }, [query, selectedPlace]);
+    }, [query, selectedPlace, showSearch]);
 
     const searchPlaces = async (q: string) => {
         setSearching(true);
@@ -309,12 +321,14 @@ export default function CreateEntryScreen() {
         setSelectedPlace(place);
         setQuery(place.name);
         setResults([]);
+        setShowSearch(false);
     };
 
     const handleClearPlace = () => {
         setSelectedPlace(null);
         setQuery('');
         setResults([]);
+        setShowSearch(true);
     };
 
     const toggleParticipant = (memberId: string) => {
@@ -332,13 +346,11 @@ export default function CreateEntryScreen() {
 
     // ── Photo upload ──────────────────────────────────────────────────────
 
-    // Keep a ref to current photos for cleanup — avoids stale closure in unmount effect
     const photosRef = useRef(photos);
     useEffect(() => {
         photosRef.current = photos;
     }, [photos]);
 
-    // Clean up orphaned uploads if user exits without submitting
     useEffect(() => {
         return () => {
             for (const slot of photosRef.current) {
@@ -351,7 +363,6 @@ export default function CreateEntryScreen() {
 
     const startUploadForSlot = useCallback(async (slotId: string, uri: string) => {
         if (!user?.id) return;
-        // Increment gen for this slot
         const gen = (uploadGenRefs.current.get(slotId) ?? 0) + 1;
         uploadGenRefs.current.set(slotId, gen);
 
@@ -362,7 +373,6 @@ export default function CreateEntryScreen() {
 
         try {
             const url = await compressAndUpload(uri, user.id);
-            // Check if still current (slot not removed, gen not incremented)
             if (uploadGenRefs.current.get(slotId) !== gen) {
                 removeUploadedPhoto(url).catch(() => {});
                 return;
@@ -396,14 +406,12 @@ export default function CreateEntryScreen() {
                 error: null,
                 uploadGen: 0,
             };
-            // Kick off upload asynchronously
             setTimeout(() => startUploadForSlot(slotId, uri), 0);
             return [...prev, newSlot];
         });
     }, [startUploadForSlot]);
 
     const handleRemovePhoto = useCallback((slotId: string) => {
-        // Invalidate in-flight upload for this slot
         const currentGen = uploadGenRefs.current.get(slotId) ?? 0;
         uploadGenRefs.current.set(slotId, currentGen + 1);
 
@@ -447,21 +455,14 @@ export default function CreateEntryScreen() {
     const pickFromCamera = async () => {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') {
-            Alert.alert(
-                'Camera Access Required',
-                'Please enable camera access in your device Settings to take a photo.',
-                [{ text: 'OK' }]
-            );
+            Alert.alert('Camera Access Required', 'Please enable camera access in Settings.');
             return;
         }
         let result;
         try {
-            result = await ImagePicker.launchCameraAsync({
-                mediaTypes: ['images'],
-                quality: 1,
-            });
+            result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 1 });
         } catch {
-            Alert.alert('Camera Unavailable', 'Camera is not available on this device. Try choosing from your photo library instead.');
+            Alert.alert('Camera Unavailable', 'Try choosing from your photo library instead.');
             return;
         }
         if (!result.canceled && result.assets[0]) {
@@ -472,17 +473,10 @@ export default function CreateEntryScreen() {
     const pickFromLibrary = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
-            Alert.alert(
-                'Photo Library Access Required',
-                'Please enable photo library access in your device Settings to choose a photo.',
-                [{ text: 'OK' }]
-            );
+            Alert.alert('Photo Library Access Required', 'Please enable photo library access in Settings.');
             return;
         }
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            quality: 1,
-        });
+        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
         if (!result.canceled && result.assets[0]) {
             addPhotoSlot(result.assets[0].uri);
         }
@@ -514,22 +508,19 @@ export default function CreateEntryScreen() {
             };
 
         const secondaryRatings = {
-            vibe_rating: vibeRating > 0 ? vibeRating : null,
-            flavor_rating: flavorRating > 0 ? flavorRating : null,
-            service_rating: serviceRating > 0 ? serviceRating : null,
-            value_rating: valueRating > 0 ? valueRating : null,
+            vibe_rating: breakdown.vibe > 0 ? breakdown.vibe : null,
+            flavor_rating: breakdown.flavor > 0 ? breakdown.flavor : null,
+            service_rating: breakdown.service > 0 ? breakdown.service : null,
+            value_rating: breakdown.value > 0 ? breakdown.value : null,
         };
 
         const ratingValue = Math.round(rating * 2) / 2;
+        const photoUrls = photos.filter(p => p.publicUrl !== null).map(p => p.publicUrl as string);
 
-        // Build ordered photo URLs from uploaded slots
-        const photoUrls = photos
-            .filter(p => p.publicUrl !== null)
-            .map(p => p.publicUrl as string);
+        const effectiveTableId = (postMode === 'round' || shareToTable) ? selectedTableId : null;
 
         try {
             if (postMode === 'round') {
-                // Start a Round
                 await startRound.mutateAsync({
                     table_id: selectedTableId!,
                     restaurant: restaurantData,
@@ -541,14 +532,14 @@ export default function CreateEntryScreen() {
                     ...secondaryRatings,
                 });
             } else {
-                // Solo journal or Solo share
                 await createEntry.mutateAsync({
                     restaurant: restaurantData,
                     rating: ratingValue,
                     content: notes.trim() || undefined,
                     dish_description: dish.trim() || undefined,
-                    table_id: selectedTableId ?? undefined,
-                    visibility: selectedTableId ? 'table' : 'private',
+                    table_id: effectiveTableId ?? undefined,
+                    visibility: effectiveTableId ? 'table' : 'private',
+                    visited_at: visitedAt.toISOString(),
                     ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
                     ...(selectedCompanions.length > 0 ? {
                         companion_ids: selectedCompanions.map(c => c.user_id),
@@ -556,7 +547,6 @@ export default function CreateEntryScreen() {
                     ...secondaryRatings,
                 });
             }
-            // Photos are now persisted — clear so cleanup effect doesn't delete them
             setPhotos([]);
             router.back();
         } catch (e: any) {
@@ -564,31 +554,18 @@ export default function CreateEntryScreen() {
         }
     }, [
         canSubmit, rating, notes, dish, selectedPlace, query,
-        selectedTableId, postMode, selectedParticipantIds,
-        vibeRating, flavorRating, serviceRating, valueRating,
-        photos, selectedCompanions,
+        selectedTableId, postMode, selectedParticipantIds, shareToTable,
+        breakdown, visitedAt, photos, selectedCompanions,
         createEntry, startRound, router,
     ]);
 
     // ── Submit label ──────────────────────────────────────────────────────
 
     const submitLabel = postMode === 'round'
-        ? 'START THE ROUND'
-        : selectedTableId
-            ? 'SHARE'
-            : 'LOG IT';
-
-    // Table picker subtitle — neutral placeholder per architect's clarification (3).
-    // Do NOT fabricate wishlist/shortlist reasons — ships a lie until the lookup exists.
-    const TABLE_SUBTITLE = 'tap to share to this table';
-
-    // Initials for the 30x30 glyph tile per table (first letter of name).
-    const tableGlyph = (name: string) =>
-        name.trim().charAt(0).toUpperCase() || 'T';
-
-    // Restaurant meta for the header block (Dinner · Tue Apr 14 style is future work;
-    // keep it grounded in address for now since that's what we already have).
-    const headerMeta = selectedPlace?.formattedAddress ?? undefined;
+        ? 'Start Round'
+        : shareToTable
+            ? 'Share'
+            : 'Save';
 
     // ── Render ────────────────────────────────────────────────────────────
 
@@ -601,9 +578,9 @@ export default function CreateEntryScreen() {
             >
                 <View style={{ paddingTop: insets.top }}>
                     <SheetHeader
-                        title="A new entry"
+                        title="a new entry"
                         leftLabel="Cancel"
-                        rightLabel={submitLabel === 'LOG IT' ? 'Save' : submitLabel === 'START THE ROUND' ? 'Start' : 'Post'}
+                        rightLabel={canSubmit ? submitLabel : submitLabel}
                         onLeftPress={() => router.back()}
                         onRightPress={handleSubmit}
                         rightDisabled={!canSubmit}
@@ -611,30 +588,21 @@ export default function CreateEntryScreen() {
                     />
                 </View>
                 <ScrollView
-                    contentContainerStyle={{
-                        paddingTop: Spacing.md,
-                        paddingBottom: insets.bottom + 120,
-                        paddingHorizontal: Spacing.lg + 2,
-                    }}
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        { paddingBottom: insets.bottom + 120 },
+                    ]}
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                 >
-                    {/* Restaurant header — selected place shows the kit header;
-                        empty state shows a labelled underline search field. */}
-                    {selectedPlace ? (
-                        <RestaurantHeader
-                            name={selectedPlace.name}
-                            meta={headerMeta}
-                            onClear={handleClearPlace}
-                        />
-                    ) : (
-                        <View style={styles.fieldGroup}>
-                            <LabelSmall color={palette.textSecondary}>Where did you eat?</LabelSmall>
+                    {/* Restaurant search / masthead */}
+                    {showSearch ? (
+                        <View style={styles.searchBlock}>
                             <View style={{ position: 'relative' }}>
                                 <FieldUnderline
                                     value={query}
                                     onChangeText={setQuery}
-                                    placeholder="Search restaurants…"
+                                    placeholder="Where did you eat?"
                                     fontVariant="serifItalic"
                                     size="display"
                                     autoFocus={!restaurantIdParam && !placePayloadParam}
@@ -648,15 +616,7 @@ export default function CreateEntryScreen() {
                                 ) : null}
                             </View>
                             {results.length > 0 ? (
-                                <View
-                                    style={[
-                                        styles.dropdown,
-                                        {
-                                            backgroundColor: palette.surfaceContainerLow,
-                                            ...Shadow.subtle,
-                                        },
-                                    ]}
-                                >
+                                <View style={[styles.dropdown, { backgroundColor: palette.surfaceContainerLow, ...Shadow.subtle }]}>
                                     {results.map((place, i) => (
                                         <Pressable
                                             key={place.id}
@@ -664,34 +624,17 @@ export default function CreateEntryScreen() {
                                             style={({ pressed }) => [
                                                 styles.dropdownRow,
                                                 {
-                                                    backgroundColor: pressed
-                                                        ? palette.surfaceContainerHigh
-                                                        : 'transparent',
+                                                    backgroundColor: pressed ? palette.surfaceContainerHigh : 'transparent',
                                                     borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
                                                     borderTopColor: palette.surfaceContainerHigh,
                                                 },
                                             ]}
                                         >
-                                            <Text
-                                                style={[
-                                                    Type.body,
-                                                    {
-                                                        color: palette.text,
-                                                        fontFamily: 'Manrope_500Medium',
-                                                    },
-                                                ]}
-                                                numberOfLines={1}
-                                            >
+                                            <Text style={[Type.body, { color: palette.text, fontFamily: 'Manrope_500Medium' }]} numberOfLines={1}>
                                                 {place.name}
                                             </Text>
                                             {place.formattedAddress ? (
-                                                <Text
-                                                    style={[
-                                                        Type.caption,
-                                                        { color: palette.textSecondary, marginTop: 1 },
-                                                    ]}
-                                                    numberOfLines={1}
-                                                >
+                                                <Text style={[Type.caption, { color: palette.textSecondary, marginTop: 1 }]} numberOfLines={1}>
                                                     {place.formattedAddress}
                                                 </Text>
                                             ) : null}
@@ -700,524 +643,143 @@ export default function CreateEntryScreen() {
                                 </View>
                             ) : null}
                             {query.trim().length >= 2 && results.length === 0 && !searching ? (
-                                <Text
-                                    style={[
-                                        Type.caption,
-                                        { color: palette.textMuted, marginTop: Spacing.xs },
-                                    ]}
-                                >
+                                <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.xs }]}>
                                     no results — you can still submit with this name
                                 </Text>
                             ) : null}
                         </View>
+                    ) : (
+                        /* Composer masthead — restaurant name + inline stars */
+                        selectedPlace ? (
+                            <ComposerMasthead
+                                restaurantName={selectedPlace.name}
+                                rating={rating}
+                                onRatingChange={setRating}
+                                onClearPlace={handleClearPlace}
+                            />
+                        ) : null
                     )}
 
-                    {/* Overall rating — stars row */}
-                    <View style={{ marginTop: Spacing.lg }}>
-                        <StarRating
-                            value={rating}
-                            size={26}
-                            editable
-                            onChange={setRating}
-                        />
-                    </View>
-
-                    {/* Dynamic photo collage */}
-                    <View style={{ marginTop: Spacing.lg }}>
-                        <PhotoCollage
-                            photos={photos}
-                            maxPhotos={MAX_PHOTOS}
-                            onAdd={handlePhotoPress}
-                            onRemove={handleRemovePhoto}
-                            onRetry={handleRetryPhoto}
-                        />
-                    </View>
-
-                    {/* Notes — Newsreader 18/1.55 prose, no fill, "Start writing…" ghost */}
-                    <View style={{ marginTop: Spacing.xl - 4 }}>
-                        <TextInput
-                            style={{
-                                fontFamily: 'Newsreader_400Regular',
-                                fontSize: 18,
-                                lineHeight: 28,
-                                color: palette.text,
-                                minHeight: 160,
-                                padding: 0,
-                                textAlignVertical: 'top',
-                            }}
-                            placeholder="Start writing…"
-                            placeholderTextColor={palette.textMuted}
+                    {/* Writing surface — the hero, ≥55% viewport */}
+                    {!showSearch ? (
+                        <WritingSurface
                             value={notes}
                             onChangeText={setNotes}
-                            multiline
                         />
-                        {/* Public visibility chip — appears when draft qualifies for public surface */}
-                        <PublicVisibilityChip
-                            isAccountPublic={isAccountPublic}
-                            rating={rating || null}
-                            note={notes}
-                        />
-                    </View>
-
-                    {/* Dish — FieldUnderline with LabelSmall above */}
-                    <View style={{ marginTop: Spacing.xl - 4 }}>
-                        <FieldUnderline
-                            label="What did you have?"
-                            value={dish}
-                            onChangeText={setDish}
-                            placeholder="e.g. spicy rigatoni, negroni"
-                            fontVariant="sans"
-                            size="body"
-                        />
-                    </View>
-
-                    {/* Companion tagging — "Who were you with?" */}
-                    <View style={{ marginTop: Spacing.lg }}>
-                        <Pressable
-                            onPress={() => setCompanionSheetVisible(true)}
-                            style={styles.companionTrigger}
-                            accessibilityRole="button"
-                            accessibilityLabel="Tag companions"
-                        >
-                            <Ionicons
-                                name="person-add-outline"
-                                size={18}
-                                color={palette.textMuted}
-                            />
-                            <Text style={[styles.companionLabel, { color: palette.textMuted }]}>
-                                {selectedCompanions.length === 0
-                                    ? 'Who were you with?'
-                                    : `with ${selectedCompanions.map(c => c.display_name.split(' ')[0]).slice(0, 2).join(', ')}${selectedCompanions.length > 2 ? ` +${selectedCompanions.length - 2} more` : ''}`
-                                }
-                            </Text>
-                            <Ionicons
-                                name="chevron-forward"
-                                size={14}
-                                color={palette.textMuted}
-                            />
-                        </Pressable>
-                        {selectedCompanions.length > 0 ? (
-                            <View style={{ marginTop: Spacing.sm }}>
-                                <CompanionChipsRow
-                                    companions={selectedCompanions.map(c => ({
-                                        user_id: c.user_id,
-                                        display_name: c.display_name,
-                                    }))}
-                                    onRemove={removeCompanion}
-                                />
-                            </View>
-                        ) : null}
-                    </View>
-
-                    {/* Secondary ratings — collapsible, underline-divided */}
-                    <View
-                        style={[
-                            styles.sectionDivider,
-                            { backgroundColor: palette.dividerSoft },
-                        ]}
-                    />
-                    <View>
-                        <Pressable
-                            style={styles.detailsToggle}
-                            onPress={() => setShowDetails(!showDetails)}
-                        >
-                            <Label>Break it down</Label>
-                            <Ionicons
-                                name={showDetails ? 'chevron-up' : 'chevron-down'}
-                                size={16}
-                                color={palette.textSecondary}
-                            />
-                        </Pressable>
-
-                        {showDetails ? (
-                            <View style={styles.detailRatings}>
-                                {([
-                                    ['Flavor', flavorRating, setFlavorRating],
-                                    ['Vibes', vibeRating, setVibeRating],
-                                    ['Service', serviceRating, setServiceRating],
-                                    ['Value', valueRating, setValueRating],
-                                ] as const).map(([label, val, setter]) => (
-                                    <View key={label} style={styles.detailRow}>
-                                        <Text
-                                            style={[
-                                                Type.labelSmall,
-                                                { color: palette.textSecondary, width: 72 },
-                                            ]}
-                                        >
-                                            {label.toUpperCase()}
-                                        </Text>
-                                        <StarRating
-                                            value={val as number}
-                                            size={22}
-                                            editable
-                                            onChange={setter as (v: number) => void}
-                                        />
-                                    </View>
-                                ))}
-                            </View>
-                        ) : null}
-                    </View>
-
-                    {/* Table picker — single-select radio rows (clarification 2) */}
-                    {sortedTables.length > 0 ? (
-                        <>
-                            <View
-                                style={[
-                                    styles.sectionDivider,
-                                    { backgroundColor: palette.dividerSoft },
-                                ]}
-                            />
-                            <View style={styles.tablePickerHeader}>
-                                <Label>Share to a table?</Label>
-                                <Text
-                                    style={{
-                                        fontFamily: 'Newsreader_400Regular_Italic',
-                                        fontSize: 13,
-                                        color: palette.textMuted,
-                                    }}
-                                >
-                                    optional
-                                </Text>
-                            </View>
-                            {sortedTables.map((t) => {
-                                const isSelected = selectedTableId === t.id;
-                                return (
-                                    <Pressable
-                                        key={t.id}
-                                        onPress={() => setSelectedTableId(t.id)}
-                                        style={({ pressed }) => [
-                                            styles.tableRow,
-                                            {
-                                                backgroundColor: isSelected
-                                                    ? palette.surfaceContainer
-                                                    : 'transparent',
-                                                borderColor: isSelected
-                                                    ? palette.primary
-                                                    : 'transparent',
-                                                opacity: pressed ? 0.85 : 1,
-                                            },
-                                        ]}
-                                    >
-                                        <View
-                                            style={[
-                                                styles.glyphTile,
-                                                {
-                                                    backgroundColor: isSelected
-                                                        ? palette.primary
-                                                        : palette.primaryMuted,
-                                                },
-                                            ]}
-                                        >
-                                            <Text
-                                                style={{
-                                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                                    fontSize: 14,
-                                                    fontWeight: '600',
-                                                    color: isSelected ? palette.textInverse : palette.primary,
-                                                }}
-                                            >
-                                                {tableGlyph(t.name)}
-                                            </Text>
-                                        </View>
-                                        <View style={{ flex: 1, minWidth: 0 }}>
-                                            <Text
-                                                style={{
-                                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                                    fontSize: 15,
-                                                    color: palette.text,
-                                                    lineHeight: 18,
-                                                }}
-                                                numberOfLines={1}
-                                            >
-                                                {t.name}
-                                            </Text>
-                                            <Text
-                                                style={{
-                                                    fontFamily: 'Manrope_400Regular',
-                                                    fontSize: 11,
-                                                    color: palette.textMuted,
-                                                    marginTop: 2,
-                                                    lineHeight: 14,
-                                                }}
-                                                numberOfLines={1}
-                                            >
-                                                {TABLE_SUBTITLE}
-                                            </Text>
-                                        </View>
-                                        {/* Radio glyph — empty circle / filled dot (clarification 2) */}
-                                        <View
-                                            style={[
-                                                styles.radioOuter,
-                                                {
-                                                    borderColor: isSelected
-                                                        ? palette.primary
-                                                        : palette.ruleInkSoft,
-                                                },
-                                            ]}
-                                        >
-                                            {isSelected ? (
-                                                <View
-                                                    style={[
-                                                        styles.radioInner,
-                                                        { backgroundColor: palette.primary },
-                                                    ]}
-                                                />
-                                            ) : null}
-                                        </View>
-                                    </Pressable>
-                                );
-                            })}
-                            <Text
-                                style={{
-                                    fontFamily: 'Newsreader_400Regular_Italic',
-                                    fontSize: 11,
-                                    color: palette.textMuted,
-                                    marginTop: Spacing.sm,
-                                    lineHeight: 16,
-                                }}
-                            >
-                                Sharing to a Table lets members see each other&apos;s logs. Post without selecting a Table to keep it on your feed only.
-                            </Text>
-                        </>
                     ) : null}
 
-                    {/* Mode picker (group tables only) — restyled kit chrome */}
-                    {selectedTableId ? (
-                        <>
-                            <View
-                                style={[
-                                    styles.sectionDivider,
-                                    { backgroundColor: palette.dividerSoft },
-                                ]}
+                    {/* Chip row — photos / dish / companions / date */}
+                    {!showSearch ? (
+                        <View style={[styles.chipRowContainer, { borderTopColor: 'rgba(221,192,186,0.25)' }]}>
+                            <ChipRow
+                                photoCount={photos.filter(p => p.publicUrl).length}
+                                onPhotosPress={handlePhotoPress}
+                                dishValue={dish}
+                                onDishPress={() => {/* handled in drawer */}}
+                                companionCount={selectedCompanions.length}
+                                onCompanionsPress={() => setCompanionSheetVisible(true)}
+                                visitedAt={visitedAt}
+                                onDateChange={setVisitedAt}
                             />
-                            <Label style={{ marginBottom: Spacing.sm }}>How are you posting?</Label>
-                            <View style={styles.modePicker}>
-                                <Pressable
-                                    onPress={() => setPostMode('solo')}
-                                    style={({ pressed }) => [
-                                        styles.modeCard,
-                                        {
-                                            backgroundColor:
-                                                postMode === 'solo'
-                                                    ? palette.surfaceContainer
-                                                    : palette.surfaceContainerLow,
-                                            borderColor:
-                                                postMode === 'solo'
-                                                    ? palette.primary
-                                                    : palette.ruleInkSoft,
-                                            opacity: pressed ? 0.85 : 1,
-                                        },
-                                    ]}
-                                >
-                                    <Ionicons
-                                        name="chatbubble-outline"
-                                        size={20}
-                                        color={
-                                            postMode === 'solo'
-                                                ? palette.primary
-                                                : palette.textSecondary
-                                        }
-                                    />
-                                    <Text
-                                        style={{
-                                            fontFamily: 'Newsreader_400Regular_Italic',
-                                            fontSize: 16,
-                                            color:
-                                                postMode === 'solo'
-                                                    ? palette.primary
-                                                    : palette.text,
-                                            marginTop: Spacing.xs,
-                                        }}
-                                    >
-                                        Solo share
-                                    </Text>
-                                    <Text
-                                        style={[
-                                            Type.caption,
-                                            {
-                                                color: palette.textMuted,
-                                                marginTop: 2,
-                                                textAlign: 'center',
-                                            },
-                                        ]}
-                                    >
-                                        a quick rec to the group
-                                    </Text>
-                                </Pressable>
-                                <Pressable
-                                    onPress={() => setPostMode('round')}
-                                    style={({ pressed }) => [
-                                        styles.modeCard,
-                                        {
-                                            backgroundColor:
-                                                postMode === 'round'
-                                                    ? palette.surfaceContainer
-                                                    : palette.surfaceContainerLow,
-                                            borderColor:
-                                                postMode === 'round'
-                                                    ? palette.primary
-                                                    : palette.ruleInkSoft,
-                                            opacity: pressed ? 0.85 : 1,
-                                        },
-                                    ]}
-                                >
-                                    <Ionicons
-                                        name="people-outline"
-                                        size={20}
-                                        color={
-                                            postMode === 'round'
-                                                ? palette.primary
-                                                : palette.textSecondary
-                                        }
-                                    />
-                                    <Text
-                                        style={{
-                                            fontFamily: 'Newsreader_400Regular_Italic',
-                                            fontSize: 16,
-                                            color:
-                                                postMode === 'round'
-                                                    ? palette.primary
-                                                    : palette.text,
-                                            marginTop: Spacing.xs,
-                                        }}
-                                    >
-                                        Start a Round
-                                    </Text>
-                                    <Text
-                                        style={[
-                                            Type.caption,
-                                            {
-                                                color: palette.textMuted,
-                                                marginTop: 2,
-                                                textAlign: 'center',
-                                            },
-                                        ]}
-                                    >
-                                        everyone rates it
-                                    </Text>
-                                </Pressable>
-                            </View>
-                        </>
+                        </View>
                     ) : null}
 
-                    {/* Attendee picker (Round mode only) */}
+                    {/* Photo collage — visible when photos exist */}
+                    {photos.length > 0 ? (
+                        <View style={{ marginTop: Spacing.md }}>
+                            <PhotoCollage
+                                photos={photos}
+                                maxPhotos={MAX_PHOTOS}
+                                onAdd={handlePhotoPress}
+                                onRemove={handleRemovePhoto}
+                                onRetry={handleRetryPhoto}
+                            />
+                        </View>
+                    ) : null}
+
+                    {/* Companion chips (when companions selected) */}
+                    {selectedCompanions.length > 0 ? (
+                        <View style={{ marginTop: Spacing.sm }}>
+                            <CompanionChipsRow
+                                companions={selectedCompanions.map(c => ({
+                                    user_id: c.user_id,
+                                    display_name: c.display_name,
+                                }))}
+                                onRemove={removeCompanion}
+                            />
+                        </View>
+                    ) : null}
+
+                    {/* Add details drawer — breakdown ratings + dish */}
+                    {!showSearch ? (
+                        <AddDetailsDrawer
+                            breakdown={breakdown}
+                            onBreakdownChange={handleBreakdownChange}
+                            dish={dish}
+                            onDishChange={setDish}
+                        />
+                    ) : null}
+
+                    {/* Table share footer — only when user has ≥1 Table AND not in round mode */}
+                    {sortedTables.length > 0 && postMode !== 'round' ? (
+                        <TableShareFooter
+                            tables={sortedTables}
+                            selectedTableId={selectedTableId ?? sortedTables[0]?.id ?? null}
+                            shareEnabled={shareToTable}
+                            onToggleShare={handleToggleShare}
+                            onSelectTable={sortedTables.length > 1
+                                ? (id) => setSelectedTableId(id)
+                                : undefined
+                            }
+                        />
+                    ) : null}
+
+                    {/* Round mode attendee picker (when round mode active) */}
                     {postMode === 'round' && selectedTableId ? (
                         <View style={{ marginTop: Spacing.lg }}>
-                            <Label style={{ marginBottom: Spacing.sm }}>Who was there?</Label>
+                            <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
+                                WHO WAS THERE?
+                            </Text>
                             {membersLoading ? (
-                                <ActivityIndicator
-                                    size="small"
-                                    color={palette.textMuted}
-                                    style={{ marginTop: Spacing.sm }}
-                                />
-                            ) : tableMembers &&
-                              tableMembers.filter((m) => m.member_id !== user?.id).length > 0 ? (
+                                <ActivityIndicator size="small" color={palette.textMuted} />
+                            ) : tableMembers && tableMembers.filter(m => m.member_id !== user?.id).length > 0 ? (
                                 <View style={styles.participantGrid}>
                                     {tableMembers.map((member) => {
                                         const isCreator = member.member_id === user?.id;
-                                        const isSelected =
-                                            isCreator || selectedParticipantIds.has(member.member_id);
+                                        const isSelected = isCreator || selectedParticipantIds.has(member.member_id);
                                         const displayName = member.profiles?.display_name ?? 'Member';
-                                        const initials = displayName
-                                            .split(' ')
-                                            .map((n) => n[0])
-                                            .join('')
-                                            .slice(0, 2)
-                                            .toUpperCase();
-
+                                        const initials = displayName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
                                         return (
                                             <Pressable
                                                 key={member.member_id}
                                                 onPress={() => toggleParticipant(member.member_id)}
                                                 disabled={isCreator}
-                                                style={[
-                                                    styles.participantChip,
-                                                    {
-                                                        backgroundColor: isSelected
-                                                            ? palette.primary
-                                                            : palette.surfaceContainerLow,
-                                                    },
-                                                ]}
+                                                style={[styles.participantChip, { backgroundColor: isSelected ? palette.primary : palette.surfaceContainerLow }]}
                                             >
-                                                <View
-                                                    style={[
-                                                        styles.participantAvatar,
-                                                        {
-                                                            backgroundColor: isSelected
-                                                                ? 'rgba(255,255,255,0.25)'
-                                                                : palette.surfaceContainerHigh,
-                                                        },
-                                                    ]}
-                                                >
-                                                    <Text
-                                                        style={{
-                                                            fontSize: 11,
-                                                            color: isSelected ? palette.textInverse : palette.text,
-                                                            fontFamily: 'Manrope_600SemiBold',
-                                                        }}
-                                                    >
+                                                <View style={[styles.participantAvatar, { backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : palette.surfaceContainerHigh }]}>
+                                                    <Text style={{ fontSize: 11, color: isSelected ? palette.textInverse : palette.text, fontFamily: 'Manrope_600SemiBold' }}>
                                                         {initials}
                                                     </Text>
                                                 </View>
-                                                <Text
-                                                    style={[
-                                                        Type.caption,
-                                                        {
-                                                            color: isSelected ? palette.textInverse : palette.text,
-                                                            maxWidth: 60,
-                                                        },
-                                                    ]}
-                                                    numberOfLines={1}
-                                                >
-                                                    {displayName.split(' ')[0]}
-                                                    {isCreator ? ' (you)' : ''}
+                                                <Text style={[Type.caption, { color: isSelected ? palette.textInverse : palette.text, maxWidth: 60 }]} numberOfLines={1}>
+                                                    {displayName.split(' ')[0]}{isCreator ? ' (you)' : ''}
                                                 </Text>
                                             </Pressable>
                                         );
                                     })}
                                 </View>
-                            ) : (
-                                <View
-                                    style={[
-                                        styles.emptyMembersBox,
-                                        { backgroundColor: palette.surfaceContainerLow },
-                                    ]}
-                                >
-                                    <Text
-                                        style={[
-                                            Type.body,
-                                            { color: palette.textMuted, textAlign: 'center' },
-                                        ]}
-                                    >
-                                        No friends at this table yet
-                                    </Text>
-                                    <Text
-                                        style={[
-                                            Type.caption,
-                                            {
-                                                color: palette.textMuted,
-                                                textAlign: 'center',
-                                                marginTop: 2,
-                                            },
-                                        ]}
-                                    >
-                                        Invite people from the table settings
-                                    </Text>
-                                </View>
-                            )}
+                            ) : null}
                         </View>
                     ) : null}
 
-                    {/* Primary CTA — pill, terracotta, UPPERCASE tracked */}
+                    {/* Primary CTA */}
                     <Pressable
                         disabled={!canSubmit || isSubmitting}
                         onPress={handleSubmit}
                         style={({ pressed }) => [
                             styles.ctaButton,
                             {
-                                backgroundColor: canSubmit
-                                    ? palette.primary
-                                    : palette.surfaceContainerHigh,
+                                backgroundColor: canSubmit ? palette.primary : palette.surfaceContainerHigh,
                                 opacity: pressed ? 0.85 : isSubmitting ? 0.6 : 1,
                             },
                         ]}
@@ -1225,15 +787,7 @@ export default function CreateEntryScreen() {
                         {isSubmitting ? (
                             <ActivityIndicator color={palette.textInverse} />
                         ) : (
-                            <Text
-                                style={[
-                                    Type.label,
-                                    {
-                                        color: canSubmit ? palette.textInverse : palette.textMuted,
-                                        letterSpacing: 1.5,
-                                    },
-                                ]}
-                            >
+                            <Text style={[Type.label, { color: canSubmit ? palette.textInverse : palette.textMuted, letterSpacing: 1.5 }]}>
                                 {submitLabel}
                             </Text>
                         )}
@@ -1256,7 +810,11 @@ export default function CreateEntryScreen() {
 // ── Styles ────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-    fieldGroup: {
+    scrollContent: {
+        paddingHorizontal: Spacing.lg + 2,
+        paddingTop: Spacing.md,
+    },
+    searchBlock: {
         gap: Spacing.sm,
     },
     dropdown: {
@@ -1268,78 +826,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm + 2,
     },
-    sectionDivider: {
-        height: StyleSheet.hairlineWidth,
-        marginVertical: Spacing.lg,
+    chipRowContainer: {
+        borderTopWidth: 1,
     },
-    // "Break it down" toggle
-    detailsToggle: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    detailRatings: {
-        gap: Spacing.md,
-        paddingTop: Spacing.md,
-    },
-    detailRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.md,
-    },
-    // Table picker
-    tablePickerHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: Spacing.sm + 2,
-    },
-    tableRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.md - 4,
-        paddingVertical: Spacing.sm + 4,
-        paddingHorizontal: Spacing.sm + 4,
-        borderRadius: 8,
-        marginBottom: Spacing.xs + 2,
-        borderWidth: 1,
-    },
-    glyphTile: {
-        width: 30,
-        height: 30,
-        borderRadius: 6,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-    },
-    radioOuter: {
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-        borderWidth: 1.5,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-    },
-    radioInner: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-    },
-    // Mode picker
-    modePicker: {
-        flexDirection: 'row',
-        gap: Spacing.sm + 2,
-    },
-    modeCard: {
-        flex: 1,
-        alignItems: 'center',
-        paddingVertical: Spacing.md,
-        paddingHorizontal: Spacing.sm,
-        borderRadius: Radius.md,
-        borderWidth: 1,
-    },
-    // Participants
     participantGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -1360,30 +849,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    emptyMembersBox: {
-        paddingVertical: Spacing.lg,
-        paddingHorizontal: Spacing.md,
-        borderRadius: Radius.lg,
-        alignItems: 'center',
-    },
-    // Submit pill
     ctaButton: {
         height: 52,
         borderRadius: Radius.full,
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: Spacing.xl,
-    },
-    // Companion trigger row
-    companionTrigger: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.sm,
-        paddingVertical: Spacing.sm,
-    },
-    companionLabel: {
-        flex: 1,
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 14,
     },
 });

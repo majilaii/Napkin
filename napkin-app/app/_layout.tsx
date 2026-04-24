@@ -68,9 +68,9 @@ function BottomNavBar() {
         <Text style={[Type.labelSmall, { color: activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Tables</Text>
       </Pressable>
 
-      {/* Center + button */}
+      {/* Center + button — opens day logger (Concept C) */}
       <PressableScale
-        onPress={() => router.push('/create-entry')}
+        onPress={() => router.push('/day/today')}
         style={navStyles.addButton}
         haptic="medium"
         scaleTo={0.92}
@@ -237,6 +237,10 @@ function RootLayoutNav() {
           <Stack.Screen
             name="regulars"
             options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="day/[date]"
+            options={{ presentation: 'modal', headerShown: false }}
           />
         </Stack>
         <BottomNavBar />

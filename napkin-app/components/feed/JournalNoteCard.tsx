@@ -1,9 +1,19 @@
 /**
- * JournalNoteCard — canvas-faithful TNoteCard shape (no-rating variant).
- * Reference: tables-screens.jsx → TNoteCard.
+ * JournalNoteCard — Concept B1 "The Memory Object" feed card.
+ * Applies to the viewing user's own solo entries on the journal tab.
  *
- * Same visual shape as SoloShareCard, but the verb flips to "noted" and
- * the rating row is suppressed. Used for solo_share items with no rating.
+ * Grammar:
+ *   kicker: "noted · tue · kono" (verb + date + companions if any)
+ *   restaurant: italic Newsreader masthead
+ *   pull-quote: user's content as serif-italic with em-dash + 2px terracotta left rule
+ *   empty-note variant: "— no note. the [dish] spoke for itself." or "— no note."
+ *   rating: GiantRatingNumeral (X/5 form) in foot row
+ *   card: ambient shadow, no hard border, rounded
+ *
+ * Q8 decision: only use "the [dish] spoke for itself." when dish_description
+ * is present and contains ≥1 space OR ≥4 characters. Otherwise fall back to "— no note."
+ *
+ * Does NOT use extractHighlight — empty note handling is deliberate and explicit.
  */
 import React, { useRef, useState } from 'react';
 import {
@@ -18,11 +28,11 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
-import { extractHighlight, formatRelativeTime } from '@/lib/textHighlight';
 import { formatCompanions } from '@/lib/companions';
+import { PullQuote, GiantRatingNumeral } from '@/components/ui/napkin';
 import { FeedActionRow } from './FeedActionRow';
 import { ReactionPicker } from './ReactionPicker';
 
@@ -35,20 +45,59 @@ interface Props {
     lastSeenAt?: string | null;
 }
 
+/**
+ * Format visited_at date to a short lowercase label: "tue", "wed apr 13", etc.
+ * Falls back to created_at if visited_at is missing.
+ */
+function formatCardDate(dateStr: string | null | undefined): string {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const day = d.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+    const month = d.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+    const date = d.getDate();
+    // If within the last 7 days, just show weekday; otherwise show weekday + month + day
+    const diffMs = Date.now() - d.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 7) return day;
+    return `${day} ${month} ${date}`;
+}
+
+/**
+ * Q8: only use "the [dish] spoke for itself" when the dish looks like a concrete
+ * multi-word item (e.g. "egg sandwich"). Generic single-word entries like
+ * "dinner", "omakase", "chicken" read oddly with that construction, so we fall
+ * back to a plain "— no note." in those cases.
+ */
+function emptyNoteText(dish: string | null | undefined): string {
+    const trimmed = dish?.trim();
+    if (trimmed && trimmed.includes(' ')) {
+        return `— no note. the ${trimmed.toLowerCase()} spoke for itself.`;
+    }
+    return '— no note.';
+}
+
 export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
     const router = useRouter();
     const toggleReaction = useToggleReaction();
     const queryClient = useQueryClient();
 
-    const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
+    const neighborhoodOrCity = item.restaurants?.city ?? item.restaurants?.address ?? null;
     const companionLine = formatCompanions(item.companions);
 
-    const sortDate = item.sort_date ?? item.created_at;
+    const sortDate = item.sort_date ?? item.visited_at ?? item.created_at;
     const isUnseen = !lastSeenAt || (!!sortDate && sortDate > lastSeenAt);
-    const relativeTime = sortDate ? formatRelativeTime(sortDate) : null;
+    const dateLabel = formatCardDate(item.visited_at ?? item.sort_date);
 
-    const highlight = extractHighlight(item.content);
+    // Kicker: "noted · tue · with clara, thomas" (lowercase, middle-dot separated)
+    const kickerParts: string[] = ['noted'];
+    if (dateLabel) kickerParts.push(dateLabel);
+    if (companionLine) kickerParts.push(companionLine);
+    const kicker = kickerParts.join(' · ');
+
+    const hasNote = !!(item.content && item.content.trim().length > 0);
+    const hasRating = item.rating != null;
 
     const cardRef = useRef<View>(null);
     const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
@@ -81,70 +130,67 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
 
     return (
         <Pressable
-            onPress={() =>
-                router.push({ pathname: '/entry-detail', params: { entryId: item.id } })
-            }
+            onPress={() => router.push({ pathname: '/entry-detail', params: { entryId: item.id } })}
             onLongPress={handleLongPress}
             delayLongPress={500}
             style={({ pressed }) => ({ opacity: pressed ? 0.95 : 1 })}
         >
-            <View ref={cardRef} style={styles.timeline}>
-                {/* Olive left rule */}
-                <View style={[styles.rule, { backgroundColor: palette.oliveCream }]} />
-                <View style={[styles.dot, { backgroundColor: palette.secondary }]} />
-
-                {isUnseen && (
+            <View
+                ref={cardRef}
+                style={[
+                    styles.card,
+                    { backgroundColor: palette.surfaceContainerLow },
+                    Shadow.ambient,
+                ]}
+            >
+                {isUnseen ? (
                     <View
                         style={[styles.unseenDot, { backgroundColor: palette.primary }]}
                         accessibilityElementsHidden
                         importantForAccessibility="no"
                     />
-                )}
+                ) : null}
 
-                {/* Header */}
-                <View style={styles.headerRow}>
-                    <Text
-                        style={[styles.attribution, { color: palette.textSecondary }]}
-                        numberOfLines={1}
-                    >
-                        <Text style={[styles.who, { color: palette.text }]}>{displayName}</Text>
-                        <Text>{' noted'}</Text>
+                {/* Kicker — noted · tue · with clara */}
+                <Text style={[styles.kicker, { color: palette.textMuted }]} numberOfLines={1}>
+                    <Text style={[styles.kickerVerb, { color: palette.primary }]}>noted</Text>
+                    {kicker.slice(5) /* everything after "noted" */}
+                </Text>
+
+                {/* Restaurant masthead */}
+                <Text style={[styles.restaurantName, { color: palette.text }]} numberOfLines={2}>
+                    {restaurantName}
+                </Text>
+
+                {/* Neighborhood / city meta */}
+                {neighborhoodOrCity ? (
+                    <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
+                        {neighborhoodOrCity}
                     </Text>
-                    {relativeTime ? (
-                        <Text style={[styles.time, { color: palette.textMuted }]}>
-                            {relativeTime}
-                        </Text>
-                    ) : null}
-                </View>
+                ) : null}
 
-                {/* Nested note card */}
-                <View style={[styles.noteCard, { backgroundColor: palette.surfaceJournalLow }]}>
-                    <Text style={[styles.restName, { color: palette.textSecondary }]} numberOfLines={2}>
-                        {restaurantName}
-                    </Text>
-
-                    {item.dish_description ? (
-                        <Text style={[styles.sub, { color: palette.textMuted }]} numberOfLines={1}>
-                            {item.dish_description}
-                        </Text>
-                    ) : null}
-                    {companionLine ? (
-                        <Text style={[styles.companions, { color: palette.textMuted }]} numberOfLines={1}>
-                            {companionLine}
-                        </Text>
-                    ) : null}
-
-                    {highlight ? (
-                        <Text
-                            style={[styles.prose, { color: palette.text }]}
+                {/* Pull-quote or empty-note */}
+                <View style={styles.quoteArea}>
+                    {hasNote ? (
+                        <PullQuote
+                            text={item.content!.trim()}
                             numberOfLines={3}
-                        >
-                            &ldquo;{highlight}&rdquo;
+                            size="card"
+                        />
+                    ) : (
+                        <Text style={[styles.emptyNote, { color: palette.textMuted }]}>
+                            {emptyNoteText(item.dish_description)}
                         </Text>
-                    ) : null}
+                    )}
                 </View>
 
-                <View style={styles.actionRow}>
+                {/* Footer: rating numeral + reactions */}
+                <View style={[styles.foot, { borderTopColor: palette.divider }]}>
+                    {hasRating ? (
+                        <GiantRatingNumeral value={item.rating!} scale="card" />
+                    ) : (
+                        <View />
+                    )}
                     <FeedActionRow
                         targetType="entry"
                         targetId={item.id}
@@ -171,85 +217,58 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
 }
 
 const styles = StyleSheet.create({
-    timeline: {
+    card: {
+        borderRadius: Radius.lg,
+        padding: 22,
+        paddingBottom: 18,
+        marginBottom: Spacing.md,
         position: 'relative',
-        paddingLeft: 20,
-        marginLeft: 22,
-    },
-    rule: {
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        bottom: 0,
-        width: 2,
-    },
-    dot: {
-        position: 'absolute',
-        left: -3,
-        top: 10,
-        width: 8,
-        height: 8,
-        borderRadius: 4,
     },
     unseenDot: {
         position: 'absolute',
-        top: 0,
-        right: 0,
+        top: 12,
+        right: 12,
         width: 6,
         height: 6,
         borderRadius: 3,
         zIndex: 10,
     },
-    headerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        marginBottom: 8,
-    },
-    attribution: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
-        flex: 1,
-        minWidth: 0,
-    },
-    who: {
+    kicker: {
         fontFamily: 'Manrope_700Bold',
-        fontWeight: '700',
-    },
-    time: {
-        fontFamily: 'Manrope_500Medium',
         fontSize: 10,
-        flexShrink: 0,
-    },
-    noteCard: {
-        borderRadius: 18,
-        padding: 14,
-        paddingHorizontal: 16,
-    },
-    restName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 19,
-        lineHeight: 24,
-    },
-    sub: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 10,
-        letterSpacing: 0.3,
+        letterSpacing: 2.2,
         textTransform: 'uppercase',
-        marginTop: 6,
+        marginBottom: 10,
     },
-    companions: {
+    kickerVerb: {
+        fontFamily: 'Manrope_700Bold',
+    },
+    restaurantName: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
+        lineHeight: 27,
+        letterSpacing: -0.3,
+        fontWeight: '400',
+    },
+    meta: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 11,
-        marginTop: 6,
+        fontSize: 12,
+        marginTop: 4,
     },
-    prose: {
+    quoteArea: {
+        marginTop: 18,
+    },
+    emptyNote: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 13,
         lineHeight: 20,
-        marginTop: 6,
     },
-    actionRow: {
-        marginTop: 8,
+    foot: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 16,
+        paddingTop: 14,
+        borderTopWidth: 1,
     },
 });

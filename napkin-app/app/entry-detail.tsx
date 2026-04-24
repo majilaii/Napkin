@@ -40,6 +40,7 @@ import { MultiPhotoRow } from '@/components/MultiPhotoRow';
 import { useRoundContext } from '@/hooks/tables/useTableNight';
 import { useUserRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
 import { PreviouslyHereBanner } from '@/components/restaurants';
+import { PullQuote, GiantRatingNumeral } from '@/components/ui/napkin';
 import { useAuth } from '@/providers/AuthProvider';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
 import { CommentRow } from '@/components/posts/CommentRow';
@@ -1061,7 +1062,23 @@ export default function EntryDetailScreen() {
                             {isRoundEntry ? ' \u00B7 round' : ''}
                         </Text>
 
-                        {/* Title row: restaurant name + address | inline rating */}
+                        {/* Prior-visit metadata — own entries, hidden for first visit and public view */}
+                        {!isPublicView && isOwnEntry && userHistory && userHistory.visit_count > 0 ? (() => {
+                            const ordinals: Record<number, string> = { 2: '2nd', 3: '3rd', 4: '4th', 5: '5th' };
+                            const visitNum = userHistory.visit_count + 1;
+                            const ordinal = ordinals[visitNum] ?? `${visitNum}th`;
+                            const lastRating = userHistory.last_visit?.rating;
+                            const lastRatingStr = lastRating != null
+                                ? (Number.isInteger(lastRating) ? String(lastRating) : String(lastRating))
+                                : null;
+                            return (
+                                <Text style={[styles.priorVisitLine, { color: palette.textMuted }]}>
+                                    {`your ${ordinal} visit${lastRatingStr ? ' \u00B7 last time ' + lastRatingStr : ''}`}
+                                </Text>
+                            );
+                        })() : null}
+
+                        {/* Title row: restaurant name + address | GiantRatingNumeral (detail scale) */}
                         <View style={styles.titleRow}>
                             <Pressable
                                 onPress={() => {
@@ -1088,7 +1105,7 @@ export default function EntryDetailScreen() {
                                 ) : null}
                             </Pressable>
 
-                            {/* Rating — inline to the right */}
+                            {/* Giant rating numeral — detail scale (Concept B2) */}
                             {!isEditingRating && entry.rating != null ? (
                                 <Pressable
                                     onPress={isOwnEntry ? handleRatingTap : undefined}
@@ -1096,12 +1113,7 @@ export default function EntryDetailScreen() {
                                     hitSlop={8}
                                     style={styles.ratingStack}
                                 >
-                                    <Text style={[styles.ratingNum, { color: palette.text }]}>
-                                        {entry.rating.toFixed(1)}
-                                    </Text>
-                                    <Text style={[styles.ratingSlash, { color: palette.textMuted }]}>
-                                        / 5
-                                    </Text>
+                                    <GiantRatingNumeral value={entry.rating} scale="detail" />
                                 </Pressable>
                             ) : null}
                         </View>
@@ -1140,14 +1152,12 @@ export default function EntryDetailScreen() {
                                     </Text>
                                 ) : null}
                             </View>
-                        ) : entry.rating != null ? (
-                            <View style={styles.starsRow}>
-                                <StarRating value={entry.rating} size={16} editable={false} />
-                            </View>
                         ) : null}
 
-                        {/* Previously-here banner — viewer's cross-Table history (hidden in public view) */}
-                        {!isPublicView && userHistory && userHistory.visit_count > 0 && (
+                        {/* Previously-here banner — hidden for own non-Round entries (replaced by
+                            the inline "your Nth visit" kicker above). Still shown for Round entries
+                            and for other users' entries viewed in this detail. */}
+                        {!isPublicView && userHistory && userHistory.visit_count > 0 && !(isOwnEntry && !isRoundEntry) && (
                             <View style={{ marginTop: Spacing.lg }}>
                                 <PreviouslyHereBanner
                                     voice="user"
@@ -1242,10 +1252,8 @@ export default function EntryDetailScreen() {
                                 disabled={!isOwnEntry}
                                 style={styles.proseBlock}
                             >
-                                <Text style={[styles.prose, { color: palette.text }]}>
-                                    {'\u2014 '}
-                                    {entry.content}
-                                </Text>
+                                {/* PullQuote — detail scale, full content (Concept B2) */}
+                                <PullQuote text={entry.content} size="detail" />
                             </Pressable>
                         ) : null}
 
@@ -1916,6 +1924,14 @@ const styles = StyleSheet.create({
         letterSpacing: 0.4,
     },
 
+    // Prior-visit metadata — "your 2nd visit · last time 3.5"
+    priorVisitLine: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 12,
+        marginTop: 6,
+        marginBottom: 2,
+    },
+
     // Title row — name + inline rating
     titleRow: {
         flexDirection: 'row',
@@ -1940,17 +1956,6 @@ const styles = StyleSheet.create({
     ratingStack: {
         alignItems: 'flex-end',
         paddingTop: 4,
-    },
-    ratingNum: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 34,
-        lineHeight: 36,
-        letterSpacing: -0.6,
-    },
-    ratingSlash: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
-        marginTop: 2,
     },
     // Stars row — 16px single line below title row
     starsRow: {

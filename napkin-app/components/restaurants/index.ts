@@ -21,3 +21,6 @@ export { YourLastKicker } from './YourLastKicker';
 export { PhotosTab } from './PhotosTab';
 export { InfoTab } from './InfoTab';
 export { InfoMapPreview } from './InfoMapPreview';
+// TICKET-026: professional critics
+export { ProfessionalTakesBand } from './ProfessionalTakesBand';
+export { CriticRow } from './CriticRow';

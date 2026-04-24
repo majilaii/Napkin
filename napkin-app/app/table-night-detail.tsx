@@ -38,6 +38,7 @@ import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -591,10 +592,10 @@ function VoiceCard({
     const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
 
     const handleProfilePress = () => {
-        if (canTapProfile && tableId) {
+        if (canTapProfile) {
             router.push({
-                pathname: '/member/[userId]',
-                params: { userId: participant.user_id, tableId },
+                pathname: '/u/[identifier]',
+                params: { identifier: participant.user_id },
             });
         }
     };
@@ -648,19 +649,8 @@ function VoiceCard({
         );
     }
 
-    return (
-        <Pressable
-            onPress={() =>
-                router.push({
-                    pathname: '/entry-detail',
-                    params: { nightId, userId: participant.user_id },
-                })
-            }
-            style={({ pressed }) => [
-                voiceStyles.card,
-                { backgroundColor: cardBg, borderColor: palette.divider, opacity: pressed ? 0.85 : 1 },
-            ]}
-        >
+    const cardContent = (
+        <>
             {/* Top row: avatar · name · stars · rating */}
             <View style={voiceStyles.topRow}>
                 <Pressable
@@ -770,6 +760,32 @@ function VoiceCard({
                     )}
                 </View>
             )}
+        </>
+    );
+
+    if (!canTapProfile) {
+        return (
+            <View style={[voiceStyles.card, { backgroundColor: cardBg, borderColor: palette.divider }]}>
+                {cardContent}
+            </View>
+        );
+    }
+
+    return (
+        <Pressable
+            onPressIn={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+            onPress={() =>
+                router.push({
+                    pathname: '/entry-detail',
+                    params: { nightId, userId: participant.user_id },
+                })
+            }
+            style={({ pressed }) => [
+                voiceStyles.card,
+                { backgroundColor: cardBg, borderColor: palette.divider, opacity: pressed ? 0.85 : 1 },
+            ]}
+        >
+            {cardContent}
         </Pressable>
     );
 }

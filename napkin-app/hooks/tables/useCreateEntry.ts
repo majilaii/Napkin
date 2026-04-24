@@ -62,12 +62,14 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
         onSuccess: () => {
             if (userId) {
                 qc.invalidateQueries({ queryKey: queryKeys.entries.list(userId) });
-                // Invalidate the cross-Table feed so tagged companions see the entry on next focus
+                qc.invalidateQueries({ queryKey: queryKeys.entries.mySolo(userId) });
+                // Any day-page currently mounted must refresh to show the new slot.
+                // Prefix match against ['entriesForDay', userId, ...] across dates.
+                qc.invalidateQueries({ queryKey: ['entriesForDay', userId] });
                 qc.invalidateQueries({ queryKey: queryKeys.feed.all(userId) });
             }
             if (tableId) {
                 qc.invalidateQueries({ queryKey: queryKeys.tables.activity(tableId) });
-                // Invalidate Atlas — new entry may add a city or update a tile
                 qc.invalidateQueries({ queryKey: queryKeys.atlas.index(tableId) });
                 qc.invalidateQueries({ queryKey: ['atlas', tableId] });
             }

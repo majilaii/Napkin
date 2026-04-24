@@ -15,3 +15,5 @@ export { PulseDot } from './PulseDot';
 export { RoundBanner } from './RoundBanner';
 export { Icon } from './Icon';
 export { PressableScale } from './PressableScale';
+export { PullQuote } from './PullQuote';
+export { GiantRatingNumeral } from './GiantRatingNumeral';
