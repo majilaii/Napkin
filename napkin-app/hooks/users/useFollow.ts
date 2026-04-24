@@ -2,15 +2,20 @@
  * useFollow / useUnfollow — optimistic follow-graph mutations (TICKET-028).
  *
  * Mirrors useToggleReaction pattern:
- *   onMutate: cancel + snapshot, flip is_following in search cache + profile cache
+ *   onMutate: cancel + snapshot, flip is_following in search + profile caches,
+ *             increment/decrement followers_count on the target's profile and
+ *             following_count on the viewer's profile (TICKET-036 P1-8).
  *   onError:  restore snapshots
- *   onSuccess: invalidate search family + profile + following list
+ *   onSuccess: narrow refetch of follow-list pages only — every other surface
+ *              (search, both profiles) is already correct from the optimistic
+ *              patch and shouldn't trigger a refetch.
  *
  * Edge function: user-profile action=follow | action=unfollow
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import { useAuth } from '@/providers/AuthProvider';
 import type { UserProfileResult } from './useUserProfile';
 import type { UserSearchResult } from './useUserSearch';
 
@@ -23,10 +28,60 @@ async function invokeFollow(targetUserId: string, action: 'follow' | 'unfollow')
     });
 }
 
+/**
+ * Patch a UserProfileResult: flip is_following_viewer and bump
+ * followers_count by `delta`. Used on the target's cached profile.
+ */
+function patchTargetProfile(
+    prev: UserProfileResult | undefined,
+    isFollowing: boolean,
+    delta: 1 | -1,
+): UserProfileResult | undefined {
+    if (!prev?.data) return prev;
+    return {
+        ...prev,
+        data: {
+            ...prev.data,
+            is_following_viewer: isFollowing,
+            stats: prev.data.stats
+                ? {
+                      ...prev.data.stats,
+                      followers_count: Math.max(0, prev.data.stats.followers_count + delta),
+                  }
+                : prev.data.stats,
+        },
+    };
+}
+
+/**
+ * Patch the viewer's own UserProfileResult: bump following_count
+ * by `delta`. Followers/is_following_viewer stay untouched.
+ */
+function patchViewerProfile(
+    prev: UserProfileResult | undefined,
+    delta: 1 | -1,
+): UserProfileResult | undefined {
+    if (!prev?.data) return prev;
+    return {
+        ...prev,
+        data: {
+            ...prev.data,
+            stats: prev.data.stats
+                ? {
+                      ...prev.data.stats,
+                      following_count: Math.max(0, prev.data.stats.following_count + delta),
+                  }
+                : prev.data.stats,
+        },
+    };
+}
+
 // ── useFollow ─────────────────────────────────────────────────────────────────
 
 export function useFollow() {
     const queryClient = useQueryClient();
+    const { user } = useAuth();
+    const viewerId = user?.id ?? null;
 
     return useMutation({
         mutationFn: ({ targetUserId }: { targetUserId: string }) =>
@@ -36,6 +91,9 @@ export function useFollow() {
             // Cancel in-flight queries that we're about to mutate
             await queryClient.cancelQueries({ queryKey: queryKeys.users.searchAll() });
             await queryClient.cancelQueries({ queryKey: queryKeys.users.profile(targetUserId) });
+            if (viewerId) {
+                await queryClient.cancelQueries({ queryKey: queryKeys.users.profile(viewerId) });
+            }
 
             // Snapshot search cache (any active search query)
             const searchSnapshots: Array<{ key: readonly unknown[]; data: UserSearchResult[] }> = [];
@@ -55,21 +113,29 @@ export function useFollow() {
                 );
             }
 
-            // Snapshot profile cache and flip is_following_viewer
-            const profileSnapshot = queryClient.getQueryData<UserProfileResult>(
+            // Snapshot + patch target profile (flip follow + bump followers_count)
+            const targetProfileSnapshot = queryClient.getQueryData<UserProfileResult>(
                 queryKeys.users.profile(targetUserId)
             );
-            if (profileSnapshot?.data) {
+            if (targetProfileSnapshot?.data) {
                 queryClient.setQueryData<UserProfileResult>(
                     queryKeys.users.profile(targetUserId),
-                    (prev) =>
-                        prev?.data
-                            ? { ...prev, data: { ...prev.data, is_following_viewer: true } }
-                            : prev
+                    (prev) => patchTargetProfile(prev, true, +1),
                 );
             }
 
-            return { searchSnapshots, profileSnapshot };
+            // Snapshot + patch viewer profile (bump following_count)
+            const viewerProfileSnapshot = viewerId
+                ? queryClient.getQueryData<UserProfileResult>(queryKeys.users.profile(viewerId))
+                : undefined;
+            if (viewerId && viewerProfileSnapshot?.data) {
+                queryClient.setQueryData<UserProfileResult>(
+                    queryKeys.users.profile(viewerId),
+                    (prev) => patchViewerProfile(prev, +1),
+                );
+            }
+
+            return { searchSnapshots, targetProfileSnapshot, viewerProfileSnapshot };
         },
 
         onError: (_err, { targetUserId }, context) => {
@@ -79,21 +145,28 @@ export function useFollow() {
                     queryClient.setQueryData(key, data);
                 }
             }
-            // Restore profile snapshot
-            if (context?.profileSnapshot) {
+            // Restore target profile snapshot
+            if (context?.targetProfileSnapshot) {
                 queryClient.setQueryData(
                     queryKeys.users.profile(targetUserId),
-                    context.profileSnapshot
+                    context.targetProfileSnapshot
+                );
+            }
+            // Restore viewer profile snapshot
+            if (viewerId && context?.viewerProfileSnapshot) {
+                queryClient.setQueryData(
+                    queryKeys.users.profile(viewerId),
+                    context.viewerProfileSnapshot
                 );
             }
         },
 
-        onSuccess: (_data, { targetUserId }) => {
-            // P1-8: do NOT invalidate ['users', 'profile'] wholesale — that nukes
-            // every cached profile and triggers a thundering-herd refetch. Only
-            // touch the target profile (which has updated followers_count).
-            queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
-            queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
+        onSuccess: () => {
+            // P1-8: cache is already correct from the optimistic patch (search +
+            // both profiles + counts). Refetch only the follow-list pages, since
+            // those carry server-side ordering / cursors we can't reproduce
+            // client-side. Don't touch ['users', 'profile'] — that prefix nukes
+            // every cached profile across the session.
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
         },
@@ -104,6 +177,8 @@ export function useFollow() {
 
 export function useUnfollow() {
     const queryClient = useQueryClient();
+    const { user } = useAuth();
+    const viewerId = user?.id ?? null;
 
     return useMutation({
         mutationFn: ({ targetUserId }: { targetUserId: string }) =>
@@ -112,6 +187,9 @@ export function useUnfollow() {
         onMutate: async ({ targetUserId }) => {
             await queryClient.cancelQueries({ queryKey: queryKeys.users.searchAll() });
             await queryClient.cancelQueries({ queryKey: queryKeys.users.profile(targetUserId) });
+            if (viewerId) {
+                await queryClient.cancelQueries({ queryKey: queryKeys.users.profile(viewerId) });
+            }
 
             const searchSnapshots: Array<{ key: readonly unknown[]; data: UserSearchResult[] }> = [];
             queryClient.getQueriesData<UserSearchResult[]>({ queryKey: queryKeys.users.searchAll() })
@@ -129,20 +207,27 @@ export function useUnfollow() {
                 );
             }
 
-            const profileSnapshot = queryClient.getQueryData<UserProfileResult>(
+            const targetProfileSnapshot = queryClient.getQueryData<UserProfileResult>(
                 queryKeys.users.profile(targetUserId)
             );
-            if (profileSnapshot?.data) {
+            if (targetProfileSnapshot?.data) {
                 queryClient.setQueryData<UserProfileResult>(
                     queryKeys.users.profile(targetUserId),
-                    (prev) =>
-                        prev?.data
-                            ? { ...prev, data: { ...prev.data, is_following_viewer: false } }
-                            : prev
+                    (prev) => patchTargetProfile(prev, false, -1),
                 );
             }
 
-            return { searchSnapshots, profileSnapshot };
+            const viewerProfileSnapshot = viewerId
+                ? queryClient.getQueryData<UserProfileResult>(queryKeys.users.profile(viewerId))
+                : undefined;
+            if (viewerId && viewerProfileSnapshot?.data) {
+                queryClient.setQueryData<UserProfileResult>(
+                    queryKeys.users.profile(viewerId),
+                    (prev) => patchViewerProfile(prev, -1),
+                );
+            }
+
+            return { searchSnapshots, targetProfileSnapshot, viewerProfileSnapshot };
         },
 
         onError: (_err, { targetUserId }, context) => {
@@ -151,18 +236,23 @@ export function useUnfollow() {
                     queryClient.setQueryData(key, data);
                 }
             }
-            if (context?.profileSnapshot) {
+            if (context?.targetProfileSnapshot) {
                 queryClient.setQueryData(
                     queryKeys.users.profile(targetUserId),
-                    context.profileSnapshot
+                    context.targetProfileSnapshot
+                );
+            }
+            if (viewerId && context?.viewerProfileSnapshot) {
+                queryClient.setQueryData(
+                    queryKeys.users.profile(viewerId),
+                    context.viewerProfileSnapshot
                 );
             }
         },
 
-        onSuccess: (_data, { targetUserId }) => {
-            // P1-8: scope to the target profile only — no blast radius.
-            queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
-            queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
+        onSuccess: () => {
+            // P1-8: same scoping as useFollow.onSuccess — narrow follow-list
+            // refetch only; profiles + counts are already patched.
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
         },
