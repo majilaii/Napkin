@@ -11,6 +11,7 @@
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
 import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
+import type { EmojiCount } from '@/hooks/posts/usePostInteractions';
 
 export interface FeedEntry {
     id: string;
@@ -25,7 +26,13 @@ export interface FeedEntry {
     photo_count: number;
     reaction_count: number;
     comment_count: number;
-    top_emojis: string[];
+    /**
+     * TICKET-036 P0-7: was incorrectly typed as `string[]`. Runtime is `EmojiCount[]`
+     * (`{ emoji, count, last_reacted_at }`) — the same shape returned by the
+     * post-interactions edge function. Consumers that read `t.emoji` happened
+     * to work; literal-string consumers broke silently.
+     */
+    top_emojis: EmojiCount[];
     my_reactions: string[];
     restaurant: { id: string; name: string; photo_url: string | null } | null;
     author: { display_name: string; avatar_url: string | null };

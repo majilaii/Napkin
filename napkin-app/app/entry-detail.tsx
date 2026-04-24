@@ -280,7 +280,7 @@ async function resolveEntryIdByNight(nightId: string, userId: string): Promise<s
 
 function useEntryDetail(entryId?: string, nightId?: string, userId?: string) {
     const { data: resolvedId, isLoading: resolvingId, error: resolveError } = useQuery({
-        queryKey: ['resolve-entry-by-night', nightId, userId],
+        queryKey: queryKeys.tableNight.resolveEntryByNight(nightId ?? '', userId ?? ''),
         queryFn: () => resolveEntryIdByNight(nightId!, userId!),
         enabled: !entryId && !!nightId && !!userId,
         staleTime: Infinity,
@@ -313,7 +313,7 @@ async function fetchEntryPhotos(entryId: string): Promise<{ id: string; photo_ur
 
 function useEntryPhotos(entryId?: string) {
     return useQuery({
-        queryKey: ['entry-photos', entryId],
+        queryKey: queryKeys.entryDetail.photos(entryId),
         queryFn: () => fetchEntryPhotos(entryId!),
         enabled: !!entryId,
         staleTime: 1000 * 60 * 5,
@@ -726,7 +726,7 @@ export default function EntryDetailScreen() {
         data: isEligible,
         isLoading: eligibilityLoading,
     } = useQuery({
-        queryKey: ['entry-public-eligibility', entry?.id],
+        queryKey: queryKeys.entryDetail.publicEligibility(entry?.id ?? ''),
         queryFn: async () => {
             const { data, error: rpcError } = await supabase.rpc('is_entry_publicly_eligible', {
                 p_entry_id: entry!.id,

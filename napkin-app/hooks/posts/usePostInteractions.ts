@@ -146,8 +146,8 @@ export function useToggleReaction() {
             // Only invalidate feed caches for table-scope reactions (public reactions
             // don't affect Table feed cards)
             if (scope === 'table') {
-                await queryClient.cancelQueries({ queryKey: ['tableActivity'] });
-                await queryClient.cancelQueries({ queryKey: ['feed'] });
+                await queryClient.cancelQueries({ queryKey: queryKeys.tables.activityAll() });
+                await queryClient.cancelQueries({ queryKey: queryKeys.feed.rootAll() });
             }
 
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
@@ -156,11 +156,11 @@ export function useToggleReaction() {
             // Snapshot every feed-side cache so we can roll back on error
             const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
             if (scope === 'table') {
-                queryClient.getQueriesData<any>({ queryKey: ['tableActivity'] })
+                queryClient.getQueriesData<any>({ queryKey: queryKeys.tables.activityAll() })
                     .forEach(([k, data]) => {
                         if (data) feedSnapshots.push({ key: k, data });
                     });
-                queryClient.getQueriesData<any>({ queryKey: ['feed'] })
+                queryClient.getQueriesData<any>({ queryKey: queryKeys.feed.rootAll() })
                     .forEach(([k, data]) => {
                         if (data) feedSnapshots.push({ key: k, data });
                     });
@@ -214,7 +214,7 @@ export function useToggleReaction() {
 
                 // tableActivity = useInfiniteQuery → { pages: ActivityItem[][] }
                 queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
-                    { queryKey: ['tableActivity'] },
+                    { queryKey: queryKeys.tables.activityAll() },
                     (data) => {
                         if (!data?.pages) return data;
                         return {
@@ -226,7 +226,7 @@ export function useToggleReaction() {
 
                 // feed = useQuery → { entries: FeedEntry[], trending, windowDays }
                 queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
-                    { queryKey: ['feed'] },
+                    { queryKey: queryKeys.feed.rootAll() },
                     (data) => {
                         if (!data?.entries) return data;
                         return { ...data, entries: data.entries.map(flipItem) };
@@ -259,8 +259,8 @@ export function useToggleReaction() {
             });
             if (scope === 'table') {
                 // Refetch every feed-side cache so counts reconcile with server truth
-                queryClient.invalidateQueries({ queryKey: ['tableActivity'] });
-                queryClient.invalidateQueries({ queryKey: ['feed'] });
+                queryClient.invalidateQueries({ queryKey: queryKeys.tables.activityAll() });
+                queryClient.invalidateQueries({ queryKey: queryKeys.feed.rootAll() });
             }
         },
     });

@@ -40,12 +40,12 @@ export function useFollow() {
 
         onMutate: async ({ targetUserId }) => {
             // Cancel in-flight queries that we're about to mutate
-            await queryClient.cancelQueries({ queryKey: ['users', 'search'] });
+            await queryClient.cancelQueries({ queryKey: queryKeys.users.searchAll() });
             await queryClient.cancelQueries({ queryKey: queryKeys.users.profile(targetUserId) });
 
             // Snapshot search cache (any active search query)
             const searchSnapshots: Array<{ key: readonly unknown[]; data: UserSearchResult[] }> = [];
-            queryClient.getQueriesData<UserSearchResult[]>({ queryKey: ['users', 'search'] })
+            queryClient.getQueriesData<UserSearchResult[]>({ queryKey: queryKeys.users.searchAll() })
                 .forEach(([key, data]) => {
                     if (data) searchSnapshots.push({ key, data });
                 });
@@ -94,16 +94,14 @@ export function useFollow() {
             }
         },
 
-        onSuccess: (_data, _vars) => {
-            // Invalidate search family (next search refetches with up-to-date is_following)
-            queryClient.invalidateQueries({ queryKey: ['users', 'search'] });
-            // Invalidate all profile caches (refreshes follower/following counts on
-            // both sides + is_following_viewer on the target)
-            queryClient.invalidateQueries({ queryKey: ['users', 'profile'] });
-            // Invalidate following list (legacy hook — caller's following list)
-            queryClient.invalidateQueries({ queryKey: ['users', 'following'] });
-            // Invalidate any followers/following list screens currently mounted
-            queryClient.invalidateQueries({ queryKey: ['users', 'followList'] });
+        onSuccess: (_data, { targetUserId }) => {
+            // P1-8: do NOT invalidate ['users', 'profile'] wholesale — that nukes
+            // every cached profile and triggers a thundering-herd refetch. Only
+            // touch the target profile (which has updated followers_count).
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
         },
     });
 }
@@ -118,11 +116,11 @@ export function useUnfollow() {
             invokeFollow(targetUserId, 'unfollow'),
 
         onMutate: async ({ targetUserId }) => {
-            await queryClient.cancelQueries({ queryKey: ['users', 'search'] });
+            await queryClient.cancelQueries({ queryKey: queryKeys.users.searchAll() });
             await queryClient.cancelQueries({ queryKey: queryKeys.users.profile(targetUserId) });
 
             const searchSnapshots: Array<{ key: readonly unknown[]; data: UserSearchResult[] }> = [];
-            queryClient.getQueriesData<UserSearchResult[]>({ queryKey: ['users', 'search'] })
+            queryClient.getQueriesData<UserSearchResult[]>({ queryKey: queryKeys.users.searchAll() })
                 .forEach(([key, data]) => {
                     if (data) searchSnapshots.push({ key, data });
                 });
@@ -167,11 +165,12 @@ export function useUnfollow() {
             }
         },
 
-        onSuccess: (_data, _vars) => {
-            queryClient.invalidateQueries({ queryKey: ['users', 'search'] });
-            queryClient.invalidateQueries({ queryKey: ['users', 'profile'] });
-            queryClient.invalidateQueries({ queryKey: ['users', 'following'] });
-            queryClient.invalidateQueries({ queryKey: ['users', 'followList'] });
+        onSuccess: (_data, { targetUserId }) => {
+            // P1-8: scope to the target profile only — no blast radius.
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
         },
     });
 }

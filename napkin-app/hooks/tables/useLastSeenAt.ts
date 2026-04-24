@@ -114,14 +114,24 @@ export function useMarkSeen() {
             if (!userId) return;
 
             const key = queryKeys.tables.lastSeen(tableId, userId);
+            // P0-8: snapshot previous value so onError can roll back. Without
+            // this, a server failure leaves the cache stuck at now() forever
+            // and the unseen-dot system breaks until app restart.
+            await queryClient.cancelQueries({ queryKey: key });
+            const previous = queryClient.getQueryData<string | null>(key);
             const now = new Date().toISOString();
             queryClient.setQueryData<string | null>(key, now);
+            return { previous, userId };
         },
 
-        onError: (_err, { tableId }) => {
-            // On failure, revert the debounce timestamp so the next call retries.
+        onError: (_err, { tableId }, context) => {
+            // P0-8: revert the optimistic now() write on failure. If onMutate
+            // bailed (no userId), context is undefined — safe to no-op.
             _lastMarkSeenAt.delete(tableId);
-            // The stale lastSeenAt in the cache is fine — extra dots next session.
+            if (context && context.userId) {
+                const key = queryKeys.tables.lastSeen(tableId, context.userId);
+                queryClient.setQueryData<string | null | undefined>(key, context.previous);
+            }
         },
 
         onSuccess: (result, { tableId }) => {

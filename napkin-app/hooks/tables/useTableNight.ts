@@ -111,20 +111,8 @@ export function useTableNightStatus(nightId: string | null | undefined) {
 }
 
 // ─── Mutations ───
-
-export function useStartTableNight() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: (input: { table_id: string; restaurant_id: string }) =>
-            invokeTableNight({ action: 'start', ...input }),
-        onSuccess: (data: TableNight) => {
-            queryClient.invalidateQueries({
-                queryKey: queryKeys.tableNight.active(data.table_id),
-            });
-        },
-    });
-}
+// Note: useStartTableNight removed — its signature didn't match the edge
+// function. Use useStartRound (hooks/tables/useStartRound.ts) instead.
 
 export function useJoinTableNight() {
     const queryClient = useQueryClient();

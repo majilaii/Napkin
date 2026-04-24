@@ -29,6 +29,7 @@ import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Spacing } from '@/constants/theme';
+import { queryKeys } from '@/lib/queryKeys';
 import { type TableNightActivity } from '@/hooks/tables/useTableActivity';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { PulseDot } from '@/components/ui/napkin/PulseDot';
@@ -92,7 +93,7 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [] 
                 onSuccess: () => {
                     if (tableId) {
                         queryClient.invalidateQueries({
-                            queryKey: ['tableActivity', tableId],
+                            queryKey: queryKeys.tables.activityForTable(tableId),
                             exact: false,
                         });
                     }

@@ -35,10 +35,10 @@ export function useWishlistRemove(userId: string | null | undefined) {
                 );
             }
             queryClient.invalidateQueries({
-                queryKey: ['wishlist', 'table'],
+                queryKey: queryKeys.wishlist.tableAll(),
             });
             // Invalidate all Atlas city caches — wished_by_viewer may have changed
-            queryClient.invalidateQueries({ queryKey: ['atlas'] });
+            queryClient.invalidateQueries({ queryKey: queryKeys.atlas.all() });
         },
     });
 }
