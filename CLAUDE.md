@@ -104,6 +104,33 @@ Emergent overlap, not declared nomination.
 - **Feed-only entry** = an entry with `table_id = NULL`. Lives on the user's personal feed/journal. Not shared to any Table.
 - **Ghost restaurant** = a Places-search result not yet persisted in `restaurants`. First heart/log tap triggers upsert-from-place silently.
 
+## Schema conventions — read before writing migrations or RLS
+
+### `member_id` vs `user_id` (intentional exception)
+
+Every table that references a user uses `user_id` — **except `table_members.member_id`**. This is legacy from TICKET-001 and the rename cost is not worth the value (every RLS policy and join would need touching). Doctrine for new code:
+
+- When writing RLS or joins against `table_members`, the column is `member_id`, full stop. Type `tm.user_id` and you have a bug.
+- When writing queries that "feel like" they want a `user_id` from `table_members`, alias it: `select member_id as user_id from table_members ...`.
+- This trap caused TICKET-034 P0-2 (`entry_photos` RLS used `tm.user_id`, silently allowed nothing).
+
+### `table_night` vs `round` — when each name applies
+
+| Layer | Name |
+|---|---|
+| DB tables / columns | `table_nights`, `table_night_participants`, `table_night_id` |
+| Edge function path | `table-night/` (actions: `start`, `rate`, `status`, ...) |
+| Client hooks | Prefer `Round` in new hook names (`useStartRound`, `useRateRound`). Existing `useTableNight*` hooks are fine until renamed. |
+| UI copy | Always "Round" — never expose "table night" to users. |
+
+Rename DB tables and edge function paths only if a ticket explicitly scopes that work. Hook renames are mechanical and can land opportunistically.
+
+### Dead-hook hit list (do not resurrect)
+
+- `useStartTableNight` was deleted in TICKET-039 — its signature didn't match the edge function. Use `useStartRound` from `hooks/tables/useStartRound.ts`.
+- `useSubmitTake` was deleted in TICKET-039 — duplicate of `useRateTableNight`.
+- `supabase/functions/table-members/` was deleted in TICKET-039 — never invoked from any hook. Use `table-management?action=add_member`.
+
 ## Current State (as of 2026-04-17)
 
 Shipped foundations:

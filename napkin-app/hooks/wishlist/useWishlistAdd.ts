@@ -76,10 +76,10 @@ export function useWishlistAdd(userId: string | null | undefined) {
             }
             // Invalidate all table wishlist caches — we don't enumerate Tables here
             queryClient.invalidateQueries({
-                queryKey: ['wishlist', 'table'],
+                queryKey: queryKeys.wishlist.tableAll(),
             });
             // Invalidate all Atlas city caches — wished_by_viewer may have changed
-            queryClient.invalidateQueries({ queryKey: ['atlas'] });
+            queryClient.invalidateQueries({ queryKey: queryKeys.atlas.all() });
         },
     });
 }

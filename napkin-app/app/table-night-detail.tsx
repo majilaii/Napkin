@@ -116,7 +116,7 @@ async function fetchNightEntryPhotos(nightId: string): Promise<Record<string, st
 
 function useNightEntryPhotos(nightId: string | null | undefined) {
     return useQuery({
-        queryKey: ['night-entry-photos', nightId],
+        queryKey: queryKeys.tableNight.nightPhotos(nightId ?? ''),
         queryFn: () => fetchNightEntryPhotos(nightId!),
         enabled: !!nightId,
         staleTime: 1000 * 60 * 5,
@@ -204,7 +204,7 @@ function useMyEntryId(
     enabled: boolean
 ) {
     return useQuery({
-        queryKey: ['myEntryId', nightId, userId],
+        queryKey: queryKeys.tableNight.myEntryId(nightId ?? '', userId ?? ''),
         queryFn: () => fetchMyEntryId(nightId!, userId!),
         enabled: enabled && !!nightId && !!userId,
         staleTime: 1000 * 60 * 10,
@@ -853,7 +853,7 @@ function SharedPhotoGrid({
                         queryKey: queryKeys.tableNight.photoPool(nightId),
                     }),
                     queryClient.invalidateQueries({
-                        queryKey: ['night-entry-photos', nightId],
+                        queryKey: queryKeys.tableNight.nightPhotos(nightId),
                     }),
                 ]);
             } catch {

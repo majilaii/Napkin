@@ -25,6 +25,7 @@ import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
+import { queryKeys } from '@/lib/queryKeys';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { extractHighlight, formatRelativeTime } from '@/lib/textHighlight';
@@ -87,7 +88,7 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
                 onSuccess: () => {
                     if (tableId) {
                         queryClient.invalidateQueries({
-                            queryKey: ['tableActivity', tableId],
+                            queryKey: queryKeys.tables.activityForTable(tableId),
                             exact: false,
                         });
                     }

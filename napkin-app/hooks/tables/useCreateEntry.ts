@@ -83,13 +83,13 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
                 qc.invalidateQueries({ queryKey: queryKeys.entries.mySolo(userId) });
                 // Any day-page currently mounted must refresh to show the new slot.
                 // Prefix match against ['entriesForDay', userId, ...] across dates.
-                qc.invalidateQueries({ queryKey: ['entriesForDay', userId] });
+                qc.invalidateQueries({ queryKey: queryKeys.entries.forDayAll(userId) });
                 qc.invalidateQueries({ queryKey: queryKeys.feed.all(userId) });
             }
             if (tableId) {
                 qc.invalidateQueries({ queryKey: queryKeys.tables.activity(tableId) });
                 qc.invalidateQueries({ queryKey: queryKeys.atlas.index(tableId) });
-                qc.invalidateQueries({ queryKey: ['atlas', tableId] });
+                // (was duplicate ['atlas', tableId] literal — same as atlas.index, removed)
             }
         },
     });

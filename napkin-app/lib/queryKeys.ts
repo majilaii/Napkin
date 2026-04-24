@@ -4,6 +4,11 @@
  *
  * Scope is deliberately small: Napkin's v1 is Tables and Table Night.
  * Add new key groups here when you wire new features — don't inline them.
+ *
+ * Each group exposes both leaf-key builders (e.g. `users.profile(id)`) and
+ * `*All()` prefix helpers (e.g. `users.profileAll()`) for invalidation.
+ * Use the `*All()` form when invalidating across many ids; never inline
+ * `['users', 'profile']` literals — TICKET-039 doctrine.
  */
 export const queryKeys = {
     // Tables (supper club groups)
@@ -11,6 +16,8 @@ export const queryKeys = {
         list: (userId: string) => ['tables', userId] as const,
         detail: (tableId: string) => ['table', tableId] as const,
         members: (tableId: string) => ['tableMembers', tableId] as const,
+        activityAll: () => ['tableActivity'] as const,
+        activityForTable: (tableId: string) => ['tableActivity', tableId] as const,
         activity: (tableId: string, filters?: { filterType?: string; filterUserId?: string }) =>
             filters && (filters.filterType || filters.filterUserId)
                 ? ['tableActivity', tableId, filters] as const
@@ -24,6 +31,7 @@ export const queryKeys = {
         list: (userId: string) => ['entries', userId] as const,
         detail: (entryId: string) => ['entry', entryId] as const,
         participants: (entryId: string) => ['entry', entryId, 'participants'] as const,
+        forDayAll: (userId: string) => ['entriesForDay', userId] as const,
         forDay: (userId: string, date: string) => ['entriesForDay', userId, date] as const,
         mySolo: (userId: string) => ['entries', 'mySolo', userId] as const,
     },
@@ -36,6 +44,9 @@ export const queryKeys = {
             ['tableNight', nightId, 'participants'] as const,
         roundContext: (nightId: string) => ['roundContext', nightId] as const,
         photoPool: (nightId: string) => ['night-photos-pool', nightId] as const,
+        nightPhotos: (nightId: string) => ['night-entry-photos', nightId] as const,
+        myEntryId: (nightId: string, userId: string) => ['myEntryId', nightId, userId] as const,
+        resolveEntryByNight: (nightId: string, userId: string) => ['resolve-entry-by-night', nightId, userId] as const,
     },
 
     // Members (Table-scoped member profiles)
@@ -58,6 +69,7 @@ export const queryKeys = {
     // Wishlist (personal saves + derived Table overlap view)
     wishlist: {
         personal: (userId: string) => ['wishlist', 'personal', userId] as const,
+        tableAll: () => ['wishlist', 'table'] as const,
         table: (tableId: string) => ['wishlist', 'table', tableId] as const,
         check: (userId: string, restaurantId: string) =>
             ['wishlist', 'check', userId, restaurantId] as const,
@@ -73,27 +85,33 @@ export const queryKeys = {
 
     // Users (public / merged profile surface — TICKET-020, TICKET-025)
     users: {
+        profileAll: () => ['users', 'profile'] as const,
         profile: (identifier: string) => ['users', 'profile', identifier] as const,
         diary: (userId: string) =>
             ['users', 'diary', userId] as const,
         regulars: (userId: string) => ['users', 'regulars', userId] as const,
+        searchAll: () => ['users', 'search'] as const,
         search: (q: string, opts?: { mutualOnly?: boolean }) =>
             opts?.mutualOnly
                 ? ['users', 'search', q, 'mutual'] as const
                 : ['users', 'search', q] as const,
         recentCompanions: (userId: string) => ['users', 'recentCompanions', userId] as const,
+        followingAll: () => ['users', 'following'] as const,
         following: (userId: string) => ['users', 'following', userId] as const,
+        followListAll: () => ['users', 'followList'] as const,
         followList: (userId: string, kind: 'followers' | 'following') =>
             ['users', 'followList', userId, kind] as const,
     },
 
     // Feed (cross-Table chronological feed — Feed tab)
     feed: {
+        rootAll: () => ['feed'] as const,
         all: (userId: string) => ['feed', userId] as const,
     },
 
     // Atlas (geographic lens on a Table's dining history)
     atlas: {
+        all: () => ['atlas'] as const,
         index: (tableId: string) => ['atlas', tableId] as const,
         city: (tableId: string, city: string) => ['atlas', tableId, city] as const,
     },
@@ -121,4 +139,11 @@ export const queryKeys = {
                 ? ['restaurantPage', restaurantId, tableId] as const
                 : ['restaurantPage', restaurantId] as const,
     },
+
+    // Misc per-entry caches (entry-detail screen ad-hoc queries)
+    entryDetail: {
+        photos: (entryId: string) => ['entry-photos', entryId] as const,
+        publicEligibility: (entryId: string) => ['entry-public-eligibility', entryId] as const,
+    },
 } as const;
+
