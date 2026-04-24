@@ -1,11 +1,27 @@
 /**
- * Table Activity Edge Function
- * Fetches paginated activity feed for a table.
- * Returns three shapes: Table Night cards, solo share cards, and collaborative entry cards.
+ * Table Activity Edge Function — TICKET-035 rewrite
+ *
+ * Replaced split-offset merge with fn_table_activity_page RPC (inline UNION
+ * in SQL, keyset-paginated). Switched from GET to POST so the cursor rides in
+ * the body. Returns the canonical { rows, next_cursor, has_more } envelope.
+ *
+ * Request: POST { table_id, cursor?, filter_type?, filter_user_id? }
+ * Response: { data: { rows: ActivityItem[], next_cursor, has_more } }
+ *
+ * Each row in `rows` is a hydrated ActivityItem (solo_share | collaborative_entry
+ * | table_night) with profile, participants, companions, photos, and reactions.
+ *
+ * Companion-widening: folded into fn_table_activity_page SQL — an entry appears
+ * when the caller (p_caller_id) is its author OR a companion, independent of
+ * p_filter_user_id. Preserves the old "companion-tagged entries surface in feed"
+ * behaviour exactly.
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { buildPage, decodeCursor } from '../_shared/pagination.ts';
+
+const PAGE_SIZE = 20;
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -35,416 +51,363 @@ serve(async (req) => {
             );
         }
 
-        if (req.method === 'GET') {
-            const url = new URL(req.url);
-            const tableId = url.searchParams.get('table_id');
-            const limit = parseInt(url.searchParams.get('limit') || '20');
-            const offset = parseInt(url.searchParams.get('offset') || '0');
-            // Optional filter params
-            const filterType = url.searchParams.get('filter_type'); // 'round' | 'solo_share'
-            const filterUserId = url.searchParams.get('filter_user_id'); // UUID
-
-            if (!tableId) {
-                return new Response(
-                    JSON.stringify({ error: 'table_id is required' }),
-                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-                );
-            }
-
-            // Verify user is a member of this table
-            const { data: membership } = await supabase
-                .from('table_members')
-                .select('member_id')
-                .eq('table_id', tableId)
-                .eq('member_id', user.id)
-                .single();
-
-            if (!membership) {
-                return new Response(
-                    JSON.stringify({ error: 'Not a member of this table' }),
-                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-                );
-            }
-
-            // ── Solo entries (skipped when filter_type=round) ──────────────────
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            let taggedEntries: any[] = [];
-
-            if (filterType !== 'round') {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                let soloQuery: any = supabase
-                    .from('entries')
-                    .select(`
-                        id,
-                        user_id,
-                        restaurant_id,
-                        rating,
-                        content,
-                        dish_description,
-                        visited_at,
-                        created_at,
-                        table_night_id,
-                        photo_url,
-                        reaction_count,
-                        comment_count,
-                        top_emojis,
-                        restaurants (
-                            id,
-                            name,
-                            address,
-                            city,
-                            photo_url
-                        )
-                    `)
-                    .eq('table_id', tableId)
-                    .is('table_night_id', null)
-                    .order('visited_at', { ascending: false })
-                    .range(offset, offset + limit - 1);
-
-                if (filterUserId) {
-                    soloQuery = soloQuery.eq('user_id', filterUserId);
-                }
-
-                const { data: soloEntries, error: soloError } = await soloQuery;
-
-                if (soloError) {
-                    console.error('Solo entries query error:', soloError);
-                    throw soloError;
-                }
-
-                // ── Widen for companion-tagged entries ─────────────────────
-                // Fetch entry IDs where the caller is a companion on an entry in this table.
-                // This is the "tagged-user sees it in feed" path (TICKET-027).
-                // Only applies when not filtering by a specific user.
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                let companionTaggedEntries: any[] = [];
-                if (!filterUserId) {
-                    const { data: companionLinks } = await supabase
-                        .from('entry_companions')
-                        .select('entry_id')
-                        .eq('user_id', user.id);
-
-                    const companionEntryIds = ((companionLinks ?? []) as { entry_id: string }[])
-                        .map((r) => r.entry_id);
-
-                    if (companionEntryIds.length > 0) {
-                        // Fetch those entries if they belong to this table (no cross-table bleed)
-                        const existingIds = new Set(((soloEntries ?? []) as { id: string }[]).map((e) => e.id));
-                        const newIds = companionEntryIds.filter((id) => !existingIds.has(id));
-
-                        if (newIds.length > 0) {
-                            const { data: compEntries, error: compErr } = await supabase
-                                .from('entries')
-                                .select(`
-                                    id,
-                                    user_id,
-                                    restaurant_id,
-                                    rating,
-                                    content,
-                                    dish_description,
-                                    visited_at,
-                                    created_at,
-                                    table_night_id,
-                                    photo_url,
-                                    reaction_count,
-                                    comment_count,
-                                    top_emojis,
-                                    restaurants (
-                                        id,
-                                        name,
-                                        address,
-                                        city,
-                                        photo_url
-                                    )
-                                `)
-                                .in('id', newIds)
-                                .eq('table_id', tableId)
-                                .is('table_night_id', null);
-
-                            if (!compErr) {
-                                companionTaggedEntries = compEntries ?? [];
-                            }
-                        }
-                    }
-                }
-
-                // Merge regular + companion-widened entries (deduplicated)
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const allSoloEntries: any[] = [
-                    ...(soloEntries ?? []),
-                    ...companionTaggedEntries,
-                ];
-
-                // Fetch profile info for each entry's creator
-                const userIds = [...new Set(allSoloEntries.map((e: { user_id: string }) => e.user_id))];
-                const { data: profiles } = userIds.length > 0
-                    ? await supabase
-                        .from('profiles')
-                        .select('user_id, display_name')
-                        .in('user_id', userIds)
-                    : { data: [] };
-
-                const profileMap = new Map((profiles ?? []).map((p: { user_id: string; display_name: string }) => [p.user_id, p]));
-                const entriesWithProfiles = allSoloEntries.map((e: { user_id: string }) => ({
-                    ...e,
-                    profiles: profileMap.get(e.user_id) ?? { display_name: 'User' },
-                }));
-
-                // Fetch entry_participants for all fetched entries
-                const entryIds = allSoloEntries.map((e: { id: string }) => e.id);
-                const { data: entryParticipants } = entryIds.length > 0
-                    ? await supabase
-                        .from('entry_participants')
-                        .select(`
-                            entry_id,
-                            user_id,
-                            rating,
-                            notes,
-                            profiles:user_id (
-                                display_name
-                            )
-                        `)
-                        .in('entry_id', entryIds)
-                    : { data: [] };
-
-                // Fetch entry_photos counts for all fetched entries
-                const { data: entryPhotos } = entryIds.length > 0
-                    ? await supabase
-                        .from('entry_photos')
-                        .select('entry_id')
-                        .in('entry_id', entryIds)
-                    : { data: [] };
-
-                // Build a count map: entry_id -> number of photos
-                const photoCountMap = new Map<string, number>();
-                for (const ep of (entryPhotos ?? []) as { entry_id: string }[]) {
-                    photoCountMap.set(ep.entry_id, (photoCountMap.get(ep.entry_id) ?? 0) + 1);
-                }
-
-                // Group participants by entry_id
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const participantsByEntry = new Map<string, any[]>();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                for (const p of (entryParticipants ?? []) as any[]) {
-                    const list = participantsByEntry.get(p.entry_id) ?? [];
-                    list.push(p);
-                    participantsByEntry.set(p.entry_id, list);
-                }
-
-                // Fetch entry_companions for all fetched entries
-                const { data: entryCompanions } = entryIds.length > 0
-                    ? await supabase
-                        .from('entry_companions')
-                        .select(`
-                            entry_id,
-                            user_id,
-                            profiles:user_id (
-                                display_name
-                            )
-                        `)
-                        .in('entry_id', entryIds)
-                    : { data: [] };
-
-                // Group companions by entry_id
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const companionsByEntry = new Map<string, any[]>();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                for (const c of (entryCompanions ?? []) as any[]) {
-                    const list = companionsByEntry.get(c.entry_id) ?? [];
-                    const profileNode = Array.isArray(c.profiles) ? c.profiles[0] : c.profiles;
-                    list.push({
-                        user_id: c.user_id,
-                        display_name: profileNode?.display_name ?? 'User',
-                    });
-                    companionsByEntry.set(c.entry_id, list);
-                }
-
-                // Tag entries: solo_share (0-1 participants) or collaborative_entry (2+)
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                taggedEntries = (entriesWithProfiles as any[]).map((entry) => {
-                    const participants = participantsByEntry.get(entry.id) ?? [];
-                    const companions = companionsByEntry.get(entry.id) ?? [];
-                    const photoCount = photoCountMap.get(entry.id) ?? 0;
-                    if (participants.length > 1) {
-                        const ratings = participants
-                            .filter((p: { rating: number | null }) => p.rating !== null)
-                            .map((p: { rating: number }) => p.rating as number);
-                        const average = ratings.length > 0
-                            ? ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length
-                            : null;
-                        return {
-                            ...entry,
-                            type: 'collaborative_entry' as const,
-                            participants,
-                            companions,
-                            average_rating: average,
-                            sort_date: entry.visited_at || entry.created_at,
-                            photo_count: photoCount,
-                        };
-                    }
-                    return {
-                        ...entry,
-                        type: 'solo_share' as const,
-                        companions,
-                        sort_date: entry.visited_at || entry.created_at,
-                        photo_count: photoCount,
-                    };
-                });
-            }
-
-            // ── Table nights (skipped when filter_type=solo_share) ─────────────
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            let nightsWithParticipants: any[] = [];
-
-            if (filterType !== 'solo_share') {
-                // When filter_user_id is set, restrict to nights where that user is a participant
-                let nightIds: string[] | null = null;
-                if (filterUserId) {
-                    const { data: participantRows } = await supabase
-                        .from('table_night_participants')
-                        .select('table_night_id')
-                        .eq('user_id', filterUserId);
-                    nightIds = ((participantRows ?? []) as { table_night_id: string }[])
-                        .map((r) => r.table_night_id);
-                    if (nightIds.length === 0) {
-                        nightIds = ['__none__']; // forces empty result from IN clause
-                    }
-                }
-
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                let nightsQuery: any = supabase
-                    .from('table_nights')
-                    .select(`
-                        id,
-                        restaurant_id,
-                        host_user_id,
-                        status,
-                        created_at,
-                        revealed_at,
-                        is_async,
-                        reaction_count,
-                        comment_count,
-                        top_emojis,
-                        restaurants (
-                            id,
-                            name,
-                            address,
-                            city,
-                            photo_url
-                        )
-                    `)
-                    .eq('table_id', tableId)
-                    .in('status', ['rating', 'revealed', 'closed'])
-                    .order('created_at', { ascending: false })
-                    .range(offset, offset + limit - 1);
-
-                if (nightIds !== null) {
-                    nightsQuery = nightsQuery.in('id', nightIds);
-                }
-
-                const { data: tableNights, error: nightsError } = await nightsQuery;
-
-                if (nightsError) throw nightsError;
-
-                // For each table night, fetch participants with ratings
-                nightsWithParticipants = await Promise.all(
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    (tableNights ?? []).map(async (night: any) => {
-                        const { data: participants } = await supabase
-                            .from('table_night_participants')
-                            .select(`
-                                user_id,
-                                rating,
-                                notes,
-                                profiles (
-                                    display_name
-                                )
-                            `)
-                            .eq('table_night_id', night.id);
-
-                        const ratings = (participants ?? [])
-                            .filter((p: { rating: number | null }) => p.rating !== null)
-                            .map((p: { rating: number }) => p.rating as number);
-                        const average = ratings.length > 0
-                            ? ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length
-                            : null;
-
-                        return {
-                            ...night,
-                            participants: participants ?? [],
-                            average_rating: average,
-                            type: 'table_night' as const,
-                            sort_date: night.revealed_at || night.created_at,
-                        };
-                    })
-                );
-            }
-
-            // ── Caller's own reactions on fetched items ────────────────────────
-            // One query each for entries + nights; merged as `my_reactions: string[]`.
-            const entryIdsForReactions = taggedEntries.map((e: { id: string }) => e.id);
-            const nightIdsForReactions = nightsWithParticipants.map((n: { id: string }) => n.id);
-
-            const myReactionsByTarget = new Map<string, string[]>();
-            const targetKey = (targetType: string, targetId: string) =>
-                `${targetType}:${targetId}`;
-
-            if (entryIdsForReactions.length > 0) {
-                const { data: myEntryReactions } = await supabase
-                    .from('post_reactions')
-                    .select('target_id, emoji')
-                    .eq('target_type', 'entry')
-                    .eq('user_id', user.id)
-                    .eq('scope', 'table')
-                    .in('target_id', entryIdsForReactions);
-                for (const r of (myEntryReactions ?? []) as { target_id: string; emoji: string }[]) {
-                    const k = targetKey('entry', r.target_id);
-                    const list = myReactionsByTarget.get(k) ?? [];
-                    list.push(r.emoji);
-                    myReactionsByTarget.set(k, list);
-                }
-            }
-
-            if (nightIdsForReactions.length > 0) {
-                const { data: myNightReactions } = await supabase
-                    .from('post_reactions')
-                    .select('target_id, emoji')
-                    .eq('target_type', 'table_night')
-                    .eq('user_id', user.id)
-                    .eq('scope', 'table')
-                    .in('target_id', nightIdsForReactions);
-                for (const r of (myNightReactions ?? []) as { target_id: string; emoji: string }[]) {
-                    const k = targetKey('table_night', r.target_id);
-                    const list = myReactionsByTarget.get(k) ?? [];
-                    list.push(r.emoji);
-                    myReactionsByTarget.set(k, list);
-                }
-            }
-
-            // Merge and sort by date
-            const allActivity = [
-                ...nightsWithParticipants.map((n: { id: string }) => ({
-                    ...n,
-                    my_reactions: myReactionsByTarget.get(targetKey('table_night', n.id)) ?? [],
-                })),
-                ...taggedEntries.map((e: { id: string }) => ({
-                    ...e,
-                    my_reactions: myReactionsByTarget.get(targetKey('entry', e.id)) ?? [],
-                })),
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            ].sort((a: any, b: any) =>
-                new Date(b.sort_date).getTime() - new Date(a.sort_date).getTime()
-            );
-
+        if (req.method !== 'POST') {
             return new Response(
-                JSON.stringify({ data: allActivity }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                JSON.stringify({ error: 'Method not allowed' }),
+                { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
         }
 
+        const body = await req.json();
+        const {
+            table_id: tableId,
+            cursor,
+            filter_type: filterType,
+            filter_user_id: filterUserId,
+        } = body as {
+            table_id?: string;
+            cursor?: string | null;
+            filter_type?: string | null;
+            filter_user_id?: string | null;
+        };
+
+        if (!tableId) {
+            return new Response(
+                JSON.stringify({ error: 'table_id is required' }),
+                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // Verify user is a member of this table
+        const { data: membership } = await supabase
+            .from('table_members')
+            .select('member_id')
+            .eq('table_id', tableId)
+            .eq('member_id', user.id)
+            .single();
+
+        if (!membership) {
+            return new Response(
+                JSON.stringify({ error: 'Not a member of this table' }),
+                { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // Decode cursor for RPC
+        const decoded = decodeCursor(cursor ?? null);
+
+        // ── Call fn_table_activity_page RPC ───────────────────────────────────
+        const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_table_activity_page', {
+            p_table_id: tableId,
+            p_caller_id: user.id,
+            p_cursor_date: decoded?.sort_date ?? null,
+            p_cursor_id: decoded?.id ?? null,
+            p_limit: PAGE_SIZE + 1,
+            p_filter_type: filterType ?? null,
+            p_filter_user_id: filterUserId ?? null,
+        });
+
+        if (rpcErr) {
+            console.error('fn_table_activity_page error:', rpcErr);
+            throw rpcErr;
+        }
+
+        const pageRows = (rpcRows ?? []) as {
+            kind: string;
+            id: string;
+            sort_date: string;
+            payload: Record<string, unknown>;
+        }[];
+
+        // Build page envelope first (pageRows may have PAGE_SIZE + 1 rows)
+        // We need to hydrate only the kept rows
+        const has_more = pageRows.length > PAGE_SIZE;
+        const keptRpc = has_more ? pageRows.slice(0, PAGE_SIZE) : pageRows;
+
+        // ── Collect IDs for hydration ──────────────────────────────────────────
+        const entryRpcRows = keptRpc.filter((r) => r.kind === 'entry');
+        const nightRpcRows = keptRpc.filter((r) => r.kind === 'table_night');
+
+        const entryIds = entryRpcRows.map((r) => r.id);
+        const nightIds = nightRpcRows.map((r) => r.id);
+
+        // ── Hydrate: solo entries ─────────────────────────────────────────────
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let taggedEntries: any[] = [];
+
+        if (entryIds.length > 0) {
+            const { data: soloEntries, error: soloError } = await supabase
+                .from('entries')
+                .select(`
+                    id,
+                    user_id,
+                    restaurant_id,
+                    rating,
+                    content,
+                    dish_description,
+                    visited_at,
+                    created_at,
+                    table_night_id,
+                    photo_url,
+                    reaction_count,
+                    comment_count,
+                    top_emojis,
+                    restaurants (
+                        id,
+                        name,
+                        address,
+                        city,
+                        photo_url
+                    )
+                `)
+                .in('id', entryIds);
+
+            if (soloError) throw soloError;
+
+            const allSoloEntries = (soloEntries ?? []) as any[];
+
+            // Profiles
+            const userIds = [...new Set(allSoloEntries.map((e: { user_id: string }) => e.user_id))];
+            const { data: profiles } = userIds.length > 0
+                ? await supabase
+                    .from('profiles')
+                    .select('user_id, display_name')
+                    .in('user_id', userIds)
+                : { data: [] };
+
+            const profileMap = new Map((profiles ?? []).map((p: { user_id: string; display_name: string }) => [p.user_id, p]));
+            const entriesWithProfiles = allSoloEntries.map((e: { user_id: string }) => ({
+                ...e,
+                profiles: profileMap.get(e.user_id) ?? { display_name: 'User' },
+            }));
+
+            // Entry participants
+            const { data: entryParticipants } = await supabase
+                .from('entry_participants')
+                .select(`
+                    entry_id,
+                    user_id,
+                    rating,
+                    notes,
+                    profiles:user_id (
+                        display_name
+                    )
+                `)
+                .in('entry_id', entryIds);
+
+            // Entry photos
+            const { data: entryPhotos } = await supabase
+                .from('entry_photos')
+                .select('entry_id')
+                .in('entry_id', entryIds);
+
+            const photoCountMap = new Map<string, number>();
+            for (const ep of (entryPhotos ?? []) as { entry_id: string }[]) {
+                photoCountMap.set(ep.entry_id, (photoCountMap.get(ep.entry_id) ?? 0) + 1);
+            }
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const participantsByEntry = new Map<string, any[]>();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            for (const p of (entryParticipants ?? []) as any[]) {
+                const list = participantsByEntry.get(p.entry_id) ?? [];
+                list.push(p);
+                participantsByEntry.set(p.entry_id, list);
+            }
+
+            // Entry companions
+            const { data: entryCompanions } = await supabase
+                .from('entry_companions')
+                .select(`
+                    entry_id,
+                    user_id,
+                    profiles:user_id (
+                        display_name
+                    )
+                `)
+                .in('entry_id', entryIds);
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const companionsByEntry = new Map<string, any[]>();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            for (const c of (entryCompanions ?? []) as any[]) {
+                const list = companionsByEntry.get(c.entry_id) ?? [];
+                const profileNode = Array.isArray(c.profiles) ? c.profiles[0] : c.profiles;
+                list.push({
+                    user_id: c.user_id,
+                    display_name: profileNode?.display_name ?? 'User',
+                });
+                companionsByEntry.set(c.entry_id, list);
+            }
+
+            // Build sort_date lookup from RPC rows
+            const sortDateByEntryId = new Map(entryRpcRows.map((r) => [r.id, r.sort_date]));
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            taggedEntries = (entriesWithProfiles as any[]).map((entry) => {
+                const participants = participantsByEntry.get(entry.id) ?? [];
+                const companions = companionsByEntry.get(entry.id) ?? [];
+                const photoCount = photoCountMap.get(entry.id) ?? 0;
+                const sort_date = sortDateByEntryId.get(entry.id) ?? entry.visited_at ?? entry.created_at;
+
+                if (participants.length > 1) {
+                    const ratings = participants
+                        .filter((p: { rating: number | null }) => p.rating !== null)
+                        .map((p: { rating: number }) => p.rating as number);
+                    const average = ratings.length > 0
+                        ? ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length
+                        : null;
+                    return {
+                        ...entry,
+                        type: 'collaborative_entry' as const,
+                        participants,
+                        companions,
+                        average_rating: average,
+                        sort_date,
+                        photo_count: photoCount,
+                    };
+                }
+                return {
+                    ...entry,
+                    type: 'solo_share' as const,
+                    companions,
+                    sort_date,
+                    photo_count: photoCount,
+                };
+            });
+        }
+
+        // ── Hydrate: table nights ─────────────────────────────────────────────
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let nightsWithParticipants: any[] = [];
+
+        if (nightIds.length > 0) {
+            const { data: tableNights, error: nightsError } = await supabase
+                .from('table_nights')
+                .select(`
+                    id,
+                    restaurant_id,
+                    host_user_id,
+                    status,
+                    created_at,
+                    revealed_at,
+                    is_async,
+                    reaction_count,
+                    comment_count,
+                    top_emojis,
+                    restaurants (
+                        id,
+                        name,
+                        address,
+                        city,
+                        photo_url
+                    )
+                `)
+                .in('id', nightIds);
+
+            if (nightsError) throw nightsError;
+
+            // Build sort_date lookup from RPC rows
+            const sortDateByNightId = new Map(nightRpcRows.map((r) => [r.id, r.sort_date]));
+
+            nightsWithParticipants = await Promise.all(
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (tableNights ?? []).map(async (night: any) => {
+                    const { data: participants } = await supabase
+                        .from('table_night_participants')
+                        .select(`
+                            user_id,
+                            rating,
+                            notes,
+                            profiles (
+                                display_name
+                            )
+                        `)
+                        .eq('table_night_id', night.id);
+
+                    const ratings = (participants ?? [])
+                        .filter((p: { rating: number | null }) => p.rating !== null)
+                        .map((p: { rating: number }) => p.rating as number);
+                    const average = ratings.length > 0
+                        ? ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length
+                        : null;
+
+                    return {
+                        ...night,
+                        participants: participants ?? [],
+                        average_rating: average,
+                        type: 'table_night' as const,
+                        sort_date: sortDateByNightId.get(night.id) ?? night.revealed_at ?? night.created_at,
+                    };
+                })
+            );
+        }
+
+        // ── Reactions ────────────────────────────────────────────────────────
+        const myReactionsByTarget = new Map<string, string[]>();
+        const targetKey = (targetType: string, targetId: string) => `${targetType}:${targetId}`;
+
+        if (entryIds.length > 0) {
+            const { data: myEntryReactions } = await supabase
+                .from('post_reactions')
+                .select('target_id, emoji')
+                .eq('target_type', 'entry')
+                .eq('user_id', user.id)
+                .eq('scope', 'table')
+                .in('target_id', entryIds);
+            for (const r of (myEntryReactions ?? []) as { target_id: string; emoji: string }[]) {
+                const k = targetKey('entry', r.target_id);
+                const list = myReactionsByTarget.get(k) ?? [];
+                list.push(r.emoji);
+                myReactionsByTarget.set(k, list);
+            }
+        }
+
+        if (nightIds.length > 0) {
+            const { data: myNightReactions } = await supabase
+                .from('post_reactions')
+                .select('target_id, emoji')
+                .eq('target_type', 'table_night')
+                .eq('user_id', user.id)
+                .eq('scope', 'table')
+                .in('target_id', nightIds);
+            for (const r of (myNightReactions ?? []) as { target_id: string; emoji: string }[]) {
+                const k = targetKey('table_night', r.target_id);
+                const list = myReactionsByTarget.get(k) ?? [];
+                list.push(r.emoji);
+                myReactionsByTarget.set(k, list);
+            }
+        }
+
+        // ── Merge in RPC order (sort_date DESC already from fn_table_activity_page) ──
+        const entryById = new Map(taggedEntries.map((e: { id: string }) => [e.id, e]));
+        const nightById = new Map(nightsWithParticipants.map((n: { id: string }) => [n.id, n]));
+
+        const orderedItems = keptRpc
+            .map((rpcRow) => {
+                const item = rpcRow.kind === 'entry'
+                    ? entryById.get(rpcRow.id)
+                    : nightById.get(rpcRow.id);
+                if (!item) return null;
+                const tk = rpcRow.kind === 'entry'
+                    ? targetKey('entry', rpcRow.id)
+                    : targetKey('table_night', rpcRow.id);
+                return {
+                    ...item,
+                    my_reactions: myReactionsByTarget.get(tk) ?? [],
+                };
+            })
+            .filter(Boolean);
+
+        // Build Page envelope from the RPC rows (cursor uses sort_date + id)
+        const last = keptRpc[keptRpc.length - 1];
+        const next_cursor = has_more && last
+            ? buildPage(keptRpc, PAGE_SIZE, (r) => ({ sort_date: r.sort_date, id: r.id })).next_cursor
+            : null;
+
         return new Response(
-            JSON.stringify({ error: 'Method not allowed' }),
-            { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            JSON.stringify({ data: { rows: orderedItems, next_cursor, has_more } }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
 
     } catch (error) {

@@ -30,7 +30,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
-import { useTableActivity, type SoloShareActivity } from '@/hooks/tables/useTableActivity';
+import { useTableActivity, flattenActivity, type SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { Avatar } from '@/components/feed/Avatar';
 
 export default function SeedFromSoloScreen() {
@@ -51,7 +51,7 @@ export default function SeedFromSoloScreen() {
     const firstTable = tables?.[0]?.tables;
     const { data: activityData, isLoading } = useTableActivity(firstTable?.id);
     const items = useMemo(
-        () => (activityData?.pages?.flat() ?? []) as SoloShareActivity[],
+        () => flattenActivity(activityData) as SoloShareActivity[],
         [activityData],
     );
     const solos = items.filter((i) => i.type === 'solo_share') as SoloShareActivity[];

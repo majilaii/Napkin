@@ -10,14 +10,14 @@
  * entries with prose or photos become FriendLogCard prose cards.
  */
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, RefreshControl, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useFeed, type FeedEntry, TOWN_TRENDING_MOCK } from '@/hooks/feed';
+import { useFeed, flattenFeed, type FeedEntry, TOWN_TRENDING_MOCK } from '@/hooks/feed';
 import { queryKeys } from '@/lib/queryKeys';
 import {
     FeedHeader,
@@ -41,20 +41,40 @@ export default function FeedScreen() {
 
     const [scope, setScope] = useState<FeedScope>('tables');
 
-    const { data, isLoading, refetch, isRefetching } = useFeed(user?.id);
+    const {
+        data,
+        isLoading,
+        refetch,
+        isRefetching,
+        fetchNextPage,
+        hasNextPage,
+        isFetchingNextPage,
+    } = useFeed(user?.id);
 
-    const groups = useMemo(() => groupByDay(data?.entries ?? []), [data?.entries]);
+    // Flatten all pages into a single entry array
+    const entries = useMemo(() => flattenFeed(data), [data]);
+    const groups = useMemo(() => groupByDay(entries), [entries]);
 
+    // Trending comes from the first page only
+    const page0 = data?.pages?.[0] as any;
     const railTitle = scope === 'tables' ? 'Circling your table' : 'Around town';
     const railKicker = scope === 'tables' ? 'Circling · 14 days' : 'Popular · 7 days';
     const railScope = scope === 'tables' ? 'Tablemates' : 'London · editorial';
-    const trending = scope === 'tables' ? data?.trending ?? [] : TOWN_TRENDING_MOCK;
+    const trending = scope === 'tables' ? page0?.trending ?? [] : TOWN_TRENDING_MOCK;
 
     const onRefresh = () => {
         if (user?.id) {
             queryClient.invalidateQueries({ queryKey: queryKeys.feed.all(user.id) });
         }
         refetch();
+    };
+
+    const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+        const nearEnd = contentOffset.y + layoutMeasurement.height >= contentSize.height - 300;
+        if (nearEnd && hasNextPage && !isFetchingNextPage) {
+            fetchNextPage();
+        }
     };
 
     return (
@@ -64,6 +84,8 @@ export default function FeedScreen() {
             <ScrollView
                 contentContainerStyle={{ paddingBottom: insets.bottom + 120 }}
                 showsVerticalScrollIndicator={false}
+                onMomentumScrollEnd={onScrollEnd}
+                onScrollEndDrag={onScrollEnd}
                 refreshControl={
                     <RefreshControl
                         refreshing={isRefetching}
@@ -97,7 +119,12 @@ export default function FeedScreen() {
                                 ))}
                             </View>
                         ))}
-                        <FeedTerminus windowDays={data?.windowDays ?? 14} />
+                        {isFetchingNextPage && (
+                            <View style={{ paddingVertical: Spacing.lg, alignItems: 'center' }}>
+                                <ActivityIndicator color={palette.primary} />
+                            </View>
+                        )}
+                        <FeedTerminus windowDays={page0?.window_days ?? 14} />
                     </>
                 )}
             </ScrollView>
