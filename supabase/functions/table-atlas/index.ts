@@ -13,6 +13,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,7 +99,9 @@ type CityStats = {
 type CityPageResponse = {
     city: string;
     city_stats: CityStats;
-    restaurants: RestaurantTile[];
+    rows: RestaurantTile[];
+    next_cursor: string | null;
+    has_more: boolean;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -305,13 +308,49 @@ async function handleCityIndex(
 
 // ── Action: city-page ─────────────────────────────────────────────────────────
 
+const CITY_PAGE_SIZE = 50;
+const CITY_PAGE_MAX = 100;
+
 async function handleCityPage(
     supabase: any,
     userId: string,
     tableId: string,
     city: string,
+    cursor: string | null,
+    pageSize: number,
 ): Promise<Response> {
-    // ── Solo entries in this city (exclude Round-generated entry rows) ──────────
+    // Step 1: Get the paginated restaurant IDs via RPC (keyset-sorted by last_visit_date DESC)
+    const decoded = decodeCursor(cursor);
+    const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_atlas_city_restaurants', {
+        p_table_id: tableId,
+        p_city: city,
+        p_cursor_date: decoded?.sort_date ?? null,
+        p_cursor_id: decoded?.id ?? null,
+        p_limit: pageSize + 1,
+    });
+    if (rpcErr) throw rpcErr;
+
+    // Detect has_more from the +1 sentinel row
+    const rpcList = (rpcRows ?? []) as { restaurant_id: string; last_visit_date: string }[];
+    const has_more = rpcList.length > pageSize;
+    const pageRestaurantIds = has_more ? rpcList.slice(0, pageSize) : rpcList;
+
+    if (pageRestaurantIds.length === 0) {
+        // No restaurants in city (or past the last page)
+        const cityStats: CityStats = { city, spot_count: 0, member_count: 0 };
+        const response: CityPageResponse = {
+            city,
+            city_stats: cityStats,
+            rows: [],
+            next_cursor: null,
+            has_more: false,
+        };
+        return json({ data: response });
+    }
+
+    const restaurantIds = pageRestaurantIds.map((r) => r.restaurant_id);
+
+    // Step 2: Fetch solo entries for these restaurants in this table
     const { data: entries, error: entryErr } = await supabase
         .from('entries')
         .select(`
@@ -333,7 +372,7 @@ async function handleCityPage(
         `)
         .eq('table_id', tableId)
         .is('table_night_id', null)
-        .eq('restaurants.city', city);
+        .in('restaurant_id', restaurantIds);
     if (entryErr) throw entryErr;
 
     // Companion join-table lookup — keyed by entry_id
@@ -352,7 +391,7 @@ async function handleCityPage(
         }
     }
 
-    // ── Rounds in this city ────────────────────────────────────────────────────
+    // Step 3: Fetch rounds for these restaurants in this table
     const { data: nights, error: nightErr } = await supabase
         .from('table_nights')
         .select(`
@@ -375,10 +414,10 @@ async function handleCityPage(
             )
         `)
         .eq('table_id', tableId)
-        .eq('restaurants.city', city);
+        .in('restaurant_id', restaurantIds);
     if (nightErr) throw nightErr;
 
-    // ── Viewer's wishlist restaurant IDs ──────────────────────────────────────
+    // Step 4: Viewer's wishlist restaurant IDs
     const { data: wishlistRows, error: wishErr } = await supabase
         .from('wishlist_items')
         .select('restaurant_id')
@@ -388,7 +427,7 @@ async function handleCityPage(
         (wishlistRows ?? []).map((w: any) => w.restaurant_id as string),
     );
 
-    // ── Collect all user IDs for profile fetch ────────────────────────────────
+    // Step 5: Collect user IDs for profile fetch
     const allUserIds = new Set<string>();
     for (const e of (entries ?? []) as any[]) allUserIds.add(e.user_id);
     for (const n of (nights ?? []) as any[]) {
@@ -398,7 +437,7 @@ async function handleCityPage(
     }
     const profiles = await fetchProfiles(supabase, [...allUserIds]);
 
-    // ── Build per-restaurant aggregates ──────────────────────────────────────
+    // Step 6: Build per-restaurant aggregates (only for restaurantIds on this page)
     type RestaurantAgg = {
         id: string;
         name: string;
@@ -406,6 +445,7 @@ async function handleCityPage(
         photo_url: string | null;
         lat: number | null;
         lng: number | null;
+        last_visit_date: string;
         round_visits: {
             night_id: string;
             average_rating: number | null;
@@ -423,26 +463,55 @@ async function handleCityPage(
 
     const restaurantMap = new Map<string, RestaurantAgg>();
 
+    // Pre-populate from RPC results so we preserve the keyset order
+    for (const rr of pageRestaurantIds) {
+        restaurantMap.set(rr.restaurant_id, {
+            id: rr.restaurant_id,
+            name: '',
+            cuisine: null,
+            photo_url: null,
+            lat: null,
+            lng: null,
+            last_visit_date: rr.last_visit_date,
+            round_visits: [],
+            solo_visits: [],
+            companion_ids_union: new Set(),
+        });
+    }
+
     function ensureRestaurant(r: any): RestaurantAgg {
-        if (!restaurantMap.has(r.id)) {
-            restaurantMap.set(r.id, {
-                id: r.id,
-                name: r.name,
-                cuisine: r.cuisine ?? null,
-                photo_url: r.photo_url ?? null,
-                lat: r.lat ?? null,
-                lng: r.lng ?? null,
-                round_visits: [],
-                solo_visits: [],
-                companion_ids_union: new Set(),
-            });
+        const existing = restaurantMap.get(r.id);
+        if (existing) {
+            // Hydrate metadata if not yet set
+            if (!existing.name) {
+                existing.name = r.name;
+                existing.cuisine = r.cuisine ?? null;
+                existing.photo_url = r.photo_url ?? null;
+                existing.lat = r.lat ?? null;
+                existing.lng = r.lng ?? null;
+            }
+            return existing;
         }
-        return restaurantMap.get(r.id)!;
+        // Restaurant not in this page — skip
+        const stub: RestaurantAgg = {
+            id: r.id,
+            name: r.name,
+            cuisine: r.cuisine ?? null,
+            photo_url: r.photo_url ?? null,
+            lat: r.lat ?? null,
+            lng: r.lng ?? null,
+            last_visit_date: '',
+            round_visits: [],
+            solo_visits: [],
+            companion_ids_union: new Set(),
+        };
+        // Don't add to map — we only process restaurants in this page
+        return stub;
     }
 
     for (const e of (entries ?? []) as any[]) {
         const r = e.restaurants;
-        if (!r || r.city !== city) continue;
+        if (!r || !restaurantMap.has(r.id)) continue;
         const agg = ensureRestaurant(r);
         agg.solo_visits.push({
             entry_id: e.id,
@@ -457,7 +526,7 @@ async function handleCityPage(
 
     for (const n of (nights ?? []) as any[]) {
         const r = n.restaurants;
-        if (!r || r.city !== city) continue;
+        if (!r || !restaurantMap.has(r.id)) continue;
         const agg = ensureRestaurant(r);
         const participants = (n.table_night_participants ?? []) as {
             user_id: string;
@@ -476,41 +545,33 @@ async function handleCityPage(
         });
     }
 
-    // ── Build tiles ───────────────────────────────────────────────────────────
-    const tiles: RestaurantTile[] = [];
-    const restaurantList = [...restaurantMap.values()];
-
-    // Unique member count for city stats
+    // Step 7: Build tiles in RPC sort order (last_visit_date DESC, restaurant_id DESC)
     const cityMemberIds = new Set<string>();
+    const tiles: RestaurantTile[] = [];
 
-    for (const agg of restaurantList) {
+    for (const rr of pageRestaurantIds) {
+        const agg = restaurantMap.get(rr.restaurant_id);
+        if (!agg || !agg.name) continue; // unfilled means no visits in DB (shouldn't happen)
+
         const hasRound = agg.round_visits.length > 0;
         const hasSolo = agg.solo_visits.length > 0;
         const tile_type: 'solo' | 'round' | 'mixed' = hasRound
-            ? hasSolo
-                ? 'mixed'
-                : 'round'
+            ? hasSolo ? 'mixed' : 'round'
             : 'solo';
 
         // Rating derivation
         let rating: number | null = null;
         if (hasRound) {
-            // Round or mixed: use the most-recent Round's average_rating
             const latestRound = agg.round_visits.sort((a, b) =>
                 b.date.localeCompare(a.date),
             )[0];
             rating = latestRound.average_rating;
         } else {
-            // Solo: viewer's personal avg, else most-recent solo rating
-            const viewerSolos = agg.solo_visits.filter(
-                (v) => v.user_id === userId,
-            );
+            const viewerSolos = agg.solo_visits.filter((v) => v.user_id === userId);
             if (viewerSolos.length > 0) {
                 const ratedSolos = viewerSolos.filter((v) => v.rating != null);
                 if (ratedSolos.length > 0) {
-                    rating =
-                        ratedSolos.reduce((sum, v) => sum + v.rating!, 0) /
-                        ratedSolos.length;
+                    rating = ratedSolos.reduce((sum, v) => sum + v.rating!, 0) / ratedSolos.length;
                 }
             }
             if (rating == null) {
@@ -521,7 +582,6 @@ async function handleCityPage(
             }
         }
 
-        // Collect unique member IDs
         const memberIdsSet = new Set<string>();
         for (const rv of agg.round_visits) {
             for (const uid of rv.participant_user_ids) {
@@ -535,14 +595,7 @@ async function handleCityPage(
         }
 
         const memberIds = [...memberIdsSet];
-        const memberNames = memberIds.map(
-            (id) => profiles.get(id)?.display_name ?? 'Member',
-        );
-        const memberAvatarUrls = memberIds.map(
-            (id) => profiles.get(id)?.avatar_url ?? null,
-        );
 
-        // Build visit list (rounds first, then solos, newest first)
         const visits: VisitRow[] = [
             ...agg.round_visits
                 .sort((a, b) => b.date.localeCompare(a.date))
@@ -550,20 +603,16 @@ async function handleCityPage(
                     const roundParticipants: RoundParticipant[] =
                         rv.participant_user_ids.map((uid) => ({
                             user_id: uid,
-                            display_name:
-                                profiles.get(uid)?.display_name ?? 'Tablemate',
-                            avatar_url:
-                                profiles.get(uid)?.avatar_url ?? null,
+                            display_name: profiles.get(uid)?.display_name ?? 'Tablemate',
+                            avatar_url: profiles.get(uid)?.avatar_url ?? null,
                         }));
                     const leadUid = rv.participant_user_ids[0] ?? '';
                     return {
                         kind: 'round' as const,
                         id: rv.night_id,
                         user_id: leadUid,
-                        display_name:
-                            profiles.get(leadUid)?.display_name ?? 'Tablemate',
-                        avatar_url:
-                            profiles.get(leadUid)?.avatar_url ?? null,
+                        display_name: profiles.get(leadUid)?.display_name ?? 'Tablemate',
+                        avatar_url: profiles.get(leadUid)?.avatar_url ?? null,
                         rating: rv.average_rating,
                         date: rv.date,
                         table_night_id: rv.night_id,
@@ -576,10 +625,8 @@ async function handleCityPage(
                     kind: 'solo' as const,
                     id: sv.entry_id,
                     user_id: sv.user_id,
-                    display_name:
-                        profiles.get(sv.user_id)?.display_name ?? 'Member',
-                    avatar_url:
-                        profiles.get(sv.user_id)?.avatar_url ?? null,
+                    display_name: profiles.get(sv.user_id)?.display_name ?? 'Member',
+                    avatar_url: profiles.get(sv.user_id)?.avatar_url ?? null,
                     rating: sv.rating,
                     date: sv.date,
                     entry_id: sv.entry_id,
@@ -601,19 +648,18 @@ async function handleCityPage(
             round_count: agg.round_visits.length,
             solo_count: agg.solo_visits.length,
             member_ids: memberIds,
-            member_names: memberNames,
-            member_avatar_urls: memberAvatarUrls,
+            member_names: memberIds.map((id) => profiles.get(id)?.display_name ?? 'Member'),
+            member_avatar_urls: memberIds.map((id) => profiles.get(id)?.avatar_url ?? null),
         });
     }
 
-    // Sort by most-recent visit date DESC (default)
-    tiles.sort((a, b) => {
-        const aDate =
-            a.visits[0]?.date ?? '1970-01-01';
-        const bDate =
-            b.visits[0]?.date ?? '1970-01-01';
-        return bDate.localeCompare(aDate);
-    });
+    // Build the next_cursor via buildPage applied to the RPC list
+    const rpcPage = buildPage(
+        pageRestaurantIds,
+        pageSize,
+        (r) => ({ sort_date: r.last_visit_date, id: r.restaurant_id }),
+    );
+    const next_cursor = rpcPage.next_cursor;
 
     const cityStats: CityStats = {
         city,
@@ -624,7 +670,9 @@ async function handleCityPage(
     const response: CityPageResponse = {
         city,
         city_stats: cityStats,
-        restaurants: tiles,
+        rows: tiles,
+        next_cursor,
+        has_more,
     };
     return json({ data: response });
 }
@@ -655,10 +703,12 @@ serve(async (req) => {
         if (req.method !== 'POST') return fail('Method not allowed', 405);
 
         const body = await req.json();
-        const { action, table_id, city } = body as {
+        const { action, table_id, city, cursor, limit } = body as {
             action?: string;
             table_id?: string;
             city?: string;
+            cursor?: string | null;
+            limit?: number;
         };
 
         if (!table_id) return fail('table_id is required', 400);
@@ -673,7 +723,8 @@ serve(async (req) => {
 
         if (action === 'city-page') {
             if (!city) return fail('city is required for city-page action', 400);
-            return await handleCityPage(supabase, user.id, table_id, city);
+            const pageSize = Math.min(Math.max(limit ?? CITY_PAGE_SIZE, 1), CITY_PAGE_MAX);
+            return await handleCityPage(supabase, user.id, table_id, city, cursor ?? null, pageSize);
         }
 
         return fail(`Unknown action: ${action}`, 400);
