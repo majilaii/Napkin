@@ -4,7 +4,7 @@
  * Idempotent: re-adding an already-saved restaurant returns the existing row silently.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 /** Shape of a Places ghost restaurant payload (matches _shared/restaurant.ts RestaurantInput) */
@@ -43,18 +43,7 @@ export interface WishlistItem {
 }
 
 async function addToWishlist(input: WishlistAddInput): Promise<WishlistItem> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('wishlist', {
-        body: { action: 'add', ...input },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data;
+    return callEdgeFn<WishlistItem>('wishlist', { action: 'add', body: input });
 }
 
 export function useWishlistAdd(userId: string | null | undefined) {
@@ -62,24 +51,44 @@ export function useWishlistAdd(userId: string | null | undefined) {
 
     return useMutation({
         mutationFn: addToWishlist,
-        onSuccess: (item) => {
-            if (userId) {
-                queryClient.invalidateQueries({
-                    queryKey: queryKeys.wishlist.personal(userId),
-                });
-                if (item?.restaurant_id) {
-                    queryClient.setQueryData(
-                        queryKeys.wishlist.check(userId, item.restaurant_id),
-                        true,
-                    );
-                }
+        onMutate: async (input) => {
+            if (!userId) return undefined;
+            // TICKET-036 P0-8 / P1-2: snapshot the wishlist-check key for the
+            // restaurant we're optimistically saving, so we can roll back on error.
+            const checkKey = input.restaurant_id
+                ? queryKeys.wishlist.check(userId, input.restaurant_id)
+                : null;
+            if (checkKey) {
+                await queryClient.cancelQueries({ queryKey: checkKey });
+                const previous = queryClient.getQueryData<boolean>(checkKey);
+                queryClient.setQueryData(checkKey, true);
+                return { checkKey, previous };
             }
-            // Invalidate all table wishlist caches — we don't enumerate Tables here
+            return undefined;
+        },
+        onError: (_err, _input, context) => {
+            if (context?.checkKey) {
+                queryClient.setQueryData(context.checkKey, context.previous);
+            }
+        },
+        onSuccess: (item) => {
+            if (!userId) return;
+            // Authoritative server id — set the canonical check key true.
+            // For ghost (external_id) saves the optimistic key may have been
+            // a different id; rely on next-focus refetch for the canonical key.
+            if (item?.restaurant_id) {
+                queryClient.setQueryData(
+                    queryKeys.wishlist.check(userId, item.restaurant_id),
+                    true,
+                );
+            }
+            // Personal wishlist needs a refetch — it's the source of truth list.
             queryClient.invalidateQueries({
-                queryKey: queryKeys.wishlist.tableAll(),
+                queryKey: queryKeys.wishlist.personal(userId),
             });
-            // Invalidate all Atlas city caches — wished_by_viewer may have changed
-            queryClient.invalidateQueries({ queryKey: queryKeys.atlas.all() });
+            // TICKET-036 P1-2: do NOT invalidate every cached Table wishlist nor
+            // every Atlas city. Both have their own staleTime and refetch on focus;
+            // a single heart tap shouldn't cause N+M refetches across the app.
         },
     });
 }

@@ -2,21 +2,14 @@
  * Mutation hook: remove a restaurant from the caller's personal wishlist.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 async function removeFromWishlist(restaurant_id: string): Promise<void> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('wishlist', {
-        body: { action: 'remove', restaurant_id },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    await callEdgeFn<void>('wishlist', {
+        action: 'remove',
+        body: { restaurant_id },
     });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
 }
 
 export function useWishlistRemove(userId: string | null | undefined) {
@@ -24,21 +17,30 @@ export function useWishlistRemove(userId: string | null | undefined) {
 
     return useMutation({
         mutationFn: removeFromWishlist,
-        onSuccess: (_void, restaurantId) => {
-            if (userId) {
-                queryClient.invalidateQueries({
-                    queryKey: queryKeys.wishlist.personal(userId),
-                });
-                queryClient.setQueryData(
-                    queryKeys.wishlist.check(userId, restaurantId),
-                    false,
-                );
+        onMutate: async (restaurantId) => {
+            if (!userId) return undefined;
+            const checkKey = queryKeys.wishlist.check(userId, restaurantId);
+            await queryClient.cancelQueries({ queryKey: checkKey });
+            const previous = queryClient.getQueryData<boolean>(checkKey);
+            queryClient.setQueryData(checkKey, false);
+            return { checkKey, previous };
+        },
+        onError: (_err, _restaurantId, context) => {
+            if (context?.checkKey) {
+                queryClient.setQueryData(context.checkKey, context.previous);
             }
+        },
+        onSuccess: (_void, restaurantId) => {
+            if (!userId) return;
+            queryClient.setQueryData(
+                queryKeys.wishlist.check(userId, restaurantId),
+                false,
+            );
             queryClient.invalidateQueries({
-                queryKey: queryKeys.wishlist.tableAll(),
+                queryKey: queryKeys.wishlist.personal(userId),
             });
-            // Invalidate all Atlas city caches — wished_by_viewer may have changed
-            queryClient.invalidateQueries({ queryKey: queryKeys.atlas.all() });
+            // TICKET-036 P1-2: do NOT invalidate every cached Table wishlist or
+            // Atlas city. They refetch on focus.
         },
     });
 }

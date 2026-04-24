@@ -29,50 +29,60 @@ export function usePostInteractionsRealtime({
     useEffect(() => {
         if (!targetType || !targetId) return;
 
-        // Channel name includes scope so table and public subscribers don't share a channel
-        const channelName = `post-interactions:${targetType}:${targetId}:${scope}`;
-        const queryKey = queryKeys.postInteractions.all(targetType, targetId, scope);
+        // TICKET-036 P2-11: debounce subscribe by 150ms so rapid back-and-forth
+        // navigation between two entry-details doesn't churn through 20
+        // connect/disconnect cycles per second and trip Supabase channel limits.
+        let channel: ReturnType<typeof supabase.channel> | null = null;
+        let cancelled = false;
 
-        // Supabase Realtime postgres_changes only accepts ONE column filter per
-        // listener, so we filter by target_id server-side and narrow to the
-        // matching target_type AND scope in the handler. Two independent gates:
-        // RLS-aware realtime drops deltas the caller can't SELECT (first gate),
-        // and this client handler checks scope (second gate).
-        const invalidateIfMatch = (payload: { new?: Record<string, unknown>; old?: Record<string, unknown> }) => {
-            const row = payload.new ?? payload.old ?? {};
-            // Narrow by target_type
-            if (row.target_type && row.target_type !== targetType) return;
-            // Belt-and-suspenders: narrow by scope to prevent cross-scope invalidation
-            if (row.scope && row.scope !== scope) return;
-            queryClient.invalidateQueries({ queryKey });
-        };
+        const timer = setTimeout(() => {
+            if (cancelled) return;
 
-        const channel = supabase
-            .channel(channelName)
-            .on(
-                'postgres_changes',
-                {
-                    event: '*',
-                    schema: 'public',
-                    table: 'post_reactions',
-                    filter: `target_id=eq.${targetId}`,
-                },
-                invalidateIfMatch
-            )
-            .on(
-                'postgres_changes',
-                {
-                    event: '*',
-                    schema: 'public',
-                    table: 'post_comments',
-                    filter: `target_id=eq.${targetId}`,
-                },
-                invalidateIfMatch
-            )
-            .subscribe();
+            // Channel name includes scope so table and public subscribers don't share a channel
+            const channelName = `post-interactions:${targetType}:${targetId}:${scope}`;
+            const queryKey = queryKeys.postInteractions.all(targetType, targetId, scope);
+
+            // Supabase Realtime postgres_changes only accepts ONE column filter per
+            // listener, so we filter by target_id server-side and narrow to the
+            // matching target_type AND scope in the handler. Two independent gates:
+            // RLS-aware realtime drops deltas the caller can't SELECT (first gate),
+            // and this client handler checks scope (second gate).
+            const invalidateIfMatch = (payload: { new?: Record<string, unknown>; old?: Record<string, unknown> }) => {
+                const row = payload.new ?? payload.old ?? {};
+                if (row.target_type && row.target_type !== targetType) return;
+                if (row.scope && row.scope !== scope) return;
+                queryClient.invalidateQueries({ queryKey });
+            };
+
+            channel = supabase
+                .channel(channelName)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'post_reactions',
+                        filter: `target_id=eq.${targetId}`,
+                    },
+                    invalidateIfMatch
+                )
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'post_comments',
+                        filter: `target_id=eq.${targetId}`,
+                    },
+                    invalidateIfMatch
+                )
+                .subscribe();
+        }, 150);
 
         return () => {
-            supabase.removeChannel(channel);
+            cancelled = true;
+            clearTimeout(timer);
+            if (channel) supabase.removeChannel(channel);
         };
     }, [targetType, targetId, scope, queryClient]);
 }
