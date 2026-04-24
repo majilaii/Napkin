@@ -74,6 +74,65 @@ export interface PostInteractionsData {
 
 export type TargetType = 'table_night' | 'entry';
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Optimistically patch a top_emojis array for a single emoji add/remove.
+ * Mirrors the SQL trigger sort: count desc, then last_reacted_at desc.
+ * The server returns authoritative top_emojis in the react response;
+ * this is just for the instant render between mutate and success.
+ */
+function patchTopEmojis(
+    current: EmojiCount[],
+    emoji: string,
+    op: 'add' | 'remove',
+): EmojiCount[] {
+    const now = new Date().toISOString();
+    const idx = current.findIndex((e) => e.emoji === emoji);
+    let next: EmojiCount[];
+    if (op === 'add') {
+        if (idx >= 0) {
+            next = current.map((e, i) =>
+                i === idx
+                    ? { ...e, count: e.count + 1, last_reacted_at: now }
+                    : e,
+            );
+        } else {
+            next = [...current, { emoji, count: 1, last_reacted_at: now }];
+        }
+    } else {
+        if (idx < 0) return current;
+        const e = current[idx];
+        if (e.count <= 1) {
+            next = current.filter((_, i) => i !== idx);
+        } else {
+            next = current.map((x, i) => (i === idx ? { ...x, count: x.count - 1 } : x));
+        }
+    }
+    return next.sort(
+        (a, b) => b.count - a.count || b.last_reacted_at.localeCompare(a.last_reacted_at),
+    );
+}
+
+/**
+ * Single source of truth for the comment count rendered in UI.
+ * (TICKET-036 P1-4)
+ *
+ * Derive from `comments.filter(c => !c.failed).length` rather than
+ * trusting `counts.comments`. The optimistic add/delete paths leave
+ * the comments array in the right shape; treating the failed flag as
+ * the only signal removes the cross-mutation drift the manual
+ * inc/dec used to introduce.
+ *
+ * Falls back to the server count when the comment list is missing
+ * (initial loading state).
+ */
+export function effectiveCommentCount(data: PostInteractionsData | null | undefined): number {
+    if (!data) return 0;
+    if (!data.comments) return data.counts?.comments ?? 0;
+    return data.comments.filter((c) => !c.failed).length;
+}
+
 // ── Fetch ────────────────────────────────────────────────────────────────────
 
 async function fetchPostInteractions(
@@ -118,7 +177,12 @@ export function useToggleReaction() {
 
     return useMutation({
         mutationFn: async ({ targetType, targetId, emoji, scope }: ToggleReactionInput) => {
-            return callEdgeFn<{ added: boolean; removed: boolean; reaction: Reaction | null }>(
+            return callEdgeFn<{
+                added: boolean;
+                removed: boolean;
+                reaction: Reaction | null;
+                counts?: { reactions: number; top_emojis: EmojiCount[] };
+            }>(
                 'post-interactions',
                 {
                     action: 'react',
@@ -178,12 +242,13 @@ export function useToggleReaction() {
                     counts: {
                         ...previous.counts,
                         reactions: nextReactions.length,
+                        top_emojis: patchTopEmojis(previous.counts.top_emojis, emoji, alreadyReacted ? 'remove' : 'add'),
                     },
                 });
             }
 
             if (scope === 'table') {
-                // Flips reaction_count + my_reactions on the matching item.
+                // Flips reaction_count + my_reactions + top_emojis on the matching item.
                 // Shared by both cache shapes since they use the same field names.
                 const flipItem = (item: any) => {
                     if (item?.id !== targetId) return item;
@@ -197,6 +262,7 @@ export function useToggleReaction() {
                         reaction_count: has
                             ? Math.max(0, (item.reaction_count ?? 0) - 1)
                             : (item.reaction_count ?? 0) + 1,
+                        top_emojis: patchTopEmojis(item.top_emojis ?? [], emoji, has ? 'remove' : 'add'),
                     };
                 };
 
@@ -241,15 +307,66 @@ export function useToggleReaction() {
             toast.show("Couldn't react. Try again.");
         },
 
-        onSuccess: (_data, { targetType, targetId, scope }) => {
-            queryClient.invalidateQueries({
-                queryKey: queryKeys.postInteractions.all(targetType, targetId, scope),
-            });
-            if (scope === 'table') {
-                // Refetch every feed-side cache so counts reconcile with server truth
-                queryClient.invalidateQueries({ queryKey: queryKeys.tables.activityAll() });
-                queryClient.invalidateQueries({ queryKey: queryKeys.feed.rootAll() });
+        onSuccess: (result, { targetType, targetId, emoji, scope }) => {
+            // P0-5: reconcile cache from server response instead of blast-invalidate.
+            // Server returns: added/removed flag, the inserted reaction (if added),
+            // and the trigger-maintained counts (reactions count + top_emojis).
+            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
+            const current = queryClient.getQueryData<PostInteractionsData>(key);
+            if (current) {
+                let nextReactions = current.reactions;
+                if (result.added && result.reaction) {
+                    // Swap the optimistic row (matched by user_id+emoji) for the server row.
+                    const serverReaction = result.reaction;
+                    let swapped = false;
+                    nextReactions = current.reactions.map((r) => {
+                        if (!swapped && r.id.startsWith('optimistic-') && r.user_id === serverReaction.user_id && r.emoji === serverReaction.emoji) {
+                            swapped = true;
+                            return serverReaction;
+                        }
+                        return r;
+                    });
+                    // If no optimistic row matched (e.g. cache was cleared mid-flight), append.
+                    if (!swapped) nextReactions = [...nextReactions, serverReaction];
+                }
+                // For removed reactions the optimistic filter already dropped it; nothing to swap.
+                queryClient.setQueryData<PostInteractionsData>(key, {
+                    ...current,
+                    reactions: nextReactions,
+                    counts: result.counts
+                        ? { ...current.counts, reactions: result.counts.reactions, top_emojis: result.counts.top_emojis }
+                        : current.counts,
+                });
             }
+
+            if (scope === 'table' && result.counts) {
+                // Sync feed-card top_emojis + reaction_count from server's authoritative
+                // counts so all caches converge without invalidating.
+                const syncItem = (item: any) => {
+                    if (item?.id !== targetId) return item;
+                    return {
+                        ...item,
+                        reaction_count: result.counts!.reactions,
+                        top_emojis: result.counts!.top_emojis,
+                    };
+                };
+                queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
+                    { queryKey: queryKeys.tables.activityAll() },
+                    (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
+                        if (!data?.pages) return data;
+                        return { ...data, pages: data.pages.map((page) => page.map(syncItem)) };
+                    },
+                );
+                queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
+                    { queryKey: queryKeys.feed.rootAll() },
+                    (data) => {
+                        if (!data?.entries) return data;
+                        return { ...data, entries: data.entries.map(syncItem) };
+                    },
+                );
+            }
+            // Suppress unused warnings.
+            void emoji;
         },
     });
 }
@@ -317,10 +434,8 @@ export function useAddComment() {
                 queryClient.setQueryData<PostInteractionsData>(key, {
                     ...previous,
                     comments: [...previous.comments, optimisticComment],
-                    counts: {
-                        ...previous.counts,
-                        comments: previous.counts.comments + 1,
-                    },
+                    // P1-4: counts.comments is no longer hand-managed; the UI
+                    // derives the live count via effectiveCommentCount(data).
                 });
             }
 
@@ -357,8 +472,9 @@ export function useAddComment() {
             const current = queryClient.getQueryData<PostInteractionsData>(key);
 
             // Keep the optimistic row visible but mark it as failed so the UI
-            // can render Retry / Discard. Decrement the comment count so the
-            // failed row doesn't inflate the feed-card pill.
+            // can render Retry / Discard. The derived count
+            // (effectiveCommentCount) ignores failed rows automatically, so
+            // we no longer hand-decrement counts.comments here. (P1-4)
             if (current && clientNonce) {
                 const next = current.comments.map((c) =>
                     c.client_nonce === clientNonce
@@ -368,10 +484,6 @@ export function useAddComment() {
                 queryClient.setQueryData<PostInteractionsData>(key, {
                     ...current,
                     comments: next,
-                    counts: {
-                        ...current.counts,
-                        comments: Math.max(0, current.counts.comments - 1),
-                    },
                 });
             } else if (context?.previous) {
                 queryClient.setQueryData(key, context.previous);
@@ -485,10 +597,8 @@ export function useDeleteComment() {
                 queryClient.setQueryData<PostInteractionsData>(key, {
                     ...previous,
                     comments: previous.comments.filter((c) => c.id !== commentId),
-                    counts: {
-                        ...previous.counts,
-                        comments: Math.max(0, previous.counts.comments - 1),
-                    },
+                    // P1-4: derived via effectiveCommentCount(data); no manual
+                    // counts.comments touch needed.
                 });
             }
 

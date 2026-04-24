@@ -6,8 +6,12 @@
  *   - saved:   filled heart, warm accent (Colors.primary)
  *
  * Behavior:
- *   - Optimistic toggle: flips local state immediately, fires mutation, rolls back + Alert on error
- *   - Scale-bounce animation via Reanimated withSpring on tap
+ *   - Optimistic toggle is owned by the hook layer (useWishlistAdd /
+ *     useWishlistRemove): they flip the wishlist.check cache key on
+ *     mutate and roll back on error. useIsWishlisted reads that key,
+ *     so the UI stays in sync without component-local state.
+ *     (TICKET-036 P1-2 / P1-14)
+ *   - Scale-bounce animation via Reanimated withSpring on tap.
  *
  * Props:
  *   - restaurantId: UUID of a persisted restaurant (pass this OR restaurant)
@@ -15,7 +19,7 @@
  *   - size:         icon size in pt (default 24)
  *   - userId:       required to enable the mutations and drive useIsWishlisted
  */
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Pressable, Alert } from 'react-native';
 import Animated, {
     useSharedValue,
@@ -46,14 +50,11 @@ export function WishlistHeartButton({
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
-    const isServerSaved = useIsWishlisted(restaurantId, userId);
-    const [optimisticSaved, setOptimisticSaved] = React.useState<boolean | null>(null);
-    const saved = optimisticSaved !== null ? optimisticSaved : isServerSaved;
-
-    // Sync optimistic state when server state changes (e.g., after cache invalidation)
-    useEffect(() => {
-        setOptimisticSaved(null);
-    }, [isServerSaved]);
+    // useIsWishlisted accepts either a UUID (queries server) or an
+    // external_id (reads cache, populated by useWishlistAdd's dual-write
+    // optimistic patch). Either way, the hook is the single source of truth.
+    const effectiveId = restaurantId ?? restaurant?.external_id;
+    const saved = useIsWishlisted(effectiveId, userId);
 
     const scale = useSharedValue(1);
     const animatedStyle = useAnimatedStyle(() => ({
@@ -66,39 +67,29 @@ export function WishlistHeartButton({
     const handlePress = () => {
         if (!userId) return;
 
-        // Optimistic flip
-        const nextSaved = !saved;
-        setOptimisticSaved(nextSaved);
-
         // Scale bounce
         scale.value = withSpring(1.3, { damping: 10, stiffness: 300 }, () => {
             scale.value = withSpring(1, { damping: 12, stiffness: 260 });
         });
 
-        if (nextSaved) {
-            // Adding to wishlist
+        if (!saved) {
+            // Adding to wishlist — hook handles the optimistic check-key flip.
             const addInput = restaurantId
                 ? { restaurant_id: restaurantId }
                 : { restaurant };
 
-            addMutation.mutate(addInput as any, {
+            addMutation.mutate(addInput as Parameters<typeof addMutation.mutate>[0], {
                 onError: () => {
-                    setOptimisticSaved(!nextSaved); // rollback
                     Alert.alert("Couldn't save", 'Try again');
                 },
             });
         } else {
-            // Removing from wishlist — need the restaurant_id.
+            // Removing from wishlist — need the persisted restaurant_id.
             // For a ghost restaurant we may have just resolved one via the add mutation.
             const rid = restaurantId ?? addMutation.data?.restaurant_id;
-            if (!rid) {
-                // Truly nothing to remove (no prior add in this session)
-                setOptimisticSaved(!nextSaved);
-                return;
-            }
+            if (!rid) return;
             removeMutation.mutate(rid, {
                 onError: () => {
-                    setOptimisticSaved(!nextSaved); // rollback
                     Alert.alert("Couldn't remove", 'Try again');
                 },
             });

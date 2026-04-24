@@ -1,13 +1,20 @@
 /**
  * Returns true if the given restaurant is in the user's personal wishlist.
  *
- * Queries the server directly (cache-independent), so it stays correct for
- * users with more than one page of saves where useMyWishlist hasn't loaded
- * the matching item yet.
+ * Accepts either a persisted restaurant_id (UUID) or a Places external_id.
+ *
+ * - UUID: queries the server (cache-independent, correct for users with more
+ *   than one page of saves where useMyWishlist hasn't loaded the matching
+ *   item yet).
+ * - external_id: read-only from cache. The optimistic dual-write in
+ *   useWishlistAdd.onSuccess sets this key true so the heart fills in
+ *   immediately for ghost-restaurant saves (TICKET-036 P1-14).
  */
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function checkWishlisted(restaurantId: string): Promise<boolean> {
     const data = await callEdgeFn<{ wishlisted: boolean }>('wishlist', {
@@ -18,15 +25,26 @@ async function checkWishlisted(restaurantId: string): Promise<boolean> {
 }
 
 export function useIsWishlisted(
-    restaurantId: string | null | undefined,
+    restaurantIdOrExternalId: string | null | undefined,
     userId: string | null | undefined,
 ): boolean {
+    const queryClient = useQueryClient();
+    const id = restaurantIdOrExternalId ?? null;
+    const isUuid = !!id && UUID_RE.test(id);
+
     const { data } = useQuery({
-        queryKey: restaurantId && userId
-            ? queryKeys.wishlist.check(userId, restaurantId)
+        queryKey: id && userId
+            ? queryKeys.wishlist.check(userId, id)
             : ['wishlist', 'check', 'disabled'],
-        queryFn: () => checkWishlisted(restaurantId!),
-        enabled: !!restaurantId && !!userId,
+        // For UUIDs, fetch from server. For external_ids, the cache value
+        // (set by useWishlistAdd dual-write) is the source of truth — initial
+        // value false until the user saves the ghost in this session.
+        queryFn: isUuid
+            ? () => checkWishlisted(id!)
+            : () => Promise.resolve(
+                  queryClient.getQueryData<boolean>(queryKeys.wishlist.check(userId!, id!)) ?? false,
+              ),
+        enabled: !!id && !!userId,
         staleTime: 1000 * 60 * 5,
     });
     return !!data;

@@ -53,32 +53,51 @@ export function useWishlistAdd(userId: string | null | undefined) {
         mutationFn: addToWishlist,
         onMutate: async (input) => {
             if (!userId) return undefined;
-            // TICKET-036 P0-8 / P1-2: snapshot the wishlist-check key for the
-            // restaurant we're optimistically saving, so we can roll back on error.
-            const checkKey = input.restaurant_id
-                ? queryKeys.wishlist.check(userId, input.restaurant_id)
-                : null;
-            if (checkKey) {
-                await queryClient.cancelQueries({ queryKey: checkKey });
-                const previous = queryClient.getQueryData<boolean>(checkKey);
-                queryClient.setQueryData(checkKey, true);
-                return { checkKey, previous };
+            // TICKET-036 P0-8 / P1-2 / P1-14: snapshot the wishlist-check keys
+            // we're about to flip so we can roll back on error. We optimistically
+            // mark BOTH the persisted-id key (if known) and the external_id key
+            // (if a ghost-restaurant payload) as true; the server will resolve
+            // the ghost and we'll write the canonical id key in onSuccess.
+            const keys: Array<readonly unknown[]> = [];
+            if (input.restaurant_id) {
+                keys.push(queryKeys.wishlist.check(userId, input.restaurant_id));
             }
-            return undefined;
+            if (input.restaurant?.external_id) {
+                keys.push(queryKeys.wishlist.check(userId, input.restaurant.external_id));
+            }
+            if (keys.length === 0) return undefined;
+
+            const snapshots: Array<{ key: readonly unknown[]; previous: boolean | undefined }> = [];
+            for (const k of keys) {
+                await queryClient.cancelQueries({ queryKey: k });
+                snapshots.push({ key: k, previous: queryClient.getQueryData<boolean>(k) });
+                queryClient.setQueryData(k, true);
+            }
+            return { snapshots };
         },
         onError: (_err, _input, context) => {
-            if (context?.checkKey) {
-                queryClient.setQueryData(context.checkKey, context.previous);
+            if (context?.snapshots) {
+                for (const { key, previous } of context.snapshots) {
+                    queryClient.setQueryData(key, previous);
+                }
             }
         },
-        onSuccess: (item) => {
+        onSuccess: (item, input) => {
             if (!userId) return;
             // Authoritative server id — set the canonical check key true.
-            // For ghost (external_id) saves the optimistic key may have been
-            // a different id; rely on next-focus refetch for the canonical key.
             if (item?.restaurant_id) {
                 queryClient.setQueryData(
                     queryKeys.wishlist.check(userId, item.restaurant_id),
+                    true,
+                );
+            }
+            // P1-14: keep the external_id key true too. The hero/heart button
+            // is keyed by whichever id the caller had (often external_id for a
+            // not-yet-persisted Places result). Without this dual-write the
+            // heart goes back to outline once the optimistic state ages out.
+            if (input.restaurant?.external_id) {
+                queryClient.setQueryData(
+                    queryKeys.wishlist.check(userId, input.restaurant.external_id),
                     true,
                 );
             }
