@@ -131,6 +131,58 @@ Rename DB tables and edge function paths only if a ticket explicitly scopes that
 - `useSubmitTake` was deleted in TICKET-039 — duplicate of `useRateTableNight`.
 - `supabase/functions/table-members/` was deleted in TICKET-039 — never invoked from any hook. Use `table-management?action=add_member`.
 
+## Edge function calls — use `callEdgeFn`
+
+`napkin-app/lib/edgeInvoke.ts::callEdgeFn` is the one canonical way to call any Supabase edge function from a hook. Do **not** call `supabase.functions.invoke` directly and do **not** raw-`fetch` an edge function URL outside this helper.
+
+Why: auth attachment, error unwrapping, GET-with-query-params, and the TICKET-037 structured error envelope are all centralized there. Hooks that bypass it will drift and silently 401 when contract changes (see TICKET-038 retro: Atlas + Cy hooks both shipped manual `Authorization` headers and broke).
+
+```ts
+// POST (mutation) — typical edge function shape
+const item = await callEdgeFn<WishlistItem>('wishlist', {
+    action: 'add',
+    body: { restaurant_id },
+});
+
+// GET (read with query params) — when invoke is the wrong transport
+const page = await callEdgeFn<DiaryPage>('user-profile', {
+    method: 'GET',
+    action: 'diary',
+    params: { user_id, limit: 30 },
+});
+```
+
+Errors are real `Error` instances with `.cause: UnwrappedError` (`{ code, message, details?, status? }`) for callers that want to branch on the structured shape.
+
+## Mutation pattern (TanStack Query)
+
+Every data-mutation hook follows this shape (TICKET-036 doctrine):
+
+```ts
+useMutation({
+    mutationFn: async (input) => callEdgeFn(...),
+    onMutate: async (input) => {
+        await queryClient.cancelQueries({ queryKey });
+        const previous = queryClient.getQueryData(queryKey);
+        queryClient.setQueryData(queryKey, (old) => patch(old, input));
+        return { previous };
+    },
+    onError: (_err, _input, ctx) => {
+        if (ctx?.previous !== undefined) queryClient.setQueryData(queryKey, ctx.previous);
+    },
+    onSuccess: (result) => {
+        // Reconcile with server shape; do not blanket-invalidate.
+    },
+});
+```
+
+Rules:
+
+1. **`onMutate` ALWAYS snapshots `previous` and returns it.** Non-negotiable. Without this, errors leave the cache stuck on the optimistic value (TICKET-036 P0-8 was exactly this on `useMarkSeen`).
+2. **Never invalidate on a wider prefix than needed.** `['users', 'profile']` (all profiles) is wrong; `queryKeys.users.profile(targetId)` is right. Loop if multiple ids.
+3. **Related caches get patched, not invalidated.** Flipping a follow shouldn't refetch every cached profile (TICKET-036 P1-8).
+4. **`onSettled` invalidations are dangerous if `onMutate` already patched.** They race with the patch. Only invalidate at settle time when the server shape carries data the patch couldn't synthesize (e.g. server-assigned positions in a list).
+
 ## Current State (as of 2026-04-17)
 
 Shipped foundations:

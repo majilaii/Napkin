@@ -7,7 +7,7 @@
  *   Rolls back on server error.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { MyList } from './useMyLists';
 import type { ListDetailData } from './useList';
@@ -18,17 +18,7 @@ export interface RemoveFromListInput {
 }
 
 async function removeFromList(input: RemoveFromListInput): Promise<void> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('lists', {
-        body: { action: 'remove_entry', ...input },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
+    await callEdgeFn<void>('lists', { action: 'remove_entry', body: input });
 }
 
 export function useRemoveFromList(userId: string | null | undefined) {
@@ -97,13 +87,9 @@ export function useRemoveFromList(userId: string | null | undefined) {
                 queryClient.setQueryData(context.detailKey, context.prevDetail);
             }
         },
-        onSettled: (_data, _err, { list_id, restaurant_id }) => {
-            if (userId) {
-                queryClient.invalidateQueries({
-                    queryKey: queryKeys.lists.containing(userId, restaurant_id),
-                });
-                queryClient.invalidateQueries({ queryKey: queryKeys.lists.mine(userId) });
-            }
+        onSettled: (_data, _err, { list_id }) => {
+            // TICKET-036 P1-3: only refetch list detail; onMutate already patched
+            // containing + mine and re-invalidating them races with the patch.
             queryClient.invalidateQueries({ queryKey: queryKeys.lists.detail(list_id) });
         },
     });

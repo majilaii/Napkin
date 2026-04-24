@@ -7,7 +7,7 @@
  *   Rolls back both on server error.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { MyList } from './useMyLists';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
@@ -29,18 +29,7 @@ export interface ListEntryResult {
 }
 
 async function addToList(input: AddToListInput): Promise<ListEntryResult> {
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const { data, error } = await supabase.functions.invoke('lists', {
-        body: { action: 'add_entry', ...input },
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
-    });
-
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
-    return data?.data;
+    return callEdgeFn<ListEntryResult>('lists', { action: 'add_entry', body: input });
 }
 
 export function useAddToList(userId: string | null | undefined) {
@@ -83,13 +72,12 @@ export function useAddToList(userId: string | null | undefined) {
             queryClient.setQueryData(context.containingKey, context.prevContaining);
             queryClient.setQueryData(context.mineKey, context.prevMine);
         },
-        onSettled: (_data, _err, { list_id, restaurant_id }) => {
-            if (userId && restaurant_id) {
-                queryClient.invalidateQueries({
-                    queryKey: queryKeys.lists.containing(userId, restaurant_id),
-                });
-                queryClient.invalidateQueries({ queryKey: queryKeys.lists.mine(userId) });
-            }
+        onSettled: (_data, _err, { list_id }) => {
+            // TICKET-036 P1-3: only invalidate the list detail — it's the
+            // server's authoritative entries[] (positions, computed fields).
+            // Do NOT invalidate `containing` or `mine`: onMutate already patched
+            // them and a settle-time invalidation creates a race that flip-flops
+            // on rapid add→remove→add sequences.
             queryClient.invalidateQueries({ queryKey: queryKeys.lists.detail(list_id) });
         },
     });
