@@ -54,6 +54,8 @@ interface Props {
     onBack: () => void;
     onRestaurantPress: (restaurantId: string) => void;
     onRefresh?: () => void;
+    /** Called when the grid reaches its end — trigger fetchNextPage here */
+    onLoadMore?: () => void;
     isRefreshing?: boolean;
     isLoading?: boolean;
     palette?: typeof Colors.light;
@@ -172,6 +174,7 @@ export function AtlasCityPage({
     onBack,
     onRestaurantPress,
     onRefresh,
+    onLoadMore,
     isRefreshing = false,
     isLoading = false,
     palette: paletteProp,
@@ -433,6 +436,11 @@ export function AtlasCityPage({
                             />
                         ) : undefined
                     }
+                    onScrollEndDrag={({ nativeEvent }) => {
+                        const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
+                        const nearEnd = contentOffset.y + layoutMeasurement.height >= contentSize.height - 200;
+                        if (nearEnd && onLoadMore) onLoadMore();
+                    }}
                 >
                     {controls}
 

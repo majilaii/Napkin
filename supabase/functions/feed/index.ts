@@ -9,20 +9,28 @@
  * The caller's own entries are INCLUDED — the feed is "what's happening across
  * my Tables" which includes my own activity.
  *
- * Response shape:
+ * Response shape (Page envelope):
  *   {
  *     data: {
- *       entries: FeedEntry[],       // chronological, newest first
- *       trending: TrendingPoster[], // top 5, ranked
- *       windowDays: number,
+ *       rows: FeedEntry[],          // chronological, newest first
+ *       next_cursor: string | null,
+ *       has_more: boolean,
+ *       trending: TrendingPoster[], // top 5, ranked — ONLY on page 0 (null on pages 1+)
+ *       window_days: number,
  *     }
  *   }
+ *
+ * Cursor: base64(sort_date_iso|entry_id)  — sort_date = visited_at ?? created_at
+ * Default page size: 30. Hard cap: 50.
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { buildPage, decodeCursor, applyKeysetFilter } from '../_shared/pagination.ts';
 
 const DEFAULT_WINDOW_DAYS = 14;
+const DEFAULT_PAGE_SIZE = 30;
+const MAX_PAGE_SIZE = 50;
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -52,16 +60,34 @@ serve(async (req) => {
             );
         }
 
-        if (req.method !== 'GET') {
+        // Accept both GET (legacy) and POST (new pagination path)
+        let windowDays = DEFAULT_WINDOW_DAYS;
+        let cursor: string | null = null;
+        let limit = DEFAULT_PAGE_SIZE;
+
+        if (req.method === 'POST') {
+            const body = await req.json().catch(() => ({}));
+            windowDays = parseInt(body.window_days ?? String(DEFAULT_WINDOW_DAYS));
+            cursor = body.cursor ?? null;
+            limit = Math.min(Math.max(parseInt(body.limit ?? String(DEFAULT_PAGE_SIZE)), 1), MAX_PAGE_SIZE);
+        } else if (req.method === 'GET') {
+            const url = new URL(req.url);
+            windowDays = parseInt(url.searchParams.get('window_days') || String(DEFAULT_WINDOW_DAYS));
+            cursor = url.searchParams.get('cursor') ?? null;
+            limit = Math.min(
+                Math.max(parseInt(url.searchParams.get('limit') || String(DEFAULT_PAGE_SIZE)), 1),
+                MAX_PAGE_SIZE,
+            );
+        } else {
             return new Response(
                 JSON.stringify({ error: 'Method not allowed' }),
                 { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
             );
         }
 
-        const url = new URL(req.url);
-        const windowDays = parseInt(url.searchParams.get('window_days') || String(DEFAULT_WINDOW_DAYS));
         const sinceIso = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+        const decoded = decodeCursor(cursor);
+        const isFirstPage = !decoded;
 
         // 1. Find all tables the caller belongs to
         const { data: memberships, error: memErr } = await supabase
@@ -74,13 +100,21 @@ serve(async (req) => {
 
         if (tableIds.length === 0) {
             return new Response(
-                JSON.stringify({ data: { entries: [], trending: [], windowDays } }),
+                JSON.stringify({
+                    data: {
+                        rows: [],
+                        next_cursor: null,
+                        has_more: false,
+                        trending: isFirstPage ? [] : null,
+                        window_days: windowDays,
+                    },
+                }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
             );
         }
 
-        // 2. Pull entries across all those tables in the window
-        const { data: entries, error: entriesErr } = await supabase
+        // 2. Pull entries across all those tables in the window, with cursor keyset
+        let entriesQuery = supabase
             .from('entries')
             .select(`
                 id,
@@ -109,11 +143,17 @@ serve(async (req) => {
             .is('table_night_id', null)
             .gte('visited_at', sinceIso)
             .order('visited_at', { ascending: false })
-            .limit(200);
+            .order('id', { ascending: false })
+            .limit(limit + 1);
 
+        if (decoded) {
+            entriesQuery = applyKeysetFilter(entriesQuery, { sort_date: decoded.sort_date, id: decoded.id });
+        }
+
+        const { data: entries, error: entriesErr } = await entriesQuery;
         if (entriesErr) throw entriesErr;
 
-        const entryList = (entries ?? []) as Array<{
+        const rawEntries = (entries ?? []) as Array<{
             id: string;
             user_id: string;
             restaurant_id: string | null;
@@ -127,7 +167,7 @@ serve(async (req) => {
         }>;
 
         // 3. Hydrate profiles for authors
-        const authorIds = [...new Set(entryList.map((e) => e.user_id))];
+        const authorIds = [...new Set(rawEntries.map((e) => e.user_id))];
         const { data: profiles } = authorIds.length > 0
             ? await supabase
                 .from('profiles')
@@ -140,13 +180,13 @@ serve(async (req) => {
             ),
         );
 
-        // 4. Photo counts
-        const entryIds = entryList.map((e) => e.id);
-        const { data: photoRows } = entryIds.length > 0
+        // 4. Photo counts (only for the page rows)
+        const entryIdsForPhotos = rawEntries.map((e) => e.id);
+        const { data: photoRows } = entryIdsForPhotos.length > 0
             ? await supabase
                 .from('entry_photos')
                 .select('entry_id, photo_url')
-                .in('entry_id', entryIds)
+                .in('entry_id', entryIdsForPhotos)
             : { data: [] };
         const photosByEntry = new Map<string, string[]>();
         for (const p of (photoRows ?? []) as { entry_id: string; photo_url: string }[]) {
@@ -155,16 +195,16 @@ serve(async (req) => {
             photosByEntry.set(p.entry_id, list);
         }
 
-        // 4b. Caller's reactions on these entries (powers tap-to-react state)
+        // 4b. Caller's reactions on these entries
         const myReactionsByEntry = new Map<string, string[]>();
-        if (entryIds.length > 0) {
+        if (entryIdsForPhotos.length > 0) {
             const { data: reactRows } = await supabase
                 .from('post_reactions')
                 .select('target_id, emoji')
                 .eq('target_type', 'entry')
                 .eq('user_id', user.id)
                 .eq('scope', 'table')
-                .in('target_id', entryIds);
+                .in('target_id', entryIdsForPhotos);
             for (const r of (reactRows ?? []) as { target_id: string; emoji: string }[]) {
                 const list = myReactionsByEntry.get(r.target_id) ?? [];
                 list.push(r.emoji);
@@ -172,16 +212,12 @@ serve(async (req) => {
             }
         }
 
-        // 4c. prior_visit — for the caller's own entries, fetch prior visit count + last rating.
-        // Only runs for entries where user_id === caller's id (avoids privacy leak).
-        // "Prior" = strictly earlier than the target entry's visited_at — future visits
-        // must not be counted for older entries.
-        const myOwnEntries = entryList.filter((e) => e.user_id === user.id && e.restaurant_id != null);
+        // 4c. prior_visit — for the caller's own entries on this page
+        const myOwnEntries = rawEntries.filter((e) => e.user_id === user.id && e.restaurant_id != null);
         const priorVisitMap = new Map<string, { count: number; last_rating: number | null }>();
 
         if (myOwnEntries.length > 0) {
             const myRestaurantIds = [...new Set(myOwnEntries.map((e) => e.restaurant_id as string))];
-
             const { data: priorRows } = await supabase
                 .from('entries')
                 .select('id, restaurant_id, rating, visited_at')
@@ -189,7 +225,6 @@ serve(async (req) => {
                 .in('restaurant_id', myRestaurantIds)
                 .order('visited_at', { ascending: false });
 
-            // Group all the caller's entries by restaurant (sorted desc by visited_at).
             const byRestaurant = new Map<string, { id: string; rating: number | null; visited_at: string | null }[]>();
             for (const row of (priorRows ?? []) as { id: string; restaurant_id: string | null; rating: number | null; visited_at: string | null }[]) {
                 if (!row.restaurant_id) continue;
@@ -198,7 +233,6 @@ serve(async (req) => {
                 byRestaurant.set(row.restaurant_id, list);
             }
 
-            // Per target entry, filter strictly-earlier rows.
             for (const e of myOwnEntries) {
                 const rows = byRestaurant.get(e.restaurant_id as string) ?? [];
                 const targetVisitedAt = e.visited_at ?? '';
@@ -215,11 +249,11 @@ serve(async (req) => {
             }
         }
 
-        // 5. Shape response
-        const shaped = entryList.map((e) => {
+        // 5. Shape entries
+        const shaped = rawEntries.map((e) => {
             const extraPhotos = photosByEntry.get(e.id) ?? [];
             const photos = [
-                ...(e.photo_url ? [e.photo_url] : []),
+                ...(e.photo_url ? [e.photo_url as string] : []),
                 ...extraPhotos,
             ];
             return {
@@ -232,69 +266,85 @@ serve(async (req) => {
                 created_at: e.created_at,
                 photos,
                 photo_count: photos.length,
-                reaction_count: e.reaction_count ?? 0,
-                comment_count: e.comment_count ?? 0,
-                top_emojis: e.top_emojis ?? [],
+                reaction_count: (e.reaction_count as number) ?? 0,
+                comment_count: (e.comment_count as number) ?? 0,
+                top_emojis: (e.top_emojis as unknown[]) ?? [],
                 my_reactions: myReactionsByEntry.get(e.id) ?? [],
                 restaurant: e.restaurants
                     ? {
-                        id: e.restaurants.id,
-                        name: e.restaurants.name,
-                        photo_url: e.restaurants.photo_url,
+                        id: (e.restaurants as any).id,
+                        name: (e.restaurants as any).name,
+                        photo_url: (e.restaurants as any).photo_url,
                     }
                     : null,
                 author: profileMap.get(e.user_id) ?? { display_name: 'Someone', avatar_url: null },
                 sort_date: e.visited_at || e.created_at,
-                // prior_visit: nullable — only present for caller's own entries with prior history
                 prior_visit: priorVisitMap.get(e.id) ?? null,
             };
         });
 
-        // 6. Trending rail — count distinct loggers per restaurant in the window
-        const byRestaurant = new Map<string, {
-            restaurant_id: string;
-            restaurant: { id: string; name: string; photo_url: string | null };
-            loggers: Set<string>;
-            sumRating: number;
-            countRating: number;
-            latest: string;
-        }>();
+        // Build the Page envelope
+        const page = buildPage(shaped, limit, (e) => ({
+            sort_date: e.sort_date,
+            id: e.id,
+        }));
 
-        for (const e of shaped) {
-            if (!e.restaurant || !e.restaurant_id) continue;
-            const key = e.restaurant_id;
-            const cur = byRestaurant.get(key) ?? {
-                restaurant_id: e.restaurant_id,
-                restaurant: e.restaurant,
-                loggers: new Set<string>(),
-                sumRating: 0,
-                countRating: 0,
-                latest: e.sort_date,
-            };
-            cur.loggers.add(e.user_id);
-            if (typeof e.rating === 'number') {
-                cur.sumRating += e.rating;
-                cur.countRating += 1;
+        // 6. Trending rail — only compute on first page
+        let trending: unknown[] | null = null;
+        if (isFirstPage) {
+            const byRestaurant = new Map<string, {
+                restaurant_id: string;
+                restaurant: { id: string; name: string; photo_url: string | null };
+                loggers: Set<string>;
+                sumRating: number;
+                countRating: number;
+                latest: string;
+            }>();
+
+            for (const e of page.rows) {
+                if (!e.restaurant || !e.restaurant_id) continue;
+                const key = e.restaurant_id;
+                const cur = byRestaurant.get(key) ?? {
+                    restaurant_id: e.restaurant_id,
+                    restaurant: e.restaurant,
+                    loggers: new Set<string>(),
+                    sumRating: 0,
+                    countRating: 0,
+                    latest: e.sort_date,
+                };
+                cur.loggers.add(e.user_id);
+                if (typeof e.rating === 'number') {
+                    cur.sumRating += e.rating;
+                    cur.countRating += 1;
+                }
+                if (e.sort_date > cur.latest) cur.latest = e.sort_date;
+                byRestaurant.set(key, cur);
             }
-            if (e.sort_date > cur.latest) cur.latest = e.sort_date;
-            byRestaurant.set(key, cur);
+
+            trending = [...byRestaurant.values()]
+                .sort((a, b) => {
+                    if (b.loggers.size !== a.loggers.size) return b.loggers.size - a.loggers.size;
+                    return a.latest < b.latest ? 1 : -1;
+                })
+                .slice(0, 5)
+                .map((r, i) => ({
+                    rank: i + 1,
+                    restaurant: r.restaurant,
+                    logger_count: r.loggers.size,
+                    average_rating: r.countRating > 0 ? r.sumRating / r.countRating : null,
+                }));
         }
 
-        const trending = [...byRestaurant.values()]
-            .sort((a, b) => {
-                if (b.loggers.size !== a.loggers.size) return b.loggers.size - a.loggers.size;
-                return a.latest < b.latest ? 1 : -1;
-            })
-            .slice(0, 5)
-            .map((r, i) => ({
-                rank: i + 1,
-                restaurant: r.restaurant,
-                logger_count: r.loggers.size,
-                average_rating: r.countRating > 0 ? r.sumRating / r.countRating : null,
-            }));
-
         return new Response(
-            JSON.stringify({ data: { entries: shaped, trending, windowDays } }),
+            JSON.stringify({
+                data: {
+                    rows: page.rows,
+                    next_cursor: page.next_cursor,
+                    has_more: page.has_more,
+                    trending,
+                    window_days: windowDays,
+                },
+            }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         );
     } catch (error) {

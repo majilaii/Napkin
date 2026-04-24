@@ -1,14 +1,18 @@
 /**
- * useTableAtlasCity — city-page query for the Atlas city deep-dive.
+ * useTableAtlasCity — paginated city-page query for the Atlas city deep-dive.
+ * TICKET-035: converted to cursor pagination via useCursorPagedQuery.
  *
  * Returns restaurant tiles for a specific city in the Table's Atlas,
  * including tile_type (solo/round/mixed), rating, wished_by_viewer, and visits.
+ * Sorted by last_visit_date DESC, restaurant_id DESC.
  *
- * Calls: POST table-atlas { action: 'city-page', table_id, city }
+ * Consumers read city_stats from pages[0] and flatten tiles with flattenPages.
+ *
+ * Calls: POST table-atlas { action: 'city-page', table_id, city, cursor? }
  */
-import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -66,6 +70,21 @@ export type AtlasCityStats = {
     member_count: number;
 };
 
+/**
+ * Wire shape from the edge function. Extends Page<AtlasRestaurantTile> with
+ * city-level metadata (city, city_stats) that lives on every page but is most
+ * useful from pages[0].
+ */
+export type AtlasCityPage = Page<AtlasRestaurantTile> & {
+    city: string;
+    city_stats: AtlasCityStats;
+};
+
+/**
+ * Legacy flat shape used by AtlasCityPage component.
+ * Built from the paginated data in the screen — not returned from the server directly.
+ * Kept for component compatibility; `restaurants` = all flattened tiles.
+ */
 export type TableAtlasCityData = {
     city: string;
     city_stats: AtlasCityStats;
@@ -74,17 +93,20 @@ export type TableAtlasCityData = {
 
 // ── Fetcher ───────────────────────────────────────────────────────────────────
 
-async function fetchTableAtlasCity(
+async function fetchAtlasCityPage(
     tableId: string,
     city: string,
-): Promise<TableAtlasCityData> {
+    cursor: string | null,
+    token: string | null,
+): Promise<AtlasCityPage> {
     const { data, error } = await supabase.functions.invoke('table-atlas', {
-        body: { action: 'city-page', table_id: tableId, city },
+        body: { action: 'city-page', table_id: tableId, city, cursor },
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
 
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
-    return data?.data as TableAtlasCityData;
+    return data?.data as AtlasCityPage;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -93,10 +115,15 @@ export function useTableAtlasCity(
     tableId: string | null | undefined,
     city: string | null | undefined,
 ) {
-    return useQuery({
+    return useCursorPagedQuery<AtlasRestaurantTile>({
         queryKey: queryKeys.atlas.city(tableId ?? '', city ?? ''),
-        queryFn: () => fetchTableAtlasCity(tableId!, city!),
+        fetchPage: (cursor, token) => fetchAtlasCityPage(tableId!, city!, cursor, token) as Promise<Page<AtlasRestaurantTile>>,
         enabled: !!tableId && !!city,
         staleTime: 1000 * 60 * 5,
     });
+}
+
+/** Flatten all pages of tiles. */
+export function flattenAtlasTiles(data: ReturnType<typeof useTableAtlasCity>['data']) {
+    return flattenPages(data);
 }

@@ -30,6 +30,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     useTableActivity,
+    flattenActivity,
     type TableNightActivity,
     type SoloShareActivity,
 } from '@/hooks/tables/useTableActivity';
@@ -55,7 +56,7 @@ export default function LookingBackScreen() {
     const foundedAt = activeTable?.created_at ?? null;
 
     const items = useMemo(
-        () => activityData?.pages?.flat() ?? [],
+        () => flattenActivity(activityData),
         [activityData],
     );
 

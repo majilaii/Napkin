@@ -33,6 +33,7 @@ import { useTables } from '@/hooks/tables/useTables';
 import { useLastSeenAt, useMarkSeen } from '@/hooks/tables/useLastSeenAt';
 import {
     useTableActivity,
+    flattenActivity,
     type ActivityItem,
     type SoloShareActivity,
     type TableNightActivity,
@@ -116,7 +117,7 @@ export default function TablesScreen() {
     } = useTableActivity(activeTable?.id);
 
     const items: ActivityItem[] = useMemo(
-        () => activityData?.pages?.flat() ?? [],
+        () => flattenActivity(activityData),
         [activityData],
     );
 

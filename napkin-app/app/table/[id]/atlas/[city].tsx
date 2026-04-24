@@ -18,7 +18,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useTableAtlasCity } from '@/hooks/tables/useTableAtlasCity';
+import { useTableAtlasCity, flattenAtlasTiles, type TableAtlasCityData } from '@/hooks/tables/useTableAtlasCity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { AtlasCityPage } from '@/components/atlas';
 
@@ -38,14 +38,25 @@ export default function AtlasCityScreen() {
     const city = cityParam ? decodeURIComponent(cityParam) : '';
 
     const {
-        data,
+        data: pagedData,
         isLoading,
         isRefetching,
         refetch,
         error,
+        fetchNextPage,
+        hasNextPage,
     } = useTableAtlasCity(tableId, city);
 
     const { data: members } = useTableMembers(tableId);
+
+    // Build flat legacy shape from all pages for AtlasCityPage component
+    const data: TableAtlasCityData | null = pagedData
+        ? {
+              city: (pagedData.pages[0] as any)?.city ?? city,
+              city_stats: (pagedData.pages[0] as any)?.city_stats ?? { city, spot_count: 0, member_count: 0 },
+              restaurants: flattenAtlasTiles(pagedData),
+          }
+        : null;
 
     // AC 18: redirect on error (403 non-member or any failure) — avoid blank screen
     React.useEffect(() => {
@@ -96,6 +107,7 @@ export default function AtlasCityScreen() {
                         onBack={() => router.back()}
                         onRestaurantPress={handleRestaurantPress}
                         onRefresh={refetch}
+                        onLoadMore={() => { if (hasNextPage) fetchNextPage(); }}
                         isRefreshing={isRefetching}
                         isLoading={isLoading}
                         palette={palette}

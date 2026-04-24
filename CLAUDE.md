@@ -226,6 +226,31 @@ All defined in `lib/queryKeys.ts`. When adding a new feature, add its keys there
 - `useAuth` from `@/providers/AuthProvider`
 - Barrel-export from each component directory's `index.ts`
 
+### Pagination
+All paginated endpoints use the canonical `Page<T>` envelope and opaque cursor string.
+
+**Wire envelope** (snake_case on the wire):
+```ts
+type Page<T> = { rows: T[]; next_cursor: string | null; has_more: boolean };
+```
+
+**Cursor format**: `base64(${iso8601}|${uuid})`. The server is authoritative; clients never parse cursors.
+
+**Client helper** — `napkin-app/lib/pagination.ts`:
+- `useCursorPagedQuery<T>(opts)` — wraps `useInfiniteQuery` with canonical `getNextPageParam`. **Mandate: every paginated hook must use this — never open-code `useInfiniteQuery` or numeric offsets.**
+- `flattenPages<T>(data)` — replaces `data?.pages?.flat()` everywhere.
+
+**Server helper** — `supabase/functions/_shared/pagination.ts`:
+- `encodeCursor` / `decodeCursor` — encode/decode the `(sort_date, id)` tuple.
+- `buildPage(rows, pageSize, getCursor)` — build the envelope from a `limit+1` query result.
+- `applyKeysetFilter(query, cursor)` — apply the decomposed tuple keyset filter to a supabase-js query.
+
+**Keyset SQL**: `ORDER BY sort_date DESC, id DESC`, filter = `(sort_date, id) < (d, i)`.
+
+**`table-activity` uses POST** (cursor in body). All other endpoints use POST action bodies. Do not use GET for paginated calls — cursor strings can be long.
+
+See `hooks/users/useUserDiary.ts` or `hooks/tables/useTableActivity.ts` for canonical hook examples.
+
 ## Things NOT to Build
 
 Explicitly out of scope until a ticket says otherwise:

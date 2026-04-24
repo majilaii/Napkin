@@ -1,9 +1,13 @@
 /**
- * Hook to fetch paginated table activity feed
+ * Hook to fetch cursor-paginated table activity feed.
+ * TICKET-035: rewrote from numeric-offset GET to cursor-based POST.
+ *
+ * Backed by fn_table_activity_page RPC — a UNION of entries + table_nights
+ * sorted by sort_date DESC, id DESC. No more duplicates or gaps.
  */
-import { useInfiniteQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
 
 export interface CompanionProfile {
     user_id: string;
@@ -101,49 +105,45 @@ export interface CollaborativeEntryActivity {
 
 export type ActivityItem = SoloShareActivity | TableNightActivity | CollaborativeEntryActivity;
 
-const PAGE_SIZE = 20;
-
 export interface TableActivityFilters {
     filterType?: string;   // 'round' | 'solo_share'
     filterUserId?: string; // UUID
 }
 
-async function fetchTableActivity(
+async function fetchTableActivityPage(
     tableId: string,
-    offset: number,
-    filters?: TableActivityFilters,
-): Promise<ActivityItem[]> {
-    const { data: { session } } = await supabase.auth.getSession();
+    cursor: string | null,
+    filters: TableActivityFilters | undefined,
+    token: string | null,
+): Promise<Page<ActivityItem>> {
+    const body: Record<string, unknown> = { table_id: tableId };
+    if (cursor) body.cursor = cursor;
+    if (filters?.filterType) body.filter_type = filters.filterType;
+    if (filters?.filterUserId) body.filter_user_id = filters.filterUserId;
 
-    let url = `table-activity?table_id=${tableId}&limit=${PAGE_SIZE}&offset=${offset}`;
-    if (filters?.filterType) url += `&filter_type=${encodeURIComponent(filters.filterType)}`;
-    if (filters?.filterUserId) url += `&filter_user_id=${encodeURIComponent(filters.filterUserId)}`;
-
-    const { data, error } = await supabase.functions.invoke(url, {
-        method: 'GET',
-        headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : undefined,
+    const { data, error } = await supabase.functions.invoke('table-activity', {
+        method: 'POST',
+        body,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
 
     if (error) throw error;
-    return data?.data ?? [];
+    return data?.data as Page<ActivityItem>;
 }
 
 export function useTableActivity(
     tableId: string | null | undefined,
     filters?: TableActivityFilters,
 ) {
-    return useInfiniteQuery<ActivityItem[], Error>({
+    return useCursorPagedQuery<ActivityItem>({
         queryKey: queryKeys.tables.activity(tableId!, filters),
-        queryFn: ({ pageParam }) =>
-            fetchTableActivity(tableId!, pageParam as number, filters),
-        initialPageParam: 0,
-        getNextPageParam: (lastPage, allPages) => {
-            if (lastPage.length < PAGE_SIZE) return undefined;
-            return allPages.length * PAGE_SIZE;
-        },
+        fetchPage: (cursor, token) => fetchTableActivityPage(tableId!, cursor, filters, token),
         enabled: !!tableId,
         staleTime: 1000 * 60 * 2,
     });
+}
+
+/** Flatten all pages of activity items. */
+export function flattenActivity(data: ReturnType<typeof useTableActivity>['data']): ActivityItem[] {
+    return flattenPages(data);
 }
