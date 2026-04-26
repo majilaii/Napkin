@@ -12,3 +12,4 @@ export { PinToBoardSheet, type PinBoardTable } from './PinToBoardSheet';
 export { AddMemberSheet } from './AddMemberSheet';
 export { TableMemberRow, type TableMemberRowProps } from './TableMemberRow';
 export { WelcomeBanner } from './WelcomeBanner';
+export { TableTopFourPlaceholder } from './TableTopFourPlaceholder';

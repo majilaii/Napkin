@@ -53,21 +53,29 @@ export async function upsertRestaurant(
         placesMetadata.places_synced_at = new Date().toISOString();
     }
 
+    // Build the upsert payload. We deliberately DROP undefined/null/empty
+    // location fields so a follow-up call with a sparse payload (e.g. an
+    // entry create that only carries `external_id` + `name`) cannot wipe a
+    // city/country that an earlier Places lookup populated. Postgres' upsert
+    // overwrites every column listed; omitting the key is the only way to
+    // preserve the existing value on conflict.
+    const upsertRow: Record<string, unknown> = {
+        external_id: input.external_id,
+        name: input.name,
+        ...placesMetadata,
+    };
+    const addr = input.location?.address?.trim();
+    const city = input.location?.locality?.trim();
+    const country = input.location?.country?.trim();
+    if (addr) upsertRow.address = addr;
+    if (city) upsertRow.city = city;
+    if (country) upsertRow.country = country;
+    if (input.latitude !== undefined && input.latitude !== null) upsertRow.lat = input.latitude;
+    if (input.longitude !== undefined && input.longitude !== null) upsertRow.lng = input.longitude;
+
     const { data, error } = await supabase
         .from('restaurants')
-        .upsert(
-            {
-                external_id: input.external_id,
-                name: input.name,
-                address: input.location?.address,
-                city: input.location?.locality,
-                country: input.location?.country,
-                lat: input.latitude,
-                lng: input.longitude,
-                ...placesMetadata,
-            },
-            { onConflict: 'external_id' },
-        )
+        .upsert(upsertRow, { onConflict: 'external_id' })
         .select('id, photo_url')
         .single();
 

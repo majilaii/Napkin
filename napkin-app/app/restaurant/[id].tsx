@@ -47,6 +47,10 @@ import {
     type PageVisit,
 } from '@/hooks/restaurants/useRestaurantPage';
 import {
+    useLookupByPlaceId,
+    useLazyBackfillRestaurant,
+} from '@/hooks/search/useLookupByPlaceId';
+import {
     RestaurantHero,
     RestaurantTabsV3,
     type RestaurantTabV3,
@@ -144,7 +148,7 @@ export default function RestaurantScreen() {
         restaurantId,
         tableId ?? undefined,
     );
-    const isActuallyLoading = isLoading && fetchStatus === 'fetching';
+    const isPageLoading = isLoading && fetchStatus === 'fetching';
 
     const { data: tables } = useTables(user?.id);
     const hasAnyTable = useMemo(() => (tables ?? []).length > 0, [tables]);
@@ -152,18 +156,46 @@ export default function RestaurantScreen() {
     useMyWishlist(user?.id);
 
     // ── Ghost synthesis ───────────────────────────────────────────────────
+    // Empty-payload guard: if we arrived as a ghost (placeId set) but the
+    // caller didn't pass a placePayload (deep-link / lost nav state), fetch
+    // the place by ID so we still render a hero instead of an empty page.
+    const needsPlaceLookup = isGhost && !parsedPlacePayload && !!placeId;
+    const placeLookup = useLookupByPlaceId(placeId ?? null, {
+        enabled: needsPlaceLookup,
+    });
+    const lookupPayload = placeLookup.data ?? null;
+
     const ghostRestaurant: RestaurantPageRestaurant | null = useMemo(() => {
-        if (!isGhost || !parsedPlacePayload) return null;
-        return ghostRestaurantFromPayload(parsedPlacePayload);
-    }, [isGhost, parsedPlacePayload]);
+        if (!isGhost) return null;
+        const source = parsedPlacePayload ?? lookupPayload;
+        if (!source) return null;
+        return ghostRestaurantFromPayload(source);
+    }, [isGhost, parsedPlacePayload, lookupPayload]);
 
     const ghostWishlistPayload: RestaurantPayload | null = useMemo(() => {
-        if (!isGhost || !parsedPlacePayload) return null;
-        return placePayloadToWishlistPayload(parsedPlacePayload);
-    }, [isGhost, parsedPlacePayload]);
+        if (!isGhost) return null;
+        const source = parsedPlacePayload ?? lookupPayload;
+        if (!source) return null;
+        return placePayloadToWishlistPayload(source);
+    }, [isGhost, parsedPlacePayload, lookupPayload]);
 
     const restaurant: RestaurantPageRestaurant | null =
         pageData?.restaurant ?? ghostRestaurant ?? null;
+
+    // ── Lazy backfill: heal stale persisted rows ──────────────────────────
+    // Some rows pre-date the Places metadata extraction (city / photo_url)
+    // or were inserted by manual seeds. When we land on such a row AND it
+    // has an external_id we can resolve, fire one Place Details fetch to
+    // re-upsert the missing fields. The server-side upsert is non-destructive
+    // so this can never wipe good data. Runs at most once per externalId.
+    const persistedRow = pageData?.restaurant ?? null;
+    const isStale = !!persistedRow && (!persistedRow.city || !persistedRow.photo_url);
+    useLazyBackfillRestaurant({
+        enabled: isStale,
+        externalId: persistedRow?.external_id ?? null,
+        restaurantId: persistedRow?.id ?? null,
+        tableId: tableId ?? null,
+    });
 
     // ── Log visit sheet state ─────────────────────────────────────────────
     const [showLogSheet, setShowLogSheet] = useState(false);
@@ -344,21 +376,29 @@ export default function RestaurantScreen() {
             if (!rid) return;
             wishlistRemove.mutate(rid, { onError: () => Alert.alert("Couldn't remove", 'Try again') });
         } else {
-            const input = persistedRestaurantId
-                ? { restaurant_id: persistedRestaurantId }
-                : {
-                    restaurant: ghostWishlistPayload ?? placePayloadToWishlistPayload({
-                        id: restaurant.external_id ?? '',
-                        name: restaurant.name,
-                        formattedAddress: restaurant.address,
-                        city: restaurant.city,
-                        country: restaurant.country,
-                        cuisine: restaurant.cuisine,
-                        priceLevel: restaurant.price_level,
-                        googleRating: restaurant.google_rating,
-                        googleRatingCount: restaurant.google_rating_count,
-                    }),
-                };
+            // Always pass the full `restaurant` payload when we have one — even
+            // when the row is already persisted. The server-side upsert is now
+            // non-destructive (sparse fields are dropped, populated ones win),
+            // so this opportunistically backfills `city` / `country` / Places
+            // metadata onto rows that pre-date the addressComponents extraction.
+            // Falls back to a bare restaurant_id only if we somehow have no
+            // restaurant detail to send.
+            const payload = ghostWishlistPayload ?? (restaurant?.external_id
+                ? placePayloadToWishlistPayload({
+                    id: restaurant.external_id,
+                    name: restaurant.name,
+                    formattedAddress: restaurant.address,
+                    city: restaurant.city,
+                    country: restaurant.country,
+                    cuisine: restaurant.cuisine,
+                    priceLevel: restaurant.price_level,
+                    googleRating: restaurant.google_rating,
+                    googleRatingCount: restaurant.google_rating_count,
+                })
+                : null);
+            const input = payload
+                ? { restaurant: payload }
+                : { restaurant_id: persistedRestaurantId! };
             wishlistAdd.mutate(input as any, { onError: () => Alert.alert("Couldn't save", 'Try again') });
         }
     }, [bookmarkDisabled, bookmarked, persistedRestaurantId, wishlistAdd, wishlistRemove, ghostWishlistPayload, restaurant]);
@@ -383,7 +423,7 @@ export default function RestaurantScreen() {
                     showsVerticalScrollIndicator={false}
                 >
                     {/* Loading — shown only when we have nothing yet */}
-                    {isActuallyLoading && !restaurant ? (
+                    {(isPageLoading || (needsPlaceLookup && placeLookup.isLoading)) && !restaurant ? (
                         <View style={styles.loadingCenter}>
                             <ActivityIndicator color={palette.primary} />
                         </View>
@@ -470,7 +510,7 @@ export default function RestaurantScreen() {
                                     onVisitPress={handleVisitPress}
                                     onPublicReviewPress={handlePublicReviewPress}
                                 />
-                            ) : isActuallyLoading ? (
+                            ) : isPageLoading ? (
                                 <View style={styles.sectionSpinner}>
                                     <ActivityIndicator size="small" color={palette.textMuted} />
                                 </View>

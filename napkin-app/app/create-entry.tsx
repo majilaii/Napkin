@@ -49,7 +49,7 @@ import {
     WritingSurface,
     ChipRow,
     AddDetailsDrawer,
-    TableShareFooter,
+    TablePickerSheet,
 } from '@/components/create-entry';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 import { useQuery } from '@tanstack/react-query';
@@ -112,24 +112,21 @@ export default function CreateEntryScreen() {
     // Mode picker (round mode reachable via `mode=round` param — not surfaced in solo chrome)
     const [postMode, setPostMode] = useState<PostMode>(modeParam === 'round' ? 'round' : 'solo');
 
-    // Table share state — defaults OFF per Q9 (solo-is-default posture).
-    // EXCEPTION: callers that pass an explicit `tableId` URL param have signalled
-    // share intent (e.g. FastLogSheet from a Table); honor it by defaulting ON.
-    const [shareToTable, setShareToTable] = useState(!!tableIdParam);
+    // Table selection — single source of truth. Null = solo (private).
+    // The chip's filled state IS the share signal; no separate toggle.
+    // Round mode requires a Table — default to first if none picked.
     const [selectedTableId, setSelectedTableId] = useState<string | null>(
         tableIdParam ?? null
     );
+    const [tablePickerVisible, setTablePickerVisible] = useState(false);
 
-    // When toggling share ON, default to first table if none selected
-    const handleToggleShare = (enabled: boolean) => {
-        setShareToTable(enabled);
-        if (enabled && !selectedTableId && sortedTables.length > 0) {
+    // Round mode requires a table — fall back to first sorted Table if user
+    // arrived in round mode with no pre-selection.
+    useEffect(() => {
+        if (postMode === 'round' && !selectedTableId && sortedTables.length > 0) {
             setSelectedTableId(sortedTables[0].id);
         }
-        if (!enabled) {
-            // Keep selectedTableId so next toggle-on remembers the pick
-        }
-    };
+    }, [postMode, selectedTableId, sortedTables]);
 
     // Participant tagging (Round mode on group tables)
     const { data: tableMembers, isLoading: membersLoading } = useTableMembers(
@@ -141,7 +138,7 @@ export default function CreateEntryScreen() {
         setSelectedParticipantIds(new Set());
     }, [selectedTableId, postMode]);
 
-    const createEntry = useCreateEntry(user?.id, shareToTable ? selectedTableId : null);
+    const createEntry = useCreateEntry(user?.id, selectedTableId);
     const startRound = useStartRound(user?.id, selectedTableId);
 
     // ── Prefill from route params ─────────────────────────────────────────────
@@ -234,7 +231,7 @@ export default function CreateEntryScreen() {
     // Dish (inside drawer)
     const [dish, setDish] = useState('');
 
-    // visited_at state — prefilled from day-logger route param (ISO string) or defaults to now
+    // visited_at state — prefilled from `visitedAt` route param (ISO) or defaults to now
     const [visitedAt, setVisitedAt] = useState<Date>(() => {
         if (visitedAtParam) {
             const d = new Date(visitedAtParam);
@@ -517,7 +514,7 @@ export default function CreateEntryScreen() {
         const ratingValue = Math.round(rating * 2) / 2;
         const photoUrls = photos.filter(p => p.publicUrl !== null).map(p => p.publicUrl as string);
 
-        const effectiveTableId = (postMode === 'round' || shareToTable) ? selectedTableId : null;
+        const effectiveTableId = selectedTableId;
 
         try {
             if (postMode === 'round') {
@@ -554,7 +551,7 @@ export default function CreateEntryScreen() {
         }
     }, [
         canSubmit, rating, notes, dish, selectedPlace, query,
-        selectedTableId, postMode, selectedParticipantIds, shareToTable,
+        selectedTableId, postMode, selectedParticipantIds,
         breakdown, visitedAt, photos, selectedCompanions,
         createEntry, startRound, router,
     ]);
@@ -563,7 +560,7 @@ export default function CreateEntryScreen() {
 
     const submitLabel = postMode === 'round'
         ? 'Start Round'
-        : shareToTable
+        : selectedTableId
             ? 'Share'
             : 'Save';
 
@@ -668,7 +665,7 @@ export default function CreateEntryScreen() {
                         />
                     ) : null}
 
-                    {/* Chip row — photos / dish / companions / date */}
+                    {/* Chip row — photos / dish / with… / today / tables… */}
                     {!showSearch ? (
                         <View style={[styles.chipRowContainer, { borderTopColor: 'rgba(221,192,186,0.25)' }]}>
                             <ChipRow
@@ -680,6 +677,13 @@ export default function CreateEntryScreen() {
                                 onCompanionsPress={() => setCompanionSheetVisible(true)}
                                 visitedAt={visitedAt}
                                 onDateChange={setVisitedAt}
+                                tablesAvailable={sortedTables.length > 0 && postMode !== 'round'}
+                                selectedTableName={
+                                    selectedTableId
+                                        ? sortedTables.find(t => t.id === selectedTableId)?.name ?? null
+                                        : null
+                                }
+                                onTablesPress={() => setTablePickerVisible(true)}
                             />
                         </View>
                     ) : null}
@@ -717,20 +721,6 @@ export default function CreateEntryScreen() {
                             onBreakdownChange={handleBreakdownChange}
                             dish={dish}
                             onDishChange={setDish}
-                        />
-                    ) : null}
-
-                    {/* Table share footer — only when user has ≥1 Table AND not in round mode */}
-                    {sortedTables.length > 0 && postMode !== 'round' ? (
-                        <TableShareFooter
-                            tables={sortedTables}
-                            selectedTableId={selectedTableId ?? sortedTables[0]?.id ?? null}
-                            shareEnabled={shareToTable}
-                            onToggleShare={handleToggleShare}
-                            onSelectTable={sortedTables.length > 1
-                                ? (id) => setSelectedTableId(id)
-                                : undefined
-                            }
                         />
                     ) : null}
 
@@ -801,6 +791,15 @@ export default function CreateEntryScreen() {
                 selectedIds={new Set(selectedCompanions.map(c => c.user_id))}
                 onToggle={toggleCompanion}
                 currentUserId={user?.id}
+                palette={palette}
+            />
+
+            <TablePickerSheet
+                visible={tablePickerVisible}
+                onClose={() => setTablePickerVisible(false)}
+                tables={sortedTables.map(t => ({ id: t.id, name: t.name }))}
+                selectedId={selectedTableId}
+                onSelect={setSelectedTableId}
                 palette={palette}
             />
         </>

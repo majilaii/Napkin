@@ -66,11 +66,7 @@ export function InfoMapPreview({ lat, lng, address, name }: Props) {
 }
 
 function GridLines() {
-    // Render a simple grid pattern using absolute positioned views
-    const scheme = useColorScheme();
-    const lineColor = scheme === 'dark'
-        ? 'rgba(200, 140, 120, 0.12)'
-        : 'rgba(138, 114, 108, 0.16)';
+    const lineColor = 'rgba(138, 114, 108, 0.16)';
 
     const cols = 6;
     const rows = 4;

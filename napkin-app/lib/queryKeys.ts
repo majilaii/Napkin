@@ -145,5 +145,11 @@ export const queryKeys = {
         photos: (entryId: string) => ['entry-photos', entryId] as const,
         publicEligibility: (entryId: string) => ['entry-public-eligibility', entryId] as const,
     },
+
+    // Notifications (Heirloom inbox — friend logs, pins, Top 4 edits, invites, nudges)
+    notifications: {
+        all: (userId: string) => ['notifications', userId] as const,
+        unreadCount: (userId: string) => ['notifications', userId, 'unread'] as const,
+    },
 } as const;
 

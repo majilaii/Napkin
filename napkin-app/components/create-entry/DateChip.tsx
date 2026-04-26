@@ -4,11 +4,11 @@
  * Renders visited_at as lowercase human copy: "today", "yesterday", "thu apr 18".
  */
 import React, { useState, useMemo } from 'react';
-import { Text, Pressable, StyleSheet, Modal, View, ScrollView, Platform, StatusBar } from 'react-native';
+import { Text, Pressable, StyleSheet, Modal, View, ScrollView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getTodayDateStr, getYesterdayDateStr, localDateStr } from '@/lib/mealSlots';
+import { getTodayDateStr, getYesterdayDateStr, localDateStr } from '@/lib/dateHelpers';
 
 interface Props {
     value: Date;

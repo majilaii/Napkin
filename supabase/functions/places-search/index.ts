@@ -1,10 +1,95 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { parsePayload, clamp, type SearchPayload } from './utils.ts';
 
 const GOOGLE_PLACES_API_KEY = Deno.env.get('GOOGLE_PLACES_API_KEY');
 const GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com/v1/places:searchText';
+const GOOGLE_PLACE_DETAILS_BASE_URL = 'https://places.googleapis.com/v1/places';
+
+// Field mask shared between text-search and place-details responses.
+// For details, drop the "places." prefix (single-place response).
+const PLACE_FIELDS = [
+    'id',
+    'displayName',
+    'formattedAddress',
+    'addressComponents',
+    'location',
+    'types',
+    'primaryType',
+    'rating',
+    'userRatingCount',
+    'priceLevel',
+    'websiteUri',
+    'googleMapsUri',
+    'photos',
+];
+
+function humanizeCuisine(raw: unknown): string | null {
+    if (typeof raw !== 'string' || !raw) return null;
+    // Drop the generic "_restaurant" suffix Google attaches to most cuisines
+    // (e.g. "indian_restaurant" → "indian"). Leave non-restaurant types alone
+    // ("bar", "bakery", "cafe") so they still render meaningfully.
+    const stripped = raw.replace(/_restaurant$/i, '');
+    if (!stripped) return null;
+    return stripped
+        .split('_')
+        .map(part => part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : '')
+        .join(' ');
+}
+
+function sanitizePlace(place: any) {
+    let city: string | null = null;
+    let country: string | null = null;
+    if (Array.isArray(place.addressComponents)) {
+        for (const component of place.addressComponents) {
+            const types: string[] = component.types ?? [];
+            if (types.includes('locality') || types.includes('postal_town')) {
+                city = component.longText ?? component.shortText ?? null;
+            }
+            if (types.includes('country')) {
+                country = component.longText ?? component.shortText ?? null;
+            }
+        }
+    }
+
+    const priceLevelMap: Record<string, number> = {
+        PRICE_LEVEL_FREE: 0,
+        PRICE_LEVEL_INEXPENSIVE: 1,
+        PRICE_LEVEL_MODERATE: 2,
+        PRICE_LEVEL_EXPENSIVE: 3,
+        PRICE_LEVEL_VERY_EXPENSIVE: 4,
+    };
+    const priceLevel = place.priceLevel
+        ? (priceLevelMap[place.priceLevel] ?? null)
+        : null;
+
+    // Google returns primaryType as a raw enum like "indian_restaurant",
+    // "italian_restaurant", "bar", "bakery", "meal_takeaway". Strip the
+    // generic "_restaurant" suffix and title-case the rest so we can
+    // render it directly on the hero meta line ("Indian · London · $$$")
+    // without any client-side transform.
+    const cuisine: string | null = humanizeCuisine(place.primaryType);
+
+    return {
+        id: place.id,
+        name: place.displayName?.text ?? null,
+        formattedAddress: place.formattedAddress ?? null,
+        city,
+        country,
+        latitude: place.location?.latitude ?? null,
+        longitude: place.location?.longitude ?? null,
+        categories: place.types ?? [],
+        cuisine,
+        googleRating: place.rating ?? null,
+        googleRatingCount: place.userRatingCount ?? null,
+        priceLevel,
+        photoReference: place.photos?.[0]?.name ?? null,
+        website: place.websiteUri ?? null,
+        link: place.googleMapsUri ?? null,
+    };
+}
 
 serve(async req => {
     if (req.method === 'OPTIONS') {
@@ -57,13 +142,81 @@ serve(async req => {
         const payload: SearchPayload = await parsePayload(req);
         console.log('Google Places search payload:', payload);
         const query = payload.query?.trim();
+        const placeId = payload.place_id?.trim();
 
-        if (!query) {
-            return new Response(JSON.stringify({ error: 'Missing query parameter' }), {
-                status: 400,
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
+        if (!query && !placeId) {
+            return new Response(
+                JSON.stringify({ error: 'Missing query or place_id parameter' }),
+                {
+                    status: 400,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                },
+            );
         }
+
+        // ── Branch A: lookup by place_id (Place Details) ─────────────────
+        if (placeId) {
+            const detailsUrl = `${GOOGLE_PLACE_DETAILS_BASE_URL}/${encodeURIComponent(placeId)}`;
+            const detailsRes = await fetch(detailsUrl, {
+                method: 'GET',
+                headers: {
+                    'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+                    'X-Goog-FieldMask': PLACE_FIELDS.join(','),
+                },
+            });
+            const detailsBody = await detailsRes.json();
+            if (!detailsRes.ok) {
+                console.error('Place Details error:', detailsBody);
+                return new Response(
+                    JSON.stringify({
+                        error: detailsBody?.error?.message || 'Place Details request failed',
+                        details: detailsBody,
+                    }),
+                    {
+                        status: detailsRes.status,
+                        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                    },
+                );
+            }
+
+            const sanitized = sanitizePlace(detailsBody);
+            let restaurantId: string | null = null;
+
+            // Opportunistic upsert: when persist=true, mirror the place into
+            // restaurants. _shared/restaurant.ts handles non-destructive merge
+            // and Storage hero-photo mirroring.
+            if (payload.persist && sanitized.id && sanitized.name) {
+                try {
+                    restaurantId = await upsertRestaurant(supabase, {
+                        external_id: sanitized.id,
+                        name: sanitized.name,
+                        location: {
+                            address: sanitized.formattedAddress ?? undefined,
+                            locality: sanitized.city ?? undefined,
+                            country: sanitized.country ?? undefined,
+                        },
+                        latitude: sanitized.latitude ?? undefined,
+                        longitude: sanitized.longitude ?? undefined,
+                        photoReference: sanitized.photoReference ?? undefined,
+                        googleRating: sanitized.googleRating ?? undefined,
+                        googleRatingCount: sanitized.googleRatingCount ?? undefined,
+                        priceLevel: sanitized.priceLevel ?? undefined,
+                        cuisine: sanitized.cuisine ?? undefined,
+                    });
+                } catch (e) {
+                    // Persist failure is non-fatal; the client still gets the
+                    // sanitized place to render a ghost.
+                    console.error('Persist upsert failed:', e);
+                }
+            }
+
+            return new Response(
+                JSON.stringify({ data: [sanitized] }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+            );
+        }
+
+        // ── Branch B: text search (existing behaviour) ────────────────────
 
         // Build the request body for Google Places Text Search
         const requestBody: any = {
@@ -85,21 +238,7 @@ serve(async req => {
         }
 
         // Extended field mask to include rating, price, and address components
-        const fieldMask = [
-            'places.id',
-            'places.displayName',
-            'places.formattedAddress',
-            'places.addressComponents',
-            'places.location',
-            'places.types',
-            'places.primaryType',
-            'places.rating',
-            'places.userRatingCount',
-            'places.priceLevel',
-            'places.websiteUri',
-            'places.googleMapsUri',
-            'places.photos',
-        ].join(',');
+        const fieldMask = PLACE_FIELDS.map(f => `places.${f}`).join(',');
 
         const upstream = await fetch(GOOGLE_PLACES_BASE_URL, {
             method: 'POST',
@@ -133,55 +272,7 @@ serve(async req => {
         }
 
         // Transform to normalized shape for Napkin clients
-        const sanitized = (responseBody?.places ?? []).map((place: any) => {
-            // Extract city and country from addressComponents
-            let city: string | null = null;
-            let country: string | null = null;
-            if (Array.isArray(place.addressComponents)) {
-                for (const component of place.addressComponents) {
-                    const types: string[] = component.types ?? [];
-                    if (types.includes('locality') || types.includes('postal_town')) {
-                        city = component.longText ?? component.shortText ?? null;
-                    }
-                    if (types.includes('country')) {
-                        country = component.longText ?? component.shortText ?? null;
-                    }
-                }
-            }
-
-            // Map Google price level enum to integer (1-4)
-            const priceLevelMap: Record<string, number> = {
-                PRICE_LEVEL_FREE: 0,
-                PRICE_LEVEL_INEXPENSIVE: 1,
-                PRICE_LEVEL_MODERATE: 2,
-                PRICE_LEVEL_EXPENSIVE: 3,
-                PRICE_LEVEL_VERY_EXPENSIVE: 4,
-            };
-            const priceLevel = place.priceLevel
-                ? (priceLevelMap[place.priceLevel] ?? null)
-                : null;
-
-            // Derive cuisine from primaryType (best available signal)
-            const cuisine: string | null = place.primaryType ?? null;
-
-            return {
-                id: place.id, // Google Place ID (= external_id in our schema)
-                name: place.displayName?.text ?? null,
-                formattedAddress: place.formattedAddress ?? null,
-                city,
-                country,
-                latitude: place.location?.latitude ?? null,
-                longitude: place.location?.longitude ?? null,
-                categories: place.types ?? [],
-                cuisine,
-                googleRating: place.rating ?? null,
-                googleRatingCount: place.userRatingCount ?? null,
-                priceLevel,
-                photoReference: place.photos?.[0]?.name ?? null,
-                website: place.websiteUri ?? null,
-                link: place.googleMapsUri ?? null,
-            };
-        });
+        const sanitized = (responseBody?.places ?? []).map(sanitizePlace);
 
         return new Response(JSON.stringify({ data: sanitized }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },

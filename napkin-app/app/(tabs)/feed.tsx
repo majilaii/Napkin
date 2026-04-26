@@ -10,7 +10,7 @@
  * entries with prose or photos become FriendLogCard prose cards.
  */
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, RefreshControl, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import { View, ScrollView, ActivityIndicator, RefreshControl, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -27,6 +27,7 @@ import {
     FriendLogCard,
     FastLogRow,
     FeedTerminus,
+    FeedEmpty,
     type FeedScope,
 } from '@/components/feed';
 
@@ -146,41 +147,7 @@ function FeedItem({ entry }: { entry: FeedEntry }) {
 function EmptyState() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    return (
-        <View style={{ padding: 22 }}>
-            <View
-                style={{
-                    padding: 18,
-                    borderRadius: 10,
-                    backgroundColor: palette.surfaceContainerLow,
-                    borderWidth: 1,
-                    borderColor: palette.border,
-                }}
-            >
-                <Text
-                    style={{
-                        fontFamily: 'Newsreader_400Regular_Italic',
-                        fontSize: 18,
-                        color: palette.text,
-                        lineHeight: 24,
-                    }}
-                >
-                    Your Feed is where your tablemates&rsquo; meals show up.
-                </Text>
-                <Text
-                    style={{
-                        fontFamily: 'Manrope_400Regular',
-                        fontSize: 12,
-                        color: palette.textMuted,
-                        marginTop: 6,
-                        lineHeight: 18,
-                    }}
-                >
-                    Start a Table with a few people and this page fills with their logs.
-                </Text>
-            </View>
-        </View>
-    );
+    return <FeedEmpty palette={palette} />;
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────

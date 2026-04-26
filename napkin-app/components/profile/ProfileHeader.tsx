@@ -25,6 +25,9 @@ import type {
 import { FollowButton } from './FollowButton';
 import { CalibrationChip } from './CalibrationChip';
 import { RateMoreToUnlockPrompt } from './RateMoreToUnlockPrompt';
+import { NotifBell } from '@/components/notifications/NotifBell';
+import { useNotifications } from '@/hooks/notifications';
+import { useAuth } from '@/providers/AuthProvider';
 
 interface Props {
     profile: UserProfileRow;
@@ -57,6 +60,9 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
+    const { user } = useAuth();
+    const { data: notifData } = useNotifications(isSelf ? user?.id : null);
+    const hasUnread = (notifData?.unreadCount ?? 0) > 0;
 
     const showUsername =
         relationship === 'self' ||
@@ -103,17 +109,24 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                 </View>
 
                 {isSelf ? (
-                    <Pressable
-                        onPress={() => router.push('/settings')}
-                        hitSlop={10}
-                        style={styles.gear}
-                    >
-                        <Ionicons
-                            name="settings-outline"
-                            size={20}
-                            color={palette.textMuted}
+                    <View style={styles.selfActions}>
+                        <NotifBell
+                            unread={hasUnread}
+                            onPress={() => router.push('/notifications')}
+                            ringColor={palette.background}
                         />
-                    </Pressable>
+                        <Pressable
+                            onPress={() => router.push('/settings')}
+                            hitSlop={10}
+                            style={styles.gear}
+                        >
+                            <Ionicons
+                                name="settings-outline"
+                                size={20}
+                                color={palette.textMuted}
+                            />
+                        </Pressable>
+                    </View>
                 ) : (
                     <FollowButton
                         targetUserId={profile.user_id}
@@ -241,6 +254,12 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginTop: -2,
+    },
+    selfActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: -4,
     },
     calibrationRow: {
         marginTop: Spacing.sm,

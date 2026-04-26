@@ -12,6 +12,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
+import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -248,7 +249,10 @@ export function restaurantFromPlace(
         country: place.country ?? place.location?.country ?? null,
         cuisine: place.cuisine ?? null,
         price_level: place.priceLevel ?? null,
-        photo_url: null, // ghost photo served via photoReference separately
+        // Ghost photo: serve via places-photo edge proxy. Once the row is
+        // upserted, _shared/restaurant.ts mirrors the bytes to Supabase
+        // Storage and writes a permanent photo_url that supersedes this.
+        photo_url: placesPhotoProxyUrl(place.photoReference) ?? null,
         google_rating: place.googleRating ?? null,
         google_rating_count: place.googleRatingCount ?? null,
         external_id: place.external_id,
