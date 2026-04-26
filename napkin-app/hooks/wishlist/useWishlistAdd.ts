@@ -6,6 +6,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import type { WishlistSource } from '@/lib/types/wishlistSource';
 
 /** Shape of a Places ghost restaurant payload (matches _shared/restaurant.ts RestaurantInput) */
 export interface RestaurantPayload {
@@ -32,6 +33,8 @@ export interface WishlistAddInput {
     /** Places payload for a ghost restaurant. Server will upsert before saving. */
     restaurant?: RestaurantPayload;
     note?: string;
+    /** Optional source metadata (link import — TICKET-053). Validated server-side. */
+    source?: WishlistSource;
 }
 
 export interface WishlistItem {
@@ -39,6 +42,7 @@ export interface WishlistItem {
     user_id: string;
     restaurant_id: string;
     note: string | null;
+    source: WishlistSource | null;
     created_at: string;
 }
 

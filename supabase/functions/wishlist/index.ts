@@ -10,6 +10,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant, type RestaurantInput } from '../_shared/restaurant.ts';
+import { validateWishlistSource } from '../_shared/wishlistSource.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -86,10 +87,26 @@ serve(async (req) => {
                 );
             }
 
+            // Validate source if provided [H1 / ARCH-REVIEW-H1]
+            let validatedSource: unknown = null;
+            if (body.source !== undefined && body.source !== null) {
+                const sourceResult = validateWishlistSource(body.source);
+                if (!sourceResult.ok) {
+                    return jsonResponse({
+                        error: {
+                            code: 'INVALID_SOURCE_SHAPE',
+                            message: `source validation failed: ${sourceResult.reason}`,
+                            details: { extra_keys: (sourceResult as any).extra_keys },
+                        },
+                    }, 400);
+                }
+                validatedSource = sourceResult.source;
+            }
+
             // Idempotent: if a row already exists, return it untouched (do not overwrite note).
             const { data: existing, error: existingErr } = await supabase
                 .from('wishlist_items')
-                .select('id, user_id, restaurant_id, note, created_at')
+                .select('id, user_id, restaurant_id, note, source, created_at')
                 .eq('user_id', user.id)
                 .eq('restaurant_id', restaurantId)
                 .maybeSingle();
@@ -104,8 +121,9 @@ serve(async (req) => {
                     user_id: user.id,
                     restaurant_id: restaurantId,
                     note: body.note ?? null,
+                    source: validatedSource ?? null,
                 })
-                .select('id, user_id, restaurant_id, note, created_at')
+                .select('id, user_id, restaurant_id, note, source, created_at')
                 .single();
 
             if (error) throw error;
@@ -157,6 +175,7 @@ serve(async (req) => {
                 .select(`
                     id,
                     note,
+                    source,
                     created_at,
                     restaurant:restaurants (
                         id,
@@ -225,7 +244,9 @@ serve(async (req) => {
                 return jsonResponse({ data: [] });
             }
 
-            // Fetch all wishlist items for members of this table, joined to restaurants
+            // Fetch all wishlist items for members of this table, joined to restaurants.
+            // NOTE: `source` is intentionally OMITTED here — it contains pasted URLs and
+            // TikTok captions (user PII) that must not leak to tablemates. [ARCH-REVIEW-M3]
             const { data: wishlistRows, error: wishlistError } = await supabase
                 .from('wishlist_items')
                 .select(`

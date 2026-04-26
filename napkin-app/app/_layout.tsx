@@ -21,7 +21,7 @@ import {
 } from '@expo-google-fonts/manrope';
 import * as SplashScreen from 'expo-splash-screen';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, View, Pressable, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +32,8 @@ import { Colors, Type } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 import { PressableScale } from '@/components/ui/napkin';
 import { useNotifications } from '@/hooks/notifications';
+import { PlusActionMenu } from '@/components/nav';
+import { ImportLinkSheet } from '@/components/wishlist';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -45,6 +47,10 @@ function BottomNavBar() {
   const { data: notifData } = useNotifications(user?.id);
   const hasUnread = (notifData?.unreadCount ?? 0) > 0;
 
+  // + button action menu
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [importSheetVisible, setImportSheetVisible] = useState(false);
+
   // Only show on tab screens
   const inTabs = segments[0] === '(tabs)';
   if (!inTabs) return null;
@@ -53,60 +59,82 @@ function BottomNavBar() {
   const activeTab = segments[1] ?? 'feed';
 
   return (
-    <View style={[navStyles.bar, { backgroundColor: palette.surfaceContainerLow, paddingBottom: insets.bottom > 0 ? insets.bottom : 12 }]}>
-      {/* Feed tab */}
-      <Pressable
-        onPress={() => router.replace('/feed')}
-        style={navStyles.tab}
-      >
-        <Ionicons name="home-outline" size={24} color={activeTab === 'feed' ? palette.tabIconSelected : palette.tabIconDefault} />
-        <Text style={[Type.labelSmall, { color: activeTab === 'feed' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Feed</Text>
-      </Pressable>
+    <>
+      <View style={[navStyles.bar, { backgroundColor: palette.surfaceContainerLow, paddingBottom: insets.bottom > 0 ? insets.bottom : 12 }]}>
+        {/* Feed tab */}
+        <Pressable
+          onPress={() => router.replace('/feed')}
+          style={navStyles.tab}
+        >
+          <Ionicons name="home-outline" size={24} color={activeTab === 'feed' ? palette.tabIconSelected : palette.tabIconDefault} />
+          <Text style={[Type.labelSmall, { color: activeTab === 'feed' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Feed</Text>
+        </Pressable>
 
-      {/* Tables tab */}
-      <Pressable
-        onPress={() => router.replace('/tables')}
-        style={navStyles.tab}
-      >
-        <Ionicons name="restaurant-outline" size={24} color={activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault} />
-        <Text style={[Type.labelSmall, { color: activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Tables</Text>
-      </Pressable>
+        {/* Tables tab */}
+        <Pressable
+          onPress={() => router.replace('/tables')}
+          style={navStyles.tab}
+        >
+          <Ionicons name="restaurant-outline" size={24} color={activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault} />
+          <Text style={[Type.labelSmall, { color: activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Tables</Text>
+        </Pressable>
 
-      {/* Center + button — opens the full-log composer (search-first) */}
-      <PressableScale
-        onPress={() => router.push('/create-entry')}
-        style={navStyles.addButton}
-        haptic="medium"
-        scaleTo={0.92}
-      >
-        <View style={[navStyles.addCircle, { backgroundColor: palette.primary }]}>
-          <Ionicons name="add" size={28} color="#fff" />
-        </View>
-      </PressableScale>
+        {/* Center + button — opens PlusActionMenu (TICKET-053 step 11) */}
+        <PressableScale
+          onPress={() => setMenuVisible(true)}
+          style={navStyles.addButton}
+          haptic="medium"
+          scaleTo={0.92}
+        >
+          <View style={[navStyles.addCircle, { backgroundColor: palette.primary }]}>
+            <Ionicons name="add" size={28} color="#fff" />
+          </View>
+        </PressableScale>
 
-      {/* Search tab */}
-      <Pressable
-        onPress={() => router.replace('/search')}
-        style={navStyles.tab}
-      >
-        <Ionicons name="search-outline" size={24} color={activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault} />
-        <Text style={[Type.labelSmall, { color: activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Search</Text>
-      </Pressable>
+        {/* Search tab */}
+        <Pressable
+          onPress={() => router.replace('/search')}
+          style={navStyles.tab}
+        >
+          <Ionicons name="search-outline" size={24} color={activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault} />
+          <Text style={[Type.labelSmall, { color: activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Search</Text>
+        </Pressable>
 
-      {/* Profile tab — bell entry; small terracotta dot when unread (no count). */}
-      <Pressable
-        onPress={() => router.replace('/profile')}
-        style={navStyles.tab}
-      >
-        <View>
-          <Ionicons name="person-circle-outline" size={24} color={activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault} />
-          {hasUnread ? (
-            <View style={[navStyles.unreadDot, { backgroundColor: palette.primary, borderColor: palette.surfaceContainerLow }]} />
-          ) : null}
-        </View>
-        <Text style={[Type.labelSmall, { color: activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Profile</Text>
-      </Pressable>
-    </View>
+        {/* Profile tab — bell entry; small terracotta dot when unread (no count). */}
+        <Pressable
+          onPress={() => router.replace('/profile')}
+          style={navStyles.tab}
+        >
+          <View>
+            <Ionicons name="person-circle-outline" size={24} color={activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault} />
+            {hasUnread ? (
+              <View style={[navStyles.unreadDot, { backgroundColor: palette.primary, borderColor: palette.surfaceContainerLow }]} />
+            ) : null}
+          </View>
+          <Text style={[Type.labelSmall, { color: activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Profile</Text>
+        </Pressable>
+      </View>
+
+      {/* PlusActionMenu — shown above the nav bar */}
+      <PlusActionMenu
+        visible={menuVisible}
+        onDismiss={() => setMenuVisible(false)}
+        onLogVisit={() => {
+          setMenuVisible(false);
+          router.push('/create-entry');
+        }}
+        onAddFromLink={() => {
+          setMenuVisible(false);
+          setImportSheetVisible(true);
+        }}
+      />
+
+      {/* ImportLinkSheet — entry point B */}
+      <ImportLinkSheet
+        visible={importSheetVisible}
+        onDismiss={() => setImportSheetVisible(false)}
+      />
+    </>
   );
 }
 
