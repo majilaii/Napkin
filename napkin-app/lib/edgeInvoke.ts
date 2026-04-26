@@ -16,7 +16,13 @@ export interface CallEdgeFnOptions<TBody = unknown> {
     params?: Record<string, string | number | boolean | null | undefined>;
     /** JSON body for POST. Ignored for GET. */
     body?: TBody;
-    /** AbortSignal for cancellation (GET path only). */
+    /**
+     * AbortSignal for cancellation.
+     * - On GET: always wired through to fetch (existing behavior).
+     * - On POST with signal: routes to postWithFetch() so the upstream request
+     *   is actually cancelled. Without signal, POST uses supabase.functions.invoke
+     *   (unchanged behavior for all existing callers). [ARCH-REVIEW-M2]
+     */
     signal?: AbortSignal;
 }
 
@@ -117,6 +123,13 @@ export async function callEdgeFn<T = unknown>(
         return (json?.data ?? json) as T;
     }
 
+    // POST: if a signal is provided, use raw fetch so AbortSignal actually cancels
+    // the upstream request. Without signal, fall through to supabase.functions.invoke
+    // (unchanged behavior for all existing callers). [ARCH-REVIEW-M2]
+    if (signal) {
+        return postWithFetch<T>(name, opts);
+    }
+
     // POST via supabase-js invoke (auto-attaches auth).
     // If `params` is provided, append them as a query string on the function
     // name — supabase-js preserves query strings in the function name. This
@@ -154,6 +167,81 @@ export async function callEdgeFn<T = unknown>(
         throwInvokeError({ code: 'LEGACY', message: String(errPayload) });
     }
     return (data?.data ?? data) as T;
+}
+
+/**
+ * POST via raw fetch with manual auth header forwarding + AbortSignal support.
+ * Mirrors the GET fetch branch — same auth attachment, same error-envelope unwrap.
+ * Called by callEdgeFn when method === 'POST' && signal is present. [ARCH-REVIEW-M2]
+ */
+async function postWithFetch<T>(name: string, opts: CallEdgeFnOptions): Promise<T> {
+    const { action, params, body, signal } = opts;
+    const { data: { session } } = await supabase.auth.getSession();
+    const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+    const url = new URL(`${baseUrl}/functions/v1/${name}`);
+    if (action) url.searchParams.set('action', action);
+    if (params) {
+        for (const [k, v] of Object.entries(params)) {
+            if (v === undefined || v === null) continue;
+            url.searchParams.set(k, String(v));
+        }
+    }
+
+    const postBody = action
+        ? { action, ...((body as object | undefined) ?? {}) }
+        : body;
+
+    let res: Response;
+    try {
+        res = await fetch(url.toString(), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(session?.access_token
+                    ? { Authorization: `Bearer ${session.access_token}` }
+                    : {}),
+                apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '',
+            },
+            body: postBody !== undefined ? JSON.stringify(postBody) : undefined,
+            signal,
+        });
+    } catch (fetchErr) {
+        throwInvokeError({
+            code: 'NETWORK',
+            message: fetchErr instanceof Error ? fetchErr.message : 'Network error',
+        });
+    }
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        const errPayload = json?.error;
+        if (errPayload && typeof errPayload === 'object' && errPayload.code) {
+            throwInvokeError({
+                code: errPayload.code,
+                message: errPayload.message ?? `HTTP ${res.status}`,
+                details: errPayload.details,
+                status: res.status,
+            });
+        }
+        throwInvokeError({
+            code: `http_${res.status}`,
+            message: typeof errPayload === 'string' ? errPayload : `HTTP ${res.status}`,
+            details: json,
+            status: res.status,
+        });
+    }
+    if (json?.error) {
+        const errPayload = json.error;
+        if (typeof errPayload === 'object' && errPayload.code) {
+            throwInvokeError({
+                code: errPayload.code,
+                message: errPayload.message ?? 'Edge function error',
+                details: errPayload.details,
+            });
+        }
+        throwInvokeError({ code: 'LEGACY', message: String(errPayload) });
+    }
+    return (json?.data ?? json) as T;
 }
 
 /**

@@ -26,7 +26,7 @@ import {
     KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as Location from 'expo-location';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -103,6 +103,26 @@ export default function SearchScreen() {
     const router = useRouter();
     const { user } = useAuth();
     const { data: tables } = useTables(user?.id);
+
+    // [ARCH-REVIEW-M1] Seed search from ?q= route param (used by ImportLinkSheet fallback).
+    // Consumed once on mount; cleared so re-entering the tab doesn't auto-re-search.
+    const { q: prefillQ } = useLocalSearchParams<{ q?: string }>();
+    const prefillConsumedRef = useRef(false);
+
+    useEffect(() => {
+        if (prefillQ && !prefillConsumedRef.current) {
+            prefillConsumedRef.current = true;
+            const q = prefillQ.trim();
+            if (q) {
+                setImmediateQuery(q);
+                setDebouncedQuery(q);
+                lastQuery = q;
+            }
+            // Clear the param so re-entering the tab doesn't auto-re-search
+            router.setParams({ q: undefined });
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefillQ]);
 
     // Search mode — Places (default) or People. State is local to the tab.
     const [mode, setMode] = useState<SearchMode>('places');
