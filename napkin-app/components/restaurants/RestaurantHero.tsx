@@ -1,10 +1,16 @@
 /**
  * RestaurantHero — V1 "Dossier" full-bleed hero.
  *
- * Full-bleed photo (no horizontal padding) with dark gradient scrim top+bottom.
- * Chrome (back / bookmark / share / more) floats over the photo in a cream-on-
- * dark glass style. Title block sits bottom-left: UPPERCASE meta (cuisine ·
- * city) → italic serif name → italic serif address.
+ * Two visual modes:
+ *
+ *   1. Photo mode — full-bleed photo (Napkin Storage URL, or Google Places
+ *      proxy URL on ghosts) with dark gradient scrim top+bottom. Cream text
+ *      over photo.
+ *
+ *   2. Invitation mode (TICKET-041) — fires when there is no photo URL at
+ *      all. Warm cream-paper backdrop, dark text, centered italic name and
+ *      a "be the first to note it" subline. Renders the same chrome
+ *      (back/bookmark/share/more) but in dark on cream.
  *
  * Bookmark lives in the chrome (per logging-entry-canvas). Log affordance is
  * the floating pill bottom-right — not this component.
@@ -24,6 +30,7 @@ type Palette = typeof Colors.light;
 
 const HERO_HEIGHT = 340;
 const CREAM = Colors.light.cream;
+const INK = Colors.light.text;
 
 function priceTierLabel(level: number | null): string {
     if (level == null) return '';
@@ -52,6 +59,7 @@ export function RestaurantHero({
     const palette = Colors[scheme ?? 'light'] as Palette;
 
     const photoUri = restaurant.photo_url ?? null;
+    const isInvitation = !photoUri;
 
     const metaParts: string[] = [];
     if (restaurant.cuisine) metaParts.push(restaurant.cuisine);
@@ -59,6 +67,66 @@ export function RestaurantHero({
     const priceTier = priceTierLabel(restaurant.price_level);
     if (priceTier) metaParts.push(priceTier);
     const metaLine = metaParts.join(' · ');
+
+    if (isInvitation) {
+        return (
+            <View style={[styles.hero, styles.invitationBg]}>
+                {/* Subtle warm-paper gradient (cream → slightly warmer cream) */}
+                <LinearGradient
+                    colors={['#FAF6EC', '#F1E9D6']}
+                    style={StyleSheet.absoluteFill}
+                    pointerEvents="none"
+                />
+
+                {/* Chrome (dark on cream) */}
+                <View style={[styles.chrome, { top: insets.top + 8 }]}>
+                    <ChromeButton onPress={onBack} variant="dark">
+                        <Ionicons name="chevron-back" size={18} color={INK} />
+                    </ChromeButton>
+                    <View style={styles.chromeRight}>
+                        {onBookmarkPress ? (
+                            <ChromeButton onPress={onBookmarkPress} variant="dark">
+                                <Ionicons
+                                    name={bookmarked ? 'bookmark' : 'bookmark-outline'}
+                                    size={14}
+                                    color={INK}
+                                />
+                            </ChromeButton>
+                        ) : null}
+                        <ChromeButton onPress={onShare} variant="dark">
+                            <Ionicons name="share-outline" size={15} color={INK} />
+                        </ChromeButton>
+                        <ChromeButton onPress={onMore} variant="dark">
+                            <Ionicons name="ellipsis-horizontal" size={16} color={INK} />
+                        </ChromeButton>
+                    </View>
+                </View>
+
+                {/* Centered italic name + invitation copy */}
+                <View style={styles.invitationBlock}>
+                    {metaLine ? (
+                        <Text style={[styles.invitationMeta, { color: palette.textMuted }]}>
+                            {metaLine.toUpperCase()}
+                        </Text>
+                    ) : null}
+                    <Text style={[styles.invitationName, { color: INK }]} numberOfLines={3}>
+                        {restaurant.name}
+                    </Text>
+                    {restaurant.address ? (
+                        <Text style={[styles.invitationAddress, { color: palette.textMuted }]} numberOfLines={2}>
+                            {restaurant.address}
+                        </Text>
+                    ) : null}
+                    <Text
+                        style={[styles.invitationCopy, { color: palette.textMuted }]}
+                        numberOfLines={2}
+                    >
+                        no one at your table has been here yet — be the first to note it.
+                    </Text>
+                </View>
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
@@ -131,16 +199,22 @@ export function RestaurantHero({
 function ChromeButton({
     children,
     onPress,
+    variant = 'light',
 }: {
     children: React.ReactNode;
     onPress?: () => void;
+    variant?: 'light' | 'dark';
 }) {
+    const bg = variant === 'dark' ? 'rgba(28,28,25,0.08)' : 'rgba(28,28,25,0.35)';
     return (
         <Pressable
             onPress={onPress}
             hitSlop={8}
             disabled={!onPress}
-            style={({ pressed }) => [styles.chromeBtn, { opacity: pressed ? 0.7 : 1 }]}
+            style={({ pressed }) => [
+                styles.chromeBtn,
+                { backgroundColor: bg, opacity: pressed ? 0.7 : 1 },
+            ]}
         >
             {children}
         </Pressable>
@@ -169,7 +243,6 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         borderRadius: 16,
-        backgroundColor: 'rgba(28,28,25,0.35)',
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -200,5 +273,47 @@ const styles = StyleSheet.create({
         color: CREAM,
         opacity: 0.8,
         marginTop: 5,
+    },
+    // ── Invitation (no-photo) variant ────────────────────────────────────
+    invitationBg: {
+        backgroundColor: '#FAF6EC',
+    },
+    invitationBlock: {
+        position: 'absolute',
+        left: 22,
+        right: 22,
+        top: 0,
+        bottom: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    invitationMeta: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        letterSpacing: 1.5,
+        marginBottom: 10,
+        textAlign: 'center',
+    },
+    invitationName: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 32,
+        lineHeight: 36,
+        letterSpacing: -0.5,
+        textAlign: 'center',
+    },
+    invitationAddress: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        textAlign: 'center',
+        marginTop: 6,
+        opacity: 0.85,
+    },
+    invitationCopy: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        textAlign: 'center',
+        marginTop: 18,
+        paddingHorizontal: 24,
+        opacity: 0.75,
     },
 });

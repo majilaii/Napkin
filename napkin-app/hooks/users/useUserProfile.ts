@@ -141,7 +141,7 @@ async function fetchUserProfile(identifier: string): Promise<UserProfileResult> 
         return { data: data ?? null, isNotFound: false };
     } catch (err) {
         // 404 → not found is a normal UX state, not an error
-        const cause = (err as Error & { cause?: { status?: number; code?: string; message?: string } })?.cause;
+        const cause = (err as Error & { cause?: { status?: number; code?: string; message?: string; details?: unknown } })?.cause;
         if (cause?.status === 404 || cause?.code === 'NOT_FOUND') {
             return { data: null, isNotFound: true };
         }

@@ -5,10 +5,18 @@
 
 export type SearchPayload = {
     query?: string;
+    place_id?: string;
     latitude?: number;
     longitude?: number;
     limit?: number;
     radius?: number;
+    /**
+     * When true and place_id is provided, server upserts the resulting place
+     * into restaurants and returns restaurant_id alongside the sanitized place.
+     * Used by the client for opportunistic backfill of stale rows and for
+     * recovering from missing-payload deep links.
+     */
+    persist?: boolean;
 };
 
 export async function parsePayload(req: Request): Promise<SearchPayload> {
@@ -19,10 +27,14 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
 
             return {
                 query: body.query ?? searchParams.get('query') ?? undefined,
+                place_id: body.place_id ?? searchParams.get('place_id') ?? undefined,
                 latitude: firstNumber(body.latitude, searchParams.get('latitude')),
                 longitude: firstNumber(body.longitude, searchParams.get('longitude')),
                 limit: firstNumber(body.limit, searchParams.get('limit')),
                 radius: firstNumber(body.radius, searchParams.get('radius')),
+                persist: typeof body.persist === 'boolean'
+                    ? body.persist
+                    : searchParams.get('persist') === 'true' || undefined,
             };
         } catch {
             // fall through to query params only
@@ -31,10 +43,12 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
 
     return {
         query: searchParams.get('query') ?? undefined,
+        place_id: searchParams.get('place_id') ?? undefined,
         latitude: firstNumber(undefined, searchParams.get('latitude')),
         longitude: firstNumber(undefined, searchParams.get('longitude')),
         limit: firstNumber(undefined, searchParams.get('limit')),
         radius: firstNumber(undefined, searchParams.get('radius')),
+        persist: searchParams.get('persist') === 'true' || undefined,
     };
 }
 

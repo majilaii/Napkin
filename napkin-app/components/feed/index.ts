@@ -22,3 +22,4 @@ export { FriendLogCard } from './FriendLogCard';
 export { FastLogRow } from './FastLogRow';
 export { FeedTerminus } from './FeedTerminus';
 export { InlineStars } from './InlineStars';
+export { FeedEmpty } from './FeedEmpty';

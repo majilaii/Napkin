@@ -31,6 +31,7 @@ import { ToastProvider } from '@/providers/ToastProvider';
 import { Colors, Type } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 import { PressableScale } from '@/components/ui/napkin';
+import { useNotifications } from '@/hooks/notifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -40,6 +41,9 @@ function BottomNavBar() {
   const scheme = useScheme() ?? 'light';
   const palette = Colors[scheme];
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const { data: notifData } = useNotifications(user?.id);
+  const hasUnread = (notifData?.unreadCount ?? 0) > 0;
 
   // Only show on tab screens
   const inTabs = segments[0] === '(tabs)';
@@ -68,9 +72,9 @@ function BottomNavBar() {
         <Text style={[Type.labelSmall, { color: activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Tables</Text>
       </Pressable>
 
-      {/* Center + button — opens day logger (Concept C) */}
+      {/* Center + button — opens the full-log composer (search-first) */}
       <PressableScale
-        onPress={() => router.push('/day/today')}
+        onPress={() => router.push('/create-entry')}
         style={navStyles.addButton}
         haptic="medium"
         scaleTo={0.92}
@@ -89,12 +93,17 @@ function BottomNavBar() {
         <Text style={[Type.labelSmall, { color: activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Search</Text>
       </Pressable>
 
-      {/* Profile tab */}
+      {/* Profile tab — bell entry; small terracotta dot when unread (no count). */}
       <Pressable
         onPress={() => router.replace('/profile')}
         style={navStyles.tab}
       >
-        <Ionicons name="person-circle-outline" size={24} color={activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault} />
+        <View>
+          <Ionicons name="person-circle-outline" size={24} color={activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault} />
+          {hasUnread ? (
+            <View style={[navStyles.unreadDot, { backgroundColor: palette.primary, borderColor: palette.surfaceContainerLow }]} />
+          ) : null}
+        </View>
         <Text style={[Type.labelSmall, { color: activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Profile</Text>
       </Pressable>
     </View>
@@ -136,6 +145,15 @@ const navStyles = StyleSheet.create({
     shadowOpacity: 0.14,
     shadowRadius: 20,
     elevation: 4,
+  },
+  unreadDot: {
+    position: 'absolute',
+    top: -2,
+    right: -3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1.5,
   },
 });
 
@@ -241,6 +259,10 @@ function RootLayoutNav() {
           <Stack.Screen
             name="day/[date]"
             options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
+            name="notifications"
+            options={{ headerShown: false }}
           />
         </Stack>
         <BottomNavBar />

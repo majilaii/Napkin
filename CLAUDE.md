@@ -364,3 +364,32 @@ Workflow lives in `.kanban/`:
 - `done/` → shipped
 
 Use the project slash commands: `/project:board`, `/project:spec TICKET-NNN`, `/project:start TICKET-NNN`, `/project:review`.
+
+### Dual-review protocol
+
+For high-stakes work, every gated phase (spec, architecture, build) gets BOTH a Claude review and a Codex review. Two model architectures, independent failure modes — catches what a single reviewer misses. Single-reviewer is fine for routine adds.
+
+**Triggers** (any one is enough — applies at spec, architecture, AND build phases):
+
+- PR / change deletes >500 LOC or removes major modules
+- Touches DB schema, migrations, or RLS policies
+- Touches edge function contracts in `supabase/functions/_shared/` or `lib/edgeInvoke.ts`
+- Refactors crossing module boundaries
+- Auth, permissions, or data integrity (Supabase RLS, `table_members`, follow graph)
+- External APIs with real cost or rate limits (Google Places, Maps)
+- Builder uses `--no-verify` or any hook bypass
+- Builder reports "pre-existing failures" to justify failing tests
+- Builder deviates from the spec's file list (additions or omissions)
+- Cherry-picks, rebases, or merge-conflict resolutions
+
+**Where Codex plugs in:**
+
+| Phase | Claude reviewer | Codex pass | What Codex looks for |
+|-------|------------------|--------------|------------------------|
+| Spec (`/project:spec`) | (n/a, product-designer writes spec) | Sanity-check spec | Missing acceptance criteria, ambiguous scope statements, security/data-integrity gaps |
+| Architecture (`/project:start` Phase 1) | (n/a, architect writes design) | Adversarial design review | Hidden coupling, lazy-import landmines, scope creep, lock-in choices |
+| Build (`/project:start` Phase 3) | code-reviewer subagent | `/codex:adversarial-review` | Runtime landmines, swallowed errors, broken callers, test bypass |
+
+**Reconciliation:** if either reviewer returns FAIL, the phase fails. PASS from one + PASS-WITH-NITS from the other = pass with nits documented. Conflicting findings on the same code path → orchestrator does a third pass.
+
+**Invocation:** Codex runs via `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task` (for spec/arch sanity) or `adversarial-review` (for build review). See `~/.claude/commands/spec.md`, `~/.claude/commands/start.md`, `~/.claude/commands/review.md` for the exact invocation per phase.

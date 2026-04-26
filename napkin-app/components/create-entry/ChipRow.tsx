@@ -1,13 +1,13 @@
 /**
  * ChipRow — horizontal scrollable row of action chips below the writing surface.
- * Chips: photos (count if any), dish, companions (count if any), date.
+ * Chips: photos · dish · with… · today · tables…
  *
  * Each chip is a Pressable that fires the corresponding onPress callback.
  * Uses ghosted warm-rule pill styling (no solid fill, borderColor = divider).
  * "active" chips (have data) get a soft terracotta tint per wireframe.
  */
 import React from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
+import { ScrollView, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -22,6 +22,15 @@ interface ChipRowProps {
     onCompanionsPress: () => void;
     visitedAt: Date;
     onDateChange: (date: Date) => void;
+    /**
+     * Selected table name to show on the chip ("Sunday Roast"); null/undefined
+     * means no table selected (chip reads "tables…").
+     * Only render the chip when the user is in ≥1 Table — caller controls
+     * via `tablesAvailable`.
+     */
+    tablesAvailable: boolean;
+    selectedTableName: string | null;
+    onTablesPress: () => void;
 }
 
 interface ChipProps {
@@ -69,6 +78,9 @@ export function ChipRow({
     onCompanionsPress,
     visitedAt,
     onDateChange,
+    tablesAvailable,
+    selectedTableName,
+    onTablesPress,
 }: ChipRowProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -106,6 +118,19 @@ export function ChipRow({
 
             {/* Date chip has its own picker UI */}
             <DateChip value={visitedAt} onChange={onDateChange} />
+
+            {/* Tables chip — same affordance pattern as the rest. Only renders
+                when the user is in ≥1 Table. Single-select v1; multi-select
+                arrives with the entries.table_id schema rework. */}
+            {tablesAvailable ? (
+                <ActionChip
+                    icon="people-circle-outline"
+                    label={selectedTableName ?? 'tables…'}
+                    active={!!selectedTableName}
+                    onPress={onTablesPress}
+                    palette={palette}
+                />
+            ) : null}
         </ScrollView>
     );
 }

@@ -17,7 +17,7 @@ import {
     TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { StarRating } from '@/components/StarRating';
 
@@ -58,21 +58,28 @@ export function AddDetailsDrawer({ breakdown, onBreakdownChange, dish, onDishCha
     };
 
     return (
-        <View style={[styles.container, { borderTopColor: 'rgba(221,192,186,0.25)' }]}>
+        <View style={[styles.container, { borderTopColor: palette.dividerSoft }]}>
             <Pressable
                 onPress={toggle}
                 style={styles.trigger}
                 accessibilityRole="button"
                 accessibilityLabel={open ? 'Collapse details' : 'Add details'}
             >
-                <Text style={[styles.triggerLabel, { color: palette.textMuted }]}>
+                <Text style={[styles.triggerLabel, { color: palette.primary }]}>
                     add details
                 </Text>
-                <Ionicons
-                    name={open ? 'chevron-up' : 'chevron-down'}
-                    size={14}
-                    color={palette.textMuted}
-                />
+                <View
+                    style={[
+                        styles.chevronCircle,
+                        { borderColor: 'rgba(160,63,40,0.3)' },
+                    ]}
+                >
+                    <Ionicons
+                        name={open ? 'chevron-up' : 'chevron-down'}
+                        size={11}
+                        color={palette.primary}
+                    />
+                </View>
             </Pressable>
 
             {open ? (
@@ -115,18 +122,27 @@ export function AddDetailsDrawer({ breakdown, onBreakdownChange, dish, onDishCha
 
 const styles = StyleSheet.create({
     container: {
-        borderTopWidth: 1,
-        marginTop: Spacing.md,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        marginTop: Spacing.lg,
     },
     trigger: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingVertical: Spacing.md,
+        paddingTop: Spacing.md + 2,
+        paddingBottom: Spacing.md + 2,
     },
     triggerLabel: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 14,
+    },
+    chevronCircle: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     content: {
         paddingBottom: Spacing.md,

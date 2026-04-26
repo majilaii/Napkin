@@ -9,6 +9,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { Avatar } from '@/components/feed/Avatar';
+import { TableTopFourPlaceholder } from './TableTopFourPlaceholder';
 
 type Palette = typeof Colors.light;
 
@@ -93,6 +94,9 @@ export function FoundedHero({
                     </Pressable>
                 ) : null}
             </View>
+
+            {/* Top 4 placeholder — week-one waiting state from the design system. */}
+            <TableTopFourPlaceholder palette={palette} />
         </View>
     );
 }

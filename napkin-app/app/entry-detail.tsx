@@ -314,7 +314,7 @@ async function fetchEntryPhotos(entryId: string): Promise<{ id: string; photo_ur
 
 function useEntryPhotos(entryId?: string) {
     return useQuery({
-        queryKey: queryKeys.entryDetail.photos(entryId),
+        queryKey: queryKeys.entryDetail.photos(entryId ?? ''),
         queryFn: () => fetchEntryPhotos(entryId!),
         enabled: !!entryId,
         staleTime: 1000 * 60 * 5,

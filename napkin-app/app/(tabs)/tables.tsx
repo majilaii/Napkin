@@ -136,7 +136,7 @@ export default function TablesScreen() {
 
     // Welcome banner: show when caller_welcomed_at IS NULL and role !== 'admin'
     const showWelcomeBanner =
-        !activeTable?.is_personal &&
+        !(activeTable as any)?.is_personal &&
         tableDetail?.caller_welcomed_at === null &&
         tableDetail?.caller_role !== 'admin' &&
         tableDetail?.caller_role != null;
@@ -258,7 +258,7 @@ export default function TablesScreen() {
                 hasMultipleTables={hasMultipleTables}
                 onSwitcherPress={() => setShowTablePicker(true)}
                 palette={palette}
-                onSettingsPress={!activeTable.is_personal ? handleSettingsPress : undefined}
+                onSettingsPress={!(activeTable as any).is_personal ? handleSettingsPress : undefined}
             />
 
             {/* Welcome banner — shown once when a user is added to a table (TICKET-029) */}
