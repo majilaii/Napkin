@@ -32,6 +32,7 @@ export interface CreateEntryInput {
         latitude?: number;
         longitude?: number;
         photoReference?: string;
+        photoAttributionHtml?: string | null;
     };
     rating?: number | null;
     content?: string;

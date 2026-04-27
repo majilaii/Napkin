@@ -16,7 +16,7 @@
  * the floating pill bottom-right — not this component.
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
 import type { RestaurantPageRestaurant } from '@/hooks/restaurants/useRestaurantPage';
 
 type Palette = typeof Colors.light;
@@ -128,71 +129,127 @@ export function RestaurantHero({
         );
     }
 
+    // TICKET-057 AC 10/11: isPlaces drives both the warm-paper overlay and the
+    // attribution rule. 'none' is treated identically to null — no overlay, no
+    // attribution, falls through to invitation hero if photo_url is also null.
+    // When a user/Table photo replaces a Places hero, photo_source flips server-side
+    // and isPlaces becomes false on the next render — no manual refresh needed (AC 11).
+    const isPlaces = restaurant.photo_source === 'places';
+    const parsed = isPlaces ? parsePlacesAttribution(restaurant.places_photo_attribution_html) : null;
+
     return (
-        <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
-            {photoUri ? (
-                <ExpoImage
-                    source={{ uri: photoUri }}
+        <>
+            <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
+                {photoUri ? (
+                    <ExpoImage
+                        source={{ uri: photoUri }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        transition={200}
+                    />
+                ) : null}
+
+                {/* TICKET-057 AC 9: warm-paper overlay on Places-sourced hero.
+                    Layered between the photo and the dark scrim so chrome legibility
+                    is preserved. Never applies when photo_source is 'user', 'table',
+                    or null (one-way invariant per AC 10). */}
+                {isPlaces ? (
+                    <View
+                        style={[
+                            StyleSheet.absoluteFill,
+                            {
+                                backgroundColor: palette.placesOverlayTint,
+                                opacity: palette.placesOverlayOpacity,
+                            },
+                        ]}
+                        pointerEvents="none"
+                    />
+                ) : null}
+
+                {/* Dark gradient scrim — top for chrome legibility, bottom for title */}
+                <LinearGradient
+                    colors={[
+                        'rgba(28,28,25,0.55)',
+                        'rgba(28,28,25,0)',
+                        'rgba(28,28,25,0)',
+                        'rgba(28,28,25,0.85)',
+                    ]}
+                    locations={[0, 0.3, 0.55, 1]}
                     style={StyleSheet.absoluteFill}
-                    contentFit="cover"
-                    transition={200}
+                    pointerEvents="none"
                 />
-            ) : null}
 
-            {/* Dark gradient scrim — top for chrome legibility, bottom for title */}
-            <LinearGradient
-                colors={[
-                    'rgba(28,28,25,0.55)',
-                    'rgba(28,28,25,0)',
-                    'rgba(28,28,25,0)',
-                    'rgba(28,28,25,0.85)',
-                ]}
-                locations={[0, 0.3, 0.55, 1]}
-                style={StyleSheet.absoluteFill}
-                pointerEvents="none"
-            />
-
-            {/* Chrome */}
-            <View style={[styles.chrome, { top: insets.top + 8 }]}>
-                <ChromeButton onPress={onBack}>
-                    <Ionicons name="chevron-back" size={18} color={CREAM} />
-                </ChromeButton>
-                <View style={styles.chromeRight}>
-                    {onBookmarkPress ? (
-                        <ChromeButton onPress={onBookmarkPress}>
-                            <Ionicons
-                                name={bookmarked ? 'bookmark' : 'bookmark-outline'}
-                                size={14}
-                                color={CREAM}
-                            />
+                {/* Chrome */}
+                <View style={[styles.chrome, { top: insets.top + 8 }]}>
+                    <ChromeButton onPress={onBack}>
+                        <Ionicons name="chevron-back" size={18} color={CREAM} />
+                    </ChromeButton>
+                    <View style={styles.chromeRight}>
+                        {onBookmarkPress ? (
+                            <ChromeButton onPress={onBookmarkPress}>
+                                <Ionicons
+                                    name={bookmarked ? 'bookmark' : 'bookmark-outline'}
+                                    size={14}
+                                    color={CREAM}
+                                />
+                            </ChromeButton>
+                        ) : null}
+                        <ChromeButton onPress={onShare}>
+                            <Ionicons name="share-outline" size={15} color={CREAM} />
                         </ChromeButton>
+                        <ChromeButton onPress={onMore}>
+                            <Ionicons name="ellipsis-horizontal" size={16} color={CREAM} />
+                        </ChromeButton>
+                    </View>
+                </View>
+
+                {/* Title block */}
+                <View style={styles.titleBlock}>
+                    {metaLine ? (
+                        <Text style={styles.metaLine} numberOfLines={1}>
+                            {metaLine.toUpperCase()}
+                        </Text>
                     ) : null}
-                    <ChromeButton onPress={onShare}>
-                        <Ionicons name="share-outline" size={15} color={CREAM} />
-                    </ChromeButton>
-                    <ChromeButton onPress={onMore}>
-                        <Ionicons name="ellipsis-horizontal" size={16} color={CREAM} />
-                    </ChromeButton>
+                    <Text style={styles.name} numberOfLines={3}>
+                        {restaurant.name}
+                    </Text>
+                    {restaurant.address ? (
+                        <Text style={styles.address} numberOfLines={2}>
+                            {restaurant.address}
+                        </Text>
+                    ) : null}
                 </View>
             </View>
 
-            {/* Title block */}
-            <View style={styles.titleBlock}>
-                {metaLine ? (
-                    <Text style={styles.metaLine} numberOfLines={1}>
-                        {metaLine.toUpperCase()}
+            {/* TICKET-057 AC 6/7: attribution rule below the hero photo, on the warm-paper
+                margin. NOT overlaid on the image (Heirloom: no scrim chrome on photography).
+                Only rendered when photo_source === 'places' AND parsed is non-null. */}
+            {isPlaces && parsed ? (
+                <View
+                    style={[
+                        styles.attributionRow,
+                        { backgroundColor: palette.background },
+                    ]}
+                >
+                    <Text style={[styles.attribution, { color: palette.textMuted }]}>
+                        {'photo via google'}
+                        {parsed ? ' · ' : null}
+                        {parsed ? (
+                            parsed.href != null ? (
+                                <Text
+                                    onPress={() => Linking.openURL(parsed.href!)}
+                                    style={styles.attributionLink}
+                                >
+                                    {parsed.label}
+                                </Text>
+                            ) : (
+                                <Text>{parsed.label}</Text>
+                            )
+                        ) : null}
                     </Text>
-                ) : null}
-                <Text style={styles.name} numberOfLines={3}>
-                    {restaurant.name}
-                </Text>
-                {restaurant.address ? (
-                    <Text style={styles.address} numberOfLines={2}>
-                        {restaurant.address}
-                    </Text>
-                ) : null}
-            </View>
-        </View>
+                </View>
+            ) : null}
+        </>
     );
 }
 
@@ -273,6 +330,23 @@ const styles = StyleSheet.create({
         color: CREAM,
         opacity: 0.8,
         marginTop: 5,
+    },
+    // ── TICKET-057: Places attribution rule ──────────────────────────────
+    attributionRow: {
+        paddingHorizontal: 22,
+        paddingTop: 8,
+        paddingBottom: 12,
+    },
+    attribution: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        letterSpacing: 0.2,
+    },
+    attributionLink: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        letterSpacing: 0.2,
+        textDecorationLine: 'underline',
     },
     // ── Invitation (no-photo) variant ────────────────────────────────────
     invitationBg: {

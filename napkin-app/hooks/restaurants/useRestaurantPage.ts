@@ -29,6 +29,11 @@ export type RestaurantPageRestaurant = {
     google_rating: number | null;
     google_rating_count: number | null;
     external_id: string | null;
+    // TICKET-057: photo provenance and Places attribution.
+    // photo_source drives the warm-paper overlay and attribution rule in RestaurantHero.
+    // 'none' = we tried Places, got no usable attribution — skip lazy backfill on re-visit.
+    photo_source: 'user' | 'table' | 'places' | 'none' | null;
+    places_photo_attribution_html: string | null;
 };
 
 export type PageVisit = {
@@ -180,6 +185,13 @@ async function fetchRestaurantPage(
 
     // Back-fill v3 fields for older edge function responses (graceful degradation)
     const data = json.data as RestaurantPageData;
+    // TICKET-057: back-fill attribution fields for responses before migration.
+    if (data.restaurant && data.restaurant.photo_source === undefined) {
+        (data.restaurant as any).photo_source = null;
+    }
+    if (data.restaurant && data.restaurant.places_photo_attribution_html === undefined) {
+        (data.restaurant as any).places_photo_attribution_html = null;
+    }
     if (!data.distributions) {
         data.distributions = { you: [0,0,0,0,0], your_table: null, napkin: [0,0,0,0,0] };
     }
@@ -226,6 +238,11 @@ export function useRestaurantPage(
  * Synthesises a RestaurantPageRestaurant from a Places search payload.
  * Used to render the hero immediately for ghost restaurants before the
  * server fetch returns (or when the restaurant isn't yet in the DB).
+ *
+ * TICKET-057: accepts photoAttributionHtml from the search result to populate
+ * photo_source and places_photo_attribution_html on the ghost render so
+ * RestaurantHero can show the warm-paper overlay and attribution rule
+ * immediately — before the lazy server upsert resolves.
  */
 export function restaurantFromPlace(
     place: RestaurantPayload & {
@@ -237,10 +254,35 @@ export function restaurantFromPlace(
         priceLevel?: number;
         cuisine?: string;
         photoReference?: string;
+        photoAttributionHtml?: string | null;
         name: string;
         external_id: string;
     },
 ): RestaurantPageRestaurant {
+    // TICKET-057 ghost-path synthesis (§2 ghost-render path trace, step 3):
+    // - photoReference + non-empty attribution → photo_source 'places', proxy URL, attribution.
+    // - photoReference but no attribution → photo_source 'none', no photo (AC 12: no Places
+    //   photo without credit, even on ghost render). Falls through to invitation hero.
+    // - neither → all null (no photo at all).
+    const hasAttribution = !!(place.photoAttributionHtml && place.photoAttributionHtml.trim());
+    const hasPhotoRef = !!place.photoReference;
+
+    let photoUrl: string | null = null;
+    let photoSource: RestaurantPageRestaurant['photo_source'] = null;
+    let attributionHtml: string | null = null;
+
+    if (hasPhotoRef && hasAttribution) {
+        photoUrl = placesPhotoProxyUrl(place.photoReference) ?? null;
+        photoSource = 'places';
+        attributionHtml = place.photoAttributionHtml!;
+    } else if (hasPhotoRef && !hasAttribution) {
+        // No attribution → sentinel. Hero falls to invitation state.
+        photoUrl = null;
+        photoSource = 'none';
+        attributionHtml = null;
+    }
+    // else: neither → all null.
+
     return {
         id: '', // not yet persisted
         name: place.name,
@@ -249,12 +291,11 @@ export function restaurantFromPlace(
         country: place.country ?? place.location?.country ?? null,
         cuisine: place.cuisine ?? null,
         price_level: place.priceLevel ?? null,
-        // Ghost photo: serve via places-photo edge proxy. Once the row is
-        // upserted, _shared/restaurant.ts mirrors the bytes to Supabase
-        // Storage and writes a permanent photo_url that supersedes this.
-        photo_url: placesPhotoProxyUrl(place.photoReference) ?? null,
+        photo_url: photoUrl,
         google_rating: place.googleRating ?? null,
         google_rating_count: place.googleRatingCount ?? null,
         external_id: place.external_id,
+        photo_source: photoSource,
+        places_photo_attribution_html: attributionHtml,
     };
 }

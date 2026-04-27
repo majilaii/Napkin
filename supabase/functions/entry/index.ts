@@ -87,6 +87,8 @@ serve(async (req) => {
                     latitude: rInput.latitude,
                     longitude: rInput.longitude,
                     photoReference: rInput.photoReference,
+                    // TICKET-057: see entry-create path comment below; same contract.
+                    photoAttributionHtml: rInput.photoAttributionHtml ?? null,
                     googleRating: rInput.googleRating ?? rInput.rating,
                     googleRatingCount: rInput.googleRatingCount ?? rInput.userRatingCount,
                     priceLevel: rInput.priceLevel,
@@ -336,6 +338,10 @@ serve(async (req) => {
                         latitude: restaurant.latitude,
                         longitude: restaurant.longitude,
                         photoReference: restaurant.photoReference,
+                        // TICKET-057: clients that pass photoReference must also pass
+                        // photoAttributionHtml — empty/missing stamps photo_source='none'
+                        // (sentinel) per AC 12 to honor the Places ToS attribution rule.
+                        photoAttributionHtml: restaurant.photoAttributionHtml ?? null,
                         googleRating: restaurant.googleRating,
                         googleRatingCount: restaurant.googleRatingCount,
                         priceLevel: restaurant.priceLevel,

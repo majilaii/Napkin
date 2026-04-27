@@ -38,7 +38,7 @@ export function Icon({ name, size = 'lg', color, rawColor }: Props) {
   if (rawColor) {
     resolvedColor = rawColor;
   } else if (color && color in palette) {
-    resolvedColor = (palette as Record<string, string>)[color];
+    resolvedColor = (palette as unknown as Record<string, string>)[color];
   } else if (color) {
     resolvedColor = color;
   } else {

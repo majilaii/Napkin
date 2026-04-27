@@ -22,6 +22,10 @@ export interface PlacesResult {
     city: string | null;
     cuisine: string | null;
     photoReference: string | null;
+    // TICKET-057: synthesized attribution HTML from Places authorAttributions.
+    // null when no attribution is available. Plumbed to ghost render + upsert
+    // so attribution and warm-paper overlay appear on ghost pages.
+    photoAttributionHtml: string | null;
     formattedAddress: string | null;
     latitude: number | null;
     longitude: number | null;

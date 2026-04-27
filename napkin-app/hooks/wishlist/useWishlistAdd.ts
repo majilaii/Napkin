@@ -21,6 +21,10 @@ export interface RestaurantPayload {
     latitude?: number;
     longitude?: number;
     photoReference?: string;
+    // TICKET-057: synthesized attribution HTML from Places authorAttributions.
+    // Carried through so ghost wishlist adds round-trip the field into the server
+    // upsert, which writes places_photo_attribution_html + photo_source = 'places'.
+    photoAttributionHtml?: string | null;
     googleRating?: number;
     googleRatingCount?: number;
     priceLevel?: number;

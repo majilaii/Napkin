@@ -18,22 +18,37 @@ DROP FUNCTION IF EXISTS public.prevent_personal_table_delete();
 -- 2. Drop the partial unique index (one personal table per owner)
 DROP INDEX IF EXISTS idx_tables_one_personal_per_owner;
 
--- 3. Reassign entries on personal tables to feed-only
-UPDATE public.entries e
-SET table_id = NULL
-FROM public.tables t
-WHERE e.table_id = t.id AND t.is_personal = true;
+-- 3-6. Cleanup of personal-table data + column.
+-- Wrapped in a column-existence guard so the migration is safe to re-run on
+-- environments where the column was already dropped (a previous identically-
+-- versioned file silently won the race in remote schema_migrations).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'tables'
+          AND column_name = 'is_personal'
+    ) THEN
+        -- 3. Reassign entries on personal tables to feed-only
+        UPDATE public.entries e
+        SET table_id = NULL
+        FROM public.tables t
+        WHERE e.table_id = t.id AND t.is_personal = true;
 
--- 4. Delete memberships for personal tables
-DELETE FROM public.table_members tm
-USING public.tables t
-WHERE tm.table_id = t.id AND t.is_personal = true;
+        -- 4. Delete memberships for personal tables
+        DELETE FROM public.table_members tm
+        USING public.tables t
+        WHERE tm.table_id = t.id AND t.is_personal = true;
 
--- 5. Delete personal tables
-DELETE FROM public.tables WHERE is_personal = true;
+        -- 5. Delete personal tables
+        DELETE FROM public.tables WHERE is_personal = true;
 
--- 6. Drop the column
-ALTER TABLE public.tables DROP COLUMN IF EXISTS is_personal;
+        -- 6. Drop the column
+        ALTER TABLE public.tables DROP COLUMN is_personal;
+    END IF;
+END $$;
 
 -- 7. Rewrite handle_new_user to stop creating personal tables
 CREATE OR REPLACE FUNCTION public.handle_new_user()
