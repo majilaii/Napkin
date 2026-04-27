@@ -57,17 +57,12 @@ export function ComposerMasthead({ restaurantName, rating, onRatingChange, onCle
                             >
                                 <Ionicons
                                     name={filled ? 'star' : half ? 'star-half' : 'star-outline'}
-                                    size={18}
+                                    size={20}
                                     color={color}
                                 />
                             </Pressable>
                         );
                     })}
-                    {rating > 0 ? (
-                        <Text style={[styles.ratingNum, { color: palette.text }]}>
-                            {String(rating)}
-                        </Text>
-                    ) : null}
                 </View>
             </View>
         </View>
@@ -92,25 +87,19 @@ const styles = StyleSheet.create({
     },
     restaurantName: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 32,
-        lineHeight: 36,
+        fontSize: 28,
+        lineHeight: 32,
         letterSpacing: -0.4,
         fontWeight: '400',
     },
     starRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 2,
+        gap: 3,
         flexShrink: 0,
-        paddingBottom: 4, // baseline-align with text
+        paddingBottom: 3, // baseline-align with text
     },
     starTap: {
         padding: 2,
-    },
-    ratingNum: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
-        marginLeft: 4,
-        lineHeight: 22,
     },
 });

@@ -162,7 +162,6 @@ export function FastLogSheet({
                     {
                         backgroundColor: palette.card,
                         paddingBottom: insets.bottom + 16,
-                        minHeight: SCREEN_HEIGHT * 0.6,
                         maxHeight: SCREEN_HEIGHT * 0.9,
                         transform: [{ translateY: dragOffset }],
                     },
