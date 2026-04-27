@@ -16,3 +16,4 @@ export { TableTopFourPlaceholder } from './TableTopFourPlaceholder';
 export { TableTopFourGrid } from './TableTopFourGrid';
 export { EditTop4Sheet } from './EditTop4Sheet';
 export { Top4EditedCard } from './Top4EditedCard';
+export { StartRoundPill } from './StartRoundPill';

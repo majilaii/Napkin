@@ -56,6 +56,7 @@ import {
     TableTopFourGrid,
     TableTopFourPlaceholder,
     EditTop4Sheet,
+    StartRoundPill,
 } from '@/components/tables';
 import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
@@ -262,6 +263,27 @@ export default function TablesScreen() {
         }
     };
 
+    const handleStartRound = () => {
+        if (activeTable?.id) {
+            router.push({
+                pathname: '/create-entry',
+                params: { mode: 'round', tableId: activeTable.id },
+            });
+        }
+    };
+
+    // Show the "start a round" pill only when:
+    //   - there is an active social table (not personal)
+    //   - the table has ≥2 members
+    //   - no Round is currently in progress (ActiveGatherBanner covers that state)
+    //   - the Activity tab is active (pill is masthead chrome for the activity surface only)
+    const showStartRoundPill =
+        !!activeTable &&
+        !(activeTable as any).is_personal &&
+        (members?.length ?? 0) >= 2 &&
+        activeRounds.length === 0 &&
+        activeTab === 'activity';
+
     // Shared header + segmented control (rendered above both tabs)
     const headerAndControl = (
         <>
@@ -284,6 +306,16 @@ export default function TablesScreen() {
                     tableName={tableName}
                     adderName={ownerName}
                     palette={palette}
+                />
+            )}
+
+            {/* Start a round pill — visible on Activity tab for social tables with ≥2 members
+                and no active Round in progress. Mutually exclusive with ActiveGatherBanner. */}
+            {showStartRoundPill && activeTable && (
+                <StartRoundPill
+                    palette={palette}
+                    onPress={handleStartRound}
+                    accessibilityLabel={`Start a round at ${tableName}`}
                 />
             )}
 
