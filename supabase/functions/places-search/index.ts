@@ -255,7 +255,7 @@ serve(async req => {
             }
 
             return new Response(
-                JSON.stringify({ data: [sanitized] }),
+                JSON.stringify({ data: [sanitized], restaurant_id: restaurantId }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
             );
         }

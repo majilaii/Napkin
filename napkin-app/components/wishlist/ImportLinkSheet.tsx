@@ -80,6 +80,7 @@ interface InlineSearchResult {
     googleRatingCount: number | null;
     priceLevel: number | null;
     photoReference: string | null;
+    photoAttributionHtml: string | null;
 }
 
 interface ImportLinkSheetProps {
@@ -295,6 +296,10 @@ export function ImportLinkSheet({ visible, onDismiss }: ImportLinkSheetProps) {
 
     const handleDismiss = useCallback(() => {
         cancel();
+        if (editMatchDebounceRef.current) {
+            clearTimeout(editMatchDebounceRef.current);
+            editMatchDebounceRef.current = null;
+        }
         setSheetState('idle');
         setInputValue('');
         setTouched(false);
@@ -308,6 +313,10 @@ export function ImportLinkSheet({ visible, onDismiss }: ImportLinkSheetProps) {
         setEditMatchResults([]);
         onDismiss();
     }, [cancel, onDismiss]);
+
+    useEffect(() => () => {
+        if (editMatchDebounceRef.current) clearTimeout(editMatchDebounceRef.current);
+    }, []);
 
     const handleClipboardChip = useCallback(() => {
         if (clipboardUrl) {
@@ -340,6 +349,7 @@ export function ImportLinkSheet({ visible, onDismiss }: ImportLinkSheetProps) {
                     latitude: r.latitude ?? undefined,
                     longitude: r.longitude ?? undefined,
                     photoReference: r.photoReference ?? undefined,
+                    photoAttributionHtml: r.photoAttributionHtml ?? null,
                     googleRating: r.googleRating ?? undefined,
                     googleRatingCount: r.googleRatingCount ?? undefined,
                     priceLevel: r.priceLevel ?? undefined,
@@ -423,6 +433,7 @@ export function ImportLinkSheet({ visible, onDismiss }: ImportLinkSheetProps) {
                 googleRatingCount: row.googleRatingCount,
                 priceLevel: row.priceLevel,
                 photoReference: row.photoReference,
+                photoAttributionHtml: row.photoAttributionHtml,
             },
             google_place_id: row.id,
             restaurant_id: null,                              // ghost — server resolves via external_id upsert

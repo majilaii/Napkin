@@ -367,7 +367,6 @@ serve(async (req) => {
 
         // ── Places search ────────────────────────────────────────────────────
         if (!query) {
-            clearTimeout(timeoutId);
             return jsonResponse({
                 data: {
                     source_type: sourceType,
@@ -389,7 +388,6 @@ serve(async (req) => {
                 abortController.signal,
             );
         } catch (e: any) {
-            clearTimeout(timeoutId);
             if (e?.name === 'AbortError') {
                 return errorResponse('TIMEOUT', 'Resolver timed out', 503);
             }
@@ -398,8 +396,6 @@ serve(async (req) => {
             }
             return errorResponse('UPSTREAM_UNAVAILABLE', 'Could not complete search — try again', 503);
         }
-
-        clearTimeout(timeoutId);
 
         if (placeCandidates.length === 0) {
             return jsonResponse({
@@ -492,11 +488,12 @@ serve(async (req) => {
         });
 
     } catch (e: any) {
-        clearTimeout(timeoutId);
         if (e?.name === 'AbortError') {
             return errorResponse('TIMEOUT', 'Resolver timed out', 503);
         }
         console.error('resolve-url error:', e);
         return errorResponse('INTERNAL', 'Internal server error', 500);
+    } finally {
+        clearTimeout(timeoutId);
     }
 });

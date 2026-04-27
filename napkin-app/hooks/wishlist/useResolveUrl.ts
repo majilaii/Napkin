@@ -31,6 +31,7 @@ export interface ResolvedCandidate {
         googleRatingCount: number | null;
         priceLevel: number | null;
         photoReference: string | null;
+        photoAttributionHtml: string | null;
         website: string | null;
         link: string | null;
         external_id: string;

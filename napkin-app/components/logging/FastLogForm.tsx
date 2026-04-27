@@ -103,6 +103,7 @@ export function FastLogForm({
                 latitude: payload.latitude ?? undefined,
                 longitude: payload.longitude ?? undefined,
                 photoReference: payload.photoReference ?? undefined,
+                photoAttributionHtml: payload.photoAttributionHtml ?? null,
             };
         } else {
             restaurantData = {
