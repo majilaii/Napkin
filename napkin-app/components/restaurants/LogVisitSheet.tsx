@@ -1,15 +1,13 @@
 /**
- * LogVisitSheet — 3-option menu sheet that appears after tapping the
+ * LogVisitSheet — 2-option menu sheet that appears after tapping the
  * floating "Log" pill on a restaurant page.
  *
  * Canvas: napkin-design-system/project/ui_kits/napkin-app/logging-entry-canvas.html
- * Section 2, variant ③ "Menu sheet — discrete choices" — expanded to three
- * rows for our Round primitive.
+ * Section 2, variant ③ "Menu sheet — discrete choices"
  *
  * Options:
  *   ① Quick log          — ~10s: stars, optional line, done (FastLogSheet)
  *   ② Write a review     — prose, photos, companions (/create-entry solo)
- *   ③ Start a Round      — group rating event (shown only for social Tables)
  */
 import React from 'react';
 import {
@@ -34,8 +32,6 @@ interface Props {
     onDismiss?: () => void;
     onQuickLog: () => void;
     onWriteReview: () => void;
-    onStartRound: () => void;
-    showRoundOption: boolean;
     restaurantName?: string;
 }
 
@@ -45,8 +41,6 @@ export function LogVisitSheet({
     onDismiss,
     onQuickLog,
     onWriteReview,
-    onStartRound,
-    showRoundOption,
     restaurantName,
 }: Props) {
     const scheme = useColorScheme();
@@ -108,17 +102,6 @@ export function LogVisitSheet({
                     title="Write a review"
                     subtitle="Prose, photos, the full entry."
                 />
-
-                {/* Start a Round — tertiary (journal-low fill) */}
-                {showRoundOption ? (
-                    <SecondaryOption
-                        palette={palette}
-                        onPress={onStartRound}
-                        iconName="people-outline"
-                        title="Start a Round"
-                        subtitle="Rate together with your Table."
-                    />
-                ) : null}
             </View>
         </Modal>
     );

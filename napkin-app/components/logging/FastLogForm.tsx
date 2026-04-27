@@ -8,8 +8,8 @@
  * Layout (top → bottom):
  *   RestaurantHeader (locked)
  *   Big stars (38px, half-step)
- *   Live caption ("Really good · 4.5 / 5") — fades in once rated
- *   LOG IT pill
+ *   Live caption ("4.5 / 5") — fades in once rated
+ *   SAVE pill
  *   "⌃ pull up for the full log" italic whisper
  *
  * Note, breakdown, Post-to chips, "Break it down" expander and "open full
@@ -55,16 +55,10 @@ export interface FastLogFormProps {
     onOpenFullEntry: () => void;
 }
 
-function ratingCaption(value: number): { phrase: string | null; numeric: string | null } {
-    if (value <= 0) return { phrase: null, numeric: 'Tap to rate · half steps' };
+function ratingCaption(value: number): { numeric: string | null } {
+    if (value <= 0) return { numeric: 'Tap to rate · half steps' };
     const snapped = Math.round(value * 2) / 2;
-    const phrase =
-        snapped >= 5 ? 'Loved it'
-        : snapped >= 4 ? 'Really good'
-        : snapped >= 3 ? 'Pretty good'
-        : snapped >= 2 ? 'Okay'
-        : 'Not my thing';
-    return { phrase, numeric: `${snapped} / 5` };
+    return { numeric: `${snapped} / 5` };
 }
 
 function metaFromLocked(r: LockedRestaurant): string | undefined {
@@ -168,11 +162,6 @@ export function FastLogForm({
                     showValue={false}
                 />
                 <View style={styles.captionRow}>
-                    {caption.phrase ? (
-                        <Text style={[styles.captionPhrase, { color: palette.text }]}>
-                            {caption.phrase}
-                        </Text>
-                    ) : null}
                     {caption.numeric ? (
                         <Text style={[styles.captionNumeric, { color: palette.textMuted }]}>
                             {caption.numeric}
@@ -251,7 +240,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.xl,
     },
     starsBlock: {
-        marginTop: 32,
+        marginTop: 16,
         alignItems: 'center',
         gap: 12,
     },
@@ -260,10 +249,6 @@ const styles = StyleSheet.create({
         alignItems: 'baseline',
         gap: 8,
         height: 18,
-    },
-    captionPhrase: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 15,
     },
     captionNumeric: {
         fontFamily: 'Manrope_700Bold',

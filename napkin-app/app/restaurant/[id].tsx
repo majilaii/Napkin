@@ -254,11 +254,6 @@ export default function RestaurantScreen() {
         router.push({ pathname: '/create-entry', params: { ...createEntryParams, mode: 'solo' } });
     };
 
-    const handleStartRound = () => {
-        setShowLogSheet(false);
-        router.push({ pathname: '/create-entry', params: { ...createEntryParams, mode: 'round' } });
-    };
-
     // ── Visit navigation ──────────────────────────────────────────────────
     const handleVisitPress = useCallback((visit: PageVisit) => {
         if (visit.kind === 'round' && visit.table_night_id) {
@@ -568,8 +563,6 @@ export default function RestaurantScreen() {
                         onDismiss={handleLogSheetDismiss}
                         onQuickLog={handleQuickLog}
                         onWriteReview={handleWriteReview}
-                        onStartRound={handleStartRound}
-                        showRoundOption={hasAnyTable}
                         restaurantName={restaurant.name}
                     />
                 ) : null}
