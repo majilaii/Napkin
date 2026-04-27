@@ -19,6 +19,7 @@ interface FoundedHeroProps {
     founderName?: string;
     palette: Palette;
     onInvite?: () => void;
+    memberCount: number;
 }
 
 function formatFoundedDate(dateStr: string): string {
@@ -36,6 +37,7 @@ export function FoundedHero({
     founderName = 'You',
     palette,
     onInvite,
+    memberCount,
 }: FoundedHeroProps) {
     const dateLabel = formatFoundedDate(foundedAt);
 
@@ -44,7 +46,7 @@ export function FoundedHero({
             <View style={styles.container}>
                 <View style={[styles.rule, { backgroundColor: palette.outlineVariant }]} />
                 <Text style={[styles.kicker, { color: palette.primary }]}>
-                    {`Founded ${dateLabel} \u00B7 by ${founderName.toLowerCase()}`}
+                    {`Founded ${dateLabel} · by ${founderName.toLowerCase()}`}
                 </Text>
                 <Text style={[styles.tableName, { color: palette.text }]} numberOfLines={2}>
                     {tableName}
@@ -97,6 +99,31 @@ export function FoundedHero({
 
             {/* Top 4 placeholder — week-one waiting state from the design system. */}
             <TableTopFourPlaceholder palette={palette} />
+
+            {/* Invite prompt — shown only when member count is under 6 and onInvite is wired */}
+            {memberCount < 6 && !!onInvite ? (
+                <Pressable
+                    onPress={onInvite}
+                    accessibilityRole="button"
+                    accessibilityLabel="Invite another person to the table"
+                    style={({ pressed }) => [
+                        styles.inviteRow,
+                        { borderColor: palette.outlineVariant, opacity: pressed ? 0.85 : 1 },
+                    ]}
+                >
+                    <View style={[styles.inviteChip, { backgroundColor: palette.oliveCream }]}>
+                        <Text style={[styles.inviteGlyph, { color: palette.secondary }]}>+</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[styles.inviteHeadline, { color: palette.text }]}>
+                            Invite another person
+                        </Text>
+                        <Text style={[styles.inviteSub, { color: palette.textMuted }]}>
+                            Tables stay small. Six feels right.
+                        </Text>
+                    </View>
+                </Pressable>
+            ) : null}
         </View>
     );
 }
@@ -168,5 +195,39 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
         fontSize: 10,
         letterSpacing: 0.8,
+    },
+    inviteRow: {
+        marginHorizontal: 22,
+        marginTop: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        borderRadius: 10,
+        borderWidth: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    inviteChip: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    inviteGlyph: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 16,
+        lineHeight: 16,
+        textAlign: 'center',
+    },
+    inviteHeadline: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+    },
+    inviteSub: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        marginTop: 2,
+        lineHeight: 14,
     },
 });
