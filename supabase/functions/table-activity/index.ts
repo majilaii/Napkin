@@ -127,9 +127,11 @@ serve(async (req) => {
         // ── Collect IDs for hydration ──────────────────────────────────────────
         const entryRpcRows = keptRpc.filter((r) => r.kind === 'entry');
         const nightRpcRows = keptRpc.filter((r) => r.kind === 'table_night');
+        const tt4RpcRows = keptRpc.filter((r) => r.kind === 'top_4_edited');
 
         const entryIds = entryRpcRows.map((r) => r.id);
         const nightIds = nightRpcRows.map((r) => r.id);
+        const tt4Ids = tt4RpcRows.map((r) => r.id);
 
         // ── Hydrate: solo entries ─────────────────────────────────────────────
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -343,6 +345,81 @@ serve(async (req) => {
             );
         }
 
+        // ── Hydrate: top_4_edited events ─────────────────────────────────────
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let tt4Events: any[] = [];
+
+        if (tt4Ids.length > 0) {
+            const { data: histRows, error: histError } = await supabase
+                .from('table_top_4_history')
+                .select(`
+                    id,
+                    table_id,
+                    position,
+                    actor_id,
+                    event_type,
+                    prev_restaurant_id,
+                    next_restaurant_id,
+                    created_at
+                `)
+                .in('id', tt4Ids);
+
+            if (histError) throw histError;
+
+            // Hydrate actor profiles
+            const tt4ActorIds = [...new Set((histRows ?? []).map((h: any) => h.actor_id as string))];
+            const tt4ProfileMap = new Map<string, { display_name: string | null; avatar_url: string | null }>();
+            if (tt4ActorIds.length > 0) {
+                const { data: tt4Profiles } = await supabase
+                    .from('profiles')
+                    .select('user_id, display_name, avatar_url')
+                    .in('user_id', tt4ActorIds);
+                for (const p of (tt4Profiles ?? []) as any[]) {
+                    tt4ProfileMap.set(p.user_id, { display_name: p.display_name, avatar_url: p.avatar_url });
+                }
+            }
+
+            // Hydrate restaurant names
+            const tt4RestaurantIds = [
+                ...(histRows ?? []).map((h: any) => h.prev_restaurant_id).filter(Boolean),
+                ...(histRows ?? []).map((h: any) => h.next_restaurant_id).filter(Boolean),
+            ] as string[];
+            const tt4RestaurantMap = new Map<string, string>();
+            if (tt4RestaurantIds.length > 0) {
+                const { data: tt4Restaurants } = await supabase
+                    .from('restaurants')
+                    .select('id, name')
+                    .in('id', [...new Set(tt4RestaurantIds)]);
+                for (const r of (tt4Restaurants ?? []) as { id: string; name: string }[]) {
+                    tt4RestaurantMap.set(r.id, r.name);
+                }
+            }
+
+            const sortDateByTt4Id = new Map(tt4RpcRows.map((r) => [r.id, r.sort_date]));
+
+            tt4Events = (histRows ?? []).map((h: any) => {
+                const actor = tt4ProfileMap.get(h.actor_id);
+                return {
+                    id: h.id,
+                    type: 'top_4_edited' as const,
+                    table_id: h.table_id,
+                    position: h.position,
+                    actor_id: h.actor_id,
+                    actor_name: actor?.display_name ?? null,
+                    actor_avatar_url: actor?.avatar_url ?? null,
+                    event_type: h.event_type,
+                    prev_restaurant: h.prev_restaurant_id
+                        ? { id: h.prev_restaurant_id, name: tt4RestaurantMap.get(h.prev_restaurant_id) ?? null }
+                        : null,
+                    next_restaurant: h.next_restaurant_id
+                        ? { id: h.next_restaurant_id, name: tt4RestaurantMap.get(h.next_restaurant_id) ?? null }
+                        : null,
+                    created_at: h.created_at,
+                    sort_date: sortDateByTt4Id.get(h.id) ?? h.created_at,
+                };
+            });
+        }
+
         // ── Reactions ────────────────────────────────────────────────────────
         const myReactionsByTarget = new Map<string, string[]>();
         const targetKey = (targetType: string, targetId: string) => `${targetType}:${targetId}`;
@@ -382,19 +459,26 @@ serve(async (req) => {
         // ── Merge in RPC order (sort_date DESC already from fn_table_activity_page) ──
         const entryById = new Map(taggedEntries.map((e: { id: string }) => [e.id, e]));
         const nightById = new Map(nightsWithParticipants.map((n: { id: string }) => [n.id, n]));
+        const tt4ById = new Map(tt4Events.map((t: { id: string }) => [t.id, t]));
 
         const orderedItems = keptRpc
             .map((rpcRow) => {
-                const item = rpcRow.kind === 'entry'
-                    ? entryById.get(rpcRow.id)
-                    : nightById.get(rpcRow.id);
+                let item: any;
+                let tk: string | null = null;
+                if (rpcRow.kind === 'entry') {
+                    item = entryById.get(rpcRow.id);
+                    tk = targetKey('entry', rpcRow.id);
+                } else if (rpcRow.kind === 'table_night') {
+                    item = nightById.get(rpcRow.id);
+                    tk = targetKey('table_night', rpcRow.id);
+                } else if (rpcRow.kind === 'top_4_edited') {
+                    item = tt4ById.get(rpcRow.id);
+                    // top_4_edited events don't have reactions in v1
+                }
                 if (!item) return null;
-                const tk = rpcRow.kind === 'entry'
-                    ? targetKey('entry', rpcRow.id)
-                    : targetKey('table_night', rpcRow.id);
                 return {
                     ...item,
-                    my_reactions: myReactionsByTarget.get(tk) ?? [],
+                    my_reactions: tk ? (myReactionsByTarget.get(tk) ?? []) : [],
                 };
             })
             .filter(Boolean);

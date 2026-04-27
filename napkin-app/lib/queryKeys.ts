@@ -24,6 +24,8 @@ export const queryKeys = {
                 : ['tableActivity', tableId] as const,
         lastSeen: (tableId: string, userId: string) =>
             ['tableLastSeen', tableId, userId] as const,
+        topFourAll: () => ['tables', 'topFour'] as const,
+        topFour: (tableId: string) => ['tables', 'topFour', tableId] as const,
     },
 
     // Entries (individual meal logs)

@@ -20,6 +20,8 @@ interface FoundedHeroProps {
     palette: Palette;
     onInvite?: () => void;
     memberCount: number;
+    /** Wire to open the Edit Top 4 sheet from the placeholder CTA. */
+    onEditTopFour?: () => void;
 }
 
 function formatFoundedDate(dateStr: string): string {
@@ -38,6 +40,7 @@ export function FoundedHero({
     palette,
     onInvite,
     memberCount,
+    onEditTopFour,
 }: FoundedHeroProps) {
     const dateLabel = formatFoundedDate(foundedAt);
 
@@ -98,7 +101,7 @@ export function FoundedHero({
             </View>
 
             {/* Top 4 placeholder — week-one waiting state from the design system. */}
-            <TableTopFourPlaceholder palette={palette} />
+            <TableTopFourPlaceholder palette={palette} onStart={onEditTopFour} />
 
             {/* Invite prompt — shown only when member count is under 6 and onInvite is wired */}
             {memberCount < 6 && !!onInvite ? (
