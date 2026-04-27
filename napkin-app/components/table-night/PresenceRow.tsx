@@ -24,7 +24,7 @@ type Palette = {
     surfaceContainerHigh: string;
     textSecondary: string;
     text: string;
-    [key: string]: string;
+    [key: string]: string | number;
 };
 
 interface PresenceRowProps {

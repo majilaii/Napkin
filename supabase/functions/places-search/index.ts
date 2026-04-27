@@ -24,7 +24,25 @@ const PLACE_FIELDS = [
     'websiteUri',
     'googleMapsUri',
     'photos',
+    // TICKET-057: authorAttributions is nested under each photo object in Places v1.
+    // This field provides the structured attribution data (displayName, uri) that we
+    // synthesize into photoAttributionHtml for Google ToS compliance.
+    'photos.authorAttributions',
 ];
+
+/**
+ * Minimal HTML escaper for synthesizing attribution anchor tags.
+ * Replaces the five characters that must be escaped in HTML attribute values
+ * and text content. Used to safely embed Places authorAttributions data.
+ */
+function escapeHtml(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 function humanizeCuisine(raw: unknown): string | null {
     if (typeof raw !== 'string' || !raw) return null;
@@ -72,6 +90,30 @@ function sanitizePlace(place: any) {
     // without any client-side transform.
     const cuisine: string | null = humanizeCuisine(place.primaryType);
 
+    // TICKET-057: synthesized HTML from authorAttributions, NOT raw html_attributions.
+    // The Places v1 API does not have a top-level html_attributions field. Instead it
+    // returns structured authorAttributions per photo: [{ displayName, uri, photoUri }].
+    // We synthesize a safe <a href="...">name</a> anchor here (escaping both fields)
+    // so the client-side parser always sees a single, well-defined HTML shape regardless
+    // of any future Google API changes. Only the first photo's first attribution is used
+    // (AC 13 — first only). The escape-on-write contract means parsePlacesAttribution.ts
+    // only ever receives HTML we produced — never raw third-party markup.
+    const att = place.photos?.[0]?.authorAttributions?.[0];
+    // First entry only — multiple attributions are deliberately discarded. See TICKET-057 AC 13.
+    // Type-guard: only call escapeHtml on actual non-empty strings. A version-skewed
+    // authorAttributions object with a non-string truthy field would otherwise throw
+    // `s.replace is not a function` and 500 the entire search response. Falling through
+    // to null degrades to AC 12 (sentinel path) — calm degradation per Heirloom.
+    const displayName = typeof att?.displayName === 'string' && att.displayName.trim() !== ''
+        ? att.displayName
+        : null;
+    const uri = typeof att?.uri === 'string' && att.uri.trim() !== '' ? att.uri : null;
+    const photoAttributionHtml: string | null = displayName
+        ? (uri
+            ? `<a href="${escapeHtml(uri)}">${escapeHtml(displayName)}</a>`
+            : escapeHtml(displayName))
+        : null;
+
     return {
         id: place.id,
         name: place.displayName?.text ?? null,
@@ -86,6 +128,7 @@ function sanitizePlace(place: any) {
         googleRatingCount: place.userRatingCount ?? null,
         priceLevel,
         photoReference: place.photos?.[0]?.name ?? null,
+        photoAttributionHtml,
         website: place.websiteUri ?? null,
         link: place.googleMapsUri ?? null,
     };
@@ -198,6 +241,7 @@ serve(async req => {
                         latitude: sanitized.latitude ?? undefined,
                         longitude: sanitized.longitude ?? undefined,
                         photoReference: sanitized.photoReference ?? undefined,
+                        photoAttributionHtml: sanitized.photoAttributionHtml ?? null,
                         googleRating: sanitized.googleRating ?? undefined,
                         googleRatingCount: sanitized.googleRatingCount ?? undefined,
                         priceLevel: sanitized.priceLevel ?? undefined,

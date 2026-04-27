@@ -38,6 +38,13 @@ export interface SearchResultRow {
     /** For tier 1/2: stored photo_url. For tier 3: Places photoReference for thumb URL. */
     photoUrl: string | null;
     photoReference: string | null;
+    /**
+     * TICKET-057: Places photo attribution HTML synthesized from authorAttributions.
+     * Carried through SearchResultRow → placePayload JSON → ghost render so user
+     * stories #1/#2 fire on search-origin ghost pages, not only on direct lookups.
+     * Null when no attribution available (sentinel path will mark photo_source='none').
+     */
+    photoAttributionHtml: string | null;
     tier: SearchTier;
     /** Tier 1 only: "visited by [Table]" */
     socialTag?: string;
@@ -97,6 +104,7 @@ function mergeResults(
         address: null,
         photoUrl: r.photo_url,
         photoReference: null,
+        photoAttributionHtml: null,
         tier: 'visited',
         socialTag: `visited by ${r.table_name}`,
     }));
@@ -110,6 +118,7 @@ function mergeResults(
         address: null,
         photoUrl: r.photo_url,
         photoReference: null,
+        photoAttributionHtml: null,
         tier: 'onNapkin',
     }));
 
@@ -124,6 +133,7 @@ function mergeResults(
             address: p.formattedAddress,
             photoUrl: null,
             photoReference: p.photoReference,
+            photoAttributionHtml: p.photoAttributionHtml,
             tier: 'morePlaces',
         }));
 

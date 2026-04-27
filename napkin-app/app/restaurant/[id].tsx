@@ -87,6 +87,9 @@ function placePayloadToWishlistPayload(place: any): RestaurantPayload {
         latitude: place.latitude ?? undefined,
         longitude: place.longitude ?? undefined,
         photoReference: place.photoReference ?? undefined,
+        // TICKET-057: carry photoAttributionHtml so wishlist adds round-trip
+        // attribution into the server upsert (writes places_photo_attribution_html).
+        photoAttributionHtml: place.photoAttributionHtml ?? undefined,
         googleRating: place.googleRating ?? undefined,
         googleRatingCount: place.googleRatingCount ?? undefined,
         priceLevel: place.priceLevel ?? undefined,
@@ -104,6 +107,9 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
         cuisine: payload.cuisine ?? undefined,
         priceLevel: payload.priceLevel ?? undefined,
         photoReference: payload.photoReference ?? undefined,
+        // TICKET-057: pass attribution so ghost renders show warm-paper overlay
+        // and attribution rule immediately (before lazy server upsert resolves).
+        photoAttributionHtml: payload.photoAttributionHtml ?? null,
         googleRating: payload.googleRating ?? undefined,
         googleRatingCount: payload.googleRatingCount ?? undefined,
     });
@@ -189,7 +195,18 @@ export default function RestaurantScreen() {
     // re-upsert the missing fields. The server-side upsert is non-destructive
     // so this can never wipe good data. Runs at most once per externalId.
     const persistedRow = pageData?.restaurant ?? null;
-    const isStale = !!persistedRow && (!persistedRow.city || !persistedRow.photo_url);
+    // TICKET-057 §5: gate photo_url staleness on photo_source !== 'none'.
+    // 'none' is the sentinel stamped when _storeHeroPhoto found no usable
+    // attribution — re-triggering Place Details on every page visit would
+    // burn quota with no chance of a different result. Only re-trigger when
+    // photo_url is absent AND we haven't tried (or haven't confirmed failure).
+    const isStale = !!persistedRow
+        && (!persistedRow.city
+            || (!persistedRow.photo_url && persistedRow.photo_source !== 'none'));
+    // TICKET-057 AC 11: when a user/Table photo replaces a Places hero, the
+    // restaurant query key is invalidated by handleFastLogSubmitted (above).
+    // photo_source flips to 'user'/'table' on the server; the overlay and
+    // attribution rule disappear on the next render with no extra plumbing.
     useLazyBackfillRestaurant({
         enabled: isStale,
         externalId: persistedRow?.external_id ?? null,

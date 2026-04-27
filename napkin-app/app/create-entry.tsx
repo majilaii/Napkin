@@ -77,6 +77,7 @@ interface PlaceResult {
     longitude: number | null;
     categories: string[];
     photoReference: string | null;
+    photoAttributionHtml: string | null;
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────
@@ -154,6 +155,7 @@ export default function CreateEntryScreen() {
                     longitude: p.longitude ?? null,
                     categories: p.categories ?? [],
                     photoReference: p.photoReference ?? null,
+                    photoAttributionHtml: p.photoAttributionHtml ?? null,
                 };
             } catch {
                 return null;
@@ -199,6 +201,7 @@ export default function CreateEntryScreen() {
                     longitude: null,
                     categories: r?.cuisine ? [r.cuisine] : [],
                     photoReference: null,
+                    photoAttributionHtml: null,
                 };
                 setSelectedPlace(place);
                 setQuery(place.name);
@@ -212,6 +215,7 @@ export default function CreateEntryScreen() {
                     longitude: null,
                     categories: [],
                     photoReference: null,
+                    photoAttributionHtml: null,
                 });
                 setShowSearch(false);
             }
@@ -497,6 +501,8 @@ export default function CreateEntryScreen() {
                 latitude: selectedPlace.latitude ?? undefined,
                 longitude: selectedPlace.longitude ?? undefined,
                 photoReference: selectedPlace.photoReference ?? undefined,
+                // TICKET-057: pair every photoReference with attribution; missing → sentinel.
+                photoAttributionHtml: selectedPlace.photoAttributionHtml,
             }
             : {
                 external_id: `manual-${query.trim().toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,

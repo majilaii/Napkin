@@ -3,6 +3,13 @@
  * Used by both the entry and table-night edge functions.
  */
 
+// TICKET-057: when adding a second hero-photo writer, extract _setRestaurantHero({ url, source,
+// photoReference, attributionHtml }) from this file so all writers share one UPDATE statement and
+// the CHECK constraint invariant (photo_source = 'places' ↔ places_photo_attribution_html IS NOT
+// NULL) is enforced at the call-site rather than only in the DB. Currently only _storeHeroPhoto
+// writes restaurants.photo_url, so the centralized helper is premature — but the next writer
+// (likely entry-promotion or Table-photo) should trigger the extraction.
+
 // Food establishment types from Google Places
 const FOOD_TYPES = ['restaurant', 'cafe', 'bar', 'bakery', 'meal_takeaway', 'food', 'meal_delivery'];
 
@@ -18,6 +25,10 @@ export interface RestaurantInput {
     latitude?: number;
     longitude?: number;
     photoReference?: string;
+    // TICKET-057: synthesized attribution HTML from Places authorAttributions.
+    // Must be passed alongside photoReference so _storeHeroPhoto can persist
+    // places_photo_attribution_html and photo_source = 'places' atomically.
+    photoAttributionHtml?: string | null;
     // Places metadata (optional — present when seeded from places-search)
     googleRating?: number;
     googleRatingCount?: number;
@@ -83,7 +94,7 @@ export async function upsertRestaurant(
 
     // Download and store hero photo if we have a reference and the row has no photo yet
     if (input.photoReference && !data.photo_url) {
-        await _storeHeroPhoto(supabase, data.id, input.photoReference);
+        await _storeHeroPhoto(supabase, data.id, input.photoReference, input.photoAttributionHtml ?? null);
     }
 
     return data.id;
@@ -93,13 +104,31 @@ export async function upsertRestaurant(
  * Downloads the hero photo from Google Places media endpoint, uploads it to
  * the restaurant-photos Supabase Storage bucket, and updates the restaurant row.
  * All errors are swallowed — photo failure must never block restaurant creation.
+ *
+ * TICKET-057: photoAttributionHtml must be provided alongside photoReference.
+ * Empty/missing attribution short-circuits the mirror path entirely (AC 12):
+ * no Google media fetch, no Storage write — a sentinel UPDATE stamps
+ * photo_source = 'none' so the lazy-backfill trigger in app/restaurant/[id].tsx
+ * does not re-fire Place Details on every subsequent page visit.
  */
 async function _storeHeroPhoto(
     supabase: any,
     restaurantId: string,
     photoReference: string,
+    photoAttributionHtml: string | null,
 ): Promise<void> {
     try {
+        // AC 12: empty attribution → sentinel, no mirror. Fires before any fetch.
+        if (!photoAttributionHtml || photoAttributionHtml.trim() === '') {
+            console.log(`No attribution for ${restaurantId} — stamping photo_source='none', skipping mirror.`);
+            await supabase
+                .from('restaurants')
+                .update({ photo_source: 'none' })
+                .eq('id', restaurantId)
+                .is('photo_url', null);
+            return;
+        }
+
         const apiKey = Deno.env.get('GOOGLE_PLACES_API_KEY');
         if (!apiKey) return;
 
@@ -141,12 +170,17 @@ async function _storeHeroPhoto(
             return;
         }
 
-        // Only write if photo_url is still null (race-safe: last caller wins but both are valid)
+        // TICKET-057: write photo_url, photo_reference, attribution, and photo_source
+        // atomically in a single UPDATE. The CHECK constraint on the DB enforces that
+        // places_photo_attribution_html IS NOT NULL requires photo_source = 'places'.
+        // Only write if photo_url is still null (race-safe: last caller wins but both are valid).
         await supabase
             .from('restaurants')
             .update({
                 photo_url: publicUrlData.publicUrl,
                 photo_reference: photoReference,
+                places_photo_attribution_html: photoAttributionHtml,
+                photo_source: 'places',
             })
             .eq('id', restaurantId)
             .is('photo_url', null);

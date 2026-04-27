@@ -89,6 +89,12 @@ export const Colors = {
     overlay: 'rgba(28, 28, 25, 0.4)',
     border: 'rgba(221, 192, 186, 0.15)',   // alias for compat
     ruleInkSoft: 'rgba(138, 114, 108, 0.25)',  // --rule-ink-soft — warm taupe, field underline resting
+
+    // TICKET-057 — warm-paper wash on Places-sourced hero photos.
+    // Reads as "external context, seen through cream vellum" — quieter than a
+    // user/Table photo. Used ONLY by RestaurantHero when photo_source === 'places'.
+    placesOverlayTint: '#fdf6ec',     // light: matches `background` (cream)
+    placesOverlayOpacity: 0.22,       // 22% — calmer than a scrim, visible side-by-side
   },
   dark: {
     background: '#1a1816',
@@ -154,6 +160,11 @@ export const Colors = {
     overlay: 'rgba(0, 0, 0, 0.6)',
     border: 'rgba(86, 66, 61, 0.3)',
     ruleInkSoft: 'rgba(200, 140, 120, 0.20)',  // soft terracotta rule lines (dark)
+
+    // TICKET-057 — warm-paper wash on Places-sourced hero photos (dark mode).
+    // Dark cream matches the dark `cream` token (#3a3025) for consistency.
+    placesOverlayTint: '#3a3025',     // dark: matches `cream` token
+    placesOverlayOpacity: 0.22,       // 22% — same opacity as light mode
   },
 };
 

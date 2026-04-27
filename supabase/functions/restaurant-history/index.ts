@@ -108,6 +108,9 @@ type RestaurantPageData = {
         google_rating: number | null;
         google_rating_count: number | null;
         external_id: string | null;
+        // TICKET-057: photo provenance and attribution for Places-sourced heroes.
+        photo_source: 'user' | 'table' | 'places' | 'none' | null;
+        places_photo_attribution_html: string | null;
     } | null;
     personal: { average: number | null; visit_count: number };
     table_chip: { table_id: string; table_name: string; average: number; visit_count: number } | null;
@@ -476,7 +479,7 @@ serve(async (req) => {
             if (isUuid) {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html')
                     .eq('id', restaurantId)
                     .maybeSingle();
                 if (error) throw error;
@@ -484,7 +487,7 @@ serve(async (req) => {
             } else {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html')
                     .eq('external_id', restaurantId)
                     .maybeSingle();
                 if (error) throw error;

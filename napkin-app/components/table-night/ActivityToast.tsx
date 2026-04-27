@@ -22,7 +22,7 @@ export interface Toast {
 type Palette = {
     surfaceContainerLow: string;
     text: string;
-    [key: string]: string;
+    [key: string]: string | number;
 };
 
 interface ActivityToastProps {
@@ -115,7 +115,7 @@ function ToastItem({
                         hitSlop={8}
                         style={styles.actionButton}
                     >
-                        <Text style={[Type.titleSmall, { color: palette.primary ?? palette.text, fontWeight: '600' }]}>
+                        <Text style={[Type.titleSmall, { color: (palette.primary ?? palette.text) as string, fontWeight: '600' }]}>
                             {toast.action.label}
                         </Text>
                     </Pressable>
