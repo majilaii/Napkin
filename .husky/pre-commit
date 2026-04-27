@@ -1,2 +1,3 @@
 npm run lint --prefix napkin-app
 npm run test
+bash scripts/check-migration-timestamps.sh
