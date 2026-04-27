@@ -134,6 +134,17 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         });
     }
 
+    // Top 4s — self, or public profile viewers
+    // TICKET-047: deep-linked sub-screen; owner sees edit chrome, viewer sees picks only.
+    if (hasPalateAccess) {
+        indexSections.push({
+            title: 'Top 4s',
+            count: null,
+            hint: 'Your best by city',
+            route: `/top-fours?userId=${profileData.profile.user_id}`,
+        });
+    }
+
     // Likes — disabled placeholder
     indexSections.push({
         title: 'Likes',

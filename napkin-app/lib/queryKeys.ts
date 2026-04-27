@@ -151,5 +151,16 @@ export const queryKeys = {
         all: (userId: string) => ['notifications', userId] as const,
         unreadCount: (userId: string) => ['notifications', userId, 'unread'] as const,
     },
+
+    // Top Fours — personal regional Top 4s (TICKET-047)
+    // [ARCH-8] Two distinct keys: owner sees nudge + edit chrome; viewer does not.
+    // Mutations only touch owner(authUserId). Viewer caches drain on stale-time.
+    topFours: {
+        owner: (userId: string) => ['topFours', 'owner', userId] as const,
+        publicView: (userId: string) => ['topFours', 'public', userId] as const,
+        availableCities: (userId: string) => ['topFours', 'availableCities', userId] as const,
+        eligibleRestaurants: (userId: string, city: string) =>
+            ['topFours', 'eligibleRestaurants', userId, city] as const,
+    },
 } as const;
 
