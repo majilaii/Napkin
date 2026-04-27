@@ -24,3 +24,5 @@ export { InfoMapPreview } from './InfoMapPreview';
 // TICKET-026: professional critics
 export { ProfessionalTakesBand } from './ProfessionalTakesBand';
 export { CriticRow } from './CriticRow';
+// TICKET-054: TikTok source panel
+export { SavedFromTikTokPanel } from './SavedFromTikTokPanel';

@@ -10,3 +10,8 @@ export { useTableWishlist } from './useTableWishlist';
 export type { TableWishlistItem, TableWishlistMember } from './useTableWishlist';
 
 export { useIsWishlisted } from './useIsWishlisted';
+
+export {
+    useMyTikTokSourceForRestaurant,
+    type TikTokSourceResult,
+} from './useMyTikTokSourceForRestaurant';

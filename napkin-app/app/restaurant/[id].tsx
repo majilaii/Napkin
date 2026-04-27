@@ -40,6 +40,7 @@ import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
+import { useMyTikTokSourceForRestaurant } from '@/hooks/wishlist/useMyTikTokSourceForRestaurant';
 import {
     useRestaurantPage,
     restaurantFromPlace,
@@ -65,6 +66,7 @@ import {
     PhotosTab,
     InfoTab,
     ProfessionalTakesBand,
+    SavedFromTikTokPanel,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { FastLogSheet } from '@/components/logging';
@@ -160,6 +162,16 @@ export default function RestaurantScreen() {
     const hasAnyTable = useMemo(() => (tables ?? []).length > 0, [tables]);
 
     useMyWishlist(user?.id);
+
+    // ── Wishlist TikTok source for this restaurant ────────────────────────
+    // Read from the already-loaded useMyWishlist cache — no new endpoint.
+    // persistedRestaurantId is computed later in this file; we derive it early
+    // here so the selector can run on every render without conditional hook calls.
+    // TICKET-054: panel renders only when the *viewer* has this place wishlisted
+    // with source.type === 'tiktok'; never surfaces another user's source.
+    const earlyPersistedId =
+        pageData?.restaurant?.id ?? (isGhost ? undefined : restaurantId ?? undefined);
+    const tiktokSource = useMyTikTokSourceForRestaurant(earlyPersistedId, user?.id);
 
     // ── Ghost synthesis ───────────────────────────────────────────────────
     // Empty-payload guard: if we arrived as a ghost (placeId set) but the
@@ -449,6 +461,12 @@ export default function RestaurantScreen() {
                             bookmarked={bookmarked}
                             onBookmarkPress={bookmarkDisabled ? undefined : handleBookmarkPress}
                         />
+                    ) : null}
+
+                    {/* TikTok source panel — personal-first context, before sibling numbers */}
+                    {/* TICKET-054: only renders when viewer has this place wishlisted with source.type === 'tiktok' */}
+                    {restaurant && tiktokSource ? (
+                        <SavedFromTikTokPanel source={tiktokSource.source} />
                     ) : null}
 
                     {/* Signal strip */}

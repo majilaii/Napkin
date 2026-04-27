@@ -5,6 +5,7 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import type { WishlistSource } from '@/lib/types/wishlistSource';
 
 export interface WishlistRestaurant {
     id: string;
@@ -24,6 +25,8 @@ export interface PersonalWishlistItem {
     note: string | null;
     created_at: string;
     restaurant: WishlistRestaurant;
+    /** TikTok / google_maps / web source data captured at save time (TICKET-053). */
+    source: WishlistSource | null;
 }
 
 export interface PersonalWishlistPage {

@@ -85,6 +85,7 @@ function PersonalGrid({ userId }: PersonalGridProps) {
                 note={item.note}
                 created_at={item.created_at}
                 restaurant={item.restaurant}
+                source={item.source}
             />
         </View>
     ), []);
