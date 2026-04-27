@@ -10,7 +10,7 @@ module.exports = {
 
     // IMPORTANT: Transform these node_modules that use ESM
     transformIgnorePatterns: [
-        'node_modules/(?!(@testing-library|@supabase|@tanstack)/)',
+        'node_modules/(?!(@testing-library|@supabase|@tanstack|react-native|@react-native|expo|@expo|react-native-safe-area-context|react-native-reanimated|react-native-gesture-handler|react-native-screens)/)',
     ],
 
     // Module resolution
