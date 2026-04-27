@@ -416,11 +416,11 @@ export function EditTop4Sheet({
         const draftMapForSave = new Map(draft.map((s) => [s.position, s.restaurant_id]));
 
         const draftSlotMap = new Map(draft.map((s) => [s.position, s]));
-        const changedSlots: Array<{
+        const changedSlots: {
             position: 1 | 2 | 3 | 4;
             restaurant_id?: string | null;
             place?: TopFourPlacePayload;
-        }> = [];
+        }[] = [];
         for (const pos of [1, 2, 3, 4] as const) {
             const prev = currentMap.get(pos) ?? null;
             const draftSlot = draftSlotMap.get(pos);
