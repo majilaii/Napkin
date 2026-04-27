@@ -21,6 +21,7 @@ import { AvatarStack } from './AvatarStack';
 import { RemoveConfirmationSheet } from './RemoveConfirmationSheet';
 import type { WishlistRestaurant } from '@/hooks/wishlist/useMyWishlist';
 import type { TableWishlistMember } from '@/hooks/wishlist/useTableWishlist';
+import type { WishlistSource } from '@/lib/types/wishlistSource';
 
 interface PersonalCardProps {
     mode: 'personal';
@@ -28,6 +29,8 @@ interface PersonalCardProps {
     note: string | null;
     created_at: string;
     restaurant: WishlistRestaurant;
+    /** TikTok / google_maps / web source captured at save time (TICKET-053). */
+    source?: WishlistSource | null;
 }
 
 interface TableCardProps {
@@ -53,6 +56,10 @@ export function WishlistCard(props: WishlistCardProps) {
     const { restaurant } = props;
     const photoUrl = restaurant.photo_url;
     const secondaryLine = restaurant.city ?? restaurant.cuisine ?? null;
+
+    // TICKET-054: "tiktok" tag — personal mode only; never shown in table mode
+    const isTikTokSourced =
+        props.mode === 'personal' && props.source?.type === 'tiktok';
 
     const handleTap = () => {
         if (restaurant.id) {
@@ -91,27 +98,47 @@ export function WishlistCard(props: WishlistCardProps) {
                     },
                 ]}
             >
-                {/* Photo */}
-                {photoUrl ? (
-                    <ExpoImage
-                        source={{ uri: photoUrl }}
-                        style={[styles.photo, { aspectRatio: imageAspect }]}
-                        contentFit="cover"
-                        onLoad={(e) => {
-                            const { width, height } = e.source;
-                            if (width && height) {
-                                setImageAspect(width / height);
-                            }
-                        }}
-                    />
-                ) : (
-                    <View
-                        style={[
-                            styles.photoPlaceholder,
-                            { backgroundColor: palette.surfaceContainerHigh },
-                        ]}
-                    />
-                )}
+                {/* Photo + optional TikTok tag overlay */}
+                <View style={styles.photoWrapper}>
+                    {photoUrl ? (
+                        <ExpoImage
+                            source={{ uri: photoUrl }}
+                            style={[styles.photo, { aspectRatio: imageAspect }]}
+                            contentFit="cover"
+                            onLoad={(e) => {
+                                const { width, height } = e.source;
+                                if (width && height) {
+                                    setImageAspect(width / height);
+                                }
+                            }}
+                        />
+                    ) : (
+                        <View
+                            style={[
+                                styles.photoPlaceholder,
+                                { backgroundColor: palette.surfaceContainerHigh },
+                            ]}
+                        />
+                    )}
+                    {/* TICKET-054: TikTok grid tag — bottom-right of photo, personal mode only */}
+                    {isTikTokSourced ? (
+                        <Text
+                            style={[
+                                styles.tiktokTag,
+                                {
+                                    color: palette.textMuted,
+                                    textShadowColor: palette.surfaceJournalLow,
+                                    textShadowOffset: { width: 0, height: 1 },
+                                    textShadowRadius: 4,
+                                },
+                            ]}
+                            importantForAccessibility="no"
+                            accessibilityElementsHidden
+                        >
+                            tiktok
+                        </Text>
+                    ) : null}
+                </View>
 
                 {/* Text */}
                 <View style={styles.textContainer}>
@@ -159,12 +186,25 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         flex: 1,
     },
+    photoWrapper: {
+        // Relative container so the tiktok tag can be absolutely positioned
+        position: 'relative',
+    },
     photo: {
         width: '100%',
     },
     photoPlaceholder: {
         width: '100%',
         aspectRatio: 4 / 3,
+    },
+    tiktokTag: {
+        // TICKET-054: lowercase Manrope tag, bottom-right of photo, Spacing.xs inset
+        position: 'absolute',
+        bottom: Spacing.xs,
+        right: Spacing.xs,
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 1,
     },
     textContainer: {
         padding: Spacing.sm,

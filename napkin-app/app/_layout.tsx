@@ -292,6 +292,11 @@ function RootLayoutNav() {
             name="notifications"
             options={{ headerShown: false }}
           />
+          {/* TICKET-055: iOS share extension deep-link landing */}
+          <Stack.Screen
+            name="import"
+            options={{ headerShown: false, presentation: 'card' }}
+          />
         </Stack>
         <BottomNavBar />
       </View>

@@ -35,7 +35,7 @@ export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEd
     const { user } = useAuth();
 
     const handleShare = async () => {
-        const url = `diningjournalapp://list/${list.id}`;
+        const url = `napkin://list/${list.id}`;
         try {
             await Clipboard.setStringAsync(url);
             showToast('Link copied to clipboard');

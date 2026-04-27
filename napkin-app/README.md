@@ -49,6 +49,46 @@ Join our community of developers creating universal apps.
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
 
+## Local development
+
+### iOS share extension — `RCT_NEW_ARCH_ENABLED` shell-env trap (TICKET-055)
+
+**Problem:** If your shell exports `RCT_NEW_ARCH_ENABLED=0` globally (common
+after following older Expo / Reanimated setup guides), `pod install` will fail
+with a Reanimated podspec assertion:
+
+```
+[!] `RNReanimated` requires that the project enables New Architecture
+```
+
+This failure happens _even if_ `newArchEnabled: true` is set in `app.config.ts`,
+because the environment variable overrides the config.
+
+**Fix:** Always invoke prebuild and run commands with the env var set to `1`:
+
+```bash
+RCT_NEW_ARCH_ENABLED=1 npx expo prebuild --clean --platform ios
+RCT_NEW_ARCH_ENABLED=1 npx expo run:ios
+```
+
+Or `unset RCT_NEW_ARCH_ENABLED` from your shell before running Expo commands.
+
+The `app.config.ts` value (`newArchEnabled: true`) is the source of truth;
+the shell env var takes precedence when set to `0`, which is the trap.
+
+### iOS share extension — smoke test
+
+After building with `RCT_NEW_ARCH_ENABLED=1 npx expo run:ios`:
+
+1. Open Safari on the simulator, navigate to any URL.
+2. Tap Share, scroll the share sheet, look for **"Napkin"**.
+3. Tap "Napkin" — the main app foregrounds and `ImportLinkSheet` opens with the URL already resolving.
+4. If "Napkin" does not appear in the share sheet, tap "More" to enable it.
+
+Logged-out variant: sign out first, repeat from step 1. The app lands on `/auth`
+with the copy "sign in to save links to your wishlist." After sign-in, the sheet
+auto-opens with the original URL.
+
 ## Supabase + Google Places proxy
 
 The Explore tab queries the Supabase Edge Function

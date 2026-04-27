@@ -297,6 +297,8 @@ See `hooks/tables/useCreateTable.ts`:
 - Session token via `supabase.auth.getSession()`, `Authorization: Bearer ${token}` header
 - On success, invalidate relevant query keys
 
+**Canonical mutation pattern (TICKET-036/042):** Every mutation hook must follow the snapshot → patch → rollback → narrow refetch lifecycle. The full doc with annotated template, the `client_nonce` round-trip pattern, shared `InfiniteData` helpers, and an anti-patterns checklist lives in `napkin-app/lib/mutations.md`. Read it before writing any new `useMutation` hook — or before adding `invalidateQueries` to an existing one.
+
 ### Query Keys
 All defined in `lib/queryKeys.ts`. When adding a new feature, add its keys there, not ad-hoc.
 
