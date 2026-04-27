@@ -162,5 +162,13 @@ export const queryKeys = {
         eligibleRestaurants: (userId: string, city: string) =>
             ['topFours', 'eligibleRestaurants', userId, city] as const,
     },
+
+    // Admin — operator surfaces (TICKET-033)
+    admin: {
+        // Critics list paginated by (scraped_at desc, id desc)
+        criticsList: () => ['admin', 'criticsList'] as const,
+        // Cached isAdmin check per user — staleTime: Infinity in useIsAdmin
+        isAdmin: (userId: string) => ['admin', 'isAdmin', userId] as const,
+    },
 } as const;
 
