@@ -6,7 +6,7 @@
  * - Unranked lists use a plain FlatList.
  * - 404 state (private list not owned by caller) shows a "not found" UI.
  *
- * Deep-link: diningjournalapp://list/{id}
+ * Deep-link: napkin://list/{id}
  */
 import React, { useCallback, useState } from 'react';
 import {

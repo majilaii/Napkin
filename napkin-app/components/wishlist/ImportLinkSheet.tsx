@@ -85,6 +85,13 @@ interface InlineSearchResult {
 interface ImportLinkSheetProps {
     visible: boolean;
     onDismiss: () => void;
+    /**
+     * When set, the sheet skips the paste step and jumps directly to the
+     * 'loading' state with this URL pre-resolved. Used by the iOS share
+     * extension deep-link path (app/import.tsx). Validated internally via
+     * the same validateUrl() helper the paste step uses.
+     */
+    initialUrl?: string;
 }
 
 type Palette = typeof Colors.light;
@@ -187,7 +194,7 @@ function CandidateCard({ candidate, isSelected, onSelect, palette }: CandidateCa
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ImportLinkSheet({ visible, onDismiss }: ImportLinkSheetProps) {
+export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const insets = useSafeAreaInsets();
@@ -219,6 +226,9 @@ export function ImportLinkSheet({ visible, onDismiss }: ImportLinkSheetProps) {
     // ── Clipboard probe on mount ───────────────────────────────────────
     useEffect(() => {
         if (!visible) return;
+        // When a deep-link initialUrl is present, skip clipboard — it would
+        // race with the initialUrl effect and render an unwanted chip.
+        if (initialUrl) return;
         Clipboard.getStringAsync().then((str) => {
             if (str && /^https?:\/\/\S+$/.test(str.trim())) {
                 setClipboardUrl(str.trim());
@@ -226,7 +236,25 @@ export function ImportLinkSheet({ visible, onDismiss }: ImportLinkSheetProps) {
                 setClipboardUrl(null);
             }
         }).catch(() => setClipboardUrl(null));
-    }, [visible]);
+    }, [visible, initialUrl]);
+
+    // ── initialUrl (share extension deep-link) effect ─────────────────
+    // When the sheet is opened with a pre-provided URL (from app/import.tsx),
+    // skip the idle/paste step and jump straight to 'loading'.
+    useEffect(() => {
+        if (!visible || !initialUrl || sheetState !== 'idle') return;
+        const trimmed = initialUrl.trim();
+        const validation = validateUrl(trimmed);
+        if (validation.ok) {
+            setLastUrl(trimmed);
+            setInputValue(trimmed);
+            resolve(trimmed);
+        } else {
+            setErrorCode('INVALID_URL');
+            setSheetState('error');
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visible, initialUrl]);
 
     // ── Resolver state transitions ─────────────────────────────────────
     useEffect(() => {

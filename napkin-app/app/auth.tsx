@@ -12,7 +12,7 @@
  * Keeps the Supabase AppState auto-refresh pattern from the original screen.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -28,11 +28,12 @@ import {
     Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
+import * as pendingImport from '@/lib/pendingImport';
 
 // Supabase auth auto-refresh when foregrounded. Registered once at module load.
 AppState.addEventListener('change', (state) => {
@@ -46,6 +47,7 @@ export default function AuthScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
+    const router = useRouter();
 
     const [mode, setMode] = useState<Mode>('sign-in');
     const [email, setEmail] = useState('');
@@ -53,6 +55,14 @@ export default function AuthScreen() {
     const [loading, setLoading] = useState(false);
     const [emailFocused, setEmailFocused] = useState(false);
     const [passwordFocused, setPasswordFocused] = useState(false);
+    // TICKET-055: show "sign in to save links" copy when arriving from a share.
+    const [hasPendingImport, setHasPendingImport] = useState(false);
+
+    // Peek for a stashed share URL on mount to decide whether to show the
+    // wishlist-resume copy. Does not consume the stash — that happens after sign-in.
+    useEffect(() => {
+        pendingImport.peek().then((s) => setHasPendingImport(!!s)).catch(() => {});
+    }, []);
 
     const submit = async () => {
         if (!email || !password) {
@@ -62,8 +72,19 @@ export default function AuthScreen() {
         setLoading(true);
         try {
             if (mode === 'sign-in') {
+                // TICKET-055: consume BEFORE signIn so the /import replace happens
+                // synchronously after sign-in resolves, beating RootLayoutNav's
+                // session-flip /feed redirect. If signIn fails, we re-stash.
+                const stashed = await pendingImport.consume();
                 const { error } = await supabase.auth.signInWithPassword({ email, password });
-                if (error) Alert.alert("Couldn't sign in", error.message);
+                if (error) {
+                    if (stashed) await pendingImport.stash(stashed.url);
+                    Alert.alert("Couldn't sign in", error.message);
+                } else if (stashed) {
+                    router.replace({ pathname: '/import', params: { url: stashed.url } } as any);
+                    return; // RootLayoutNav redirect now harmless — segments[0] === 'import'
+                }
+                // No pending import — RootLayoutNav handles the /feed redirect.
             } else {
                 const { data, error } = await supabase.auth.signUp({ email, password });
                 if (error) {
@@ -71,6 +92,7 @@ export default function AuthScreen() {
                 } else if (!data.session) {
                     Alert.alert('Check your email', 'Confirm your address to finish signing up.');
                 }
+                // signUp does NOT resume pending share — new users land on /feed first.
             }
         } finally {
             setLoading(false);
@@ -112,6 +134,17 @@ export default function AuthScreen() {
                             >
                                 A private table for those you trust.
                             </Text>
+                            {/* TICKET-055: shown when arriving from iOS share extension. */}
+                            {hasPendingImport && (
+                                <Text
+                                    style={[
+                                        Type.headlineItalic,
+                                        { color: palette.textMuted, textAlign: 'center', marginTop: Spacing.sm },
+                                    ]}
+                                >
+                                    sign in to save links to your wishlist.
+                                </Text>
+                            )}
                         </View>
 
                         {/* Form */}
