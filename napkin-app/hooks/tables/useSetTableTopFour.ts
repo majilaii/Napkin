@@ -14,16 +14,41 @@ import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { TableTopFourData, TopFourSlot } from './useTableTopFour';
 
+/** Google Places payload for a ghost restaurant not yet in the Napkin DB.
+ *  Server upserts via upsertRestaurant before writing the slot. */
+export interface TopFourPlacePayload {
+    external_id: string;
+    name: string;
+    location?: { address?: string; locality?: string; country?: string };
+    latitude?: number;
+    longitude?: number;
+    photoReference?: string;
+    photoAttributionHtml?: string | null;
+    googleRating?: number;
+    googleRatingCount?: number;
+    priceLevel?: number;
+    cuisine?: string;
+}
+
 export interface SetTableTopFourInput {
     table_id: string;
-    /** Sparse list of changed slots. position + restaurant_id (null = clear). */
-    slots: Array<{ position: 1 | 2 | 3 | 4; restaurant_id: string | null }>;
+    /** Sparse list of changed slots.
+     *  Each slot provides either restaurant_id (uuid | null to clear) OR place (ghost upsert). */
+    slots: Array<{
+        position: 1 | 2 | 3 | 4;
+        /** Persisted restaurant UUID, or null to clear the slot. */
+        restaurant_id?: string | null;
+        /** Google Places payload. Provide this instead of restaurant_id for ghost restaurants. */
+        place?: TopFourPlacePayload;
+    }>;
 }
 
 /**
  * Patch the cached slot array with requested changes.
- * Deletions (restaurant_id = null) remove the position from the array.
+ * Deletions (restaurant_id = null, no place) remove the position from the array.
  * Additions/swaps upsert the position.
+ * For ghost-place slots, we use the place name/city for the optimistic render;
+ * the server reconcile will fill the canonical restaurant_id and details.
  */
 function patchSlots(
     old: TableTopFourData | undefined,
@@ -34,39 +59,50 @@ function patchSlots(
     let patchedSlots: TopFourSlot[] = [...old.slots];
 
     for (const change of slots) {
-        if (change.restaurant_id === null) {
-            // Remove the position
+        // Clear slot
+        if (change.restaurant_id === null && !change.place) {
             patchedSlots = patchedSlots.filter((s) => s.position !== change.position);
+            continue;
+        }
+
+        // Ghost place — use place name/city optimistically; server provides real id after reconcile
+        const optimisticId = change.restaurant_id ?? change.place?.external_id ?? '';
+        const optimisticName = change.place?.name ?? '';
+        const optimisticCity = change.place?.location?.locality ?? null;
+
+        const existing = patchedSlots.find((s) => s.position === change.position);
+        if (existing) {
+            patchedSlots = patchedSlots.map((s) =>
+                s.position === change.position
+                    ? {
+                          ...s,
+                          restaurant_id: optimisticId,
+                          restaurant: change.place
+                              ? { id: optimisticId, name: optimisticName, city: optimisticCity, country: null, photo_url: null, external_id: change.place.external_id }
+                              : s.restaurant,
+                      }
+                    : s,
+            );
         } else {
-            // Find existing or create minimal optimistic slot
-            const existing = patchedSlots.find((s) => s.position === change.position);
-            if (existing) {
-                patchedSlots = patchedSlots.map((s) =>
-                    s.position === change.position
-                        ? { ...s, restaurant_id: change.restaurant_id! }
-                        : s,
-                );
-            } else {
-                // Minimal optimistic slot — server reconcile will fill restaurant details
-                patchedSlots = [
-                    ...patchedSlots,
-                    {
-                        position: change.position,
-                        restaurant_id: change.restaurant_id,
-                        custom_photo_url: null,
-                        updated_by: '',
-                        updated_at: new Date().toISOString(),
-                        restaurant: {
-                            id: change.restaurant_id,
-                            name: '',
-                            city: null,
-                            country: null,
-                            photo_url: null,
-                            external_id: null,
-                        },
+            // Minimal optimistic slot — server reconcile fills full restaurant details
+            patchedSlots = [
+                ...patchedSlots,
+                {
+                    position: change.position,
+                    restaurant_id: optimisticId,
+                    custom_photo_url: null,
+                    updated_by: '',
+                    updated_at: new Date().toISOString(),
+                    restaurant: {
+                        id: optimisticId,
+                        name: optimisticName,
+                        city: optimisticCity,
+                        country: null,
+                        photo_url: null,
+                        external_id: change.place?.external_id ?? null,
                     },
-                ].sort((a, b) => a.position - b.position);
-            }
+                },
+            ].sort((a, b) => a.position - b.position);
         }
     }
 

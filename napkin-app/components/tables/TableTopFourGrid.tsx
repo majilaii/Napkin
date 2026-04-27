@@ -79,9 +79,6 @@ function FilledTile({ slot, tileWidth, palette, onPress }: FilledTileProps) {
     const photo = resolveTilePhoto({
         custom_photo_url: slot.custom_photo_url,
         primary_photo_url: slot.restaurant?.photo_url,
-        places_photo_ref: slot.restaurant?.external_id
-            ? null
-            : null, // external_id is a Place ID, not a photo ref — photo_url is the resolved URL
         restaurant_name: slot.restaurant?.name,
     });
 
@@ -129,23 +126,23 @@ function FilledTile({ slot, tileWidth, palette, onPress }: FilledTileProps) {
                 )}
 
                 {/* Bottom label overlay */}
-                <View style={[styles.tileOverlay, { backgroundColor: 'rgba(0,0,0,0.35)' }]}>
+                <View style={[styles.tileOverlay, { backgroundColor: palette.scrimDark }]}>
                     <Text
-                        style={[styles.tileName, { color: '#fff' }]}
+                        style={[styles.tileName, { color: palette.textOnImage }]}
                         numberOfLines={2}
                     >
                         {slot.restaurant?.name ?? ''}
                     </Text>
                     {slot.restaurant?.city ? (
                         <Text
-                            style={[styles.tileCity, { color: 'rgba(255,255,255,0.78)' }]}
+                            style={[styles.tileCity, { color: palette.textOnImage }]}
                             numberOfLines={1}
                         >
                             {slot.restaurant.city}
                         </Text>
                     ) : slot.restaurant?.country ? (
                         <Text
-                            style={[styles.tileCity, { color: 'rgba(255,255,255,0.78)' }]}
+                            style={[styles.tileCity, { color: palette.textOnImage }]}
                             numberOfLines={1}
                         >
                             {slot.restaurant.country}
@@ -398,13 +395,13 @@ const styles = StyleSheet.create({
     tileName: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontStyle: 'italic',
-        fontSize: 11,
-        lineHeight: 14,
+        fontSize: 13,
+        lineHeight: 16,
     },
     tileCity: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 9,
-        lineHeight: 12,
+        fontSize: 11,
+        lineHeight: 14,
         marginTop: 2,
     },
     attributionRow: {

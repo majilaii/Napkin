@@ -30,6 +30,7 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { SearchInput } from '@/components/search/SearchInput';
 import { useRestaurantSearch } from '@/hooks/search/useRestaurantSearch';
 import { useSetTableTopFour } from '@/hooks/tables/useSetTableTopFour';
+import type { TopFourPlacePayload } from '@/hooks/tables/useSetTableTopFour';
 import { resolveTilePhoto } from '@/lib/restaurantPhoto';
 import type { TopFourSlot, TopFourSuggested } from '@/hooks/tables/useTableTopFour';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
@@ -40,10 +41,13 @@ type Palette = typeof Colors.light;
 
 interface DraftSlot {
     position: 1 | 2 | 3 | 4;
+    /** Persisted Napkin UUID, or Places external_id used as a temporary key for ghost rows. */
     restaurant_id: string;
     restaurant_name: string;
     photo_url: string | null;
     city: string | null;
+    /** Set for ghost Places-only results; cleared once server reconciles the real UUID. */
+    place?: TopFourPlacePayload;
 }
 
 // ── Draft grid tile ────────────────────────────────────────────────────────────
@@ -100,8 +104,8 @@ function DraftTile({ position, slot, tileWidth, isFocused, palette, onClear, onF
                             onError={() => setImgError(true)}
                         />
                     )}
-                    <View style={[styles.tileOverlay, { backgroundColor: 'rgba(0,0,0,0.35)' }]}>
-                        <Text style={styles.tileName} numberOfLines={2}>
+                    <View style={[styles.tileOverlay, { backgroundColor: palette.scrimDark }]}>
+                        <Text style={[styles.tileName, { color: palette.textOnImage }]} numberOfLines={2}>
                             {slot.restaurant_name}
                         </Text>
                     </View>
@@ -287,9 +291,9 @@ export function EditTop4Sheet({
             setSearchValue('');
             setDebouncedSearch('');
         }
-        // Only re-run when visible opens
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visible]);
+        // Re-run when visible opens, or when currentSlots/initialFocusPosition change
+        // while the sheet is open (e.g. caller updates position before opening).
+    }, [visible, currentSlots, initialFocusPosition]);
 
     const [focusedPosition, setFocusedPosition] = useState<1 | 2 | 3 | 4>(
         initialFocusPosition ?? 1,
@@ -327,14 +331,20 @@ export function EditTop4Sheet({
     }, []);
 
     const addRestaurant = useCallback(
-        (id: string, name: string, photoUrl: string | null, city: string | null) => {
+        (
+            id: string,
+            name: string,
+            photoUrl: string | null,
+            city: string | null,
+            place?: TopFourPlacePayload,
+        ) => {
             setDraft((prev) => {
                 const existingSlot = prev.find((s) => s.position === focusedPosition);
                 if (existingSlot) {
                     // Replace
                     return prev.map((s) =>
                         s.position === focusedPosition
-                            ? { ...s, restaurant_id: id, restaurant_name: name, photo_url: photoUrl, city }
+                            ? { ...s, restaurant_id: id, restaurant_name: name, photo_url: photoUrl, city, place }
                             : s,
                     );
                 }
@@ -345,6 +355,7 @@ export function EditTop4Sheet({
                     restaurant_name: name,
                     photo_url: photoUrl,
                     city,
+                    place,
                 };
                 return [...prev, newSlot].sort((a, b) => a.position - b.position);
             });
@@ -364,8 +375,23 @@ export function EditTop4Sheet({
 
     const handleAddSearchResult = useCallback(
         (item: SearchResultRow) => {
-            if (!item.id) return; // ghost-only, no DB id
-            addRestaurant(item.id, item.name, item.photoUrl, item.city);
+            if (item.id) {
+                // Persisted restaurant — add directly with DB id
+                addRestaurant(item.id, item.name, item.photoUrl, item.city);
+            } else if (item.placeId) {
+                // Ghost Places-only result — build a place payload for server-side upsert
+                const place: TopFourPlacePayload = {
+                    external_id: item.placeId,
+                    name: item.name,
+                    location: item.city ? { locality: item.city } : undefined,
+                    photoReference: item.photoReference ?? undefined,
+                    photoAttributionHtml: item.photoAttributionHtml ?? undefined,
+                    cuisine: item.cuisine ?? undefined,
+                };
+                // Use placeId as a temporary key in draft (server reconciles to real UUID)
+                addRestaurant(item.placeId, item.name, item.photoUrl, item.city, place);
+            }
+            // else: no id or placeId — should not happen, but silently ignore
         },
         [addRestaurant],
     );
@@ -389,12 +415,23 @@ export function EditTop4Sheet({
         const currentMap = new Map(currentSlots.map((s) => [s.position, s.restaurant_id]));
         const draftMapForSave = new Map(draft.map((s) => [s.position, s.restaurant_id]));
 
-        const changedSlots: { position: 1 | 2 | 3 | 4; restaurant_id: string | null }[] = [];
+        const draftSlotMap = new Map(draft.map((s) => [s.position, s]));
+        const changedSlots: Array<{
+            position: 1 | 2 | 3 | 4;
+            restaurant_id?: string | null;
+            place?: TopFourPlacePayload;
+        }> = [];
         for (const pos of [1, 2, 3, 4] as const) {
             const prev = currentMap.get(pos) ?? null;
+            const draftSlot = draftSlotMap.get(pos);
             const next = draftMapForSave.get(pos) ?? null;
             if (prev !== next) {
-                changedSlots.push({ position: pos, restaurant_id: next });
+                if (draftSlot?.place) {
+                    // Ghost restaurant — send place payload; server upserts and fills restaurant_id
+                    changedSlots.push({ position: pos, place: draftSlot.place });
+                } else {
+                    changedSlots.push({ position: pos, restaurant_id: next });
+                }
             }
         }
 
@@ -430,7 +467,7 @@ export function EditTop4Sheet({
         ...searchResults.visited,
         ...searchResults.onNapkin,
         ...searchResults.morePlaces,
-    ].filter((r) => r.id); // only persisted restaurants can be added (need a DB id)
+    ].filter((r) => r.id || r.placeId); // persisted rows have a DB id; ghost rows have a placeId
 
     return (
         <Modal
@@ -631,7 +668,6 @@ const styles = StyleSheet.create({
         fontStyle: 'italic',
         fontSize: 10,
         lineHeight: 13,
-        color: '#fff',
     },
     clearChip: {
         position: 'absolute',

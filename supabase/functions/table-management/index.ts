@@ -5,6 +5,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { upsertRestaurant } from '../_shared/restaurant.ts';
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -574,7 +575,26 @@ serve(async (req) => {
             const body = await req.json();
             const { table_id: targetTableId, slots: inputSlots } = body as {
                 table_id?: string;
-                slots?: Array<{ position: number; restaurant_id: string | null }>;
+                slots?: Array<{
+                    position: number;
+                    /** Persisted restaurant UUID. Provide this OR `place`, not both. */
+                    restaurant_id?: string | null;
+                    /** Google Places payload for a ghost restaurant (not yet in Napkin DB).
+                     *  Server will upsert via upsertRestaurant before writing the slot. */
+                    place?: {
+                        external_id: string;
+                        name: string;
+                        location?: { address?: string; locality?: string; country?: string };
+                        latitude?: number;
+                        longitude?: number;
+                        photoReference?: string;
+                        photoAttributionHtml?: string | null;
+                        googleRating?: number;
+                        googleRatingCount?: number;
+                        priceLevel?: number;
+                        cuisine?: string;
+                    };
+                }>;
             };
 
             if (!targetTableId || typeof targetTableId !== 'string') {
@@ -590,7 +610,7 @@ serve(async (req) => {
                 );
             }
 
-            // Validate: positions in {1,2,3,4}, no duplicates, restaurant_id is uuid or null
+            // Validate: positions in {1,2,3,4}, no duplicates, each slot has restaurant_id OR place
             const positions = new Set<number>();
             const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             for (const slot of inputSlots) {
@@ -607,19 +627,59 @@ serve(async (req) => {
                     );
                 }
                 positions.add(slot.position);
-                if (slot.restaurant_id !== null && !UUID_RE.test(slot.restaurant_id ?? '')) {
+                // Slot must carry restaurant_id (uuid or null to clear) OR place payload
+                const rid = slot.restaurant_id;
+                if (rid !== null && rid !== undefined && !UUID_RE.test(rid)) {
+                    // Not null, not a valid UUID — reject unless place is provided
+                    if (!slot.place) {
+                        return new Response(
+                            JSON.stringify({ error: `Invalid restaurant_id for position ${slot.position}` }),
+                            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        );
+                    }
+                }
+                if (slot.place && (!slot.place.external_id || !slot.place.name)) {
                     return new Response(
-                        JSON.stringify({ error: `Invalid restaurant_id for position ${slot.position}` }),
+                        JSON.stringify({ error: `place payload for position ${slot.position} must include external_id and name` }),
                         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                     );
                 }
             }
 
-            // Call the atomic RPC
+            // Verify membership BEFORE resolving any ghost places — a non-member must
+            // not be able to spend Google Places quota or pollute `restaurants`.
+            // Same check used in top_four_get (member_id, NOT user_id — TICKET-034).
+            const { data: setMembership, error: setMemberCheckError } = await supabase
+                .from('table_members')
+                .select('member_id')
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id)
+                .maybeSingle();
+
+            if (setMemberCheckError || !setMembership) {
+                return new Response(
+                    JSON.stringify({ error: 'Not a member of this table' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Resolve any ghost-place slots: upsert via _shared/restaurant.ts to get a DB id
+            const resolvedSlots: Array<{ position: number; restaurant_id: string | null }> = [];
+            for (const slot of inputSlots) {
+                if (slot.place) {
+                    // Ghost restaurant — upsert and get DB UUID
+                    const resolvedId = await upsertRestaurant(supabase, slot.place);
+                    resolvedSlots.push({ position: slot.position, restaurant_id: resolvedId });
+                } else {
+                    resolvedSlots.push({ position: slot.position, restaurant_id: slot.restaurant_id ?? null });
+                }
+            }
+
+            // Call the atomic RPC (all slots now have resolved restaurant_ids)
             const { error: rpcError } = await supabase.rpc('fn_set_table_top_4', {
                 p_table_id: targetTableId,
                 p_actor_id: user.id,
-                p_slots: inputSlots,
+                p_slots: resolvedSlots,
             });
 
             if (rpcError) {

@@ -133,9 +133,7 @@ export default function TablesScreen() {
     // Top 4 state
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
     const [editTopFourFocusPos, setEditTopFourFocusPos] = useState<1 | 2 | 3 | 4>(1);
-    const { data: topFourData } = useTableTopFour(
-        activeTable?.id && !(activeTable as any).is_personal ? activeTable.id : null,
-    );
+    const { data: topFourData } = useTableTopFour(activeTable?.id ?? null);
 
     const handleOpenEditTopFour = (position?: 1 | 2 | 3 | 4) => {
         setEditTopFourFocusPos(position ?? 1);
@@ -709,7 +707,7 @@ export default function TablesScreen() {
             )}
 
             {/* Edit Top 4 sheet */}
-            {activeTable && !(activeTable as any).is_personal && (
+            {activeTable && (
                 <EditTop4Sheet
                     visible={editTopFourOpen}
                     onClose={() => setEditTopFourOpen(false)}

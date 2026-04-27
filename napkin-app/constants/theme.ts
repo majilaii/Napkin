@@ -95,6 +95,12 @@ export const Colors = {
     // user/Table photo. Used ONLY by RestaurantHero when photo_source === 'places'.
     placesOverlayTint: '#fdf6ec',     // light: matches `background` (cream)
     placesOverlayOpacity: 0.22,       // 22% — calmer than a scrim, visible side-by-side
+
+    // TICKET-046 — image overlay tokens for Top 4 tile labels.
+    // scrimDark: photo gradient overlay (on-photo text backgrounds).
+    // textOnImage: light text rendered over photo tiles.
+    scrimDark: 'rgba(28, 28, 25, 0.35)',  // on-surface at 35% — warmer than pure black
+    textOnImage: '#FFFEF8',               // warm near-white for text on photo tiles
   },
   dark: {
     background: '#1a1816',
@@ -165,6 +171,10 @@ export const Colors = {
     // Dark cream matches the dark `cream` token (#3a3025) for consistency.
     placesOverlayTint: '#3a3025',     // dark: matches `cream` token
     placesOverlayOpacity: 0.22,       // 22% — same opacity as light mode
+
+    // TICKET-046 — image overlay tokens for Top 4 tile labels (dark mode).
+    scrimDark: 'rgba(0, 0, 0, 0.50)',  // darker scrim over dark-mode photos
+    textOnImage: '#F3F0EB',            // warm off-white — matches dark `text` token
   },
 };
 

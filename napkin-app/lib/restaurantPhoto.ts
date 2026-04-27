@@ -4,14 +4,14 @@
  * Priority chain (highest to lowest):
  *   1. custom_photo_url     — explicitly set per-slot (e.g. future custom-photo picker)
  *   2. primary_photo_url    — stored in `restaurants.photo_url` (mirrored from Places)
- *   3. places_photo_ref     — proxied via the `places-photo` edge function
- *   4. ghost                — cream tile + serif initial fallback
+ *   3. ghost                — cream tile + serif initial fallback
  *
- * Co-located with `lib/placesPhoto.ts` which provides `placesPhotoProxyUrl`.
+ * Note: the edge function returns a resolved `photo_url` (not a Places photo reference),
+ * so there is no need for a places_photo_ref → proxy step here. If a direct proxy URL
+ * path is needed in future, add it back then.
+ *
  * Used by TableTopFourGrid and any future restaurant-tile surfaces.
  */
-
-import { placesPhotoProxyUrl } from './placesPhoto';
 
 export type TilePhotoResult =
     | { kind: 'url'; url: string }
@@ -20,7 +20,6 @@ export type TilePhotoResult =
 interface ResolveTilePhotoInput {
     custom_photo_url?: string | null;
     primary_photo_url?: string | null;
-    places_photo_ref?: string | null;
     restaurant_name?: string | null;
 }
 
@@ -30,10 +29,6 @@ export function resolveTilePhoto(input: ResolveTilePhotoInput): TilePhotoResult 
     }
     if (input.primary_photo_url) {
         return { kind: 'url', url: input.primary_photo_url };
-    }
-    if (input.places_photo_ref) {
-        const url = placesPhotoProxyUrl(input.places_photo_ref, { width: 400 });
-        if (url) return { kind: 'url', url };
     }
     // Ghost fallback: first letter of restaurant name, or '?'
     const initial = (input.restaurant_name ?? '?').trim().charAt(0).toUpperCase() || '?';
