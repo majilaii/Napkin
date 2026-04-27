@@ -1,0 +1,74 @@
+name: Migrations Check
+
+# Validates SQL migrations on every PR that touches them.
+#
+# Why this exists: We've shipped three production breakages in 48 hours from
+# migration drift — files in main never applied to remote, and duplicate-
+# timestamp files silently skipped. This job catches both before merge.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   - SUPABASE_ACCESS_TOKEN  (Personal Access Token from Supabase dashboard)
+#   - SUPABASE_DB_PASSWORD   (Postgres password for the linked project)
+# If unset, the dry-run job warns but does not fail. The duplicate-timestamp
+# job runs unconditionally and IS a hard gate.
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/**'
+      - 'scripts/check-migration-timestamps.sh'
+      - '.github/workflows/migrations-check.yml'
+
+jobs:
+  duplicate-timestamps:
+    name: Duplicate timestamp guard (hard gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for duplicate migration timestamps
+        run: bash scripts/check-migration-timestamps.sh
+
+  dry-run-push:
+    name: Dry-run db push against remote
+    runs-on: ubuntu-latest
+    needs: duplicate-timestamps
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Supabase secrets are set
+        id: secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" || -z "${SUPABASE_DB_PASSWORD:-}" ]]; then
+            echo "::warning::SUPABASE_ACCESS_TOKEN or SUPABASE_DB_PASSWORD not configured — skipping dry-run."
+            echo "Set them in repo Settings → Secrets and variables → Actions."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: supabase/setup-cli@v1
+        if: steps.secrets.outputs.configured == 'true'
+        with:
+          version: latest
+
+      - name: Link to remote project
+        if: steps.secrets.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref ftvmseaqwwlcxtdlvxxz --password "$SUPABASE_DB_PASSWORD"
+
+      - name: List pending migrations
+        if: steps.secrets.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          echo "## Pending migrations on remote" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          supabase db push --dry-run --linked --password "$SUPABASE_DB_PASSWORD" 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
