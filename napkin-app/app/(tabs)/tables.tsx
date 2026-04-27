@@ -37,6 +37,7 @@ import {
     type ActivityItem,
     type SoloShareActivity,
     type TableNightActivity,
+    type TopFourEditedActivity,
 } from '@/hooks/tables/useTableActivity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
@@ -52,8 +53,13 @@ import {
     SubsetCard,
     TickRow,
     WelcomeBanner,
+    TableTopFourGrid,
+    TableTopFourPlaceholder,
+    EditTop4Sheet,
 } from '@/components/tables';
+import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
+import { useTableTopFour } from '@/hooks/tables/useTableTopFour';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -123,6 +129,16 @@ export default function TablesScreen() {
 
     // Table detail — includes caller_welcomed_at for the welcome banner (TICKET-029)
     const { data: tableDetail } = useTableDetail(activeTable?.id);
+
+    // Top 4 state
+    const [editTopFourOpen, setEditTopFourOpen] = useState(false);
+    const [editTopFourFocusPos, setEditTopFourFocusPos] = useState<1 | 2 | 3 | 4>(1);
+    const { data: topFourData } = useTableTopFour(activeTable?.id ?? null);
+
+    const handleOpenEditTopFour = (position?: 1 | 2 | 3 | 4) => {
+        setEditTopFourFocusPos(position ?? 1);
+        setEditTopFourOpen(true);
+    };
 
     // Atlas data — only fetched when the active table is a social table
     // is_personal is a runtime DB field not reflected in the Table type
@@ -406,6 +422,7 @@ export default function TablesScreen() {
                                     'Inviting members will be available in a future update.',
                                 )
                             }
+                            onEditTopFour={() => handleOpenEditTopFour()}
                         />
                     ) : isEmpty ? (
                         /* Empty table after filtering */
@@ -535,6 +552,26 @@ export default function TablesScreen() {
                                 );
                             })()}
 
+                            {/* Top 4 — shown when at least one slot is filled;
+                                placeholder shown when empty (0/4) for social tables */}
+                            {isSocialTable && (
+                                topFourData && topFourData.slots.length > 0 ? (
+                                    <TableTopFourGrid
+                                        slots={topFourData.slots}
+                                        lastEvent={topFourData.last_event}
+                                        currentUserId={user?.id}
+                                        onEdit={() => handleOpenEditTopFour()}
+                                        onTapEmptySlot={(pos) => handleOpenEditTopFour(pos)}
+                                        palette={palette}
+                                    />
+                                ) : (
+                                    <TableTopFourPlaceholder
+                                        palette={palette}
+                                        onStart={() => handleOpenEditTopFour()}
+                                    />
+                                )
+                            )}
+
                             {/* Date-grouped timeline */}
                             {feedSections.map((section) => (
                                       <View
@@ -640,6 +677,16 @@ export default function TablesScreen() {
                                                           />
                                                       );
                                                   }
+                                                  if (item.type === 'top_4_edited') {
+                                                      return (
+                                                          <Top4EditedCard
+                                                              key={`tt4-${item.id}`}
+                                                              item={item as TopFourEditedActivity}
+                                                              palette={palette}
+                                                              currentUserId={user?.id}
+                                                          />
+                                                      );
+                                                  }
                                                   const solo = item as SoloShareActivity;
                                                   return (
                                                       <SoloShareCard
@@ -657,6 +704,20 @@ export default function TablesScreen() {
                         </View>
                     )}
                 </ScrollView>
+            )}
+
+            {/* Edit Top 4 sheet */}
+            {activeTable && (
+                <EditTop4Sheet
+                    visible={editTopFourOpen}
+                    onClose={() => setEditTopFourOpen(false)}
+                    tableId={activeTable.id}
+                    currentSlots={topFourData?.slots ?? []}
+                    suggested={topFourData?.suggested ?? []}
+                    initialFocusPosition={editTopFourFocusPos}
+                    palette={palette}
+                    userId={user?.id}
+                />
             )}
 
             {/* Table switcher — bottom sheet replacing old top-dropdown Modal */}

@@ -103,7 +103,23 @@ export interface CollaborativeEntryActivity {
     average_rating: number | null;
 }
 
-export type ActivityItem = SoloShareActivity | TableNightActivity | CollaborativeEntryActivity;
+export interface TopFourEditedActivity {
+    type: 'top_4_edited';
+    id: string;
+    table_id: string;
+    position: 1 | 2 | 3 | 4;
+    actor_id: string;
+    actor_name: string | null;
+    actor_avatar_url: string | null;
+    event_type: 'added' | 'removed' | 'swapped';
+    prev_restaurant: { id: string; name: string | null } | null;
+    next_restaurant: { id: string; name: string | null } | null;
+    created_at: string;
+    sort_date: string;
+    my_reactions?: string[];
+}
+
+export type ActivityItem = SoloShareActivity | TableNightActivity | CollaborativeEntryActivity | TopFourEditedActivity;
 
 export interface TableActivityFilters {
     filterType?: string;   // 'round' | 'solo_share'

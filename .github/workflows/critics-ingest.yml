@@ -1,0 +1,81 @@
+# Critics ingestion workflow — TICKET-033
+#
+# Three triggers:
+#   drip       — daily cron (06:17 UTC); processes stale restaurants (batch of 50)
+#   eater-list — monthly cron (07:23 UTC, 1st of month); diffs Eater Essentials list
+#   backfill   — manual workflow_dispatch only; one-shot, user-touched restaurants
+#
+# P2-2 ARCH-REVIEW: this workflow uses schedule + workflow_dispatch only.
+# It does NOT trigger on pull_request or pull_request_target, so secrets are
+# never exposed to PRs from forks. Do NOT add a pull_request trigger.
+#
+# Required GitHub Actions secrets:
+#   SUPABASE_URL              — Supabase project URL (e.g. https://xxx.supabase.co)
+#   SUPABASE_SERVICE_ROLE_KEY — service role key (bypasses RLS; write access)
+#
+# See build log in TICKET-033 for the setup checklist.
+
+name: Critics ingestion
+
+on:
+  schedule:
+    - cron: '17 6 * * *'    # daily drip — 06:17 UTC (odd minute avoids cron herds)
+    - cron: '23 7 1 * *'    # monthly Eater list — 07:23 UTC, 1st of month
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'backfill | drip | eater-list'
+        required: true
+        default: 'backfill'
+
+# Serialise: a long backfill must not be killed by the next-day drip.
+# cancel-in-progress: false is non-negotiable here.
+concurrency:
+  group: critics-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Minimal permissions — no repository write access needed.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: v1.x
+
+      - name: Resolve mode
+        id: mode
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            if [[ "${{ github.event.schedule }}" == "23 7 1 * *" ]]; then
+              echo "mode=eater-list" >> "$GITHUB_OUTPUT"
+            else
+              echo "mode=drip" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "mode=${{ github.event.inputs.mode }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run ingest
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        # --allow-net: HTTP fetches to publisher sites + Supabase
+        # --allow-env: read SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
+        # --allow-read intentionally NOT granted (no local file access needed)
+        # --allow-write intentionally NOT granted (writes go via HTTP to Supabase)
+        run: |
+          deno run \
+            --allow-net \
+            --allow-env \
+            scripts/critics-ingest/cli.ts \
+            ${{ steps.mode.outputs.mode }}
