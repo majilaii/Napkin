@@ -399,6 +399,7 @@ export default function TablesScreen() {
                             tableName={tableName}
                             foundedAt={activeTable.created_at}
                             palette={palette}
+                            memberCount={members?.length ?? 0}
                             onInvite={() =>
                                 Alert.alert(
                                     'Coming soon',
