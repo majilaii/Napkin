@@ -6,8 +6,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
-import { emitTableInvite } from '../_shared/notify.ts';
-// emitTopFourSwap import deferred — see TODO(post-TICKET-048) comment near top_four_set.
+import { emitTableInvite, emitTopFourSwap } from '../_shared/notify.ts';
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -688,12 +687,17 @@ serve(async (req) => {
                 }
             }
 
-            // Call the atomic RPC (all slots now have resolved restaurant_ids)
-            const { error: rpcError } = await supabase.rpc('fn_set_table_top_4', {
-                p_table_id: targetTableId,
-                p_actor_id: user.id,
-                p_slots: resolvedSlots,
-            });
+            // Call the atomic RPC (all slots now have resolved restaurant_ids).
+            // RPC returns the history rows it just inserted — used below for the
+            // top_four_swap notification fan-out (no-op-safe, race-safe, multi-slot-safe).
+            const { data: insertedHistoryRows, error: rpcError } = await supabase.rpc(
+                'fn_set_table_top_4',
+                {
+                    p_table_id: targetTableId,
+                    p_actor_id: user.id,
+                    p_slots: resolvedSlots,
+                },
+            );
 
             if (rpcError) {
                 if (rpcError.message?.includes('not a member')) {
@@ -785,24 +789,70 @@ serve(async (req) => {
                 };
             }
 
-            // TICKET-048: top_four_swap notification fan-out is deferred (Fix #6,
-            // Codex review 2026-04-28). The previous implementation queried
-            // table_top_4_history after the RPC and used the result to emit
-            // notifications, but this has three correctness bugs:
-            //   1. No-op save: the history query may return a previous row by the
-            //      same actor, emitting a stale notification.
-            //   2. Concurrent saves: the query may return a different actor's row.
-            //   3. Multi-slot: only one history row is returned; only one swap gets
-            //      a notification.
-            // The correct fix (Option A) requires fn_set_table_top_4 to return the
-            // inserted history row IDs as a setof. That RPC change is deferred to
-            // avoid touching a locked-down SECURITY DEFINER function without a
-            // dedicated migration + review.
-            // TODO(post-TICKET-048): wire top_four_swap producer after fn_set_table_top_4
-            // is updated to return inserted history row IDs (setof table_top_4_history).
-            // Then iterate returned rows here and call emitTopFourSwap once per row.
-            // Empty result set = no notification fired (no-op safe, concurrent safe).
-            // ARCHITECT-REVIEW: confirm fn_set_table_top_4 RPC change scope + migration plan.
+            // TICKET-FOLLOWUP-A: top_four_swap producer fan-out.
+            // RPC returns ONLY the rows it just inserted (filtered by save_id),
+            // so this is no-op-safe (empty array → no notifications), race-safe
+            // (different actors get different save_ids), and multi-slot-safe
+            // (every changed slot is returned). Best-effort: failures log but
+            // don't fail the producing action.
+            try {
+                const insertedRows = (insertedHistoryRows ?? []) as Array<{
+                    position: number;
+                    actor_id: string;
+                    event_type: string;
+                    prev_restaurant_id: string | null;
+                    next_restaurant_id: string | null;
+                }>;
+
+                if (insertedRows.length > 0) {
+                    // Fetch other Table members (recipients) once, exclude actor.
+                    const { data: tmRows, error: tmErr } = await supabase
+                        .from('table_members')
+                        .select('member_id')
+                        .eq('table_id', targetTableId);
+                    if (tmErr) console.error('[notify] top_four_swap members lookup failed:', tmErr.message);
+
+                    const recipients = ((tmRows ?? []) as Array<{ member_id: string }>)
+                        .map(r => r.member_id);
+
+                    // Fetch restaurant names for all prev/next IDs in one batch.
+                    const allRestaurantIds = Array.from(new Set(
+                        insertedRows
+                            .flatMap(r => [r.prev_restaurant_id, r.next_restaurant_id])
+                            .filter((id): id is string => !!id),
+                    ));
+                    const nameById = new Map<string, string>();
+                    if (allRestaurantIds.length > 0) {
+                        const { data: rNames, error: rErr } = await supabase
+                            .from('restaurants')
+                            .select('id, name')
+                            .in('id', allRestaurantIds);
+                        if (rErr) console.error('[notify] top_four_swap restaurant names lookup failed:', rErr.message);
+                        for (const r of ((rNames ?? []) as Array<{ id: string; name: string }>)) {
+                            nameById.set(r.id, r.name);
+                        }
+                    }
+
+                    // One notification per inserted history row.
+                    for (const row of insertedRows) {
+                        const addedName = row.next_restaurant_id
+                            ? (nameById.get(row.next_restaurant_id) ?? '')
+                            : '';
+                        const removedName = row.prev_restaurant_id
+                            ? (nameById.get(row.prev_restaurant_id) ?? '')
+                            : '';
+                        await emitTopFourSwap(supabase, {
+                            actorUserId: user.id,
+                            recipientUserIds: recipients,
+                            tableId: targetTableId,
+                            addedName,
+                            removedName,
+                        });
+                    }
+                }
+            } catch (notifErr) {
+                console.error('[notify] top_four_swap fan-out threw:', notifErr);
+            }
 
             // Suggested (same logic as top_four_get, post-save state)
             const { data: tableMembersAfter } = await supabase
