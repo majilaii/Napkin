@@ -31,7 +31,7 @@ import { ToastProvider } from '@/providers/ToastProvider';
 import { Colors, Type } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 import { PressableScale } from '@/components/ui/napkin';
-import { useNotifications } from '@/hooks/notifications';
+import { useUnreadCount } from '@/hooks/notifications';
 import { PlusActionMenu } from '@/components/nav';
 import { ImportLinkSheet } from '@/components/wishlist';
 
@@ -44,8 +44,8 @@ function BottomNavBar() {
   const palette = Colors[scheme];
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { data: notifData } = useNotifications(user?.id);
-  const hasUnread = (notifData?.unreadCount ?? 0) > 0;
+  const unreadCount = useUnreadCount(user?.id);
+  const hasUnread = unreadCount > 0;
 
   // + button action menu
   const [menuVisible, setMenuVisible] = useState(false);

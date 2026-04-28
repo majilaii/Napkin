@@ -26,7 +26,7 @@ import { FollowButton } from './FollowButton';
 import { CalibrationChip } from './CalibrationChip';
 import { RateMoreToUnlockPrompt } from './RateMoreToUnlockPrompt';
 import { NotifBell } from '@/components/notifications/NotifBell';
-import { useNotifications } from '@/hooks/notifications';
+import { useUnreadCount } from '@/hooks/notifications';
 import { useAuth } from '@/providers/AuthProvider';
 
 interface Props {
@@ -61,8 +61,8 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
     const palette = Colors[scheme];
     const router = useRouter();
     const { user } = useAuth();
-    const { data: notifData } = useNotifications(isSelf ? user?.id : null);
-    const hasUnread = (notifData?.unreadCount ?? 0) > 0;
+    const unreadCount = useUnreadCount(isSelf ? user?.id : null);
+    const hasUnread = unreadCount > 0;
 
     const showUsername =
         relationship === 'self' ||

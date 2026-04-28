@@ -11,16 +11,18 @@
  *   Freshness = 2px terracotta spine + 2.5% tint wash.
  *   No blue dots, no "NEW" badges. Rhythm: Today / Yesterday / This week / Earlier.
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 import {
     ActivityIndicator,
+    NativeScrollEvent,
+    NativeSyntheticEvent,
     Pressable,
     ScrollView,
     StyleSheet,
     Text,
     View,
 } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing } from '@/constants/theme';
@@ -28,8 +30,12 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import {
     useNotifications,
+    useUnreadCount,
+    useMarkNotificationRead,
+    useMarkAllNotificationsRead,
     bucketFor,
     bucketLabel,
+    flattenPages,
     type Notification,
     type NotifBucket,
 } from '@/hooks/notifications';
@@ -53,7 +59,34 @@ export default function NotificationsScreen() {
     const router = useRouter();
     const { user } = useAuth();
 
-    const { data, isLoading } = useNotifications(user?.id);
+    const {
+        data,
+        isLoading,
+        isFetchingNextPage,
+        fetchNextPage,
+        hasNextPage,
+        refetch,
+    } = useNotifications(user?.id);
+
+    const unreadCount = useUnreadCount(user?.id);
+    const hasUnread = unreadCount > 0;
+
+    const markRead = useMarkNotificationRead(user?.id);
+    const markAllRead = useMarkAllNotificationsRead(user?.id);
+
+    // Guard: don't fire focus refetch while a mark-read mutation is in-flight
+    // (would race and overwrite the optimistic patch before the server responds).
+    const markPending = markRead.isPending || markAllRead.isPending;
+
+    useFocusEffect(
+        useCallback(() => {
+            if (!markPending) {
+                refetch();
+            }
+        }, [refetch, markPending]),
+    );
+
+    const notifications = flattenPages(data);
 
     const grouped = useMemo(() => {
         const map: Record<NotifBucket, Notification[]> = {
@@ -62,15 +95,50 @@ export default function NotificationsScreen() {
             thisWeek: [],
             earlier: [],
         };
-        const all = data?.notifications ?? [];
-        for (const n of all) {
+        for (const n of notifications) {
             map[bucketFor(n.createdAt)].push(n);
         }
         return map;
-    }, [data]);
+    }, [notifications]);
 
-    const total = data?.notifications.length ?? 0;
-    const hasUnread = (data?.unreadCount ?? 0) > 0;
+    const total = notifications.length;
+
+    // Auto-advance when the first page returns zero VISIBLE rows but more
+    // raw rows exist (e.g. all stale `friend_logged` rows filtered out by
+    // visibility re-check). Without this, the screen renders NotifEmpty
+    // forever — `handleScroll` lives inside the ScrollView, which isn't
+    // rendered when `total === 0`. Re-fires whenever a new page lands and
+    // still has zero visible rows.
+    useEffect(() => {
+        if (total === 0 && hasNextPage && !isFetchingNextPage && !isLoading) {
+            fetchNextPage();
+        }
+    }, [total, hasNextPage, isFetchingNextPage, isLoading, fetchNextPage]);
+
+    // Infinite scroll: fetch next page when within 200px of the bottom.
+    const handleScroll = useCallback(
+        (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+            if (isFetchingNextPage || !hasNextPage) return;
+            const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+            const distanceFromBottom =
+                contentSize.height - (contentOffset.y + layoutMeasurement.height);
+            if (distanceFromBottom < 200) {
+                fetchNextPage();
+            }
+        },
+        [isFetchingNextPage, hasNextPage, fetchNextPage],
+    );
+
+    const handleTapRow = useCallback(
+        (n: Notification) => {
+            // Optimistically mark this row read before navigating.
+            if (!n.read) {
+                markRead.mutate(n.id);
+            }
+            handleTap(n, router);
+        },
+        [markRead, router],
+    );
 
     return (
         <>
@@ -97,7 +165,10 @@ export default function NotificationsScreen() {
                     </Text>
                     <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
                         {hasUnread ? (
-                            <Pressable hitSlop={8}>
+                            <Pressable
+                                hitSlop={8}
+                                onPress={() => markAllRead.mutate()}
+                            >
                                 <Text style={[styles.action, { color: palette.textMuted }]}>
                                     Mark read
                                 </Text>
@@ -116,6 +187,8 @@ export default function NotificationsScreen() {
                 ) : (
                     <ScrollView
                         showsVerticalScrollIndicator={false}
+                        onScroll={handleScroll}
+                        scrollEventThrottle={200}
                         contentContainerStyle={{
                             paddingBottom: insets.bottom + 100,
                         }}
@@ -130,15 +203,21 @@ export default function NotificationsScreen() {
                                         <NotificationRow
                                             key={n.id}
                                             notification={n}
-                                            onPress={() => handleTap(n, router)}
+                                            onPress={() => handleTapRow(n)}
                                         />
                                     ))}
                                 </View>
                             );
                         })}
-                        <Text style={[styles.terminus, { color: palette.textMuted }]}>
-                            — older —
-                        </Text>
+                        {isFetchingNextPage ? (
+                            <View style={styles.loadMore}>
+                                <ActivityIndicator size="small" color={palette.primary} />
+                            </View>
+                        ) : (
+                            <Text style={[styles.terminus, { color: palette.textMuted }]}>
+                                — older —
+                            </Text>
+                        )}
                     </ScrollView>
                 )}
             </View>
@@ -149,8 +228,7 @@ export default function NotificationsScreen() {
 function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
     switch (n.type) {
         case 'friend_logged':
-            // Land on the friend's log card. We don't have an entry id in the v1
-            // sample, so route to their profile as the closest meaningful target.
+            // Land on the entry via actor profile (entry-detail route not yet universal).
             router.push({ pathname: '/u/[identifier]', params: { identifier: n.actor.id } });
             return;
         case 'friend_pinned':
@@ -162,7 +240,9 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
             router.push({ pathname: '/u/[identifier]', params: { identifier: n.actor.id } });
             return;
         case 'table_invite':
-            // No deep link target yet; leave a no-op.
+            // Tables tab reads `selected` param and focuses the matching table;
+            // full /table/[id] deep route deferred until the index screen exists.
+            router.push({ pathname: '/(tabs)/tables', params: { selected: n.tableId } });
             return;
         case 'claim_city':
             // Future: open the regional Top 4 claim flow.
@@ -267,7 +347,14 @@ function NotificationRow({
                         </>
                     }
                     time={n.timeLabel}
-                    trailing={<NotifAction label="Join" variant="filledPrimary" />}
+                    trailing={
+                        <NotifAction
+                            label="Join"
+                            variant="filledPrimary"
+                            // The Join button fires the same deep-link as tapping the row.
+                            onPress={onPress}
+                        />
+                    }
                 />
             );
         case 'claim_city':
@@ -278,7 +365,7 @@ function NotificationRow({
                     leading={<NotifGlyph tone="amber">{n.logCount}</NotifGlyph>}
                     title={
                         <>
-                            {`You’ve logged ${n.logCount} places in `}
+                            {`You've logged ${n.logCount} places in `}
                             <I>{n.cityName}</I>
                             {'. Ready to name a Top 4?'}
                         </>
@@ -301,7 +388,7 @@ function NotificationRow({
                             {` ${n.dayLabel}. Care to log it?`}
                         </>
                     }
-                    body={"One tap. Or dismiss and we’ll never ask again."}
+                    body={"One tap. Or dismiss and we'll never ask again."}
                     time={n.timeLabel}
                     trailing={<NotifAction label="Log" variant="filledInk" />}
                 />
@@ -348,6 +435,10 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    loadMore: {
+        paddingVertical: 20,
+        alignItems: 'center',
     },
     terminus: {
         textAlign: 'center',

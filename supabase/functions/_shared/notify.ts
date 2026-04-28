@@ -1,0 +1,99 @@
+/**
+ * TICKET-048: Best-effort notification fan-out helpers.
+ *
+ * Each export wraps a notifications INSERT in try/catch. A failed insert
+ * NEVER throws — it logs and returns. This keeps producers (entry create,
+ * add_member, top_four_set) working even when the inbox has issues.
+ *
+ * The invariant "actor ≠ recipient" is enforced here (uniqueExcluding /
+ * early-return guard). Producers must not rely on DB constraints alone.
+ */
+import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+
+interface BaseFanout {
+    actorUserId: string;
+    recipientUserIds: string[];   // helper de-dupes and excludes actor
+}
+
+/**
+ * Emit `friend_logged` notifications to a set of recipients.
+ * Both subject_entry_id AND subject_restaurant_id must be provided —
+ * the per-kind CHECK constraint on the notifications table enforces this,
+ * and hydration reads restaurant directly from the notification row.
+ */
+export async function emitFriendLogged(
+    supabase: SupabaseClient,
+    args: BaseFanout & { entryId: string; restaurantId: string },
+): Promise<void> {
+    const recipients = uniqueExcluding(args.recipientUserIds, args.actorUserId);
+    if (recipients.length === 0) return;
+    const rows = recipients.map(uid => ({
+        user_id: uid,
+        kind: 'friend_logged',
+        actor_user_id: args.actorUserId,
+        subject_entry_id: args.entryId,
+        subject_restaurant_id: args.restaurantId,
+    }));
+    try {
+        const { error } = await supabase.from('notifications').insert(rows);
+        if (error) console.error('[notify] friend_logged insert failed:', error.message);
+    } catch (e) {
+        console.error('[notify] friend_logged threw:', e);
+    }
+}
+
+/**
+ * Emit a `table_invite` notification to the newly added user.
+ * No row is emitted if actor === recipient.
+ */
+export async function emitTableInvite(
+    supabase: SupabaseClient,
+    args: { actorUserId: string; recipientUserId: string; tableId: string },
+): Promise<void> {
+    if (args.recipientUserId === args.actorUserId) return;
+    try {
+        const { error } = await supabase.from('notifications').insert({
+            user_id: args.recipientUserId,
+            kind: 'table_invite',
+            actor_user_id: args.actorUserId,
+            subject_table_id: args.tableId,
+        });
+        if (error) console.error('[notify] table_invite insert failed:', error.message);
+    } catch (e) {
+        console.error('[notify] table_invite threw:', e);
+    }
+}
+
+/**
+ * Emit `top_four_swap` notifications to all other Table members.
+ * addedName / removedName are denormalized into subject_meta at insert time
+ * so hydration doesn't need an extra join.
+ */
+export async function emitTopFourSwap(
+    supabase: SupabaseClient,
+    args: BaseFanout & {
+        tableId: string;
+        addedName: string;
+        removedName: string;
+    },
+): Promise<void> {
+    const recipients = uniqueExcluding(args.recipientUserIds, args.actorUserId);
+    if (recipients.length === 0) return;
+    const rows = recipients.map(uid => ({
+        user_id: uid,
+        kind: 'top_four_swap',
+        actor_user_id: args.actorUserId,
+        subject_table_id: args.tableId,
+        subject_meta: { added_name: args.addedName, removed_name: args.removedName },
+    }));
+    try {
+        const { error } = await supabase.from('notifications').insert(rows);
+        if (error) console.error('[notify] top_four_swap insert failed:', error.message);
+    } catch (e) {
+        console.error('[notify] top_four_swap threw:', e);
+    }
+}
+
+function uniqueExcluding(ids: string[], exclude: string): string[] {
+    return [...new Set(ids.filter(id => id && id !== exclude))];
+}

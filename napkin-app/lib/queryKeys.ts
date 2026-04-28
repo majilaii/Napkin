@@ -149,9 +149,9 @@ export const queryKeys = {
     },
 
     // Notifications (Heirloom inbox — friend logs, pins, Top 4 edits, invites, nudges)
+    // unread_count rides on the first inbox page (pages[0].unread_count) — no separate key.
     notifications: {
         all: (userId: string) => ['notifications', userId] as const,
-        unreadCount: (userId: string) => ['notifications', userId, 'unread'] as const,
     },
 
     // Top Fours — personal regional Top 4s (TICKET-047)

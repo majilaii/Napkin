@@ -1,18 +1,16 @@
 /**
  * useNotifications — Heirloom inbox feed.
  *
- * v1: returns hand-shaped sample data so the screen renders end-to-end against
- * the design. Wire to a real `notifications` edge function when the schema is
- * ready (see CLAUDE.md doctrine: profile + Tables + wishlist + restaurant
- * page is the live core loop).
+ * Uses useCursorPagedQuery against the `notifications` edge function (inbox action).
+ * The `unread_count` field rides on the first page of the paginated envelope;
+ * read it via `data?.pages?.[0]?.unread_count ?? 0`.
  *
- * Event types map 1:1 to the canvas spec — only events that already exist as
- * primitives in the wireframes (logged meal, pinned place, Top 4 swap, Table
- * invite, claim-a-city nudge, reservation reminder).
+ * Event types map 1:1 to the canvas spec:
+ *   friend_logged | friend_pinned | top_four_swap | table_invite | claim_city | reservation_reminder
  */
-import { useQuery } from '@tanstack/react-query';
-
 import { queryKeys } from '@/lib/queryKeys';
+import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 
 export type NotifBucket = 'today' | 'yesterday' | 'thisWeek' | 'earlier';
 
@@ -98,110 +96,41 @@ export type Notification =
     | ClaimCityNotification
     | ReservationReminderNotification;
 
-export interface NotificationsPage {
-    notifications: Notification[];
-    unreadCount: number;
-}
+/** Extra top-level field on the inbox page envelope (first page only; subsequent pages have null). */
+export type InboxExtras = { unread_count: number | null };
+/** Full page shape for the inbox — Page<Notification> extended with unread_count. */
+export type InboxPage = Page<Notification> & InboxExtras;
 
-const SAMPLE: Notification[] = [
-    {
-        id: 'n_001',
-        type: 'friend_pinned',
-        read: false,
-        createdAt: relativeIso({ hours: 2 }),
-        timeLabel: '2h ago · New York',
-        actor: { id: 'u_julian', name: 'Julian Park' },
-        restaurantName: 'Tatiana',
-        wishlistLabel: 'NYC · May',
-    },
-    {
-        id: 'n_002',
-        type: 'friend_logged',
-        read: false,
-        createdAt: relativeIso({ hours: 4 }),
-        timeLabel: "4h ago · somewhere you've been",
-        actor: { id: 'u_clara', name: 'Clara Bellini' },
-        restaurantName: 'St. John',
-        quote: '"The marrow is still the marrow. ★★★★½"',
-        youveBeen: true,
-    },
-    {
-        id: 'n_003',
-        type: 'top_four_swap',
-        read: true,
-        createdAt: relativeIso({ days: 1, hours: 2 }),
-        timeLabel: 'Tuesday evening',
-        actor: { id: 'u_maya', name: 'Maya Olsen' },
-        addedName: 'St. John',
-        removedName: 'Estela',
-        tableName: 'Sunday Roast Club',
-    },
-    {
-        id: 'n_004',
-        type: 'table_invite',
-        read: true,
-        createdAt: relativeIso({ days: 1, hours: 6 }),
-        timeLabel: 'Tuesday · 1:14pm',
-        actor: { id: 'u_liam', name: 'Liam Reyes' },
-        tableName: 'Two-Martini Lunch',
-    },
-    {
-        id: 'n_005',
-        type: 'claim_city',
-        read: true,
-        createdAt: relativeIso({ days: 3 }),
-        timeLabel: 'Monday',
-        cityName: 'New York',
-        logCount: 12,
-    },
-    {
-        id: 'n_006',
-        type: 'friend_logged',
-        read: true,
-        createdAt: relativeIso({ days: 3, hours: 3 }),
-        timeLabel: 'Monday evening · with Clara',
-        actor: { id: 'u_julian', name: 'Julian Park' },
-        restaurantName: 'Carbone',
-        quote: '"Veal in lemon. ★★★★½"',
-    },
-    {
-        id: 'n_007',
-        type: 'reservation_reminder',
-        read: true,
-        createdAt: relativeIso({ days: 4 }),
-        timeLabel: 'Sunday morning',
-        restaurantName: 'Le Servan',
-        dayLabel: 'Saturday',
-    },
-];
-
-function relativeIso({
-    hours = 0,
-    days = 0,
-}: {
-    hours?: number;
-    days?: number;
-}) {
-    const ms = (days * 24 + hours) * 60 * 60 * 1000;
-    return new Date(Date.now() - ms).toISOString();
+async function fetchInboxPage(
+    cursor: string | null,
+    _token: string | null,
+): Promise<InboxPage> {
+    return callEdgeFn<InboxPage>('notifications', {
+        body: { action: 'inbox', cursor },
+    });
 }
 
 export function useNotifications(userId: string | null | undefined) {
-    return useQuery<NotificationsPage>({
-        queryKey: userId ? queryKeys.notifications.all(userId) : ['notifications', 'no-user'],
+    return useCursorPagedQuery<Notification, InboxExtras>({
+        queryKey: queryKeys.notifications.all(userId ?? ''),
+        fetchPage: fetchInboxPage,
         enabled: !!userId,
         staleTime: 1000 * 30,
-        queryFn: async () => {
-            // TODO: replace with `callEdgeFn('notifications', { method: 'GET', action: 'inbox' })`
-            // once the edge function lands. For now, return designed sample data so the
-            // surface renders against the spec.
-            return {
-                notifications: SAMPLE,
-                unreadCount: SAMPLE.filter((n) => !n.read).length,
-            };
-        },
     });
 }
+
+/**
+ * Selector helper: reads unread_count from the first cached inbox page.
+ * Used by NotifBell (on ProfileHeader) and the BottomNavBar dot.
+ * Avoids a separate query key — the unread count is always in sync with the inbox.
+ */
+export function useUnreadCount(userId: string | null | undefined): number {
+    const { data } = useNotifications(userId);
+    return data?.pages?.[0]?.unread_count ?? 0;
+}
+
+/** Re-export for callers that import flattenPages from the notifications barrel. */
+export { flattenPages };
 
 export function bucketFor(createdAtIso: string): NotifBucket {
     const created = new Date(createdAtIso);

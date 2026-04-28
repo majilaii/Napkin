@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { errorResponse, mapPgError } from '../_shared/errors.ts';
+import { emitFriendLogged } from '../_shared/notify.ts';
 
 /**
  * Entry Edge Function
@@ -425,8 +426,26 @@ serve(async (req) => {
                     .eq('client_nonce', client_nonce)
                     .maybeSingle();
                 if (!nonceErr && existing) {
+                    // TICKET-050: include entry_ordinal so retries fire the slip/stamp
+                    // with the EXISTING row's ordinal — not the user's current total.
+                    // A delayed offline replay after a later save would otherwise
+                    // stamp the duplicated entry with the wrong number.
+                    // Stable predicate: count entries up to and including `existing`.
+                    const { count: dupCount, error: dupCountErr } = await supabase
+                        .from('entries')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('user_id', user.id)
+                        .lte('created_at', existing.created_at);
+                    if (dupCountErr) {
+                        console.error('entry_ordinal count failed (duplicate path) for user', user.id, dupCountErr);
+                    }
+                    const dupOrdinal = dupCountErr ? null : (dupCount ?? null);
                     return new Response(
-                        JSON.stringify({ data: existing, warnings: [{ type: 'duplicate_submission' }] }),
+                        JSON.stringify({
+                            data: existing,
+                            entry_ordinal: dupOrdinal,
+                            warnings: [{ type: 'duplicate_submission' }],
+                        }),
                         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                     );
                 }
@@ -555,9 +574,97 @@ serve(async (req) => {
 
             console.log('Entry created:', entryData.id);
 
+            // ── Notifications fan-out (best-effort, TICKET-048) ─────────────────
+            // Only fire if the entry has a restaurant (friend_logged CHECK requires subject_restaurant_id).
+            // Fix #7 (Codex review 2026-04-28): log query errors — supabase-js never
+            // throws on query failure; always check { error } or the recipient set
+            // silently comes back empty.
+            if (restaurantId) {
+                try {
+                    const recipientSet = new Set<string>();
+
+                    // (a) Table-shared entry → all Table members.
+                    if (resolvedTableId) {
+                        const { data: members, error: membersErr } = await supabase
+                            .from('table_members')
+                            .select('member_id')
+                            .eq('table_id', resolvedTableId);
+                        if (membersErr) {
+                            console.error('[notify] emitFriendLogged: table_members query failed', membersErr);
+                        }
+                        for (const m of members ?? []) recipientSet.add(m.member_id);
+                    }
+
+                    // (b) Companion-tagged → each CONFIRMED-inserted companion.
+                    //     Re-SELECT post-insert to reflect only rows that actually landed.
+                    //     (entry_companions uses column `user_id`, not `companion_user_id`.)
+                    if (sanitizedCompanionIds.length > 0) {
+                        const { data: confirmedCompanions, error: companionsErr } = await supabase
+                            .from('entry_companions')
+                            .select('user_id')
+                            .eq('entry_id', entryData.id);
+                        if (companionsErr) {
+                            console.error('[notify] emitFriendLogged: entry_companions query failed', companionsErr);
+                        }
+                        for (const c of confirmedCompanions ?? []) recipientSet.add(c.user_id);
+                    }
+
+                    // (c) Public-eligible solo (no table_id AND no companions) → followers.
+                    //     Only this branch is gated on the public-eligibility predicate;
+                    //     (a) and (b) carry their own visibility (membership / explicit tag).
+                    if (!resolvedTableId && sanitizedCompanionIds.length === 0) {
+                        const { data: eligible, error: eligibleErr } = await supabase
+                            .rpc('is_entry_publicly_eligible', { p_entry_id: entryData.id });
+                        if (eligibleErr) {
+                            console.error('[notify] emitFriendLogged: is_entry_publicly_eligible rpc failed', eligibleErr);
+                        }
+                        if (eligible === true) {
+                            const { data: followers, error: followersErr } = await supabase
+                                .from('follows')
+                                .select('follower_id')
+                                .eq('following_id', user.id);
+                            if (followersErr) {
+                                console.error('[notify] emitFriendLogged: follows query failed', followersErr);
+                            }
+                            for (const f of followers ?? []) recipientSet.add(f.follower_id);
+                        }
+                    }
+
+                    // Always exclude the actor.
+                    recipientSet.delete(user.id);
+
+                    await emitFriendLogged(supabase, {
+                        actorUserId: user.id,
+                        recipientUserIds: Array.from(recipientSet),
+                        entryId: entryData.id,
+                        restaurantId,
+                    });
+                } catch (notifyErr) {
+                    // Best-effort: never fail the entry create because of inbox issues.
+                    console.error('[notify] friend_logged fan-out threw:', notifyErr);
+                }
+            }
+
+            // ── entry_ordinal: per-user lifetime entry count (TICKET-050) ──────
+            // Computed with a count(*) AFTER the insert so the new row is included.
+            // KNOWN LIMITATION (v1): two concurrent inserts by the same user can
+            // race and both read the same ordinal. Acceptable — ordinal is decorative,
+            // not a stable identity, and the composer is single-threaded.
+            // UPGRADE PATH: replace with a per-user bigint counter maintained by a
+            // trigger or a per-user sequence (schema-only change, no client delta).
+            const { count: entryCount, error: countErr } = await supabase
+                .from('entries')
+                .select('id', { count: 'exact', head: true })
+                .eq('user_id', user.id);
+            if (countErr) {
+                console.error('entry_ordinal count failed for user', user.id, countErr);
+            }
+            const entry_ordinal = countErr ? null : (entryCount ?? null);
+
             return new Response(
                 JSON.stringify({
                     data: entryData,
+                    entry_ordinal,
                     ...(warnings.length > 0 ? { warnings } : {}),
                 }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

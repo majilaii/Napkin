@@ -26,10 +26,10 @@ import { supabase } from '@/lib/supabase';
 /** Canonical wire envelope returned by every paginated Napkin endpoint. */
 export type Page<T> = { rows: T[]; next_cursor: string | null; has_more: boolean };
 
-export type CursorPagedQueryArgs<T> = {
+export type CursorPagedQueryArgs<T, ExtraPageFields = {}> = {
     queryKey: QueryKey;
     /** Called once per page. `cursor` is null for the first page. */
-    fetchPage: (cursor: string | null, token: string | null) => Promise<Page<T>>;
+    fetchPage: (cursor: string | null, token: string | null) => Promise<Page<T> & ExtraPageFields>;
     enabled?: boolean;
     staleTime?: number;
 };
@@ -42,9 +42,16 @@ export type CursorPagedQueryArgs<T> = {
  *
  * Mandate: every paginated endpoint in Napkin MUST use this helper.
  * Do not open-code `useInfiniteQuery` or numeric offset patterns.
+ *
+ * `ExtraPageFields` (default `{}`) allows endpoints like `notifications/inbox`
+ * to include extra top-level fields (e.g. `unread_count`) alongside the
+ * canonical `rows / next_cursor / has_more` envelope without breaking existing
+ * callers — they just don't pass the second generic and get the old behaviour.
  */
-export function useCursorPagedQuery<T>(args: CursorPagedQueryArgs<T>) {
-    return useInfiniteQuery<Page<T>, Error>({
+export function useCursorPagedQuery<T, ExtraPageFields = {}>(
+    args: CursorPagedQueryArgs<T, ExtraPageFields>,
+) {
+    return useInfiniteQuery<Page<T> & ExtraPageFields, Error>({
         queryKey: args.queryKey,
         initialPageParam: null as string | null,
         queryFn: async ({ pageParam }) => {

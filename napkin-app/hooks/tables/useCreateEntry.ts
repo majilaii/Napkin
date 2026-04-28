@@ -93,9 +93,15 @@ async function createEntry(input: CreateEntryInput): Promise<any> {
     });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
-    const entryRow = data?.data ?? {};
+    // Shallow-clone so we never mutate the mock/server object reference.
+    const entryRow = { ...(data?.data ?? {}) };
     if (data?.warnings) {
         (entryRow as any).__warnings = data.warnings;
+    }
+    // TICKET-050: stash entry_ordinal on the row so composers can surface it
+    // in the post-save slip/stamp without a second round-trip.
+    if (data?.entry_ordinal !== undefined) {
+        (entryRow as any).__entry_ordinal = data.entry_ordinal;
     }
     return entryRow;
 }
