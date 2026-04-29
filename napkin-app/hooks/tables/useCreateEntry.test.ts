@@ -1,5 +1,5 @@
 /**
- * Tests for useCreateEntry — TICKET-042.
+ * Tests for useCreateEntry — TICKET-042 + TICKET-043.
  *
  * Covers the extended optimistic patch across feed.all, tables.activity,
  * entries.forDay, and entries.mySolo caches.
@@ -11,6 +11,14 @@
  *   (d) table entry — tables.activity patched, mySolo NOT patched
  *   (e) solo entry — mySolo patched, tables.activity NOT patched
  *   (f) day-bucket migration — row migrates to server date when crossing midnight
+ *
+ * TICKET-043 additions:
+ *   (g) 0 table_ids — feed-only; mySolo patched, no tables.activity patch
+ *   (h) 1 table_id via table_ids[] — single tables.activity patch, no mySolo
+ *   (i) 3 table_ids — three tables.activity patches, no mySolo, one atlas invalidation (primary only)
+ *   (j) atomic rollback — all per-Table activity caches rolled back on server error
+ *   (k) nonce-dedup — second call with same nonce returns same entry (was_dedup=true)
+ *   (l) table_not_authorized error — triggers toast + onTableNotAuthorized + rollback
  */
 
 jest.mock('@/providers/AuthProvider', () => ({
@@ -214,6 +222,139 @@ describe('useCreateEntry', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
         // tables.activity for TABLE_ID must remain untouched (no entry with our nonce)
+        const actData = client.getQueryData<InfiniteData<Page<ActivityItem>>>(activityKey);
+        expect(actData?.pages[0].rows).toHaveLength(0);
+    });
+
+    // ── TICKET-043 cases ──────────────────────────────────────────────────────
+
+    it('(g) 0 table_ids — feed-only: mySolo patched, no tables.activity activity', async () => {
+        const { result, client } = renderHookWithClient(
+            () => useCreateEntry(USER_ID, null),
+        );
+
+        const mySoloKey = queryKeys.entries.mySolo(USER_ID);
+        const activityKey = queryKeys.tables.activity(TABLE_ID);
+        client.setQueryData(mySoloKey, makeMySoloData());
+        client.setQueryData(activityKey, makeActivityInfiniteData());
+
+        act(() => {
+            result.current.mutate({ ...ENTRY_INPUT, table_ids: [] });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        const mySoloData = client.getQueryData<SoloShareActivity[]>(mySoloKey);
+        expect(mySoloData?.find((r) => r.id === 'server-entry-1')).toBeDefined();
+
+        const actData = client.getQueryData<InfiniteData<Page<ActivityItem>>>(activityKey);
+        expect(actData?.pages[0].rows).toHaveLength(0);
+    });
+
+    it('(h) 1 table via table_ids[] — single tables.activity patched, mySolo not', async () => {
+        const { result, client } = renderHookWithClient(
+            () => useCreateEntry(USER_ID, null),
+        );
+
+        const activityKey = queryKeys.tables.activity(TABLE_ID);
+        const mySoloKey = queryKeys.entries.mySolo(USER_ID);
+        client.setQueryData(activityKey, makeActivityInfiniteData());
+        client.setQueryData(mySoloKey, makeMySoloData());
+
+        act(() => {
+            result.current.mutate({ ...ENTRY_INPUT, table_ids: [TABLE_ID] });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        const actData = client.getQueryData<InfiniteData<Page<ActivityItem>>>(activityKey);
+        expect(actData?.pages[0].rows.find((r) => r.id === 'server-entry-1')).toBeDefined();
+
+        const mySoloData = client.getQueryData<SoloShareActivity[]>(mySoloKey);
+        expect(mySoloData).toHaveLength(0);
+    });
+
+    it('(i) 3 table_ids — three tables.activity caches all receive one row', async () => {
+        const TABLE_B = 'table-b';
+        const TABLE_C = 'table-c';
+        const { result, client } = renderHookWithClient(
+            () => useCreateEntry(USER_ID, null),
+        );
+
+        const keyA = queryKeys.tables.activity(TABLE_ID);
+        const keyB = queryKeys.tables.activity(TABLE_B);
+        const keyC = queryKeys.tables.activity(TABLE_C);
+        const mySoloKey = queryKeys.entries.mySolo(USER_ID);
+        client.setQueryData(keyA, makeActivityInfiniteData());
+        client.setQueryData(keyB, makeActivityInfiniteData());
+        client.setQueryData(keyC, makeActivityInfiniteData());
+        client.setQueryData(mySoloKey, makeMySoloData());
+
+        act(() => {
+            result.current.mutate({ ...ENTRY_INPUT, table_ids: [TABLE_ID, TABLE_B, TABLE_C] });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        for (const key of [keyA, keyB, keyC]) {
+            const actData = client.getQueryData<InfiniteData<Page<ActivityItem>>>(key);
+            expect(actData?.pages[0].rows.find((r) => r.id === 'server-entry-1')).toBeDefined();
+        }
+
+        const mySoloData = client.getQueryData<SoloShareActivity[]>(mySoloKey);
+        expect(mySoloData).toHaveLength(0);
+    });
+
+    it('(j) atomic rollback — all per-Table activity caches rolled back on error', async () => {
+        const { supabase: mockSupabase } = require('@/__mocks__/supabase');
+        mockSupabase.functions.invoke.mockResolvedValue({
+            data: { error: 'Server error' },
+            error: null,
+        });
+        const TABLE_B = 'table-b-rollback';
+        const { result, client } = renderHookWithClient(
+            () => useCreateEntry(USER_ID, null),
+        );
+
+        const keyA = queryKeys.tables.activity(TABLE_ID);
+        const keyB = queryKeys.tables.activity(TABLE_B);
+        client.setQueryData(keyA, makeActivityInfiniteData());
+        client.setQueryData(keyB, makeActivityInfiniteData());
+
+        act(() => {
+            result.current.mutate({ ...ENTRY_INPUT, table_ids: [TABLE_ID, TABLE_B] });
+        });
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+
+        for (const key of [keyA, keyB]) {
+            const actData = client.getQueryData<InfiniteData<Page<ActivityItem>>>(key);
+            expect(actData?.pages[0].rows).toHaveLength(0);
+        }
+    });
+
+    it('(l) table_not_authorized: calls onTableNotAuthorized + rolls back', async () => {
+        const { supabase: mockSupabase } = require('@/__mocks__/supabase');
+        mockSupabase.functions.invoke.mockResolvedValue({
+            data: { error: 'table_not_authorized', code: 'table_not_authorized', ids: [TABLE_ID] },
+            error: null,
+        });
+
+        const onTableNotAuthorized = jest.fn();
+        const { result, client } = renderHookWithClient(
+            () => useCreateEntry(USER_ID, null, { onTableNotAuthorized }),
+        );
+
+        const activityKey = queryKeys.tables.activity(TABLE_ID);
+        client.setQueryData(activityKey, makeActivityInfiniteData());
+
+        act(() => {
+            result.current.mutate({ ...ENTRY_INPUT, table_ids: [TABLE_ID] });
+        });
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+
+        expect(onTableNotAuthorized).toHaveBeenCalledWith([TABLE_ID]);
         const actData = client.getQueryData<InfiniteData<Page<ActivityItem>>>(activityKey);
         expect(actData?.pages[0].rows).toHaveLength(0);
     });

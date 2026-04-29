@@ -139,10 +139,13 @@ async function fetchPostInteractions(
     targetType: TargetType,
     targetId: string,
     scope: Scope,
+    tableId?: string,
 ): Promise<PostInteractionsData> {
+    const params: Record<string, string> = { target_type: targetType, target_id: targetId, scope };
+    if (tableId) params.table_id = tableId;
     const data = await callEdgeFn<PostInteractionsData | null>('post-interactions', {
         method: 'GET',
-        params: { target_type: targetType, target_id: targetId, scope },
+        params,
     });
     return data ?? { reactions: [], comments: [], counts: { reactions: 0, comments: 0, top_emojis: [] } };
 }
@@ -153,10 +156,11 @@ export function usePostInteractions(
     targetType: TargetType | null | undefined,
     targetId: string | null | undefined,
     scope: Scope = 'table',
+    tableId?: string,
 ) {
     return useQuery<PostInteractionsData, Error>({
         queryKey: queryKeys.postInteractions.all(targetType!, targetId!, scope),
-        queryFn: () => fetchPostInteractions(targetType!, targetId!, scope),
+        queryFn: () => fetchPostInteractions(targetType!, targetId!, scope, tableId),
         enabled: !!targetType && !!targetId,
         staleTime: 1000 * 60 * 5,
     });
@@ -169,6 +173,9 @@ interface ToggleReactionInput {
     targetId: string;
     emoji: string;
     scope: Scope;
+    /** TICKET-043: optional Table context for multi-Table entries. When omitted,
+     * the server resolves to any linked Table the caller is a member of. */
+    tableId?: string;
 }
 
 export function useToggleReaction() {
@@ -176,7 +183,7 @@ export function useToggleReaction() {
     const toast = useToast();
 
     return useMutation({
-        mutationFn: async ({ targetType, targetId, emoji, scope }: ToggleReactionInput) => {
+        mutationFn: async ({ targetType, targetId, emoji, scope, tableId }: ToggleReactionInput) => {
             return callEdgeFn<{
                 added: boolean;
                 removed: boolean;
@@ -186,7 +193,13 @@ export function useToggleReaction() {
                 'post-interactions',
                 {
                     action: 'react',
-                    body: { target_type: targetType, target_id: targetId, emoji, scope },
+                    body: {
+                        target_type: targetType,
+                        target_id: targetId,
+                        emoji,
+                        scope,
+                        ...(tableId ? { table_id: tableId } : {}),
+                    },
                 },
             );
         },
@@ -379,13 +392,15 @@ interface AddCommentInput {
     body: string;
     clientNonce?: string;
     scope: Scope;
+    /** TICKET-043: optional Table context for multi-Table entries. */
+    tableId?: string;
 }
 
 export function useAddComment() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ targetType, targetId, body, clientNonce, scope }: AddCommentInput) => {
+        mutationFn: async ({ targetType, targetId, body, clientNonce, scope, tableId }: AddCommentInput) => {
             return callEdgeFn<Comment & { client_nonce?: string }>('post-interactions', {
                 action: 'comment',
                 body: {
@@ -394,6 +409,7 @@ export function useAddComment() {
                     body,
                     scope,
                     ...(clientNonce ? { client_nonce: clientNonce } : {}),
+                    ...(tableId ? { table_id: tableId } : {}),
                 },
             });
         },

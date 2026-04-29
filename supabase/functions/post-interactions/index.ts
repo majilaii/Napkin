@@ -102,9 +102,76 @@ serve(async (req) => {
         }
 
         // ── Helper: resolve table_id from a target ──────────────────────────────
+        // TICKET-043: for 'entry' targets, prefer the supplied table_id from the request body.
+        // This is the new contract for table-scope reactions/replies on entries.
+        //
+        // Review-fix: when no table_id is supplied (aggregate feed cards have no Table
+        // context), pick the FIRST entry_tables row whose table_id the caller is a
+        // member of — instead of always returning entries.table_id (primary). The
+        // primary-only fallback breaks B-only viewers of multi-Table entries posted
+        // to [A, B] (legacy primary=A): they're not in A, so the membership check
+        // fails. Resolving to ANY linked Table the caller belongs to fixes this
+        // without leaking other Tables' identities (the picked id is one the caller
+        // already knows about).
+        async function resolveAndValidateEntryTable(
+            entryId: string,
+            suppliedTableId: string | undefined
+        ): Promise<string | null> {
+            if (suppliedTableId) {
+                // New contract: validate the supplied table_id is linked via entry_tables.
+                const { data: linked } = await supabase
+                    .from('entry_tables')
+                    .select('table_id')
+                    .eq('entry_id', entryId)
+                    .eq('table_id', suppliedTableId)
+                    .maybeSingle();
+                if (linked) return suppliedTableId;
+                // Transition-window fallback: accept legacy entries.table_id match.
+                const { data: legacy } = await supabase
+                    .from('entries')
+                    .select('table_id')
+                    .eq('id', entryId)
+                    .single();
+                return legacy?.table_id === suppliedTableId ? suppliedTableId : null;
+            }
+
+            // No table_id supplied (aggregate feed). Find any linked Table the
+            // caller is a member of. Two-step query because entry_tables has no
+            // direct FK to table_members (both relate via tables only, so PostgREST
+            // can't infer the embed).
+            //   1. Get caller's Table ids via table_members.member_id (NOT user_id).
+            //   2. Find an entry_tables row whose table_id is in that set.
+            const { data: callerMemberships, error: memErr } = await supabase
+                .from('table_members')
+                .select('table_id')
+                .eq('member_id', user.id);
+            if (memErr) throw memErr;
+            const callerTableIds = (callerMemberships ?? []).map((m: { table_id: string }) => m.table_id);
+            if (callerTableIds.length > 0) {
+                const { data: linkedRows, error: linkedErr } = await supabase
+                    .from('entry_tables')
+                    .select('table_id')
+                    .eq('entry_id', entryId)
+                    .in('table_id', callerTableIds)
+                    .limit(1);
+                if (linkedErr) throw linkedErr;
+                const firstAllowed = (linkedRows ?? [])[0];
+                if (firstAllowed) return (firstAllowed as { table_id: string }).table_id;
+            }
+
+            // Last resort: legacy primary (preserves single-Table behaviour).
+            const { data: legacy } = await supabase
+                .from('entries')
+                .select('table_id')
+                .eq('id', entryId)
+                .single();
+            return legacy?.table_id ?? null;
+        }
+
         async function resolveTableId(
             targetType: 'table_night' | 'entry',
-            targetId: string
+            targetId: string,
+            suppliedTableId?: string
         ): Promise<string | null> {
             if (targetType === 'table_night') {
                 const { data } = await supabase
@@ -114,12 +181,7 @@ serve(async (req) => {
                     .single();
                 return data?.table_id ?? null;
             } else {
-                const { data } = await supabase
-                    .from('entries')
-                    .select('table_id')
-                    .eq('id', targetId)
-                    .single();
-                return data?.table_id ?? null;
+                return resolveAndValidateEntryTable(targetId, suppliedTableId);
             }
         }
 
@@ -189,6 +251,10 @@ serve(async (req) => {
             const targetType = url.searchParams.get('target_type');
             const targetId   = url.searchParams.get('target_id');
             const scope      = url.searchParams.get('scope');
+            // TICKET-043 review-fix: accept table_id from the request so multi-Table
+            // entries resolve to the requesting Table instead of legacy primary.
+            // Without this, a B-only viewer of [A,B] entry resolves A → 403.
+            const suppliedTableId = url.searchParams.get('table_id') ?? undefined;
 
             if (!isValidTargetType(targetType)) return fail('target_type must be table_night or entry');
             if (!targetId) return fail('target_id is required');
@@ -201,7 +267,7 @@ serve(async (req) => {
                 if (!eligible) return fail('not_public', 403);
             } else {
                 // Table scope: validate membership
-                const tableId = await resolveTableId(targetType, targetId);
+                const tableId = await resolveTableId(targetType, targetId, suppliedTableId);
                 if (!tableId) return fail('Target not found', 404);
                 if (!(await validateTableMember(tableId))) {
                     return fail('Not a member of this table', 403);
@@ -320,7 +386,8 @@ serve(async (req) => {
                     const eligible = await checkPublicEligibility(target_id);
                     if (!eligible) return fail('not_public', 403);
                 } else {
-                    const tableId = await resolveTableId(target_type, target_id);
+                    // TICKET-043: pass body.table_id so multi-Table entries route to the correct Table.
+                    const tableId = await resolveTableId(target_type, target_id, body.table_id ?? undefined);
                     if (!tableId) return fail('Target not found', 404);
                     if (!(await validateTableMember(tableId))) {
                         return fail('Not a member of this table', 403);
@@ -411,7 +478,8 @@ serve(async (req) => {
                     const allowReplies = await checkAllowPublicReplies(target_id);
                     if (!allowReplies) return fail('replies_disabled', 403);
                 } else {
-                    const tableId = await resolveTableId(target_type, target_id);
+                    // TICKET-043: pass body.table_id so multi-Table entries route to the correct Table.
+                    const tableId = await resolveTableId(target_type, target_id, body.table_id ?? undefined);
                     if (!tableId) return fail('Target not found', 404);
                     if (!(await validateTableMember(tableId))) {
                         return fail('Not a member of this table', 403);

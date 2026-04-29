@@ -49,6 +49,7 @@ export function FeedActionRow({
     palette,
     detailPathname,
     detailParams,
+    tableId,
 }: FeedActionRowProps) {
     const router = useRouter();
     const toggleReaction = useToggleReaction();
@@ -68,12 +69,14 @@ export function FeedActionRow({
     const effectiveCount = reactionCount;
 
     const applyToggle = (emoji: string) => {
-        // If switching from one emoji to another, remove the old one first
+        // TICKET-043: thread tableId so multi-Table entries route to the requesting Table.
+        // Cards in aggregate feeds pass undefined → server fallback finds any linked Table.
+        // If switching from one emoji to another, remove the old one first.
         if (!myReactions.includes(emoji) && likedEmoji && likedEmoji !== emoji) {
-            toggleReaction.mutate({ targetType, targetId, emoji: likedEmoji, scope: 'table' });
+            toggleReaction.mutate({ targetType, targetId, emoji: likedEmoji, scope: 'table', tableId });
         }
 
-        toggleReaction.mutate({ targetType, targetId, emoji, scope: 'table' });
+        toggleReaction.mutate({ targetType, targetId, emoji, scope: 'table', tableId });
     };
 
     const handleTapLike = () => {

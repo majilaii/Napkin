@@ -81,9 +81,10 @@ export function FastLogForm({
     const palette = Colors[scheme];
     const { user } = useAuth();
 
-    const selectedTableId = initialTableId ?? null;
+    // TICKET-043: convert to table_ids array; pass [] for feed-only.
+    const selectedTableIds = initialTableId ? [initialTableId] : [];
 
-    const createEntry = useCreateEntry(user?.id, selectedTableId);
+    const createEntry = useCreateEntry(user?.id, null);
     const canSubmit = rating > 0;
     const isSubmitting = createEntry.isPending;
     const [submitError, setSubmitError] = useState<string | null>(null);
@@ -118,8 +119,9 @@ export function FastLogForm({
             const result = await createEntry.mutateAsync({
                 restaurant: restaurantData,
                 rating: ratingValue,
-                table_id: selectedTableId ?? undefined,
-                visibility: selectedTableId ? 'table' : 'private',
+                // TICKET-043: send table_ids array instead of single table_id.
+                table_ids: selectedTableIds,
+                visibility: selectedTableIds.length > 0 ? 'table' : 'private',
             });
             const entryId = result?.id ?? result?.entry?.id ?? '';
             onSubmitted(entryId);
@@ -131,7 +133,7 @@ export function FastLogForm({
         isSubmitting,
         lockedRestaurant,
         rating,
-        selectedTableId,
+        selectedTableIds,
         createEntry,
         onSubmitted,
     ]);

@@ -26,7 +26,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
-import { buildPage, decodeCursor, applyKeysetFilter } from '../_shared/pagination.ts';
+import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 
 const DEFAULT_WINDOW_DAYS = 14;
 const DEFAULT_PAGE_SIZE = 30;
@@ -113,58 +113,58 @@ serve(async (req) => {
             );
         }
 
-        // 2. Pull entries across all those tables in the window, with cursor keyset
-        let entriesQuery = supabase
-            .from('entries')
-            .select(`
-                id,
-                user_id,
-                table_id,
-                restaurant_id,
-                rating,
-                content,
-                dish_description,
-                visited_at,
-                created_at,
-                table_night_id,
-                photo_url,
-                reaction_count,
-                comment_count,
-                top_emojis,
-                restaurants (
-                    id,
-                    name,
-                    address,
-                    city,
-                    photo_url
-                )
-            `)
-            .in('table_id', tableIds)
-            .is('table_night_id', null)
-            .gte('visited_at', sinceIso)
-            .order('visited_at', { ascending: false })
-            .order('id', { ascending: false })
-            .limit(limit + 1);
-
-        if (decoded) {
-            entriesQuery = applyKeysetFilter(entriesQuery, { sort_date: decoded.sort_date, id: decoded.id });
-        }
-
-        const { data: entries, error: entriesErr } = await entriesQuery;
+        // 2. TICKET-043 review-fix: pull via fn_user_aggregate_feed RPC so DISTINCT ON
+        // and the keyset cursor are applied IN SQL, before LIMIT. Previously this was
+        // done JS-side after a 93-row overscan, which broke pagination at scale and
+        // could hide entries when many duplicates fit in the overscan budget.
+        // (Codex/Claude Review 1, BLOCKER 3.)
+        const cursorDate = decoded?.sort_date ?? null;
+        const cursorId = decoded?.id ?? null;
+        const { data: rpcRows, error: entriesErr } = await supabase.rpc('fn_user_aggregate_feed', {
+            p_user_id: user.id,
+            p_table_ids: tableIds,
+            p_since: sinceIso,
+            p_cursor_date: cursorDate,
+            p_cursor_id: cursorId,
+            p_limit: limit + 1,
+        });
         if (entriesErr) throw entriesErr;
 
-        const rawEntries = (entries ?? []) as Array<{
+        const rpcEntries = (rpcRows ?? []) as Array<{
             id: string;
             user_id: string;
             restaurant_id: string | null;
             rating: number | null;
             content: string | null;
+            dish_description: string | null;
             visited_at: string | null;
             created_at: string;
+            table_night_id: string | null;
             photo_url: string | null;
-            restaurants: { id: string; name: string; photo_url: string | null } | null;
-            [k: string]: unknown;
+            reaction_count: number | null;
+            comment_count: number | null;
+            top_emojis: unknown[] | null;
+            sort_date: string;
         }>;
+
+        // 2b. Hydrate restaurants for the rows we got back.
+        const restaurantIds = [
+            ...new Set(rpcEntries.map((e) => e.restaurant_id).filter((id): id is string => !!id)),
+        ];
+        const { data: restaurantRows } = restaurantIds.length > 0
+            ? await supabase
+                .from('restaurants')
+                .select('id, name, address, city, photo_url')
+                .in('id', restaurantIds)
+            : { data: [] };
+        const restaurantMap = new Map(
+            (restaurantRows ?? []).map((r: { id: string; name: string; address: string | null; city: string | null; photo_url: string | null }) => [r.id, r]),
+        );
+
+        const rawEntries = rpcEntries.map((e) => ({
+            ...e,
+            restaurants: e.restaurant_id ? restaurantMap.get(e.restaurant_id) ?? null : null,
+        }));
 
         // 3. Hydrate profiles for authors
         const authorIds = [...new Set(rawEntries.map((e) => e.user_id))];
@@ -250,6 +250,9 @@ serve(async (req) => {
         }
 
         // 5. Shape entries
+        // TICKET-043: table_id is intentionally OMITTED from the aggregate feed payload.
+        // Aggregate feed (feed.all) never carries table_id — it's a cross-Table view.
+        // Consumer audit: no client reads entry.table_id from feed response (confirmed).
         const shaped = rawEntries.map((e) => {
             const extraPhotos = photosByEntry.get(e.id) ?? [];
             const photos = [
@@ -259,6 +262,7 @@ serve(async (req) => {
             return {
                 id: e.id,
                 user_id: e.user_id,
+                // table_id intentionally omitted — privacy invariant for aggregate feed
                 restaurant_id: e.restaurant_id,
                 rating: e.rating,
                 content: e.content,

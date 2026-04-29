@@ -1,17 +1,20 @@
 /**
- * TablePickerSheet — bottom sheet for picking which Table to share an entry to.
+ * TablePickerSheet — bottom sheet for picking which Tables to share an entry to.
  *
- * Single-select (v1). Multi-select (one entry → multiple Tables) arrives with
- * the entries.table_id schema rework — see backlog ticket.
+ * TICKET-043: evolved from single-select (v1) to multi-select.
  *
- * Shell cloned from CompanionPickerSheet (Modal + Animated.spring + PanResponder
- * drag-to-dismiss). Search filters by table name (client-side; counts are
- * small).
+ * Contract changes from v1:
+ *   selectedId → selectedIds (string[])
+ *   onSelect   → onCommit (called with the committed ids array)
  *
- * Tap a row → set selection and dismiss. The "Don't share" row at the top
- * clears the selection.
+ * Commit semantics (per spec): Done / backdrop tap / swipe-down / hardware back
+ * ALL commit the pending selection — not discard. The chip row behind the sheet
+ * already previews pending state; users expect dismiss-to-keep behavior.
+ *
+ * "Clear all" row at top (replaces v1 "Don't share" row).
+ * Skeleton loading + inline error state with retry.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -22,6 +25,7 @@ import {
     PanResponder,
     TextInput,
     ScrollView,
+    ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -36,23 +40,30 @@ export interface TablePickerSheetTable {
 
 interface Props {
     visible: boolean;
-    onClose: () => void;
     tables: TablePickerSheetTable[];
-    selectedId: string | null;
-    onSelect: (tableId: string | null) => void;
+    selectedIds: string[];
+    onCommit: (ids: string[]) => void;
     palette: Palette;
+    /** True while the table list is loading — shows skeleton rows. */
+    isLoading?: boolean;
+    /** Non-null when the table list failed to load — shows inline error + retry. */
+    loadError?: string | null;
+    onRetryLoad?: () => void;
 }
 
 const DRAG_DISMISS_THRESHOLD = 80;
 const SHEET_HEIGHT = 460;
+const SKELETON_COUNT = 3;
 
 export function TablePickerSheet({
     visible,
-    onClose,
     tables,
-    selectedId,
-    onSelect,
+    selectedIds,
+    onCommit,
     palette,
+    isLoading,
+    loadError,
+    onRetryLoad,
 }: Props) {
     const insets = useSafeAreaInsets();
     const translateY = useRef(new Animated.Value(SHEET_HEIGHT)).current;
@@ -60,10 +71,20 @@ export function TablePickerSheet({
     const backdropOpacity = useRef(new Animated.Value(0)).current;
 
     const [query, setQuery] = useState('');
+    // Local pending selection — committed on Done / dismiss.
+    const [pendingIds, setPendingIds] = useState<string[]>(selectedIds);
 
+    // Sync pendingIds when sheet opens with a new external selectedIds.
     useEffect(() => {
-        if (!visible) setQuery('');
-    }, [visible]);
+        if (visible) {
+            setPendingIds(selectedIds);
+            setQuery('');
+        }
+    }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const commit = useCallback(() => {
+        onCommit(pendingIds);
+    }, [onCommit, pendingIds]);
 
     useEffect(() => {
         if (visible) {
@@ -107,7 +128,7 @@ export function TablePickerSheet({
             },
             onPanResponderRelease: (_, gs) => {
                 if (gs.dy > DRAG_DISMISS_THRESHOLD || gs.vy > 0.8) {
-                    onClose();
+                    commit();
                 } else {
                     Animated.spring(dragY, {
                         toValue: 0,
@@ -128,23 +149,34 @@ export function TablePickerSheet({
         return tables.filter(t => t.name.toLowerCase().includes(q));
     }, [query, tables]);
 
-    const handlePick = (id: string | null) => {
-        onSelect(id);
-        onClose();
+    const toggleTable = (id: string) => {
+        setPendingIds(prev =>
+            prev.includes(id)
+                ? prev.filter(x => x !== id)
+                : [...prev, id]
+        );
     };
+
+    const clearAll = () => setPendingIds([]);
+
+    // Accessibility label for unseen tables on overflow.
+    const unseenNames = tables
+        .filter(t => !filtered.includes(t))
+        .map(t => t.name)
+        .join(', ');
 
     return (
         <Modal
             visible={visible}
             transparent
             animationType="none"
-            onRequestClose={onClose}
+            onRequestClose={commit}
             statusBarTranslucent
         >
             <Animated.View style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}>
                 <Pressable
                     style={[StyleSheet.absoluteFill, styles.backdrop]}
-                    onPress={onClose}
+                    onPress={commit}
                     accessibilityLabel="Close table picker"
                 />
             </Animated.View>
@@ -167,12 +199,17 @@ export function TablePickerSheet({
                     <Text style={[styles.sheetTitle, { color: palette.text }]}>
                         Post to a table?
                     </Text>
-                    <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Done">
+                    <Pressable
+                        onPress={commit}
+                        hitSlop={8}
+                        accessibilityLabel="Done"
+                        accessibilityRole="button"
+                    >
                         <Text style={[styles.doneLabel, { color: palette.primary }]}>Done</Text>
                     </Pressable>
                 </View>
 
-                {tables.length > 6 ? (
+                {tables.length > 6 && !isLoading && !loadError ? (
                     <View
                         style={[
                             styles.searchRow,
@@ -203,41 +240,74 @@ export function TablePickerSheet({
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* "Don't share" row — clears selection (solo / private) */}
-                    <TableRow
-                        label="Don't share — keep it private"
-                        italic
-                        selected={selectedId === null}
-                        onPress={() => handlePick(null)}
-                        palette={palette}
-                    />
-
-                    {filtered.length === 0 && query.trim() ? (
-                        <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                            No tables match &ldquo;{query.trim()}&rdquo;
-                        </Text>
-                    ) : (
-                        filtered.map(table => (
-                            <TableRow
-                                key={table.id}
-                                label={table.name}
-                                selected={selectedId === table.id}
-                                onPress={() => handlePick(table.id)}
-                                palette={palette}
-                            />
+                    {/* Loading skeleton */}
+                    {isLoading ? (
+                        Array.from({ length: SKELETON_COUNT }).map((_, i) => (
+                            <SkeletonRow key={i} palette={palette} />
                         ))
-                    )}
+                    ) : loadError ? (
+                        // Error state with retry
+                        <View style={styles.errorContainer}>
+                            <Text style={[styles.errorText, { color: palette.textMuted }]}>
+                                Couldn&rsquo;t load your tables
+                            </Text>
+                            {onRetryLoad ? (
+                                <Pressable onPress={onRetryLoad} style={styles.retryButton} hitSlop={8}>
+                                    <Text style={[styles.retryLabel, { color: palette.primary }]}>
+                                        Try again
+                                    </Text>
+                                </Pressable>
+                            ) : null}
+                        </View>
+                    ) : (
+                        <>
+                            {/* "Clear all" row — clears selection (solo / private) */}
+                            <TableRow
+                                label="Clear all — keep it private"
+                                italic
+                                selected={pendingIds.length === 0}
+                                onPress={clearAll}
+                                palette={palette}
+                                accessibilityLabel="Clear all table selections"
+                            />
 
-                    {tables.length === 0 ? (
-                        <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                            You&rsquo;re not in any tables yet.
-                        </Text>
-                    ) : null}
+                            {filtered.length === 0 && query.trim() ? (
+                                <Text style={[styles.emptyText, { color: palette.textMuted }]}>
+                                    No tables match &ldquo;{query.trim()}&rdquo;
+                                </Text>
+                            ) : (
+                                filtered.map(table => (
+                                    <TableRow
+                                        key={table.id}
+                                        label={table.name}
+                                        selected={pendingIds.includes(table.id)}
+                                        onPress={() => toggleTable(table.id)}
+                                        palette={palette}
+                                        accessibilityLabel={table.name}
+                                        accessibilityRole="checkbox"
+                                    />
+                                ))
+                            )}
+
+                            {tables.length === 0 && !query.trim() ? (
+                                <Text style={[styles.emptyText, { color: palette.textMuted }]}>
+                                    You&rsquo;re not in any tables yet.
+                                </Text>
+                            ) : null}
+
+                            {/* Overflow a11y helper — announces unseen tables if query hides them */}
+                            {unseenNames ? (
+                                <View accessibilityLabel={`More tables: ${unseenNames}`} accessible />
+                            ) : null}
+                        </>
+                    )}
                 </ScrollView>
             </Animated.View>
         </Modal>
     );
 }
+
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 interface RowProps {
     label: string;
@@ -245,9 +315,19 @@ interface RowProps {
     selected: boolean;
     onPress: () => void;
     palette: Palette;
+    accessibilityLabel?: string;
+    accessibilityRole?: 'button' | 'checkbox';
 }
 
-function TableRow({ label, italic, selected, onPress, palette }: RowProps) {
+function TableRow({
+    label,
+    italic,
+    selected,
+    onPress,
+    palette,
+    accessibilityLabel,
+    accessibilityRole = 'button',
+}: RowProps) {
     return (
         <Pressable
             onPress={onPress}
@@ -261,9 +341,9 @@ function TableRow({ label, italic, selected, onPress, palette }: RowProps) {
                         : 'transparent',
                 },
             ]}
-            accessibilityRole="button"
-            accessibilityState={{ selected }}
-            accessibilityLabel={label}
+            accessibilityRole={accessibilityRole}
+            accessibilityState={{ selected, checked: accessibilityRole === 'checkbox' ? selected : undefined }}
+            accessibilityLabel={accessibilityLabel ?? label}
         >
             <Text
                 style={[
@@ -280,12 +360,33 @@ function TableRow({ label, italic, selected, onPress, palette }: RowProps) {
             >
                 {label}
             </Text>
+            {/* Checkbox indicator for multi-select */}
             {selected ? (
-                <Ionicons name="checkmark" size={18} color={palette.primary} />
-            ) : null}
+                <Ionicons name="checkbox" size={20} color={palette.primary} />
+            ) : (
+                <Ionicons name="square-outline" size={20} color={palette.outlineVariant} />
+            )}
         </Pressable>
     );
 }
+
+function SkeletonRow({ palette }: { palette: Palette }) {
+    return (
+        <View style={[styles.row, styles.skeletonRow]}>
+            <View
+                style={[
+                    styles.skeletonLine,
+                    {
+                        backgroundColor: palette.surfaceContainerHigh,
+                        width: '60%',
+                    },
+                ]}
+            />
+        </View>
+    );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
     backdrop: {
@@ -358,11 +459,36 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 15,
     },
+    skeletonRow: {
+        paddingVertical: Spacing.md + 4,
+    },
+    skeletonLine: {
+        height: 14,
+        borderRadius: 7,
+    },
     emptyText: {
         fontFamily: 'Manrope_400Regular',
         fontSize: 13,
         textAlign: 'center',
         paddingTop: Spacing.xl,
         paddingHorizontal: Spacing.lg,
+    },
+    errorContainer: {
+        alignItems: 'center',
+        paddingTop: Spacing.xl,
+        paddingHorizontal: Spacing.lg,
+        gap: Spacing.sm,
+    },
+    errorText: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 13,
+        textAlign: 'center',
+    },
+    retryButton: {
+        paddingVertical: Spacing.sm,
+    },
+    retryLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 14,
     },
 });

@@ -4,5 +4,7 @@ export { ChipRow } from './ChipRow';
 export { AddDetailsDrawer } from './AddDetailsDrawer';
 export { TablePickerSheet } from './TablePickerSheet';
 export type { TablePickerSheetTable } from './TablePickerSheet';
+export { TableChipsRow } from './TableChipsRow';
+export type { TableChip } from './TableChipsRow';
 export { DateChip } from './DateChip';
 export { PublicVisibilityChip } from './PublicVisibilityChip';
