@@ -13,6 +13,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { projectRound } from '../_shared/round_projection.ts';
 import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -199,11 +200,14 @@ async function handleCityIndex(
         .not('restaurants.city', 'is', null);
     if (entryErr) throw entryErr;
 
-    // ── Rounds for this table ─────────────────────────────────────────────────
+    // ── Rounds for this table (live revealed + merged) ────────────────────────
+    // TICKET-044: include merged rounds (kind='merged', status=NULL).
+    // The .or() filter covers both: revealed live rounds AND merged rounds.
     const { data: nights, error: nightErr } = await supabase
         .from('table_nights')
         .select(`
             id,
+            kind,
             restaurant_id,
             revealed_at,
             created_at,
@@ -214,13 +218,10 @@ async function handleCityIndex(
                 photo_url,
                 lat,
                 lng
-            ),
-            table_night_participants (
-                user_id,
-                rating
             )
         `)
         .eq('table_id', tableId)
+        .or('kind.eq.merged,status.eq.revealed')
         .not('restaurants.city', 'is', null);
     if (nightErr) throw nightErr;
 
@@ -271,15 +272,17 @@ async function handleCityIndex(
         if (!r || !r.city) continue;
         upsertCity(r.city, r.id, e.user_id, e.visited_at ?? e.created_at, r.photo_url);
     }
+    // TICKET-044: use projectRound for participant resolution (live and merged).
     for (const n of (nights ?? []) as any[]) {
         const r = n.restaurants;
         if (!r || !r.city) continue;
         const date = n.revealed_at ?? n.created_at;
-        // Add each participant as a user
-        for (const p of (n.table_night_participants ?? []) as any[]) {
+        const roundKind: 'live' | 'merged' = n.kind === 'merged' ? 'merged' : 'live';
+        const { participants } = await projectRound(n.id, roundKind, supabase);
+        for (const p of participants) {
             upsertCity(r.city, r.id, p.user_id, date, r.photo_url);
         }
-        if ((n.table_night_participants ?? []).length === 0) {
+        if (participants.length === 0) {
             upsertCity(r.city, r.id, null, date, r.photo_url);
         }
     }
@@ -391,11 +394,13 @@ async function handleCityPage(
         }
     }
 
-    // Step 3: Fetch rounds for these restaurants in this table
+    // Step 3: Fetch rounds for these restaurants in this table.
+    // TICKET-044: include merged rounds (kind='merged') alongside live revealed rounds.
     const { data: nights, error: nightErr } = await supabase
         .from('table_nights')
         .select(`
             id,
+            kind,
             restaurant_id,
             revealed_at,
             created_at,
@@ -407,14 +412,11 @@ async function handleCityPage(
                 photo_url,
                 lat,
                 lng
-            ),
-            table_night_participants (
-                user_id,
-                rating
             )
         `)
         .eq('table_id', tableId)
-        .in('restaurant_id', restaurantIds);
+        .in('restaurant_id', restaurantIds)
+        .or('kind.eq.merged,status.eq.revealed');
     if (nightErr) throw nightErr;
 
     // Step 4: Viewer's wishlist restaurant IDs
@@ -427,14 +429,12 @@ async function handleCityPage(
         (wishlistRows ?? []).map((w: any) => w.restaurant_id as string),
     );
 
-    // Step 5: Collect user IDs for profile fetch
+    // Step 5: Collect user IDs for profile fetch.
+    // TICKET-044: projectRound handles participant resolution; we just need entry user_ids here.
+    // Round participant user IDs are collected after projectRound calls below.
     const allUserIds = new Set<string>();
     for (const e of (entries ?? []) as any[]) allUserIds.add(e.user_id);
-    for (const n of (nights ?? []) as any[]) {
-        for (const p of (n.table_night_participants ?? []) as any[]) {
-            allUserIds.add(p.user_id);
-        }
-    }
+    // Round participants fetched lazily via projectRound; collect after projection.
     const profiles = await fetchProfiles(supabase, [...allUserIds]);
 
     // Step 6: Build per-restaurant aggregates (only for restaurantIds on this page)
@@ -524,22 +524,27 @@ async function handleCityPage(
         }
     }
 
+    // TICKET-044: use projectRound for live and merged rounds.
     for (const n of (nights ?? []) as any[]) {
         const r = n.restaurants;
         if (!r || !restaurantMap.has(r.id)) continue;
         const agg = ensureRestaurant(r);
-        const participants = (n.table_night_participants ?? []) as {
-            user_id: string;
-            rating: number | null;
-        }[];
+        const roundKind: 'live' | 'merged' = n.kind === 'merged' ? 'merged' : 'live';
+        const { participants, average_rating } = await projectRound(n.id, roundKind, supabase);
         const participantUserIds = participants.map((p) => p.user_id);
-        const rated = participants.filter((p) => p.rating != null);
-        const average = rated.length > 0
-            ? rated.reduce((sum, p) => sum + (p.rating as number), 0) / rated.length
-            : null;
+        // Collect new user IDs for profile map
+        for (const p of participants) {
+            if (!profiles.has(p.user_id)) {
+                profiles.set(p.user_id, {
+                    display_name: p.display_name,
+                    avatar_url: p.avatar_url,
+                    username: null,
+                });
+            }
+        }
         agg.round_visits.push({
             night_id: n.id,
-            average_rating: average,
+            average_rating,
             date: n.revealed_at ?? n.created_at,
             participant_user_ids: participantUserIds,
         });

@@ -72,10 +72,12 @@ serve(async (req) => {
                 const tableNightId = url.searchParams.get('table_night_id');
                 if (!tableNightId) return fail('table_night_id is required');
 
+                // TICKET-044: kind='live' guard — merged rounds must not surface in live UI.
                 const { data: night, error: nightError } = await supabase
                     .from('table_nights')
                     .select('*')
                     .eq('id', tableNightId)
+                    .eq('kind', 'live')
                     .single();
 
                 if (nightError) throw nightError;
@@ -155,10 +157,13 @@ serve(async (req) => {
                 const tableId = url.searchParams.get('table_id');
                 if (!tableId) return fail('table_id is required');
 
+                // TICKET-044: kind='live' guard — merged rounds have status=NULL and must never
+                // surface as an "active" round in the live-round banner.
                 const { data: night, error: activeErr } = await supabase
                     .from('table_nights')
                     .select('*')
                     .eq('table_id', tableId)
+                    .eq('kind', 'live')
                     .eq('status', 'rating')
                     .order('created_at', { ascending: false })
                     .limit(1)
@@ -179,11 +184,13 @@ serve(async (req) => {
                 const tableNightId = url.searchParams.get('table_night_id');
                 if (!tableNightId) return fail('table_night_id is required');
 
-                // Validate user is a member of the round's table
+                // Validate user is a member of the round's table.
+                // TICKET-044: kind='live' guard — merged rounds must not appear in live round_context.
                 const { data: night, error: nightErr } = await supabase
                     .from('table_nights')
                     .select('id, table_id, status')
                     .eq('id', tableNightId)
+                    .eq('kind', 'live')
                     .single();
 
                 if (nightErr || !night) return fail('Round not found', 404, 'NOT_FOUND');
@@ -316,10 +323,12 @@ serve(async (req) => {
                 const { table_night_id } = body;
                 if (!table_night_id) return fail('table_night_id is required');
 
+                // TICKET-044: kind='live' guard — merged rounds have no join flow.
                 const { data: night, error: nightError } = await supabase
                     .from('table_nights')
                     .select('table_id, status')
                     .eq('id', table_night_id)
+                    .eq('kind', 'live')
                     .single();
 
                 if (nightError) throw nightError;
@@ -426,6 +435,18 @@ serve(async (req) => {
                 const { table_night_id } = body;
                 if (!table_night_id) return fail('table_night_id is required');
 
+                // TICKET-044: belt-and-suspenders kind='live' guard.
+                // Merged rounds have no table_night_participants rows so this path
+                // would fail naturally, but we check explicitly per the exhaustive
+                // coverage requirement.
+                const { data: roundKindCheck } = await supabase
+                    .from('table_nights')
+                    .select('kind')
+                    .eq('id', table_night_id)
+                    .eq('kind', 'live')
+                    .maybeSingle();
+                if (!roundKindCheck) return fail('Round not found or not a live round', 404, 'NOT_FOUND');
+
                 const { data: participant, error: partError } = await supabase
                     .from('table_night_participants')
                     .select('rating')
@@ -454,10 +475,12 @@ serve(async (req) => {
                 const { table_night_id } = body;
                 if (!table_night_id) return fail('table_night_id is required');
 
+                // TICKET-044: kind='live' guard — merged rounds have no reveal flow.
                 const { data: night, error: nightError } = await supabase
                     .from('table_nights')
                     .select('host_user_id, status')
                     .eq('id', table_night_id)
+                    .eq('kind', 'live')
                     .single();
 
                 if (nightError) throw nightError;

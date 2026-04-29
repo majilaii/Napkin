@@ -167,6 +167,17 @@ export const queryKeys = {
             ['topFours', 'eligibleRestaurants', userId, city] as const,
     },
 
+    // Rounds — merged-round candidate + merged-round detail (TICKET-044)
+    // NOTE: tableNight.* stays for live-round state machine; this namespace
+    // is for merged-round surfaces only. Future ticket may consolidate.
+    rounds: {
+        /** Merge-candidate query key. visitedAtIso: ISO-8601 string. */
+        merge_candidate: (tableId: string, restaurantId: string, visitedAtIso: string) =>
+            ['rounds', 'merge_candidate', tableId, restaurantId, visitedAtIso] as const,
+        /** Merged-round detail seed (round_id is a table_nights.id UUID). */
+        detail: (roundId: string) => ['rounds', 'detail', roundId] as const,
+    },
+
     // Admin — operator surfaces (TICKET-033)
     admin: {
         // Critics list paginated by (scraped_at desc, id desc)

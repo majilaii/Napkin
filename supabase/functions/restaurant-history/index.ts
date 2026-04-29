@@ -23,6 +23,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
+import { projectRound } from '../_shared/round_projection.ts';
 
 type Visit = {
     kind: 'round' | 'solo';
@@ -325,26 +326,27 @@ serve(async (req) => {
                 .maybeSingle();
             if (restErr) throw restErr;
 
+            // TICKET-044: include merged rounds (kind='merged', status=NULL) alongside
+            // live rounds (kind='live', status='revealed').
+            // Change: switch from .eq('status', 'revealed') to the kind-branched predicate.
             let roundsQuery = supabase
                 .from('table_nights')
                 .select(`
                     id,
+                    kind,
                     status,
                     revealed_at,
-                    created_at,
-                    table_night_participants (
-                        rating,
-                        profiles ( display_name )
-                    )
+                    created_at
                 `)
                 .eq('table_id', tableId)
                 .eq('restaurant_id', restaurantId)
-                .eq('status', 'revealed');
+                .or('kind.eq.merged,status.eq.revealed');
             if (excludeNightId) roundsQuery = roundsQuery.neq('id', excludeNightId);
 
             const { data: rounds, error: roundsErr } = await roundsQuery;
             if (roundsErr) throw roundsErr;
 
+            // TICKET-044: solo entries — also exclude entries now part of a merged round in this table.
             const { data: soloEntries, error: entriesErr } = await supabase
                 .from('entries')
                 .select(`
@@ -361,31 +363,40 @@ serve(async (req) => {
                 .order('visited_at', { ascending: false });
             if (entriesErr) throw entriesErr;
 
+            // Filter out solo entries that are now bound to a merged round in this table
+            const entryIds = (soloEntries ?? []).map((e: any) => e.id as string);
+            let mergedEntryIds = new Set<string>();
+            if (entryIds.length > 0) {
+                const { data: boundEntries } = await supabase
+                    .from('round_entries')
+                    .select('entry_id')
+                    .eq('table_id', tableId)
+                    .in('entry_id', entryIds);
+                mergedEntryIds = new Set(
+                    (boundEntries ?? []).map((b: any) => b.entry_id as string)
+                );
+            }
+
             const visits: Visit[] = [];
 
+            // TICKET-044: use projectRound for both live and merged rounds.
             for (const r of rounds ?? []) {
-                const participants = (r.table_night_participants ?? []) as any[];
-                const ratings = participants
-                    .map((p) => p.rating)
-                    .filter((x) => typeof x === 'number') as number[];
-                const avg =
-                    ratings.length > 0
-                        ? ratings.reduce((a, b) => a + b, 0) / ratings.length
-                        : null;
-                const names = participants
-                    .map((p) => p.profiles?.display_name)
-                    .filter(Boolean) as string[];
+                const roundKind: 'live' | 'merged' = r.kind === 'merged' ? 'merged' : 'live';
+                const { participants, average_rating } = await projectRound(r.id, roundKind, supabase);
+                const names = participants.map((p) => p.display_name).filter(Boolean) as string[];
                 visits.push({
                     kind: 'round',
                     id: r.id,
                     table_night_id: r.id,
-                    rating: avg,
+                    rating: average_rating,
                     date: r.revealed_at ?? r.created_at,
                     user_display_names: names,
                 });
             }
 
             for (const e of soloEntries ?? []) {
+                // Skip entries now part of a merged round
+                if (mergedEntryIds.has(e.id)) continue;
                 const name = (e as any).profiles?.display_name as string | undefined;
                 visits.push({
                     kind: 'solo',
@@ -709,42 +720,35 @@ serve(async (req) => {
                 }
             }
 
-            // Rounds are table-scoped — only fetch when the user has table membership.
+            // TICKET-044: Rounds are table-scoped — only fetch when the user has table membership.
+            // Change: include merged rounds (kind='merged') alongside live revealed rounds.
             if (memberTableIds.length > 0) {
                 const { data: feedNights, error: feedNightsErr } = await supabase
                     .from('table_nights')
                     .select(`
                         id,
+                        kind,
                         host_user_id,
                         revealed_at,
-                        created_at,
-                        table_night_participants(
-                            user_id,
-                            rating,
-                            notes,
-                            profiles(display_name, avatar_url)
-                        )
+                        created_at
                     `)
                     .in('table_id', memberTableIds)
                     .eq('restaurant_id', resolvedRestaurantId)
-                    .eq('status', 'revealed');
+                    .or('kind.eq.merged,status.eq.revealed');
                 if (feedNightsErr) throw feedNightsErr;
 
+                // TICKET-044: use projectRound helper for both live and merged rounds.
                 for (const night of (feedNights ?? []) as any[]) {
-                    const participants = (night.table_night_participants ?? []) as any[];
-                    const visibleParticipants = participants.filter((p: any) =>
+                    const roundKind: 'live' | 'merged' = night.kind === 'merged' ? 'merged' : 'live';
+                    const { participants, average_rating } = await projectRound(night.id, roundKind, supabase);
+
+                    const visibleParticipants = participants.filter((p) =>
                         allVisibleUserIds.includes(p.user_id)
                     );
                     if (visibleParticipants.length === 0) continue;
 
-                    const ratings = participants
-                        .map((p: any) => p.rating)
-                        .filter((r: any) => r != null) as number[];
-                    const avg = ratings.length > 0
-                        ? ratings.reduce((a, b) => a + b, 0) / ratings.length
-                        : null;
                     const names = participants
-                        .map((p: any) => p.profiles?.display_name)
+                        .map((p) => p.display_name)
                         .filter(Boolean) as string[];
 
                     visitsRaw.push({
@@ -753,7 +757,7 @@ serve(async (req) => {
                         table_night_id: night.id,
                         user_id: night.host_user_id,
                         avatar_url: null,
-                        rating: avg,
+                        rating: average_rating,
                         date: night.revealed_at ?? night.created_at,
                         user_display_names: names,
                         note: null,

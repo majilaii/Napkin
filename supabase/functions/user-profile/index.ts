@@ -30,6 +30,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { buildPage, decodeCursor, applyKeysetFilter, type Page } from '../_shared/pagination.ts';
+import { projectRound } from '../_shared/round_projection.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -119,6 +120,18 @@ type DiaryRow = {
     note: string | null;
     visited_at: string;
     created_at: string;
+    // TICKET-044: present only for self-view when the entry is part of a merged round.
+    // Public diary NEVER includes round_kind — Tables are private.
+    round_kind?: 'merged';
+    round_id?: string;
+    round_participants?: Array<{
+        user_id: string;
+        display_name: string;
+        avatar_url: string | null;
+        rating: number | null;
+        notes: string | null;
+    }>;
+    round_average_rating?: number | null;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -620,6 +633,14 @@ async function fetchRegulars(
 
 /**
  * Fetch diary rows for a user — chronological, paginated via visited_at cursor.
+ *
+ * TICKET-044: When includeRoundData=true (self-view), entries that are part of
+ * a merged round get hydrated with round_kind, round_id, round_participants, and
+ * round_average_rating. This is a private/self-only surface — Tables are never public.
+ *
+ * When includeRoundData=false (public viewer), the diary always returns the solo
+ * entry view — never the merged-round payload. This enforces the privacy boundary:
+ * "Tables are never public; even on public profiles, the Table layer stays sacred."
  */
 async function fetchDiary(
     supabase: any,
@@ -627,6 +648,7 @@ async function fetchDiary(
     includePrivate: boolean,
     cursor: string | null,
     limit: number = 30,
+    includeRoundData: boolean = false,
 ): Promise<Page<DiaryRow>> {
     const decoded = decodeCursor(cursor);
 
@@ -647,9 +669,9 @@ async function fetchDiary(
 
     const raw = (entries ?? []) as any[];
 
-    const mapped: DiaryRow[] = raw.map((e) => {
+    const mapped: DiaryRow[] = await Promise.all(raw.map(async (e) => {
         const rest = Array.isArray(e.restaurants) ? e.restaurants[0] : e.restaurants;
-        return {
+        const base: DiaryRow = {
             entry_id: e.id,
             restaurant_id: e.restaurant_id,
             restaurant_name: rest?.name ?? 'Unknown',
@@ -660,7 +682,35 @@ async function fetchDiary(
             visited_at: e.visited_at ?? e.created_at,
             created_at: e.created_at,
         };
-    });
+
+        // TICKET-044: hydrate merged-round data for self-view only.
+        // Public diary never includes this — privacy boundary enforced here AND in the
+        // calling site (includeRoundData = isSelf only).
+        if (includeRoundData) {
+            const { data: binding } = await supabase
+                .from('round_entries')
+                .select('round_id')
+                .eq('entry_id', e.id)
+                .maybeSingle();
+
+            if (binding?.round_id) {
+                const { participants, average_rating } = await projectRound(
+                    binding.round_id,
+                    'merged',
+                    supabase,
+                );
+                return {
+                    ...base,
+                    round_kind: 'merged' as const,
+                    round_id: binding.round_id,
+                    round_participants: participants,
+                    round_average_rating: average_rating,
+                };
+            }
+        }
+
+        return base;
+    }));
 
     return buildPage(mapped, limit, (r) => ({
         sort_date: r.visited_at,
@@ -862,12 +912,16 @@ serve(async (req) => {
             }
 
             const pageLimit = Math.min(Math.max(limit ?? 30, 1), 50);
+            // TICKET-044: pass includeRoundData=isSelf — public diary never surfaces
+            // merged-round payloads; Tables are private and stay that way regardless
+            // of account_privacy setting.
             const page = await fetchDiary(
                 supabase,
                 targetId,
                 isSelf,
                 cursor ?? null,
                 pageLimit,
+                isSelf, // includeRoundData — self-only privacy boundary
             );
 
             return json({ data: page });
