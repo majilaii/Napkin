@@ -121,7 +121,10 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
     let entry: any;
 
     if (entryId) {
-        // Direct entry lookup
+        // Direct entry lookup.
+        // TICKET-043: table_id is revoked from authenticated role (column-level grant).
+        // We omit it from the select and fetch the primary table_id separately via
+        // entry_tables (which authenticated can read under RLS: author OR table member).
         const { data, error } = await supabase
             .from('entries')
             .select(`
@@ -133,7 +136,6 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 dish_description,
                 visited_at,
                 created_at,
-                table_id,
                 table_night_id,
                 visibility,
                 vibe_rating,
@@ -155,7 +157,8 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
         if (error) throw error;
         entry = data;
     } else if (nightId && userId) {
-        // Lookup by table_night_id + user_id (for round participants)
+        // Lookup by table_night_id + user_id (for round participants).
+        // TICKET-043: same table_id omission — fetched separately below.
         const { data, error } = await supabase
             .from('entries')
             .select(`
@@ -167,7 +170,6 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 dish_description,
                 visited_at,
                 created_at,
-                table_id,
                 table_night_id,
                 visibility,
                 vibe_rating,
@@ -192,6 +194,20 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
     } else {
         throw new Error('Either entryId or nightId+userId required');
     }
+
+    // TICKET-043: fetch the primary table_id from entry_tables (column-level revoke
+    // prevents reading entries.table_id directly as authenticated). The author sees all
+    // their own entry_tables rows; a round-participant viewer sees rows for the Table
+    // they share with the author. We take the first row ordered by posted_at DESC as
+    // the "primary" table for UI routing (navigation to member profiles, comment scope).
+    const { data: etRow } = await supabase
+        .from('entry_tables')
+        .select('table_id')
+        .eq('entry_id', entry.id)
+        .order('posted_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    const resolvedTableId: string | null = etRow?.table_id ?? null;
 
     // Fetch profile (includes allow_public_replies for reply-gate in public view)
     const { data: profile } = await supabase
@@ -222,6 +238,8 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
 
     return {
         ...entry,
+        // TICKET-043: table_id sourced from entry_tables (revoked on entries directly).
+        table_id: resolvedTableId,
         restaurants: restaurant,
         companions,
         profiles: profile ?? { display_name: 'User', allow_public_replies: false },
@@ -1596,6 +1614,7 @@ function FloatingActionPill({
     myReactions,
     allReactions = [],
     palette,
+    tableId,
     scope = 'table',
     repliesDisabled = false,
     onReplyPress,
@@ -1617,12 +1636,13 @@ function FloatingActionPill({
     const effectiveCount = reactionCount;
 
     const applyToggle = (emoji: string) => {
-        // If switching from one emoji to another, remove the old one first
+        // TICKET-043: thread tableId so multi-Table entries route to the requesting Table.
+        // If switching from one emoji to another, remove the old one first.
         if (!myReactions.includes(emoji) && likedEmoji && likedEmoji !== emoji) {
-            toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji: likedEmoji, scope });
+            toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji: likedEmoji, scope, tableId });
         }
 
-        toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji, scope });
+        toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji, scope, tableId });
     };
 
     const handleTapLike = () => {

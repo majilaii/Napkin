@@ -13,6 +13,14 @@
  *     during the round-trip, then swaps the placeholder for the real
  *     row in onSuccess. onError rolls back from snapshot.
  *
+ * TICKET-043: extended to accept `table_ids?: string[]` for multi-Table posting.
+ *   - `table_ids` wins over legacy `table_id`; both accepted for one release.
+ *   - Client-side normalization (trim/dedupe/order) before send; server is authoritative.
+ *   - Optimistic prepend fans out into every `tables.activity(id)` for each Table.
+ *   - `table_not_authorized` (403): non-leaking toast, atomic rollback of all caches,
+ *     optional `onTableNotAuthorized(offendingIds)` callback.
+ *   - Atlas invalidation fires for `table_ids[0]` (primary) only.
+ *
  * TICKET-042: extended optimistic patch to:
  *   - feed.all(userId)       — cross-Table chronological feed
  *   - tables.activity(tableId) — Table activity feed (when table_id present)
@@ -62,6 +70,12 @@ export interface CreateEntryInput {
     cooked_by?: string;
     visited_at?: string;
     table_id?: string;
+    /**
+     * TICKET-043: multi-Table posting. When present, `table_ids` wins over `table_id`.
+     * Client normalizes (trim/dedupe/preserve order) before sending; server re-normalizes.
+     * Max 10 entries — server enforces, client mirrors for UX error message.
+     */
+    table_ids?: string[];
     visibility?: 'private' | 'friends' | 'table' | 'both';
     participant_ids?: string[];
     /** Companion tagging — who was there (distinct from Round participant_ids) */
@@ -76,7 +90,36 @@ export interface CreateEntryInput {
     client_nonce?: string;
 }
 
+/**
+ * Client-side normalization for table_ids (TICKET-043).
+ * Server is authoritative but we normalize client-side to match the optimistic
+ * patch logic with what will actually be sent.
+ */
+function normalizeTableIds(input: CreateEntryInput): string[] {
+    // table_ids wins over table_id when both are present.
+    const raw = input.table_ids ?? (input.table_id ? [input.table_id] : []);
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const id of raw) {
+        const trimmed = id?.trim();
+        if (trimmed && !seen.has(trimmed)) {
+            seen.add(trimmed);
+            result.push(trimmed);
+        }
+    }
+    return result;
+}
+
 async function createEntry(input: CreateEntryInput): Promise<any> {
+    // TICKET-043: normalize table_ids client-side before sending.
+    const effectiveTableIds = normalizeTableIds(input);
+    const bodyWithTableIds = {
+        ...input,
+        table_ids: effectiveTableIds,
+        // Keep table_id for legacy server code that may not yet read table_ids.
+        table_id: effectiveTableIds[0] ?? input.table_id ?? null,
+    };
+
     // The entry edge function returns { data: EntryRow, warnings?: [...] }.
     // callEdgeFn returns whatever's at `data.data` — we lose `warnings`.
     // Fall back to direct invoke for this one call so we can read the warnings
@@ -86,13 +129,48 @@ async function createEntry(input: CreateEntryInput): Promise<any> {
     // generalize callEdgeFn to return { data, meta }.)
     const { data: { session } } = await supabase.auth.getSession();
     const { data, error } = await supabase.functions.invoke('entry', {
-        body: input,
+        body: bodyWithTableIds,
         headers: session?.access_token
             ? { Authorization: `Bearer ${session.access_token}` }
             : undefined,
     });
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
+    if (error) {
+        // TICKET-043 review-fix: edge fn returns table_not_authorized as a 403 with
+        // nested { error: { code, message, ids } }. supabase-js throws FunctionsHttpError
+        // and exposes the original Response on `.context`. Parse it so the composer can
+        // surface a non-leaking toast and roll back optimistic state. (Codex Review 1
+        // finding #3.)
+        const ctx = (error as any)?.context;
+        if (ctx && typeof ctx.json === 'function') {
+            try {
+                const parsed = await ctx.json();
+                const inner = parsed?.error;
+                if (inner?.code === 'table_not_authorized') {
+                    const wrapped = new Error('table_not_authorized') as any;
+                    wrapped.code = 'table_not_authorized';
+                    wrapped.offendingIds = Array.isArray(inner.ids) ? inner.ids : [];
+                    wrapped.cause = error;
+                    throw wrapped;
+                }
+            } catch (parseErr) {
+                // If parseErr is itself the wrapped error, surface it.
+                if ((parseErr as any)?.code === 'table_not_authorized') throw parseErr;
+                // Otherwise body wasn't JSON or didn't match; fall through to raw error.
+            }
+        }
+        throw error;
+    }
+    if (data?.error) {
+        // Some 200-with-error legacy paths still arrive flat. Handle both nested and flat shapes.
+        const inner = typeof data.error === 'object' ? data.error : null;
+        const code = inner?.code ?? data.code
+            ?? (data.error === 'table_not_authorized' ? 'table_not_authorized' : undefined);
+        const offendingIds = inner?.ids ?? data.ids ?? [];
+        const err = new Error(typeof data.error === 'string' ? data.error : (inner?.message ?? 'entry_error')) as any;
+        err.code = code;
+        err.offendingIds = offendingIds;
+        throw err;
+    }
     // Shallow-clone so we never mutate the mock/server object reference.
     const entryRow = { ...(data?.data ?? {}) };
     if (data?.warnings) {
@@ -206,11 +284,25 @@ interface MutationContext {
     viewerLocalDate: string;
     mySoloKey?: readonly unknown[];
     feedKey?: readonly unknown[];
-    activityKey?: readonly unknown[];
+    /** TICKET-043: one key per selected Table (multi-Table fan-out). */
+    activityKeys: Array<readonly unknown[]>;
     forDayKey?: readonly unknown[];
 }
 
-export function useCreateEntry(userId?: string | null, tableId?: string | null) {
+export interface UseCreateEntryOptions {
+    /**
+     * TICKET-043: called when the server returns `table_not_authorized` (403).
+     * Receives the offending Table ids so the composer can remove them from selection.
+     * All optimistic patches are already rolled back when this is called.
+     */
+    onTableNotAuthorized?: (offendingIds: string[]) => void;
+}
+
+export function useCreateEntry(
+    userId?: string | null,
+    tableId?: string | null,
+    options?: UseCreateEntryOptions,
+) {
     const qc = useQueryClient();
     const toast = useToast();
 
@@ -229,6 +321,11 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
             // Stash the nonce on input so mutationFn uses the same value.
             input.client_nonce = nonce;
 
+            // TICKET-043: determine the effective table ids list for optimistic fan-out.
+            const effectiveTableIds = normalizeTableIds(input);
+            // Legacy single-table fallback for callers that pass tableId via hook arg.
+            if (effectiveTableIds.length === 0 && tableId) effectiveTableIds.push(tableId);
+
             const viewerLocalDate = localDateStr(new Date());
             const restores: Array<() => void> = [];
 
@@ -242,11 +339,13 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
                 prependToInfinitePages<FeedEntry, FeedPage>(prev, optimisticFeedRow),
             );
 
-            // ── 2. tables.activity(tableId) — InfiniteData<Page<ActivityItem>> ─
-            let activityKey: readonly unknown[] | undefined;
-            const effectiveTableId = input.table_id ?? tableId;
-            if (effectiveTableId) {
-                activityKey = queryKeys.tables.activity(effectiveTableId);
+            // ── 2. tables.activity — fan out per Table (TICKET-043) ───────────
+            // One optimistic row per selected Table. Each cache is snapshotted
+            // independently so all restores are collected and rolled back atomically.
+            const activityKeys: Array<readonly unknown[]> = [];
+            for (const tid of effectiveTableIds) {
+                const activityKey = queryKeys.tables.activity(tid);
+                activityKeys.push(activityKey);
                 await qc.cancelQueries({ queryKey: activityKey });
                 const { restore: restoreActivity } = snapshotInfinite<ActivityItem>(qc, activityKey);
                 restores.push(restoreActivity);
@@ -258,6 +357,7 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
 
             // ── 3. entries.forDay(userId, localDate) — flat SoloShareActivity[] ─
             // forDay is a flat array (non-paginated), used by day-bucketed calendar view.
+            // ONE row regardless of table_ids count (aggregate-feed dedup invariant).
             const forDayKey = queryKeys.entries.forDay(userId, viewerLocalDate);
             await qc.cancelQueries({ queryKey: forDayKey });
             const prevForDay = qc.getQueryData<SoloShareActivity[]>(forDayKey);
@@ -270,7 +370,7 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
             // ── 4. entries.mySolo(userId) — flat SoloShareActivity[] ─────────
             // Only prepend for feed-only entries (no table context).
             let mySoloKey: readonly unknown[] | undefined;
-            if (!effectiveTableId) {
+            if (effectiveTableIds.length === 0) {
                 mySoloKey = queryKeys.entries.mySolo(userId);
                 await qc.cancelQueries({ queryKey: mySoloKey });
                 const prevMySolo = qc.getQueryData<SoloShareActivity[]>(mySoloKey);
@@ -286,15 +386,21 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
                 viewerLocalDate,
                 mySoloKey,
                 feedKey,
-                activityKey,
+                activityKeys,
                 forDayKey,
             };
         },
 
-        onError: (_err, _input, context) => {
+        onError: (err: any, _input, context) => {
             if (!context) return;
+            // Always roll back all caches atomically.
             for (const restore of context.restores) {
                 restore();
+            }
+            // TICKET-043: surface table_not_authorized as a non-leaking toast.
+            if (err?.code === 'table_not_authorized') {
+                toast.show("One of your tables couldn't accept this post — review and try again.");
+                options?.onTableNotAuthorized?.(err.offendingIds ?? []);
             }
         },
 
@@ -341,9 +447,9 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
                 });
             }
 
-            // ── 2. Reconcile tables.activity ──────────────────────────────────
-            if (context.activityKey) {
-                qc.setQueryData<InfiniteData<Page<ActivityItem>>>(context.activityKey, (prev) => {
+            // ── 2. Reconcile tables.activity — per Table (TICKET-043) ─────────
+            for (const activityKey of context.activityKeys) {
+                qc.setQueryData<InfiniteData<Page<ActivityItem>>>(activityKey as any, (prev) => {
                     if (!prev) return prev;
                     return swapByNonce<ActivityItem>(prev, nonce, {
                         ...((prev.pages[0]?.rows?.find((r) => r.id === `optimistic-${nonce}`) ?? {}) as ActivityItem),
@@ -399,10 +505,13 @@ export function useCreateEntry(userId?: string | null, tableId?: string | null) 
 
             // ── Atlas invalidate — server-derived aggregate the client can't synthesize ─
             // (intentional invalidation — see mutations.md "When invalidation IS appropriate")
-            const effectiveTableId = _input.table_id ?? tableId;
-            if (effectiveTableId) {
-                // invalidate: atlas city stats are server-derived aggregates
-                qc.invalidateQueries({ queryKey: queryKeys.atlas.index(effectiveTableId) });
+            // TICKET-043: fire for table_ids[0] (primary) only — secondary Tables inherit
+            // via legacy column until the follow-up drop ticket.
+            const effectiveTableIds = normalizeTableIds(_input);
+            if (effectiveTableIds.length === 0 && tableId) effectiveTableIds.push(tableId);
+            const primaryTableId = effectiveTableIds[0];
+            if (primaryTableId) {
+                qc.invalidateQueries({ queryKey: queryKeys.atlas.index(primaryTableId) });
             }
         },
     });

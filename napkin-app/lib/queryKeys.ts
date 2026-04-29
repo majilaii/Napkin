@@ -103,6 +103,8 @@ export const queryKeys = {
         followListAll: () => ['users', 'followList'] as const,
         followList: (userId: string, kind: 'followers' | 'following') =>
             ['users', 'followList', userId, kind] as const,
+        /** TICKET-043: Tables ordered by user's most-recent post (Smart-three ordering source). */
+        recentlyPostedTables: (userId: string) => ['users', 'recentlyPostedTables', userId] as const,
     },
 
     // Feed (cross-Table chronological feed — Feed tab)
@@ -173,23 +175,5 @@ export const queryKeys = {
         isAdmin: (userId: string) => ['admin', 'isAdmin', userId] as const,
     },
 
-    // Top Fours — personal regional Top 4s (TICKET-047)
-    // [ARCH-8] Two distinct keys: owner sees nudge + edit chrome; viewer does not.
-    // Mutations only touch owner(authUserId). Viewer caches drain on stale-time.
-    topFours: {
-        owner: (userId: string) => ['topFours', 'owner', userId] as const,
-        publicView: (userId: string) => ['topFours', 'public', userId] as const,
-        availableCities: (userId: string) => ['topFours', 'availableCities', userId] as const,
-        eligibleRestaurants: (userId: string, city: string) =>
-            ['topFours', 'eligibleRestaurants', userId, city] as const,
-    },
-
-    // Admin — operator surfaces (TICKET-033)
-    admin: {
-        // Critics list paginated by (scraped_at desc, id desc)
-        criticsList: () => ['admin', 'criticsList'] as const,
-        // Cached isAdmin check per user — staleTime: Infinity in useIsAdmin
-        isAdmin: (userId: string) => ['admin', 'isAdmin', userId] as const,
-    },
 } as const;
 

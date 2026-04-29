@@ -34,6 +34,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useTables } from '@/hooks/tables/useTables';
+import { useRecentlyPostedTables } from '@/hooks/tables/useRecentlyPostedTables';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { useStartRound } from '@/hooks/tables/useStartRound';
 import {
@@ -50,6 +51,7 @@ import {
     ChipRow,
     AddDetailsDrawer,
     TablePickerSheet,
+    TableChipsRow,
 } from '@/components/create-entry';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 import { useQuery } from '@tanstack/react-query';
@@ -106,41 +108,68 @@ export default function CreateEntryScreen() {
     }>();
 
     // Tables data
-    const { data: tableMemberships } = useTables(user?.id);
+    const { data: tableMemberships, isLoading: tablesLoading, refetch: refetchTables } = useTables(user?.id);
     const tables = (tableMemberships ?? []).map(m => m.tables);
     const sortedTables = [...tables].sort((a, b) => a.name.localeCompare(b.name));
+
+    // TICKET-043: recently posted tables for Smart-three ordering.
+    const { data: recentlyPosted } = useRecentlyPostedTables(user?.id);
+    // Smart-three order: context-pinned (from URL param) first, then recency, rest alphabetical.
+    const orderedTables = React.useMemo(() => {
+        const pinnedId = tableIdParam ?? null;
+        const recentIds = (recentlyPosted ?? []).map(m => m.tables.id);
+        const allTableMap = new Map(tables.map(t => [t.id, t]));
+
+        const pinned = pinnedId && allTableMap.has(pinnedId) ? [allTableMap.get(pinnedId)!] : [];
+        const recent = recentIds
+            .filter(id => id !== pinnedId && allTableMap.has(id))
+            .map(id => allTableMap.get(id)!);
+        const rest = tables
+            .filter(t => t.id !== pinnedId && !recentIds.includes(t.id))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        return [...pinned, ...recent, ...rest];
+    }, [tables, recentlyPosted, tableIdParam]);
 
     // Mode picker (round mode reachable via `mode=round` param — not surfaced in solo chrome)
     const [postMode, setPostMode] = useState<PostMode>(modeParam === 'round' ? 'round' : 'solo');
 
-    // Table selection — single source of truth. Null = solo (private).
-    // The chip's filled state IS the share signal; no separate toggle.
-    // Round mode requires a Table — default to first if none picked.
-    const [selectedTableId, setSelectedTableId] = useState<string | null>(
-        tableIdParam ?? null
+    // TICKET-043: Table selection is now multi-select (selectedTableIds: string[]).
+    // Default: pre-select from URL param if provided. Empty = feed-only (private journal).
+    // Round mode is single-Table and stays that way; we expose selectedTableIds[0] to it.
+    const [selectedTableIds, setSelectedTableIds] = useState<string[]>(
+        tableIdParam ? [tableIdParam] : []
     );
     const [tablePickerVisible, setTablePickerVisible] = useState(false);
 
-    // Round mode requires a table — fall back to first sorted Table if user
-    // arrived in round mode with no pre-selection.
+    // For round mode, maintain a single effective table id (first selected, or first sorted).
+    const roundTableId = selectedTableIds[0] ?? (sortedTables[0]?.id ?? null);
+
+    // Round mode requires a table — auto-select first if user arrived with none picked.
     useEffect(() => {
-        if (postMode === 'round' && !selectedTableId && sortedTables.length > 0) {
-            setSelectedTableId(sortedTables[0].id);
+        if (postMode === 'round' && selectedTableIds.length === 0 && sortedTables.length > 0) {
+            setSelectedTableIds([sortedTables[0].id]);
         }
-    }, [postMode, selectedTableId, sortedTables]);
+    }, [postMode, selectedTableIds.length, sortedTables]);
 
     // Participant tagging (Round mode on group tables)
     const { data: tableMembers, isLoading: membersLoading } = useTableMembers(
-        postMode === 'round' ? selectedTableId : null
+        postMode === 'round' ? roundTableId : null
     );
     const [selectedParticipantIds, setSelectedParticipantIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         setSelectedParticipantIds(new Set());
-    }, [selectedTableId, postMode]);
+    }, [selectedTableIds, postMode]);
 
-    const createEntry = useCreateEntry(user?.id, selectedTableId);
-    const startRound = useStartRound(user?.id, selectedTableId);
+    // TICKET-043: pass onTableNotAuthorized to handle revoked-Table 403.
+    const createEntry = useCreateEntry(user?.id, null, {
+        onTableNotAuthorized: (offendingIds) => {
+            // Remove offending ids from selection so user can re-submit without them.
+            setSelectedTableIds(prev => prev.filter(id => !offendingIds.includes(id)));
+        },
+    });
+    const startRound = useStartRound(user?.id, roundTableId);
 
     // ── Prefill from route params ─────────────────────────────────────────────
     const prefillPlace = React.useMemo<PlaceResult | null>(() => {
@@ -520,12 +549,10 @@ export default function CreateEntryScreen() {
         const ratingValue = Math.round(rating * 2) / 2;
         const photoUrls = photos.filter(p => p.publicUrl !== null).map(p => p.publicUrl as string);
 
-        const effectiveTableId = selectedTableId;
-
         try {
             if (postMode === 'round') {
                 await startRound.mutateAsync({
-                    table_id: selectedTableId!,
+                    table_id: roundTableId!,
                     restaurant: restaurantData,
                     participant_ids: Array.from(selectedParticipantIds),
                     rating: ratingValue,
@@ -535,13 +562,14 @@ export default function CreateEntryScreen() {
                     ...secondaryRatings,
                 });
             } else {
+                // TICKET-043: send table_ids (multi-Table) instead of single table_id.
                 await createEntry.mutateAsync({
                     restaurant: restaurantData,
                     rating: ratingValue,
                     content: notes.trim() || undefined,
                     dish_description: dish.trim() || undefined,
-                    table_id: effectiveTableId ?? undefined,
-                    visibility: effectiveTableId ? 'table' : 'private',
+                    table_ids: selectedTableIds,
+                    visibility: selectedTableIds.length > 0 ? 'table' : 'private',
                     visited_at: visitedAt.toISOString(),
                     ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
                     ...(selectedCompanions.length > 0 ? {
@@ -553,20 +581,26 @@ export default function CreateEntryScreen() {
             setPhotos([]);
             router.back();
         } catch (e: any) {
-            Alert.alert('Error', e.message ?? 'Could not save entry');
+            // table_not_authorized errors are handled by onTableNotAuthorized callback
+            // (already shows toast and removes offending ids). Only show Alert for
+            // other failures.
+            if ((e as any)?.code !== 'table_not_authorized') {
+                Alert.alert('Error', e.message ?? 'Could not save entry');
+            }
         }
     }, [
         canSubmit, rating, notes, dish, selectedPlace, query,
-        selectedTableId, postMode, selectedParticipantIds,
+        selectedTableIds, roundTableId, postMode, selectedParticipantIds,
         breakdown, visitedAt, photos, selectedCompanions,
         createEntry, startRound, router,
     ]);
 
     // ── Submit label ──────────────────────────────────────────────────────
 
+    // TICKET-043: Share when ≥1 Table selected; Save when feed-only (0 tables).
     const submitLabel = postMode === 'round'
         ? 'Start Round'
-        : selectedTableId
+        : selectedTableIds.length > 0
             ? 'Share'
             : 'Save';
 
@@ -685,13 +719,33 @@ export default function CreateEntryScreen() {
                                 onDateChange={setVisitedAt}
                                 tablesAvailable={sortedTables.length > 0 && postMode !== 'round'}
                                 selectedTableName={
-                                    selectedTableId
-                                        ? sortedTables.find(t => t.id === selectedTableId)?.name ?? null
+                                    // TICKET-043: show first selected table name + overflow count.
+                                    selectedTableIds.length > 0
+                                        ? selectedTableIds.length === 1
+                                            ? sortedTables.find(t => t.id === selectedTableIds[0])?.name ?? null
+                                            : `${sortedTables.find(t => t.id === selectedTableIds[0])?.name ?? ''} +${selectedTableIds.length - 1}`
                                         : null
                                 }
                                 onTablesPress={() => setTablePickerVisible(true)}
                             />
                         </View>
+                    ) : null}
+
+                    {/* TICKET-043: TableChipsRow — Smart-three inline chip preview.
+                        Hidden in round mode (single-Table read-only context). */}
+                    {!showSearch && postMode !== 'round' && orderedTables.length > 0 ? (
+                        <TableChipsRow
+                            orderedTables={orderedTables.map(t => ({ id: t.id, name: t.name }))}
+                            selectedIds={selectedTableIds}
+                            onToggle={(id) =>
+                                setSelectedTableIds(prev =>
+                                    prev.includes(id)
+                                        ? prev.filter(x => x !== id)
+                                        : [...prev, id]
+                                )
+                            }
+                            onOpenSheet={() => setTablePickerVisible(true)}
+                        />
                     ) : null}
 
                     {/* Photo collage — visible when photos exist */}
@@ -731,7 +785,7 @@ export default function CreateEntryScreen() {
                     ) : null}
 
                     {/* Round mode attendee picker (when round mode active) */}
-                    {postMode === 'round' && selectedTableId ? (
+                    {postMode === 'round' && roundTableId ? (
                         <View style={{ marginTop: Spacing.lg }}>
                             <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
                                 WHO WAS THERE?
@@ -800,13 +854,19 @@ export default function CreateEntryScreen() {
                 palette={palette}
             />
 
+            {/* TICKET-043: multi-select TablePickerSheet — commits on Done/dismiss */}
             <TablePickerSheet
                 visible={tablePickerVisible}
-                onClose={() => setTablePickerVisible(false)}
                 tables={sortedTables.map(t => ({ id: t.id, name: t.name }))}
-                selectedId={selectedTableId}
-                onSelect={setSelectedTableId}
+                selectedIds={selectedTableIds}
+                onCommit={(ids) => {
+                    setSelectedTableIds(ids);
+                    setTablePickerVisible(false);
+                }}
                 palette={palette}
+                isLoading={tablesLoading}
+                loadError={null}
+                onRetryLoad={() => refetchTables()}
             />
         </>
     );

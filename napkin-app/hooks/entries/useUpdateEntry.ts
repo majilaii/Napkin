@@ -56,6 +56,8 @@ export function useUpdateEntry(entryId: string) {
             // Scalar edit path — direct PATCH (only when there are scalar fields to update)
             if (Object.keys(scalarInput).length === 0) return null;
 
+            // TICKET-043: explicit column list excludes table_id (column-level revoke
+            // prevents authenticated from reading entries.table_id directly).
             const { data, error } = await supabase
                 .from('entries')
                 .update({
@@ -63,7 +65,13 @@ export function useUpdateEntry(entryId: string) {
                     updated_at: new Date().toISOString(),
                 })
                 .eq('id', entryId)
-                .select()
+                .select(`
+                    id, user_id, restaurant_id, rating, content, dish_description,
+                    visited_at, created_at, updated_at, table_night_id, visibility,
+                    vibe_rating, flavor_rating, service_rating, value_rating,
+                    photo_url, client_nonce, reaction_count, comment_count,
+                    top_emojis, public_reaction_count, public_reply_count, public_top_emojis
+                `)
                 .single();
 
             if (error) throw error;

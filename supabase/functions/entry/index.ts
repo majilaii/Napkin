@@ -292,7 +292,10 @@ serve(async (req) => {
                 photo_urls,
 
                 // Table sharing (optional)
+                // TICKET-043: table_ids[] preferred; table_id is legacy (one release).
+                // If both arrive, table_ids wins.
                 table_id,
+                table_ids: table_ids_raw,
                 visibility,
 
                 // Collaborative (optional)
@@ -302,9 +305,58 @@ serve(async (req) => {
                 // companion_ids = who was there; participant_ids = Round raters
                 companion_ids,
 
-                // Idempotency key (TICKET-036 wires client; minimal support here)
+                // Idempotency key (TICKET-036 wires client; RPC handles dedup)
                 client_nonce,
             } = body;
+
+            // ── TICKET-043: normalize effective table_ids list ──────────────────
+            // Normalize: prefer table_ids[], fall back to [table_id] if legacy.
+            // Trim, dedupe preserving order, reject if > 10.
+            const rawTableIds: string[] = Array.isArray(table_ids_raw)
+                ? table_ids_raw
+                : (table_id ? [table_id] : []);
+            const effectiveTableIds: string[] = [...new Set(
+                rawTableIds.map((id: string) => id?.trim()).filter(Boolean)
+            )];
+
+            if (effectiveTableIds.length > 10) {
+                return new Response(
+                    JSON.stringify({ error: { code: 'too_many_tables', message: 'Cannot post to more than 10 tables' } }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Membership validation for all table_ids.
+            // TICKET-034 doctrine: use member_id (NOT user_id) when joining table_members.
+            if (effectiveTableIds.length > 0) {
+                const { data: memberships, error: membershipErr } = await supabase
+                    .from('table_members')
+                    .select('table_id')
+                    .eq('member_id', user.id)
+                    .in('table_id', effectiveTableIds);
+                if (membershipErr) {
+                    console.error('[entry] table membership check failed:', membershipErr);
+                    throw membershipErr;
+                }
+                const allowed = new Set((memberships ?? []).map((m: { table_id: string }) => m.table_id));
+                const offenders = effectiveTableIds.filter((id: string) => !allowed.has(id));
+                if (offenders.length > 0) {
+                    // Generic error code — do not distinguish 404 from 403 (no enumeration).
+                    return new Response(
+                        JSON.stringify({
+                            error: {
+                                code: 'table_not_authorized',
+                                message: 'Some tables could not accept this post',
+                                ids: offenders,
+                            }
+                        }),
+                        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+            }
+
+            // Legacy resolvedTableId for code paths below that still use single table_id.
+            const resolvedTableId: string | undefined = effectiveTableIds[0];
 
             // Validate secondary ratings if provided
             for (const [name, val] of Object.entries({ vibe_rating, flavor_rating, service_rating, value_rating })) {
@@ -392,22 +444,27 @@ serve(async (req) => {
             const visitedAtValue = visited_at ? new Date(visited_at).toISOString() : new Date().toISOString();
             const extraParticipantIds: string[] = Array.isArray(participant_ids) ? participant_ids : [];
 
-            // table_id is optional — entries without one live on the user's feed only.
-            let resolvedTableId: string | undefined = table_id;
-
-            // Validate all tagged participants are members of the target table
-            if (resolvedTableId && extraParticipantIds.length > 0) {
-                const { data: members } = await supabase
+            // TICKET-043: Strict participant-membership check across ALL table_ids.
+            // Each participant must be a member of EVERY supplied table_id.
+            // Uses member_id (NOT user_id) per TICKET-034 doctrine.
+            if (effectiveTableIds.length > 0 && extraParticipantIds.length > 0) {
+                const { data: memberRows } = await supabase
                     .from('table_members')
-                    .select('member_id')
-                    .eq('table_id', resolvedTableId)
+                    .select('member_id, table_id')
+                    .in('table_id', effectiveTableIds)
                     .in('member_id', extraParticipantIds);
 
-                const memberSet = new Set((members ?? []).map((m: { member_id: string }) => m.member_id));
-                const nonMembers = extraParticipantIds.filter((id: string) => !memberSet.has(id));
+                // For each participant, check membership bucket size == effectiveTableIds.length
+                const buckets = new Map<string, number>();
+                for (const row of (memberRows ?? []) as { member_id: string; table_id: string }[]) {
+                    buckets.set(row.member_id, (buckets.get(row.member_id) ?? 0) + 1);
+                }
+                const nonMembers = extraParticipantIds.filter(
+                    (id: string) => (buckets.get(id) ?? 0) < effectiveTableIds.length
+                );
                 if (nonMembers.length > 0) {
                     return new Response(
-                        JSON.stringify({ error: `Some participants are not members of this table: ${nonMembers.join(', ')}` }),
+                        JSON.stringify({ error: { code: 'participant_not_member', message: 'Some participants are not members of all selected tables', ids: nonMembers } }),
                         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                     );
                 }
@@ -417,69 +474,125 @@ serve(async (req) => {
             const photoUrlsArray: string[] = Array.isArray(photo_urls) ? photo_urls : [];
             const heroPhotoUrl = photo_url || photoUrlsArray[0] || null;
 
-            // Check for duplicate submission via client_nonce (TICKET-036 hook)
-            if (client_nonce) {
-                const { data: existing, error: nonceErr } = await supabase
-                    .from('entries')
-                    .select()
-                    .eq('user_id', user.id)
-                    .eq('client_nonce', client_nonce)
-                    .maybeSingle();
-                if (!nonceErr && existing) {
-                    // TICKET-050: include entry_ordinal so retries fire the slip/stamp
-                    // with the EXISTING row's ordinal — not the user's current total.
-                    // A delayed offline replay after a later save would otherwise
-                    // stamp the duplicated entry with the wrong number.
-                    // Stable predicate: count entries up to and including `existing`.
-                    const { count: dupCount, error: dupCountErr } = await supabase
-                        .from('entries')
-                        .select('id', { count: 'exact', head: true })
-                        .eq('user_id', user.id)
-                        .lte('created_at', existing.created_at);
-                    if (dupCountErr) {
-                        console.error('entry_ordinal count failed (duplicate path) for user', user.id, dupCountErr);
+            // Always include the creator in participants; deduplicate in case creator is in participant_ids
+            const allParticipantIds = [user.id, ...extraParticipantIds.filter((id: string) => id !== user.id)];
+
+            // ── TICKET-043: Call fn_create_entry_with_tables (atomic RPC) ─────────
+            // client_nonce dedup is handled inside the RPC; no pre-check needed here.
+            // RPC returns { entry_id, was_dedup }.
+            const entryPayload = {
+                restaurant_id: restaurantId ?? null,
+                place_id: placeId ?? null,
+                user_place_id: userPlaceId ?? null,
+                rating: ratingValue,
+                content: content?.trim() || null,
+                dish_description: dish_description?.trim() || null,
+                cooked_by: cooked_by ?? null,
+                value_profile: value_profile ?? null,
+                visited_at: visitedAtValue,
+                visibility: visibility ?? 'private',
+                ...(vibe_rating != null ? { vibe_rating } : {}),
+                ...(flavor_rating != null ? { flavor_rating } : {}),
+                ...(service_rating != null ? { service_rating } : {}),
+                ...(value_rating != null ? { value_rating } : {}),
+                ...(heroPhotoUrl ? { photo_url: heroPhotoUrl } : {}),
+                ...(client_nonce ? { client_nonce } : {}),
+            };
+
+            let entryId: string;
+            let wasDedup: boolean = false;
+
+            const { data: rpcResult, error: rpcError } = await supabase.rpc(
+                'fn_create_entry_with_tables',
+                {
+                    p_user_id: user.id,
+                    p_entry: entryPayload,
+                    p_table_ids: effectiveTableIds.length > 0 ? effectiveTableIds : null,
+                    p_participant_ids: allParticipantIds,
+                    p_companion_ids: null, // companions handled non-fatally below
+                }
+            );
+
+            if (rpcError) {
+                console.error('[entry] fn_create_entry_with_tables error:', rpcError);
+                // Map P0001 table_not_authorized to 403 with structured error.
+                // The RPC raises with DETAIL = json_build_object('id', v_table_id);
+                // surface that id in `ids` so the client can drop the stale selection
+                // (matches the precheck shape — review-fix for Codex Review 2).
+                if (rpcError.code === 'P0001' && rpcError.message?.includes('table_not_authorized')) {
+                    let offenders: string[] = [];
+                    try {
+                        const detail = (rpcError as any).details ?? (rpcError as any).detail;
+                        if (typeof detail === 'string') {
+                            const parsed = JSON.parse(detail);
+                            if (parsed?.id) offenders = [String(parsed.id)];
+                        } else if (detail?.id) {
+                            offenders = [String(detail.id)];
+                        }
+                    } catch (_) {
+                        // best-effort — fall through to empty ids
                     }
-                    const dupOrdinal = dupCountErr ? null : (dupCount ?? null);
                     return new Response(
                         JSON.stringify({
-                            data: existing,
-                            entry_ordinal: dupOrdinal,
-                            warnings: [{ type: 'duplicate_submission' }],
+                            error: {
+                                code: 'table_not_authorized',
+                                message: 'Some tables could not accept this post',
+                                ids: offenders,
+                            }
                         }),
-                        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                     );
                 }
+                throw rpcError;
             }
 
-            // Create entry
-            const { data: entryData, error: entryError } = await supabase
+            // RPC returns a table row (array with one element).
+            const rpcRow = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
+            entryId = rpcRow?.entry_id ?? rpcRow?.id;
+            wasDedup = rpcRow?.was_dedup === true;
+
+            if (!entryId) {
+                throw new Error('fn_create_entry_with_tables returned no entry_id');
+            }
+
+            // On dedup: skip all fan-out (notifications, photo inserts, etc.)
+            // and return the existing row shape.
+            if (wasDedup) {
+                const { data: existingEntry, error: fetchErr } = await supabase
+                    .from('entries')
+                    .select('*')
+                    .eq('id', entryId)
+                    .single();
+                if (fetchErr) console.error('[entry] dedup fetch error (non-fatal):', fetchErr);
+                const { count: dupCount } = await supabase
+                    .from('entries')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('user_id', user.id)
+                    .lte('created_at', existingEntry?.created_at ?? new Date().toISOString());
+                return new Response(
+                    JSON.stringify({
+                        data: {
+                            ...(existingEntry ?? { id: entryId }),
+                            table_id: effectiveTableIds[0] ?? null,
+                            table_ids: effectiveTableIds,
+                        },
+                        entry_ordinal: dupCount ?? null,
+                        warnings: [{ type: 'duplicate_submission' }],
+                    }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Fetch the newly created entry row (service-role can read table_id).
+            const { data: entryData, error: entryFetchError } = await supabase
                 .from('entries')
-                .insert({
-                    user_id: user.id,
-                    restaurant_id: restaurantId,
-                    place_id: placeId,
-                    user_place_id: userPlaceId,
-                    rating: ratingValue,
-                    content: content?.trim() || null,
-                    dish_description: dish_description?.trim() || null,
-                    cooked_by: cooked_by?.trim() || null,
-                    value_profile: value_profile || null,
-                    visited_at: visitedAtValue,
-                    ...(vibe_rating != null ? { vibe_rating } : {}),
-                    ...(flavor_rating != null ? { flavor_rating } : {}),
-                    ...(service_rating != null ? { service_rating } : {}),
-                    ...(value_rating != null ? { value_rating } : {}),
-                    ...(heroPhotoUrl ? { photo_url: heroPhotoUrl } : {}),
-                    ...(resolvedTableId ? { table_id: resolvedTableId } : {}),
-                    ...(visibility ? { visibility } : {}),
-                    ...(client_nonce ? { client_nonce } : {}),
-                })
-                .select()
+                .select('*')
+                .eq('id', entryId)
                 .single();
 
-            if (entryError) {
-                console.error('Entry insert error:', entryError);
-                throw entryError;
+            if (entryFetchError) {
+                console.error('Entry fetch after RPC error:', entryFetchError);
+                throw entryFetchError;
             }
 
             // Bulk-insert entry_photos if photo_urls provided (non-fatal if it fails)
@@ -514,27 +627,9 @@ serve(async (req) => {
                 }
             }
 
-            // Insert entry_participants
-            // Always include the creator; deduplicate in case creator is in participant_ids
-            const allParticipantIds = [user.id, ...extraParticipantIds.filter((id: string) => id !== user.id)];
+            // entry_participants were inserted atomically in fn_create_entry_with_tables RPC.
 
-            const participantRows = allParticipantIds.map((pid: string) => ({
-                entry_id: entryData.id,
-                user_id: pid,
-                rating: pid === user.id ? ratingValue : null,
-                notes: pid === user.id ? (content?.trim() || null) : null,
-            }));
-
-            const { error: partInsertError } = await supabase
-                .from('entry_participants')
-                .insert(participantRows);
-
-            if (partInsertError) {
-                console.error('entry_participants insert error:', partInsertError);
-                throw partInsertError;
-            }
-
-            // Insert entry_companions (companion tagging — NOT Round participants)
+            // ── Insert entry_companions (non-fatal, outside atomic RPC — finding 16) ──
             // companion_ids: arbitrary Napkin users; no Table-membership gate (Instagram-style)
             // TICKET-037 (P1-11): explicitly exclude allParticipantIds so a user can't appear
             // in both the "6 ratings" strip and the "with X" companions list.
@@ -583,16 +678,20 @@ serve(async (req) => {
                 try {
                     const recipientSet = new Set<string>();
 
-                    // (a) Table-shared entry → all Table members.
-                    if (resolvedTableId) {
+                    // (a) Table-shared entry → union of members across ALL table_ids (TICKET-043).
+                    // One notification per recipient regardless of how many of their Tables overlap.
+                    // IMPORTANT: never reference table ids/names in notification payload.
+                    if (effectiveTableIds.length > 0) {
                         const { data: members, error: membersErr } = await supabase
                             .from('table_members')
                             .select('member_id')
-                            .eq('table_id', resolvedTableId);
+                            .in('table_id', effectiveTableIds);
                         if (membersErr) {
                             console.error('[notify] emitFriendLogged: table_members query failed', membersErr);
                         }
-                        for (const m of members ?? []) recipientSet.add(m.member_id);
+                        for (const m of (members ?? []) as { member_id: string }[]) {
+                            recipientSet.add(m.member_id);
+                        }
                     }
 
                     // (b) Companion-tagged → each CONFIRMED-inserted companion.
@@ -609,10 +708,10 @@ serve(async (req) => {
                         for (const c of confirmedCompanions ?? []) recipientSet.add(c.user_id);
                     }
 
-                    // (c) Public-eligible solo (no table_id AND no companions) → followers.
+                    // (c) Public-eligible solo (no table_ids AND no companions) → followers.
                     //     Only this branch is gated on the public-eligibility predicate;
                     //     (a) and (b) carry their own visibility (membership / explicit tag).
-                    if (!resolvedTableId && sanitizedCompanionIds.length === 0) {
+                    if (effectiveTableIds.length === 0 && sanitizedCompanionIds.length === 0) {
                         const { data: eligible, error: eligibleErr } = await supabase
                             .rpc('is_entry_publicly_eligible', { p_entry_id: entryData.id });
                         if (eligibleErr) {
@@ -638,6 +737,7 @@ serve(async (req) => {
                         recipientUserIds: Array.from(recipientSet),
                         entryId: entryData.id,
                         restaurantId,
+                        // NOTE: no table_id/table_ids in the notification payload (privacy invariant).
                     });
                 } catch (notifyErr) {
                     // Best-effort: never fail the entry create because of inbox issues.
@@ -663,7 +763,14 @@ serve(async (req) => {
 
             return new Response(
                 JSON.stringify({
-                    data: entryData,
+                    // TICKET-043: author-facing response includes table_ids[].
+                    // Member-facing reads (table-activity, entry detail by non-author)
+                    // MUST omit table_ids[] and rewrite table_id to the requesting Table's id.
+                    data: {
+                        ...entryData,
+                        table_id: effectiveTableIds[0] ?? null,  // primary (legacy mirror)
+                        table_ids: effectiveTableIds,            // author-facing only
+                    },
                     entry_ordinal,
                     ...(warnings.length > 0 ? { warnings } : {}),
                 }),

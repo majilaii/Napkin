@@ -78,7 +78,9 @@ serve(async (req) => {
             );
         }
 
-        // Verify user is a member of this table
+        // TICKET-043: required because service-role bypasses RLS.
+        // Explicit membership gate: caller must be a member of the requested table.
+        // Uses member_id (NOT user_id) per TICKET-034 doctrine.
         const { data: membership } = await supabase
             .from('table_members')
             .select('member_id')
@@ -252,6 +254,14 @@ serve(async (req) => {
                 const photoCount = photoCountMap.get(entry.id) ?? 0;
                 const sort_date = sortDateByEntryId.get(entry.id) ?? entry.visited_at ?? entry.created_at;
 
+                // TICKET-043: scrub response — member-facing payloads MUST:
+                //   1. Never include table_ids[] (would leak other Tables).
+                //   2. Set table_id to the REQUESTED tableId, not entries.table_id (the primary).
+                //      Without this, a B-only viewer seeing an entry whose primary is A would
+                //      receive table_id = A — leaking the existence of Table A.
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                const { table_id: _drop_table_id, table_ids: _drop_table_ids, ...entryWithoutTableId } = entry as any;
+
                 if (participants.length > 1) {
                     const ratings = participants
                         .filter((p: { rating: number | null }) => p.rating !== null)
@@ -260,7 +270,8 @@ serve(async (req) => {
                         ? ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length
                         : null;
                     return {
-                        ...entry,
+                        ...entryWithoutTableId,
+                        table_id: tableId,  // always the REQUESTED Table's id
                         type: 'collaborative_entry' as const,
                         participants,
                         companions,
@@ -270,7 +281,8 @@ serve(async (req) => {
                     };
                 }
                 return {
-                    ...entry,
+                    ...entryWithoutTableId,
+                    table_id: tableId,  // always the REQUESTED Table's id
                     type: 'solo_share' as const,
                     companions,
                     sort_date,
