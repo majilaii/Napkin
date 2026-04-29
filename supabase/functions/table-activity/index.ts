@@ -20,6 +20,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { buildPage, decodeCursor } from '../_shared/pagination.ts';
+import { projectRound } from '../_shared/round_projection.ts';
 
 const PAGE_SIZE = 20;
 
@@ -291,7 +292,10 @@ serve(async (req) => {
             });
         }
 
-        // ── Hydrate: table nights ─────────────────────────────────────────────
+        // ── Hydrate: table nights (live AND merged) ───────────────────────────
+        // TICKET-044: Use projectRound helper which branches on round_kind.
+        // round_kind is extracted from the RPC payload (table_nights.kind column,
+        // included in to_jsonb(n) by fn_table_activity_page).
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let nightsWithParticipants: any[] = [];
 
@@ -303,6 +307,7 @@ serve(async (req) => {
                     restaurant_id,
                     host_user_id,
                     status,
+                    kind,
                     created_at,
                     revealed_at,
                     is_async,
@@ -327,29 +332,22 @@ serve(async (req) => {
             nightsWithParticipants = await Promise.all(
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 (tableNights ?? []).map(async (night: any) => {
-                    const { data: participants } = await supabase
-                        .from('table_night_participants')
-                        .select(`
-                            user_id,
-                            rating,
-                            notes,
-                            profiles (
-                                display_name
-                            )
-                        `)
-                        .eq('table_night_id', night.id);
-
-                    const ratings = (participants ?? [])
-                        .filter((p: { rating: number | null }) => p.rating !== null)
-                        .map((p: { rating: number }) => p.rating as number);
-                    const average = ratings.length > 0
-                        ? ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length
-                        : null;
+                    // TICKET-044: use shared projectRound helper; branches on kind.
+                    const roundKind: 'live' | 'merged' = night.kind === 'merged' ? 'merged' : 'live';
+                    const { participants, average_rating } = await projectRound(
+                        night.id,
+                        roundKind,
+                        supabase,
+                    );
 
                     return {
                         ...night,
-                        participants: participants ?? [],
-                        average_rating: average,
+                        participants,
+                        average_rating,
+                        // round_kind is the subtype discriminator (TICKET-044).
+                        // Top-level `kind` already discriminates row type ('table_night' | 'entry').
+                        // Do NOT reuse `kind` for the subtype — that collides.
+                        round_kind: roundKind,
                         type: 'table_night' as const,
                         sort_date: sortDateByNightId.get(night.id) ?? night.revealed_at ?? night.created_at,
                     };

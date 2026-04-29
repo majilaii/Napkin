@@ -60,6 +60,170 @@ serve(async (req) => {
             );
         }
 
+        // ── GET: merge_candidate ───────────────────────────────────────────────
+        // Returns the most recent entry in the target Table that:
+        //   - Matches the given restaurant_id
+        //   - Was authored by a different member
+        //   - Has visited_at within ±18h of the given visited_at
+        //   - Is NOT already bound to any round (merged OR live)
+        // Returns null if no candidate exists (silent — no card shown).
+        //
+        // TICKET-044: [ARCH-REVIEW] verified — both halves of the "not in any round"
+        // predicate are present: id NOT IN round_entries AND table_night_id IS NULL.
+        if (req.method === 'GET') {
+            const url = new URL(req.url);
+            const action = url.searchParams.get('action');
+
+            if (action === 'merge_candidate') {
+                const tableId = url.searchParams.get('table_id');
+                const restaurantId = url.searchParams.get('restaurant_id');
+                const visitedAtStr = url.searchParams.get('visited_at');
+
+                if (!tableId || !restaurantId || !visitedAtStr) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'table_id, restaurant_id, visited_at are required' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Validate caller is a member of the table (member_id doctrine)
+                const { data: membership } = await supabase
+                    .from('table_members')
+                    .select('member_id')
+                    .eq('table_id', tableId)
+                    .eq('member_id', user.id)
+                    .single();
+
+                if (!membership) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'FORBIDDEN', message: 'Not a member of this table' } }),
+                        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                const visitedAt = new Date(visitedAtStr).toISOString();
+                // ±18h window in seconds
+                const windowSecs = 18 * 3600;
+
+                // Find the most recent candidate entry in this table that:
+                //   1. Is shared to this table (entry_tables)
+                //   2. Matches the restaurant
+                //   3. Is within ±18h of the composer's visited_at
+                //   4. Was authored by a different member
+                //   5. Has table_night_id IS NULL (not in a live round)
+                //   6. Is NOT in round_entries (not in a merged round)
+                const { data: candidates, error: candErr } = await supabase
+                    .from('entry_tables')
+                    .select(`
+                        entry_id,
+                        entries:entry_id (
+                            id,
+                            user_id,
+                            rating,
+                            restaurant_id,
+                            visited_at,
+                            created_at,
+                            table_night_id,
+                            profiles:user_id (
+                                display_name,
+                                avatar_url
+                            )
+                        )
+                    `)
+                    .eq('table_id', tableId)
+                    .limit(50); // fetch a batch; filter JS-side for window + round membership
+
+                if (candErr) throw candErr;
+
+                const windowMs = windowSecs * 1000;
+                const composerDate = new Date(visitedAt).getTime();
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const rawCandidates = (candidates ?? []) as any[];
+                const filtered: {
+                    id: string;
+                    user_id: string;
+                    rating: number | null;
+                    visited_at: string;
+                    created_at: string;
+                    display_name: string;
+                    avatar_url: string | null;
+                }[] = [];
+
+                for (const row of rawCandidates) {
+                    const entry = Array.isArray(row.entries) ? row.entries[0] : row.entries;
+                    if (!entry) continue;
+                    if (entry.restaurant_id !== restaurantId) continue;
+                    if (entry.user_id === user.id) continue;
+                    if (entry.table_night_id !== null) continue;
+                    const entryDate = new Date(entry.visited_at ?? entry.created_at).getTime();
+                    if (Math.abs(composerDate - entryDate) > windowMs) continue;
+
+                    const profile = Array.isArray(entry.profiles) ? entry.profiles[0] : entry.profiles;
+                    filtered.push({
+                        id: entry.id,
+                        user_id: entry.user_id,
+                        rating: entry.rating ?? null,
+                        visited_at: entry.visited_at ?? entry.created_at,
+                        created_at: entry.created_at,
+                        display_name: profile?.display_name ?? 'User',
+                        avatar_url: profile?.avatar_url ?? null,
+                    });
+                }
+
+                if (filtered.length === 0) {
+                    return new Response(
+                        JSON.stringify({ data: null }),
+                        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Sort by visited_at DESC, created_at DESC — most recent first
+                filtered.sort((a, b) => {
+                    const diff = new Date(b.visited_at).getTime() - new Date(a.visited_at).getTime();
+                    if (diff !== 0) return diff;
+                    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                });
+
+                // Filter out any candidate already bound to a merged round.
+                // The merge RPC's commit-time recheck is the authoritative gate, but
+                // dropping bound candidates here keeps the card silent for already-merged entries.
+                const candidateIds = filtered.map((c) => c.id);
+                const { data: bound } = await supabase
+                    .from('round_entries')
+                    .select('entry_id')
+                    .in('entry_id', candidateIds);
+                const boundSet = new Set((bound ?? []).map((r: { entry_id: string }) => r.entry_id));
+                const top = filtered.find((c) => !boundSet.has(c.id));
+
+                if (!top) {
+                    return new Response(
+                        JSON.stringify({ data: null }),
+                        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                return new Response(
+                    JSON.stringify({
+                        data: {
+                            entry_id: top.id,
+                            user_id: top.user_id,
+                            rating: top.rating,
+                            visited_at: top.visited_at,
+                            display_name: top.display_name,
+                            avatar_url: top.avatar_url,
+                        }
+                    }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            return new Response(
+                JSON.stringify({ error: 'Method not allowed' }),
+                { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
         if (req.method === 'POST') {
             const body = await req.json();
             console.log('entry function called with body:', JSON.stringify(body));
@@ -196,6 +360,177 @@ serve(async (req) => {
 
                 return new Response(
                     JSON.stringify({ data: { entry_id, companion_ids: sanitized } }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // ── merge_with action ──────────────────────────────────────────
+            // Creates B's entry AND binds A's entry + B's entry to a new merged round
+            // atomically via fn_create_entry_and_merge_round.
+            //
+            // On round_conflict (concurrent merge race, A's entry deleted, A left Table, etc.)
+            // the server falls back to fn_create_entry_with_tables with the same client_nonce
+            // and returns merge_outcome: 'conflict_fell_back'.
+            //
+            // Response: { data: { ...entry }, merge_outcome: 'merged' | 'conflict_fell_back' | 'solo' }
+            //
+            // [ARCH-REVIEW] verified:
+            //   - fn_create_entry_and_merge_round validates BOTH round_entries and
+            //     table_night_id IS NULL predicates at commit time.
+            //   - client_nonce idempotency is handled inside the RPC.
+            //   - No auth.uid() in the RPC.
+            if (body.action === 'merge_with') {
+                const {
+                    entry_a_id,
+                    table_id: mergeTableId,
+                    restaurant_id: mergeRestaurantId,
+                    visited_at: mergeVisitedAt,
+                    client_nonce: mergeClientNonce,
+                    // B's full entry payload (same shape as the default create-entry path)
+                    rating: mRating,
+                    content: mContent,
+                    dish_description: mDishDesc,
+                    visited_at: mVisitedAt,
+                    visibility: mVisibility,
+                    vibe_rating: mVibeRating,
+                    flavor_rating: mFlavorRating,
+                    service_rating: mServiceRating,
+                    value_rating: mValueRating,
+                    photo_url: mPhotoUrl,
+                } = body;
+
+                if (!entry_a_id || !mergeTableId || !mergeRestaurantId || !mergeVisitedAt) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'entry_a_id, table_id, restaurant_id, visited_at are required' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Validate caller is a member of the table
+                const { data: mergeMembership } = await supabase
+                    .from('table_members')
+                    .select('member_id')
+                    .eq('table_id', mergeTableId)
+                    .eq('member_id', user.id)
+                    .single();
+
+                if (!mergeMembership) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'FORBIDDEN', message: 'Not a member of this table' } }),
+                        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                const mergeRatingValue = (mRating === 0 || mRating === undefined || mRating === null) ? null : mRating;
+                const mergeVisitedAtValue = mergeVisitedAt
+                    ? new Date(mergeVisitedAt).toISOString()
+                    : new Date().toISOString();
+
+                const bPayload = {
+                    restaurant_id: mergeRestaurantId,
+                    rating: mergeRatingValue,
+                    content: mContent?.trim() || null,
+                    dish_description: mDishDesc?.trim() || null,
+                    visited_at: mergeVisitedAtValue,
+                    visibility: mVisibility ?? 'private',
+                    ...(mVibeRating != null ? { vibe_rating: mVibeRating } : {}),
+                    ...(mFlavorRating != null ? { flavor_rating: mFlavorRating } : {}),
+                    ...(mServiceRating != null ? { service_rating: mServiceRating } : {}),
+                    ...(mValueRating != null ? { value_rating: mValueRating } : {}),
+                    ...(mPhotoUrl ? { photo_url: mPhotoUrl } : {}),
+                    ...(mergeClientNonce ? { client_nonce: mergeClientNonce } : {}),
+                };
+
+                let mergeOutcome: 'merged' | 'conflict_fell_back' | 'solo' = 'merged';
+                let resultEntryId: string | null = null;
+                let resultRoundId: string | null = null;
+
+                try {
+                    const { data: rpcData, error: rpcErr } = await supabase.rpc(
+                        'fn_create_entry_and_merge_round',
+                        {
+                            p_actor_user_id: user.id,
+                            p_table_id:      mergeTableId,
+                            p_restaurant_id: mergeRestaurantId,
+                            p_visited_at:    mergeVisitedAtValue,
+                            p_entry_a_id:    entry_a_id,
+                            p_b_payload:     bPayload,
+                            p_client_nonce:  mergeClientNonce ?? null,
+                        }
+                    );
+
+                    if (rpcErr) {
+                        // round_conflict → fall back to solo save with same nonce
+                        if (rpcErr.code === 'P0001' && rpcErr.message?.includes('round_conflict')) {
+                            mergeOutcome = 'conflict_fell_back';
+                        } else {
+                            throw rpcErr;
+                        }
+                    } else {
+                        const result = rpcData as { entry_b_id: string; round_id: string; was_dedup: boolean };
+                        resultEntryId = result.entry_b_id;
+                        resultRoundId = result.round_id;
+                        mergeOutcome = 'merged';
+                    }
+                } catch (mergeErr: unknown) {
+                    const errMsg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
+                    if (errMsg.includes('round_conflict')) {
+                        mergeOutcome = 'conflict_fell_back';
+                    } else {
+                        throw mergeErr;
+                    }
+                }
+
+                // On conflict: fall back to fn_create_entry_with_tables with same nonce
+                if (mergeOutcome === 'conflict_fell_back') {
+                    const { data: fallbackResult, error: fallbackErr } = await supabase.rpc(
+                        'fn_create_entry_with_tables',
+                        {
+                            p_user_id:        user.id,
+                            p_entry:          bPayload,
+                            p_table_ids:      [mergeTableId],
+                            p_participant_ids: [user.id],
+                            p_companion_ids:  null,
+                        }
+                    );
+                    if (fallbackErr) throw fallbackErr;
+                    const fallbackRow = Array.isArray(fallbackResult) ? fallbackResult[0] : fallbackResult;
+                    resultEntryId = fallbackRow?.entry_id ?? fallbackRow?.id;
+                }
+
+                if (!resultEntryId) {
+                    throw new Error('merge_with: no entry_id returned from RPC');
+                }
+
+                // Fetch the created entry for the response
+                const { data: mergeEntryData } = await supabase
+                    .from('entries')
+                    .select('*')
+                    .eq('id', resultEntryId)
+                    .single();
+
+                // Response shape matches hooks/rounds/useCreateEntryWithMerge.ts MergeResult.
+                // merge_outcome is nested INSIDE data so callEdgeFn's envelope-strip preserves it.
+                // restaurant/participants/average_rating omitted in v1 — the hook patches caches
+                // from the input + optimistic state; activity invalidate refetches the
+                // canonical projected round from fn_table_activity_page.
+                return new Response(
+                    JSON.stringify({
+                        data: {
+                            entry_id:      resultEntryId,
+                            round_id:      resultRoundId,
+                            entry_a_id,
+                            table_id:      mergeTableId,
+                            restaurant_id: mergeRestaurantId,
+                            visited_at:    mergeEntryData?.visited_at ?? mergeVisitedAtValue,
+                            created_at:    mergeEntryData?.created_at ?? new Date().toISOString(),
+                            rating:        mergeEntryData?.rating ?? mergeRatingValue,
+                            content:       mergeEntryData?.content ?? null,
+                            average_rating: null,
+                            restaurant:    null,
+                            merge_outcome: mergeOutcome,
+                        },
+                    }),
                     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 );
             }

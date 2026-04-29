@@ -384,6 +384,21 @@ serve(async (req) => {
                 );
             }
 
+            // Unbind any merged round_entries for this member + table BEFORE
+            // removing from table_members. The collapse trigger fires when the
+            // round_entries row is deleted and drops the table_nights row if < 2
+            // entries remain (TICKET-044). Service-role; no auth dependency.
+            const { error: unbindError } = await supabase.rpc(
+                'fn_leave_table_unbind_rounds',
+                { p_table_id: targetTableId, p_leaver_user_id: user.id },
+            );
+            if (unbindError) {
+                // Round unbind is required for collapse; surface the error rather
+                // than swallow it. Without unbind, leaving a Table leaves orphan
+                // bindings that don't trigger the collapse trigger.
+                throw unbindError;
+            }
+
             const { error: deleteError } = await supabase
                 .from('table_members')
                 .delete()

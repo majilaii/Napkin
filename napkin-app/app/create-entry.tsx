@@ -53,6 +53,10 @@ import {
     TablePickerSheet,
     TableChipsRow,
 } from '@/components/create-entry';
+import { MergeCandidateCard } from '@/components/create-entry/MergeCandidateCard';
+import { useMergeCandidate } from '@/hooks/rounds/useMergeCandidate';
+import { useCreateEntryWithMerge } from '@/hooks/rounds/useCreateEntryWithMerge';
+import { useToast } from '@/providers/ToastProvider';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 import { useQuery } from '@tanstack/react-query';
 
@@ -170,6 +174,9 @@ export default function CreateEntryScreen() {
         },
     });
     const startRound = useStartRound(user?.id, roundTableId);
+    // TICKET-044: combined merge mutation for the in-flow [merge] action.
+    const createEntryWithMerge = useCreateEntryWithMerge();
+    const toast = useToast();
 
     // ── Prefill from route params ─────────────────────────────────────────────
     const prefillPlace = React.useMemo<PlaceResult | null>(() => {
@@ -273,6 +280,35 @@ export default function CreateEntryScreen() {
         return new Date();
     });
 
+    // ── TICKET-044: merge-candidate detection (Trigger B) ────────────────────
+    // Card fires when: exactly one Table selected, real restaurant_id (UUID),
+    // visited_at known. The query is gated on a real UUID — Places-search flows
+    // (only external_id available) won't fire the card; users navigating from a
+    // restaurant page (restaurantIdParam set) get the full UX.
+    // Per-session [separate] suppression keyed on the candidate entry id.
+    const mergeTableId = selectedTableIds.length === 1 ? selectedTableIds[0] : null;
+    const mergeRestaurantId = restaurantIdParam ?? null;
+    const visitedAtIso = visitedAt.toISOString();
+    const { data: mergeCandidate } = useMergeCandidate(
+        mergeTableId,
+        mergeRestaurantId,
+        visitedAtIso,
+    );
+    const [separatedCandidateId, setSeparatedCandidateId] = useState<string | null>(null);
+    const showMergeCard =
+        !!mergeCandidate &&
+        mergeCandidate.entry_id !== separatedCandidateId &&
+        !!mergeTableId &&
+        !!mergeRestaurantId;
+    // Stable nonce for the merge mutation; regenerated only when the candidate changes.
+    const mergeNonceRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (mergeCandidate?.entry_id) {
+            mergeNonceRef.current =
+                globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+        }
+    }, [mergeCandidate?.entry_id]);
+
     // Multi-photo upload state
     const [photos, setPhotos] = useState<PhotoSlot[]>([]);
     const uploadGenRefs = useRef(new Map<string, number>());
@@ -298,7 +334,7 @@ export default function CreateEntryScreen() {
     }, []);
 
     const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photos.some(p => p.uploading);
-    const isSubmitting = createEntry.isPending || startRound.isPending;
+    const isSubmitting = createEntry.isPending || startRound.isPending || createEntryWithMerge.isPending;
 
     // Device location for search bias
     const [deviceLocation, setDeviceLocation] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -511,6 +547,70 @@ export default function CreateEntryScreen() {
             addPhotoSlot(result.assets[0].uri);
         }
     };
+
+    // ── TICKET-044: merge handler ─────────────────────────────────────────────
+    // Tapping [merge] on the in-flow card commits B's entry AND binds both
+    // entries to a new merged round atomically. On round_conflict / fall-back,
+    // the entry still saves as solo and a toast tells the user.
+
+    const handleMerge = useCallback(async () => {
+        if (!canSubmit) return;
+        if (!mergeCandidate || !mergeTableId || !mergeRestaurantId) return;
+        if (!user?.id) return;
+
+        const restaurantData = selectedPlace
+            ? {
+                external_id: selectedPlace.id,
+                name: selectedPlace.name,
+                location: selectedPlace.formattedAddress
+                    ? { address: selectedPlace.formattedAddress }
+                    : undefined,
+                latitude: selectedPlace.latitude ?? undefined,
+                longitude: selectedPlace.longitude ?? undefined,
+                photoReference: selectedPlace.photoReference ?? undefined,
+                photoAttributionHtml: selectedPlace.photoAttributionHtml,
+            }
+            : null;
+
+        const ratingValue = Math.round(rating * 2) / 2;
+        const photoUrls = photos.filter(p => p.publicUrl !== null).map(p => p.publicUrl as string);
+        const nonce =
+            mergeNonceRef.current ??
+            (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+
+        try {
+            const result = await createEntryWithMerge.mutateAsync({
+                entry_a_id: mergeCandidate.entry_id,
+                table_id: mergeTableId,
+                restaurant_id: mergeRestaurantId,
+                visited_at: visitedAt.toISOString(),
+                client_nonce: nonce,
+                rating: ratingValue,
+                content: notes.trim() || null,
+                dish_description: dish.trim() || null,
+                ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
+                ...(restaurantData ? { restaurant: restaurantData } : {}),
+            });
+            if (result.merge_outcome === 'merged') {
+                toast.show('became a round.');
+            }
+            // 'conflict_fell_back' / 'solo' toast is fired by useCreateEntryWithMerge.
+            setPhotos([]);
+            router.back();
+        } catch (e: any) {
+            Alert.alert('Error', e?.message ?? 'Could not save entry');
+        }
+    }, [
+        canSubmit, mergeCandidate, mergeTableId, mergeRestaurantId, user?.id,
+        selectedPlace, rating, photos, notes, dish, visitedAt,
+        createEntryWithMerge, toast, router,
+    ]);
+
+    const handleSeparate = useCallback(() => {
+        if (mergeCandidate?.entry_id) {
+            setSeparatedCandidateId(mergeCandidate.entry_id);
+        }
+    }, [mergeCandidate?.entry_id]);
 
     // ── Submit ────────────────────────────────────────────────────────────
 
@@ -819,6 +919,21 @@ export default function CreateEntryScreen() {
                                     })}
                                 </View>
                             ) : null}
+                        </View>
+                    ) : null}
+
+                    {/* TICKET-044: in-flow merge card (Trigger B).
+                        Renders only when restaurant_id + visited_at + single Table
+                        are set AND a candidate matches. Hidden in Round mode. */}
+                    {!showSearch && postMode !== 'round' && showMergeCard && mergeCandidate ? (
+                        <View style={{ marginTop: Spacing.lg }}>
+                            <MergeCandidateCard
+                                candidate={mergeCandidate}
+                                onMerge={handleMerge}
+                                onSeparate={handleSeparate}
+                                loading={isSubmitting}
+                                palette={palette}
+                            />
                         </View>
                     ) : null}
 

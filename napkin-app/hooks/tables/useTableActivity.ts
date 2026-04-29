@@ -49,7 +49,8 @@ export interface TableNightActivity {
     id: string;
     restaurant_id: string;
     host_user_id: string;
-    status: string;
+    /** Null for merged rounds (kind='merged', status=NULL). Live rounds: 'rating' | 'revealed' | 'closed'. */
+    status: string | null;
     created_at: string;
     revealed_at: string | null;
     is_async: boolean;
@@ -59,6 +60,13 @@ export interface TableNightActivity {
     comment_count?: number;
     top_emojis?: Array<{ emoji: string; count: number; last_reacted_at: string }>;
     my_reactions?: string[];
+    /**
+     * Round subtype discriminator (TICKET-044).
+     * 'live'   = Round-Mode (table_nights state machine: start/rate/reveal/recap).
+     * 'merged' = two solo entries bound together retroactively.
+     * Undefined for rows pre-dating TICKET-044 (treat as 'live').
+     */
+    round_kind?: 'live' | 'merged';
     restaurants: {
         id: string;
         name: string;
@@ -68,10 +76,13 @@ export interface TableNightActivity {
     };
     participants: {
         user_id: string;
+        display_name?: string;
+        avatar_url?: string | null;
         rating: number | null;
         notes: string | null;
         profiles: {
             display_name: string;
+            avatar_url?: string | null;
         };
     }[];
 }

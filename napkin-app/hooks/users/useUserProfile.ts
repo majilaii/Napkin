@@ -105,6 +105,21 @@ export type DiaryEntryRow = {
     note: string | null;
     visited_at: string;
     created_at: string;
+    /**
+     * TICKET-044 — merged-round discriminators.
+     * Present only when the diary entry is part of a merged round (self-view).
+     * Undefined for plain solo entries and public-profile diary (Tables are private).
+     */
+    round_kind?: 'merged';
+    round_id?: string | null;
+    round_participants?: Array<{
+        user_id: string;
+        display_name: string;
+        avatar_url: string | null;
+        rating: number | null;
+        notes: string | null;
+    }>;
+    round_average_rating?: number | null;
 };
 
 export type UserProfileData = {

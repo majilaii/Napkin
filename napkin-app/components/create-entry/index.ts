@@ -8,3 +8,4 @@ export { TableChipsRow } from './TableChipsRow';
 export type { TableChip } from './TableChipsRow';
 export { DateChip } from './DateChip';
 export { PublicVisibilityChip } from './PublicVisibilityChip';
+export { MergeCandidateCard } from './MergeCandidateCard';

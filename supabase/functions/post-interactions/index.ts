@@ -186,13 +186,18 @@ serve(async (req) => {
         }
 
         // ── Helper: validate round is revealed (for table_night targets) ────────
+        // TICKET-044: merged rounds (kind='merged', status=NULL) are always "revealed"
+        // from an interaction standpoint — they were formed retroactively from final logs.
         async function validateRoundRevealed(targetId: string): Promise<boolean> {
             const { data } = await supabase
                 .from('table_nights')
-                .select('status')
+                .select('status, kind')
                 .eq('id', targetId)
                 .single();
-            return data?.status === 'revealed' || data?.status === 'closed';
+            if (!data) return false;
+            // Merged rounds are always revealed (no pre-reveal phase)
+            if (data.kind === 'merged') return true;
+            return data.status === 'revealed' || data.status === 'closed';
         }
 
         // ── Helper: check public eligibility via SQL function ───────────────────

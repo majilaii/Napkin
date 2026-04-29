@@ -81,6 +81,22 @@ interface FeedSection {
     items: ActivityItem[];
 }
 
+// TICKET-044: receipt whisper for merged rounds.
+// Participant copy: "you and Clara's entries became a round." (when viewer is one of the two)
+// Non-participant copy: "Thomas and Clara's entries became a round."
+function buildMergedReceiptWhisper(item: TableNightActivity, viewerUserId: string | undefined): string | null {
+    const participants = item.participants ?? [];
+    if (participants.length < 2) return null;
+    const [p1, p2] = participants;
+    const viewerIsP1 = !!viewerUserId && p1.user_id === viewerUserId;
+    const viewerIsP2 = !!viewerUserId && p2.user_id === viewerUserId;
+    const name1 = p1.display_name ?? p1.profiles?.display_name ?? 'someone';
+    const name2 = p2.display_name ?? p2.profiles?.display_name ?? 'someone';
+    if (viewerIsP1) return `you and ${name2}'s entries became a round.`;
+    if (viewerIsP2) return `you and ${name1}'s entries became a round.`;
+    return `${name1} and ${name2}'s entries became a round.`;
+}
+
 // ── Screen ─────────────────────────────────────────────────────────────────
 
 export default function TablesScreen() {
@@ -715,6 +731,11 @@ export default function TablesScreen() {
                                                               palette={palette}
                                                               tableId={activeTable?.id}
                                                               lastSeenAt={lastSeenAt ?? null}
+                                                              receiptWhisper={
+                                                                  item.round_kind === 'merged'
+                                                                      ? buildMergedReceiptWhisper(item, user?.id)
+                                                                      : null
+                                                              }
                                                           />
                                                       );
                                                   }

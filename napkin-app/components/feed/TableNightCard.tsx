@@ -3,13 +3,16 @@
  * Reference: tables-screens.jsx → TRoundCard (newer wireframe bundle).
  *
  * Layout:
- *   [Photo 140px with dark "Round · {date}" pill top-left + unseen dot top-right]
+ *   [Receipt whisper — merged rounds only, above the card (TICKET-044)]
+ *   [Photo 200px with dark "Round · {date}" pill top-left + unseen dot top-right]
  *   [Content 14/16:
- *     Row: Name (italic serif 22pt) + sub (11pt muted)   Rating (24pt amber italic) + "N / N VOICES"
- *     FeedActionRow (after reveal)
+ *     Row: Name (italic serif 28pt) + sub (11pt muted)   Rating (24pt amber italic) + "N / N VOICES"
+ *     FeedActionRow (after reveal; always shown for merged rounds)
  *   ]
  *
  * Active live-round variant: terracotta pill w/ pulse dot, reactions disabled.
+ * Merged-round variant (TICKET-044): receipt whisper above; "merged · {date}" pill label;
+ *   skip LIVE status pill and rate CTA; action row always shown.
  *
  * The wireframes drop the avatar stack from the card body — the voices
  * label carries that weight. Member identity lives on the card detail view.
@@ -50,23 +53,36 @@ interface Props {
     tableId?: string;
     lastSeenAt?: string | null;
     chips?: string[];
+    /**
+     * TICKET-044: receipt whisper text for merged rounds.
+     * e.g. "you and Clara's entries became a round."
+     *      "Thomas and Clara's entries became a round."
+     * Rendered directly above the card in italic Newsreader.
+     * Supply from the parent feed renderer — computed once per ActivityItem.
+     * Permanent label, not a dismissible toast.
+     */
+    receiptWhisper?: string | null;
 }
 
-export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [] }: Props) {
+export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [], receiptWhisper }: Props) {
     const router = useRouter();
     const toggleReaction = useToggleReaction();
     const queryClient = useQueryClient();
 
-    const isActive = item.status === 'rating';
+    // TICKET-044: branch on round_kind for merged vs live.
+    // Undefined round_kind = pre-TICKET-044 row -> treat as live.
+    const isMerged = item.round_kind === 'merged';
+    const isActive = !isMerged && item.status === 'rating';
     const photoUrl = item.restaurants?.photo_url ?? null;
     const restaurantName = item.restaurants?.name ?? 'Unknown';
-    const sub = [item.restaurants?.city].filter(Boolean).join(' \u00B7 ');
+    const sub = [item.restaurants?.city].filter(Boolean).join(' · ');
 
     const sortDate = item.revealed_at ?? item.created_at;
     const dateLabel = formatShortDate(sortDate);
 
+    // Unseen dot: live rounds only (merged rounds have no unseen state).
     const isUnseen =
-        !isActive && (!lastSeenAt || (!!sortDate && sortDate > lastSeenAt));
+        !isActive && !isMerged && (!lastSeenAt || (!!sortDate && sortDate > lastSeenAt));
 
     const voiceTotal = item.participants?.length ?? 0;
     const voiceVoted =
@@ -103,141 +119,174 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [] 
     };
 
     return (
-        <Pressable
-            onPress={() =>
-                router.push({
-                    pathname: isActive ? '/table-night' : '/table-night-detail',
-                    params: { nightId: item.id },
-                })
-            }
-            onLongPress={handleLongPress}
-            delayLongPress={500}
-            style={({ pressed }) => ({ opacity: pressed ? 0.95 : 1 })}
-        >
-            <View
-                ref={cardRef}
-                style={[
-                    styles.card,
-                    {
-                        backgroundColor: palette.surfaceJournalLow,
+        <View>
+            {/* TICKET-044: Receipt whisper — permanent label for merged rounds.
+                "became a round." — lowercase past-tense, italic Newsreader, no emoji.
+                Data, not a toast: renders every time the card renders.
+                Only shown when isMerged and receiptWhisper is set by the parent. */}
+            {isMerged && !!receiptWhisper && (
+                <Text style={[styles.receiptWhisper, { color: palette.textMuted }]}>
+                    {receiptWhisper}
+                </Text>
+            )}
 
-                    },
-                ]}
+            <Pressable
+                onPress={() => {
+                    if (isMerged) {
+                        // Merged rounds open the detail view (same as revealed live rounds).
+                        router.push({
+                            pathname: '/table-night-detail',
+                            params: { nightId: item.id },
+                        });
+                    } else {
+                        router.push({
+                            pathname: isActive ? '/table-night' : '/table-night-detail',
+                            params: { nightId: item.id },
+                        });
+                    }
+                }}
+                onLongPress={handleLongPress}
+                delayLongPress={500}
+                style={({ pressed }) => ({ opacity: pressed ? 0.95 : 1 })}
             >
-                {/* Hero photo */}
-                <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
-                    {photoUrl ? (
-                        <Image
-                            source={{ uri: photoUrl }}
-                            style={StyleSheet.absoluteFill}
-                            resizeMode="cover"
-                        />
-                    ) : null}
+                <View
+                    ref={cardRef}
+                    style={[
+                        styles.card,
+                        {
+                            backgroundColor: palette.surfaceJournalLow,
+                        },
+                    ]}
+                >
+                    {/* Hero photo */}
+                    <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
+                        {photoUrl ? (
+                            <Image
+                                source={{ uri: photoUrl }}
+                                style={StyleSheet.absoluteFill}
+                                resizeMode="cover"
+                            />
+                        ) : null}
 
-                    {/* Pill top-left — dark caption, cream text */}
-                    <View
-                        style={[
-                            styles.heroPill,
-                            isActive
-                                ? { backgroundColor: palette.primary }
-                                : { backgroundColor: 'rgba(252,249,244,0.88)' },
-                        ]}
-                    >
-                        {isActive && <PulseDot size={6} color="#f6ecd9" />}
-                        <Text style={styles.heroPillText}>
-                            {isActive
-                                ? 'LIVE ROUND'
-                                : `Round \u00B7 ${dateLabel}`}
-                        </Text>
-                    </View>
-
-                    {/* Unseen dot top-right */}
-                    {isUnseen && (
+                        {/* Pill top-left */}
                         <View
                             style={[
-                                styles.unseenDot,
-                                { backgroundColor: palette.primary },
+                                styles.heroPill,
+                                isActive
+                                    ? { backgroundColor: palette.primary }
+                                    : { backgroundColor: 'rgba(252,249,244,0.88)' },
                             ]}
-                        />
-                    )}
-                </View>
-
-                {/* Content */}
-                <View style={styles.content}>
-                    <View style={styles.titleRow}>
-                        <View style={styles.titleLeft}>
-                            <Text
-                                style={[styles.name, { color: palette.text }]}
-                                numberOfLines={2}
-                            >
-                                {restaurantName}
+                        >
+                            {isActive && <PulseDot size={6} color="#f6ecd9" />}
+                            <Text style={styles.heroPillText}>
+                                {isActive
+                                    ? 'LIVE ROUND'
+                                    : isMerged
+                                        ? `merged · ${dateLabel}`
+                                        : `Round · ${dateLabel}`}
                             </Text>
-                            {sub ? (
-                                <Text
-                                    style={[styles.sub, { color: palette.textMuted }]}
-                                    numberOfLines={1}
-                                >
-                                    {sub}
-                                </Text>
-                            ) : null}
                         </View>
 
-                        {item.average_rating != null && (
-                            <View style={styles.ratingCol}>
-                                <Text style={[styles.ratingValue, { color: palette.tertiary }]}>
-                                    {item.average_rating.toFixed(1)}
-                                </Text>
-                                <Text style={[styles.voicesLabel, { color: palette.textMuted }]}>
-                                    {voiceTotal > 0
-                                        ? `${voiceVoted} / ${voiceTotal} VOICES`
-                                        : 'VOICES'}
-                                </Text>
-                            </View>
+                        {/* Unseen dot top-right — live rounds only */}
+                        {isUnseen && (
+                            <View
+                                style={[
+                                    styles.unseenDot,
+                                    { backgroundColor: palette.primary },
+                                ]}
+                            />
                         )}
                     </View>
 
-                    {/* Amber chips */}
-                    {chips.length > 0 && (
-                        <View style={styles.chipsRow}>
-                            {chips.map((c, i) => (
-                                <View key={i} style={[styles.chip, { backgroundColor: palette.tertiaryFixed }]}>
-                                    <Text style={[styles.chipText, { color: palette.amberInk }]}>{c}</Text>
+                    {/* Content */}
+                    <View style={styles.content}>
+                        <View style={styles.titleRow}>
+                            <View style={styles.titleLeft}>
+                                <Text
+                                    style={[styles.name, { color: palette.text }]}
+                                    numberOfLines={2}
+                                >
+                                    {restaurantName}
+                                </Text>
+                                {sub ? (
+                                    <Text
+                                        style={[styles.sub, { color: palette.textMuted }]}
+                                        numberOfLines={1}
+                                    >
+                                        {sub}
+                                    </Text>
+                                ) : null}
+                            </View>
+
+                            {item.average_rating != null && (
+                                <View style={styles.ratingCol}>
+                                    <Text style={[styles.ratingValue, { color: palette.tertiary }]}>
+                                        {item.average_rating.toFixed(1)}
+                                    </Text>
+                                    <Text style={[styles.voicesLabel, { color: palette.textMuted }]}>
+                                        {voiceTotal > 0
+                                            ? `${voiceVoted} / ${voiceTotal} VOICES`
+                                            : 'VOICES'}
+                                    </Text>
                                 </View>
-                            ))}
+                            )}
                         </View>
-                    )}
 
-                    {/* Action row — only after reveal */}
-                    {!isActive && (
-                        <View style={styles.actionRow}>
-                            <FeedActionRow
-                                targetType="table_night"
-                                targetId={item.id}
-                                topEmojis={item.top_emojis ?? []}
-                                reactionCount={item.reaction_count ?? 0}
-                                commentCount={item.comment_count ?? 0}
-                                myReactions={item.my_reactions ?? []}
-                                palette={palette}
-                                detailPathname="/table-night-detail"
-                                detailParams={{ nightId: item.id }}
-                                tableId={tableId}
-                            />
-                        </View>
-                    )}
+                        {/* Amber chips */}
+                        {chips.length > 0 && (
+                            <View style={styles.chipsRow}>
+                                {chips.map((c, i) => (
+                                    <View key={i} style={[styles.chip, { backgroundColor: palette.tertiaryFixed }]}>
+                                        <Text style={[styles.chipText, { color: palette.amberInk }]}>{c}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+
+                        {/* Action row:
+                            - Merged rounds: always shown (always "revealed").
+                            - Live rounds: shown after reveal, not while active/rating.
+                        */}
+                        {(!isActive || isMerged) && (
+                            <View style={styles.actionRow}>
+                                <FeedActionRow
+                                    targetType="table_night"
+                                    targetId={item.id}
+                                    topEmojis={item.top_emojis ?? []}
+                                    reactionCount={item.reaction_count ?? 0}
+                                    commentCount={item.comment_count ?? 0}
+                                    myReactions={item.my_reactions ?? []}
+                                    palette={palette}
+                                    detailPathname="/table-night-detail"
+                                    detailParams={{ nightId: item.id }}
+                                    tableId={tableId}
+                                />
+                            </View>
+                        )}
+                    </View>
                 </View>
-            </View>
 
-            <ReactionPicker
-                visible={!!pickerAnchor}
-                anchor={pickerAnchor}
-                onPick={handlePickEmoji}
-                onClose={() => setPickerAnchor(null)}
-            />
-        </Pressable>
+                <ReactionPicker
+                    visible={!!pickerAnchor}
+                    anchor={pickerAnchor}
+                    onPick={handlePickEmoji}
+                    onClose={() => setPickerAnchor(null)}
+                />
+            </Pressable>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
+    receiptWhisper: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        lineHeight: 18,
+        letterSpacing: -0.1,
+        paddingHorizontal: 4,
+        paddingBottom: 6,
+        // No leading icon, no emoji — copy only.
+    },
     card: {
         borderRadius: 24,
         overflow: 'hidden',
