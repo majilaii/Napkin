@@ -6,6 +6,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
+import { emitTableInvite, emitTopFourSwap } from '../_shared/notify.ts';
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -287,6 +288,17 @@ serve(async (req) => {
                 .insert({ table_id: targetTableId, member_id: target_user_id, role: 'member' });
 
             if (insertErr) throw insertErr;
+
+            // TICKET-048: best-effort table_invite notification to the new member.
+            try {
+                await emitTableInvite(supabase, {
+                    actorUserId: user.id,
+                    recipientUserId: target_user_id,
+                    tableId: targetTableId,
+                });
+            } catch (notifyErr) {
+                console.error('[notify] table_invite threw:', notifyErr);
+            }
 
             return new Response(
                 JSON.stringify({ data: { member_id: target_user_id, already_member: false } }),
@@ -675,12 +687,17 @@ serve(async (req) => {
                 }
             }
 
-            // Call the atomic RPC (all slots now have resolved restaurant_ids)
-            const { error: rpcError } = await supabase.rpc('fn_set_table_top_4', {
-                p_table_id: targetTableId,
-                p_actor_id: user.id,
-                p_slots: resolvedSlots,
-            });
+            // Call the atomic RPC (all slots now have resolved restaurant_ids).
+            // RPC returns the history rows it just inserted — used below for the
+            // top_four_swap notification fan-out (no-op-safe, race-safe, multi-slot-safe).
+            const { data: insertedHistoryRows, error: rpcError } = await supabase.rpc(
+                'fn_set_table_top_4',
+                {
+                    p_table_id: targetTableId,
+                    p_actor_id: user.id,
+                    p_slots: resolvedSlots,
+                },
+            );
 
             if (rpcError) {
                 if (rpcError.message?.includes('not a member')) {
@@ -770,6 +787,71 @@ serve(async (req) => {
                         : null,
                     created_at: h.created_at,
                 };
+            }
+
+            // TICKET-FOLLOWUP-A: top_four_swap producer fan-out.
+            // RPC returns ONLY the rows it just inserted (filtered by save_id),
+            // so this is no-op-safe (empty array → no notifications), race-safe
+            // (different actors get different save_ids), and multi-slot-safe
+            // (every changed slot is returned). Best-effort: failures log but
+            // don't fail the producing action.
+            try {
+                const insertedRows = (insertedHistoryRows ?? []) as Array<{
+                    position: number;
+                    actor_id: string;
+                    event_type: string;
+                    prev_restaurant_id: string | null;
+                    next_restaurant_id: string | null;
+                }>;
+
+                if (insertedRows.length > 0) {
+                    // Fetch other Table members (recipients) once, exclude actor.
+                    const { data: tmRows, error: tmErr } = await supabase
+                        .from('table_members')
+                        .select('member_id')
+                        .eq('table_id', targetTableId);
+                    if (tmErr) console.error('[notify] top_four_swap members lookup failed:', tmErr.message);
+
+                    const recipients = ((tmRows ?? []) as Array<{ member_id: string }>)
+                        .map(r => r.member_id);
+
+                    // Fetch restaurant names for all prev/next IDs in one batch.
+                    const allRestaurantIds = Array.from(new Set(
+                        insertedRows
+                            .flatMap(r => [r.prev_restaurant_id, r.next_restaurant_id])
+                            .filter((id): id is string => !!id),
+                    ));
+                    const nameById = new Map<string, string>();
+                    if (allRestaurantIds.length > 0) {
+                        const { data: rNames, error: rErr } = await supabase
+                            .from('restaurants')
+                            .select('id, name')
+                            .in('id', allRestaurantIds);
+                        if (rErr) console.error('[notify] top_four_swap restaurant names lookup failed:', rErr.message);
+                        for (const r of ((rNames ?? []) as Array<{ id: string; name: string }>)) {
+                            nameById.set(r.id, r.name);
+                        }
+                    }
+
+                    // One notification per inserted history row.
+                    for (const row of insertedRows) {
+                        const addedName = row.next_restaurant_id
+                            ? (nameById.get(row.next_restaurant_id) ?? '')
+                            : '';
+                        const removedName = row.prev_restaurant_id
+                            ? (nameById.get(row.prev_restaurant_id) ?? '')
+                            : '';
+                        await emitTopFourSwap(supabase, {
+                            actorUserId: user.id,
+                            recipientUserIds: recipients,
+                            tableId: targetTableId,
+                            addedName,
+                            removedName,
+                        });
+                    }
+                }
+            } catch (notifErr) {
+                console.error('[notify] top_four_swap fan-out threw:', notifErr);
             }
 
             // Suggested (same logic as top_four_get, post-save state)

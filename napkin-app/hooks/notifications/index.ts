@@ -3,12 +3,15 @@
  */
 export {
     useNotifications,
+    useUnreadCount,
     bucketFor,
     bucketLabel,
+    flattenPages,
     type NotifBucket,
     type Notification,
     type NotificationType,
-    type NotificationsPage,
+    type InboxExtras,
+    type InboxPage,
     type FriendLoggedNotification,
     type FriendPinnedNotification,
     type TopFourSwapNotification,
@@ -16,3 +19,6 @@ export {
     type ClaimCityNotification,
     type ReservationReminderNotification,
 } from './useNotifications';
+
+export { useMarkNotificationRead } from './useMarkNotificationRead';
+export { useMarkAllNotificationsRead } from './useMarkAllNotificationsRead';

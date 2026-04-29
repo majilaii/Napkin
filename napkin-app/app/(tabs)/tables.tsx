@@ -9,7 +9,7 @@
  * logic are unchanged.
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
     View,
     Text,
@@ -24,7 +24,7 @@ import { WishlistGrid } from '@/components/wishlist';
 import { AtlasCityIndex } from '@/components/atlas';
 import { useTableAtlas } from '@/hooks/tables/useTableAtlas';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -94,6 +94,15 @@ export default function TablesScreen() {
     const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'atlas'>('activity');
+
+    // Deep-link: notifications screen passes `selected` (tableId) when tapping a
+    // table_invite row. Auto-select the matching table on mount/focus.
+    const { selected: selectedTableId } = useLocalSearchParams<{ selected?: string }>();
+    useEffect(() => {
+        if (!selectedTableId || !tables) return;
+        const idx = tables.findIndex((t) => t.tables?.id === selectedTableId);
+        if (idx !== -1) setSelectedIndex(idx);
+    }, [selectedTableId, tables]);
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const hasMultipleTables = (tables?.length ?? 0) > 1;
     const [showTablePicker, setShowTablePicker] = useState(false);
