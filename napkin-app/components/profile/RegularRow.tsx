@@ -6,8 +6,9 @@
  * Matches canvas Artboard 5.
  */
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -21,6 +22,7 @@ interface Props {
 export function RegularRow({ regular }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const router = useRouter();
 
     const formatLastVisit = (ts: string | null): string => {
         if (!ts) return '';
@@ -36,7 +38,12 @@ export function RegularRow({ regular }: Props) {
         .join(' · ');
 
     return (
-        <View style={[styles.container, { borderBottomColor: palette.dividerSoft }]}>
+        <Pressable
+            onPress={() => router.push(`/restaurant/${regular.restaurant_id}` as any)}
+            style={({ pressed }) => [styles.container, { borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.92 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={`View ${regular.name}`}
+        >
             {/* Thumb */}
             <View style={[styles.thumb, { backgroundColor: palette.surfaceContainerHigh }]}>
                 {regular.photo_url ? (
@@ -86,7 +93,7 @@ export function RegularRow({ regular }: Props) {
             >
                 {`×${regular.visit_count}`}
             </Text>
-        </View>
+        </Pressable>
     );
 }
 

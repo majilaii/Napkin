@@ -6,8 +6,9 @@
  * Matches canvas Artboard 4.
  */
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -23,13 +24,19 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export function DiaryRow({ entry }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const router = useRouter();
 
     const d = new Date(entry.visited_at ?? entry.created_at);
     const day = d.getDate();
     const weekday = DAYS[d.getDay()];
 
     return (
-        <View style={[styles.container, { borderBottomColor: palette.dividerSoft }]}>
+        <Pressable
+            onPress={() => router.push({ pathname: '/entry-detail', params: { entryId: entry.entry_id } })}
+            style={({ pressed }) => [styles.container, { borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.92 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={`View entry for ${entry.restaurant_name}`}
+        >
             {/* Day rail */}
             <View style={styles.dayRail}>
                 <Text
@@ -84,7 +91,7 @@ export function DiaryRow({ entry }: Props) {
             {entry.rating != null && (
                 <Rating value={entry.rating} size={12} />
             )}
-        </View>
+        </Pressable>
     );
 }
 
