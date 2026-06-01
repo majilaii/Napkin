@@ -226,9 +226,12 @@ serve(async (req) => {
 
             let visitedRestaurants: any[] = [];
             if (tableIds.length > 0) {
+                // TICKET-043: disambiguate FK after entry_tables join was added.
+                // Two relationships now exist between entries and tables: legacy entries.table_id
+                // and entry_tables. PostgREST throws PGRST201 unless we name the FK explicitly.
                 const { data: entryRestaurants, error: entryErr } = await supabase
                     .from('entries')
-                    .select('restaurant_id, table_id, created_at, tables(name)')
+                    .select('restaurant_id, table_id, created_at, tables!entries_table_id_fkey(name)')
                     .in('table_id', tableIds)
                     .not('restaurant_id', 'is', null)
                     .order('created_at', { ascending: false });
@@ -594,9 +597,10 @@ serve(async (req) => {
                     candidateTableIds = [tableIdParam];
                 }
 
+                // TICKET-043: disambiguate FK (see search-action note above for context).
                 const { data: tableEntries, error: tableEntriesErr } = await supabase
                     .from('entries')
-                    .select('id, rating, table_id, user_id, visited_at, created_at, tables(id, name)')
+                    .select('id, rating, table_id, user_id, visited_at, created_at, tables!entries_table_id_fkey(id, name)')
                     .in('table_id', candidateTableIds)
                     .eq('restaurant_id', resolvedRestaurantId)
                     .not('rating', 'is', null)

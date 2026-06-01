@@ -514,6 +514,19 @@ export default function RestaurantScreen() {
                             <Text style={[styles.mutedItalic, { color: palette.textMuted }]}>
                                 Could not load visit history.
                             </Text>
+                            {__DEV__ ? (
+                                <Text
+                                    selectable
+                                    style={{
+                                        color: palette.textMuted,
+                                        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+                                        fontSize: 11,
+                                        marginTop: 8,
+                                    }}
+                                >
+                                    {(error as Error)?.message ?? String(error)}
+                                </Text>
+                            ) : null}
                         </View>
                     ) : null}
 
