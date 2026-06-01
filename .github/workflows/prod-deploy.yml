@@ -1,0 +1,174 @@
+name: Deploy to Production
+
+# Auto-deploys merged-to-main commits to production, then runs smoke tests.
+# If smoke fails, automatically opens a revert PR.
+#
+# This is Option 4 from the 2026-04-30 deploy doctrine review: no staging
+# (Supabase free-tier project cap), so the safety net is fast detection +
+# cheap revert. Trade-off: users may see ~30 sec of breakage between deploy
+# and revert merge. Acceptable while in friends-test phase. Revisit when
+# paying $25/mo for Supabase Pro becomes worth it (= real users).
+#
+# Triggered only on changes to migrations or edge functions — pure client
+# changes don't deploy here.
+#
+# Required repo secrets:
+#   - SUPABASE_ACCESS_TOKEN
+#   - SUPABASE_DB_PASSWORD            (prod password)
+#   - PROD_ANON_KEY                   (anon key for prod)
+#   - PROD_SMOKE_TEST_JWT             (long-lived test-user JWT on prod)
+#   - PROD_SMOKE_TEST_RESTAURANT_ID
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/functions/**'
+
+concurrency:
+  group: supabase-prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod:
+    name: Deploy to production + smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # needed to push the auto-revert branch
+      pull-requests: write  # needed to open the auto-revert PR
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Verify required secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PROD_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          PROD_SMOKE_TEST_JWT: ${{ secrets.PROD_SMOKE_TEST_JWT }}
+          PROD_SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+        run: |
+          missing=()
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROD_ANON_KEY PROD_SMOKE_TEST_JWT PROD_SMOKE_TEST_RESTAURANT_ID; do
+            if [[ -z "${!v:-}" ]]; then missing+=("$v"); fi
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Duplicate timestamp guard
+        run: bash scripts/check-migration-timestamps.sh
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - uses: denoland/setup-deno@v1
+        with:
+          deno-version: v1.x
+
+      - name: Link to prod project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref ftvmseaqwwlcxtdlvxxz --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Push migrations to prod
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          echo "## Migrations applied to PROD" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          supabase db push --linked --password "$SUPABASE_DB_PASSWORD" 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Identify changed edge functions (vs previous main commit)
+        id: changed-fns
+        run: |
+          changed=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/**' \
+            | awk -F/ '/^supabase\/functions\/[^_]/ {print $3}' \
+            | sort -u \
+            | grep -v '^$' || true)
+          if [[ -z "$changed" ]]; then
+            echo "fns=" >> "$GITHUB_OUTPUT"
+          else
+            echo "fns=$(echo $changed | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy changed edge functions to prod
+        if: steps.changed-fns.outputs.fns != ''
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          echo "## Edge functions deployed to PROD" >> "$GITHUB_STEP_SUMMARY"
+          for fn in ${{ steps.changed-fns.outputs.fns }}; do
+            echo "### $fn" >> "$GITHUB_STEP_SUMMARY"
+            supabase functions deploy "$fn" --project-ref ftvmseaqwwlcxtdlvxxz 2>&1 \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Smoke test prod
+        id: smoke
+        env:
+          SUPABASE_URL: https://ftvmseaqwwlcxtdlvxxz.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          SMOKE_TEST_JWT: ${{ secrets.PROD_SMOKE_TEST_JWT }}
+          SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+        run: |
+          echo "## Smoke test results (PROD)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          deno run --allow-env --allow-net scripts/smoke/edge-functions.ts 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # ── If smoke failed, automatically open a revert PR ──────────────────
+      # We do NOT auto-merge — you stay in the loop. But the diff is
+      # one-click ready, so MTTR is the time it takes you to read the email
+      # and click "Squash and merge".
+      - name: Open auto-revert PR on smoke failure
+        if: failure() && steps.smoke.conclusion == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BAD_SHA="${{ github.sha }}"
+          BAD_SHORT=$(echo "$BAD_SHA" | cut -c1-7)
+          BRANCH="auto-revert/${BAD_SHORT}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+
+          # Try -m 1 (merge commit case) first, fall back to plain revert.
+          if ! git revert --no-edit -m 1 "$BAD_SHA" 2>/dev/null; then
+            if ! git revert --no-edit "$BAD_SHA"; then
+              echo "::error::git revert failed — manual intervention required."
+              exit 1
+            fi
+          fi
+
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "🚨 Auto-revert: smoke tests failed on $BAD_SHORT" \
+            --body "Production smoke tests failed immediately after deploying \`$BAD_SHORT\`.
+
+This PR reverts that commit. **Review and merge ASAP** — every minute this stays open, users may be hitting errors.
+
+Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+After merging, investigate the smoke failure and ship a real fix on a new branch."
+
+      - name: Failure note
+        if: failure()
+        run: |
+          echo "::error::PROD deploy or smoke tests failed."
+          echo "::error::If smoke failed, an auto-revert PR has been opened — go merge it now."
+          echo "::error::If deploy failed (migrations / edge functions), prod may be in a partial state. Investigate the step output above."
