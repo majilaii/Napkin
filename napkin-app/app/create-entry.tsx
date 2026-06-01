@@ -336,14 +336,22 @@ export default function CreateEntryScreen() {
     const canSubmit = (selectedPlace !== null || query.trim().length > 0) && rating > 0 && !photos.some(p => p.uploading);
     const isSubmitting = createEntry.isPending || startRound.isPending || createEntryWithMerge.isPending;
 
-    // Device location for search bias
+    // Device location for search bias.
+    // Use getLastKnownPositionAsync() first — it returns instantly so the very first
+    // search has location bias. getCurrentPositionAsync() takes seconds and would race
+    // the user's typing, causing un-biased searches for nearby restaurants.
     const [deviceLocation, setDeviceLocation] = useState<{ latitude: number; longitude: number } | null>(null);
     useEffect(() => {
         (async () => {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') return;
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            setDeviceLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+            try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') return;
+                const loc = await Location.getLastKnownPositionAsync() ??
+                    await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                if (loc) setDeviceLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+            } catch {
+                // Location unavailable — search works fine without bias
+            }
         })();
     }, []);
 
@@ -368,7 +376,11 @@ export default function CreateEntryScreen() {
                 body: {
                     query: q,
                     limit: 5,
-                    ...(deviceLocation && { latitude: deviceLocation.latitude, longitude: deviceLocation.longitude }),
+                    ...(deviceLocation && {
+                        latitude: deviceLocation.latitude,
+                        longitude: deviceLocation.longitude,
+                        radius: 10000,
+                    }),
                 },
                 headers: session?.access_token
                     ? { Authorization: `Bearer ${session.access_token}` }

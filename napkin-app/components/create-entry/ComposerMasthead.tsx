@@ -16,6 +16,7 @@ interface Props {
     /** 0 = unrated; 0.5–5 in half-star steps */
     rating: number;
     onRatingChange: (value: number) => void;
+    /** When provided, renders a small "change" affordance that swaps the place. */
     onClearPlace?: () => void;
 }
 
@@ -27,19 +28,24 @@ export function ComposerMasthead({ restaurantName, rating, onRatingChange, onCle
         <View style={styles.wrapper}>
             {/* Restaurant masthead row */}
             <View style={styles.row}>
-                <Pressable
-                    onPress={onClearPlace}
-                    disabled={!onClearPlace}
-                    style={styles.nameContainer}
-                    accessibilityLabel={onClearPlace ? 'Change restaurant' : undefined}
-                >
+                <View style={styles.nameContainer}>
                     <Text
                         style={[styles.restaurantName, { color: palette.text }]}
                         numberOfLines={2}
                     >
                         {restaurantName}
                     </Text>
-                </Pressable>
+                    {onClearPlace ? (
+                        <Pressable
+                            onPress={onClearPlace}
+                            hitSlop={8}
+                            style={({ pressed }) => [styles.changeLink, { opacity: pressed ? 0.6 : 1 }]}
+                            accessibilityLabel="Change restaurant"
+                        >
+                            <Text style={[styles.changeText, { color: palette.textMuted }]}>change</Text>
+                        </Pressable>
+                    ) : null}
+                </View>
 
                 {/* Inline star row — baseline-aligned right */}
                 <View style={styles.starRow}>
@@ -91,6 +97,16 @@ const styles = StyleSheet.create({
         lineHeight: 32,
         letterSpacing: -0.4,
         fontWeight: '400',
+    },
+    changeLink: {
+        marginTop: 4,
+        alignSelf: 'flex-start',
+    },
+    changeText: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
     },
     starRow: {
         flexDirection: 'row',
