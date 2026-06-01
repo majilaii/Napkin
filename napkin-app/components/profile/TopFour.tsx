@@ -7,8 +7,9 @@
  * Partial fill: real posters for qualifying picks + dashed frames for remainder.
  */
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -22,6 +23,7 @@ interface Props {
 export function TopFour({ picks }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const router = useRouter();
 
     // Pad to 4 slots
     const slots: (TopPick | null)[] = [
@@ -37,7 +39,13 @@ export function TopFour({ picks }: Props) {
             <View style={styles.grid}>
                 {slots.map((pick, i) =>
                     pick ? (
-                        <View key={i} style={styles.cell}>
+                        <Pressable
+                            key={i}
+                            style={({ pressed }) => [styles.cell, { opacity: pressed ? 0.92 : 1 }]}
+                            onPress={() => router.push(`/restaurant/${pick.restaurant_id}` as any)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`View ${pick.name}`}
+                        >
                             {/* Poster */}
                             <View
                                 style={[
@@ -76,7 +84,7 @@ export function TopFour({ picks }: Props) {
                             >
                                 {pick.name}
                             </Text>
-                        </View>
+                        </Pressable>
                     ) : (
                         <View key={i} style={styles.cell}>
                             <View

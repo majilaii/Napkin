@@ -7,7 +7,7 @@
  * "SEE ALL" label taps to /regulars full-screen.
  */
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 
@@ -59,7 +59,7 @@ export function RegularsRail({ regulars, userId, showSeeAll = false }: Props) {
                     contentContainerStyle={styles.scrollContent}
                 >
                     {regulars.map((r) => (
-                        <RegularCard key={r.restaurant_id} regular={r} palette={palette} />
+                        <RegularCard key={r.restaurant_id} regular={r} palette={palette} router={router} />
                     ))}
                 </ScrollView>
             )}
@@ -67,7 +67,7 @@ export function RegularsRail({ regulars, userId, showSeeAll = false }: Props) {
     );
 }
 
-function RegularCard({ regular, palette }: { regular: RegularSummary; palette: any }) {
+function RegularCard({ regular, palette, router }: { regular: RegularSummary; palette: any; router: ReturnType<typeof useRouter> }) {
     const formatLastVisit = (ts: string | null): string => {
         if (!ts) return '';
         const d = new Date(ts);
@@ -75,7 +75,12 @@ function RegularCard({ regular, palette }: { regular: RegularSummary; palette: a
     };
 
     return (
-        <View style={[styles.card, { backgroundColor: palette.surfaceContainerLow, borderColor: palette.outlineVariant }]}>
+        <Pressable
+            onPress={() => router.push(`/restaurant/${regular.restaurant_id}` as any)}
+            style={({ pressed }) => [styles.card, { backgroundColor: palette.surfaceContainerLow, borderColor: palette.outlineVariant, opacity: pressed ? 0.92 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={`View ${regular.name}`}
+        >
             {/* Photo area */}
             <View style={[styles.cardPhoto, { backgroundColor: palette.surfaceContainerHigh }]}>
                 {regular.photo_url ? (
@@ -116,7 +121,7 @@ function RegularCard({ regular, palette }: { regular: RegularSummary; palette: a
                     </Text>
                 )}
             </View>
-        </View>
+        </Pressable>
     );
 }
 
