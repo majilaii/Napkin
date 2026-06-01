@@ -367,6 +367,59 @@ Workflow lives in `.kanban/`:
 
 Use the project slash commands: `/project:board`, `/project:spec TICKET-NNN`, `/project:start TICKET-NNN`, `/project:review`.
 
+## Deploy doctrine — auto-deploy with smoke + auto-revert (locked 2026-04-30)
+
+After three "could not load X" prod fires in a week (TICKET-043 PGRST201, etc.), the repo runs a smoke-tested auto-deploy with auto-revert on failure. **There is no staging environment** — Supabase free-tier project cap and unwillingness to pay $25/mo for Pro means staging-first is not on the table yet. Revisit when (a) the project has paying users, or (b) we hit Pro for any other reason (branching, larger DB).
+
+### How code reaches prod
+
+1. **Land changes on a `release/<date>-<tickets>` branch** and open a PR to `main`. PR review = the human gate.
+2. **Merge to main.** [`prod-deploy.yml`](.github/workflows/prod-deploy.yml) automatically:
+   - Runs the duplicate-timestamp guard.
+   - `supabase db push --linked` against prod.
+   - Deploys every edge function changed in this commit range.
+   - Runs `scripts/smoke/edge-functions.ts` against prod (HTTP 200 + shape sniff per critical endpoint).
+3. **If smoke fails**, the workflow automatically opens an auto-revert PR (`auto-revert/<sha>`). Go merge it. ETA from breakage to revert depends on how fast you click — design for under 5 minutes.
+4. **If smoke passes**, you're done.
+
+### Hard rules
+
+- **Never** run `supabase db push --linked` or `supabase functions deploy --project-ref ftvmseaqwwlcxtdlvxxz` from a laptop. The CI workflow is the only path to prod. Local laptop work goes against `supabase start` (local Docker stack) only.
+- **The smoke test list is sacred.** When a postmortem traces a fire to an endpoint not in the list, add it to the list as part of the fix. The list lives in [`scripts/smoke/edge-functions.ts`](scripts/smoke/edge-functions.ts).
+- **Hot-fix exception:** if prod is on fire and CI is also broken, you may direct-deploy to prod with a postmortem-required rule. Exactly one person (you) has that authority.
+- **Trade-off acknowledged:** smoke runs *after* deploy. Users may briefly hit errors before the auto-revert PR merges. This is the explicit cost of skipping a paid staging environment. Acceptable while in friends-test phase; revisit on first real users.
+
+### When to upgrade to staging-first
+
+The minute any of these is true, pay $25/mo for Supabase Pro and switch on Branching (or stand up a dedicated staging project):
+
+- Real users (anyone who'd churn over a 30-second outage)
+- More than ~3 prod-deploys per day
+- A second person committing to the repo
+
+## Migration blast-radius checklist (planner output, mandatory)
+
+PGRST201 — and every other "function passes, screen 500s" bug — comes from a migration changing the schema in a way that invalidates code nobody touched. The planner agent must produce this checklist for any ticket that includes a migration. Reviewers verify the checklist is complete; missing entries fail the review.
+
+For each schema change in the migration, the plan must list:
+
+1. **PostgREST embeds.** Grep every `supabase/functions/**` and `napkin-app/**` file for `.from('<table>').select('...joined_table(...)')`. List every site. Note for each: must be disambiguated with `!fk_name` syntax, or rewritten, or "no change needed because...".
+2. **Direct SQL queries.** Same grep against any `.rpc()` calls and any raw SQL in migrations that reference the changed objects.
+3. **RLS policies.** List every policy on the changed table OR any table that joins to it via SECURITY DEFINER helpers. Note which ones need a corresponding update.
+4. **Edge function contracts.** List every edge function whose request/response shape changes. Each must be redeployed in the same release.
+5. **TanStack Query keys + hooks.** List every queryKey and hook that consumes a changed shape. Each must update its type and any cache patches.
+6. **Optimistic patches.** If the new schema changes what the server returns, list every `onMutate` patch that synthesizes that shape — the synthesized shape must match.
+
+The checklist lives in the ticket's `## Notes / Blast Radius` section, written before the build phase. Builders treat it as a TODO list. Reviewers reject any PR where a listed file wasn't touched or wasn't explicitly justified.
+
+### PostgREST embed disambiguation rule
+
+If a table T has more than one foreign-key relationship to the same target table U (which happens whenever you add a join table that bridges T and U), every PostgREST embed `from('T').select('... U(...)')` MUST name the FK explicitly: `from('T').select('... U!T_<col>_fkey(...)')`. Otherwise PostgREST throws `PGRST201` at request time (HTTP 500).
+
+Example (TICKET-043 retrospective): adding `entry_tables` made every `entries → tables` embed ambiguous. Fix: `tables!entries_table_id_fkey(...)`.
+
+When a migration adds a join table, the blast-radius checklist (item 1 above) MUST list every existing `from('<existing_table>').select('... <other_existing_table>(...)')` site touching either side of the new join.
+
 ### Dual-review protocol
 
 For high-stakes work, every gated phase (spec, architecture, build) gets BOTH a Claude review and a Codex review. Two model architectures, independent failure modes — catches what a single reviewer misses. Single-reviewer is fine for routine adds.
