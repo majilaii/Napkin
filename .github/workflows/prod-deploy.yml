@@ -154,17 +154,20 @@ jobs:
 
           git push origin "$BRANCH"
 
+          BODY=$(printf '%s\n' \
+            "Production smoke tests failed immediately after deploying \`$BAD_SHORT\`." \
+            "" \
+            "This PR reverts that commit. **Review and merge ASAP** — every minute this stays open, users may be hitting errors." \
+            "" \
+            "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "" \
+            "After merging, investigate the smoke failure and ship a real fix on a new branch.")
+
           gh pr create \
             --base main \
             --head "$BRANCH" \
             --title "🚨 Auto-revert: smoke tests failed on $BAD_SHORT" \
-            --body "Production smoke tests failed immediately after deploying \`$BAD_SHORT\`.
-
-This PR reverts that commit. **Review and merge ASAP** — every minute this stays open, users may be hitting errors.
-
-Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-After merging, investigate the smoke failure and ship a real fix on a new branch."
+            --body "$BODY"
 
       - name: Failure note
         if: failure()
