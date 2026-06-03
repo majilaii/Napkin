@@ -583,19 +583,51 @@ async function handleVisionExtract(
 }
 
 /**
- * Async extract action (R1): called by table-shares after job creation.
- * Fetches the job, runs extraction, PATCHes import_jobs, propagates restaurant
- * to all destination rows (wishlist_items + table_shares for this job).
+ * Async extract action (R1 / CX-1 fix): called by table-shares after job creation.
+ *
+ * [CX-1/M-4 FIX] The internal call comes with the SERVICE-ROLE key as bearer.
+ * auth.getUser(serviceKey) does NOT return the job owner — it returns a JWT sub
+ * that is not the user, so `job.user_id !== user.id` always → 403 → jobs stuck pending.
+ *
+ * Fix: detect the internal call via a shared secret header (x-internal-secret)
+ * and load the job owner from the DB, skipping the user-JWT ownership check.
+ * The shared secret is INTERNAL_CALL_SECRET env var (service-role sets it on the
+ * outbound fetch; resolve-url validates it on receipt of the extract action).
+ * Fires: table-shares → resolve-url[action=extract]. Never user-facing.
+ *
+ * [M-3 FIX] Rate-limit check now runs at the top of this path.
+ * [CX-5 FIX] Uses fn_complete_import_job SECURITY DEFINER for transactional completion.
+ * [H-4 FIX] Computes real hashImage(bytes) for image saves, updates job.content_hash,
+ * and keys the extraction_cache on it (not path hash).
+ * [H-1 FIX] After wishlist save resolves, calls fn_detect_and_surface_float for
+ * each Table the saver belongs to.
  */
 async function handleAsyncExtract(
     supabase: any,
-    user: { id: string },
+    isInternalCall: boolean,
+    jobOwnerId: string,   // the saver's user_id — loaded from DB for internal calls
     jobId: string,
     supabaseUrl: string,
     supabaseAnonKey: string,
     authHeader: string,
 ): Promise<Response> {
-    // Fetch the job (verify it belongs to this user or is a service-role call)
+    // [M-3] Rate-limit check: count against the job owner's extraction bucket
+    const { data: rateRows } = await supabase.rpc(
+        'check_and_increment_rate_limit',
+        { p_user_id: jobOwnerId, p_bucket_key: 'resolve_content', p_max: 20, p_window_seconds: 3600 },
+    ).catch(() => ({ data: null }));
+    const rateRow = rateRows?.[0];
+    if (rateRow && !rateRow.allowed) {
+        // Never-block: land the save as needs_confirm, skip the model call (CODEX-M2 resolution)
+        await supabase.rpc('fn_complete_import_job', {
+            p_job_id: jobId,
+            p_status: 'needs_confirm',
+            p_restaurant_id: null,
+        }).catch((e: unknown) => console.error('fn_complete_import_job (rate-limit) error:', e));
+        return jsonResponse({ data: { job_id: jobId, status: 'needs_confirm', reason: 'rate_limited' } });
+    }
+
+    // Fetch the job
     const { data: job } = await supabase
         .from('import_jobs')
         .select('*')
@@ -605,9 +637,13 @@ async function handleAsyncExtract(
     if (!job) {
         return errorResponse('JOB_NOT_FOUND', 'Import job not found', 404);
     }
-    if (job.user_id !== user.id) {
+
+    // [CX-1 FIX] For internal calls, ownership is validated by loading the job owner from DB
+    // (jobOwnerId was set from job.user_id before this call). For user-facing calls, validate.
+    if (!isInternalCall && job.user_id !== jobOwnerId) {
         return errorResponse('FORBIDDEN', 'Not your import job', 403);
     }
+
     if (job.status !== 'pending') {
         // Already processed — idempotent
         return jsonResponse({ data: { job_id: jobId, status: job.status } });
@@ -621,38 +657,61 @@ async function handleAsyncExtract(
     let extracted: ExtractedCandidate | null = null;
     const modelId = Deno.env.get('EXTRACTION_MODEL') ?? 'claude-haiku-4-5-20251001';
 
-    // Try cache first
-    if (job.content_hash) {
-        extracted = await readExtractionCache(supabase, job.content_hash);
+    // [H-4 FIX] For image saves, compute the real bytes-based hash instead of path hash.
+    // The create_import placeholder was `path_${hash(path)}` which never dedupes images.
+    // Download bytes first, compute hashImage, update job.content_hash, then check cache.
+    let realImageHash: string | null = null;
+    let imageBytes: Uint8Array | null = null;
+
+    if (imagePath) {
+        const { data: imageData } = await supabase.storage
+            .from('import-uploads')
+            .download(imagePath);
+        if (imageData) {
+            imageBytes = new Uint8Array(await (imageData as Blob).arrayBuffer());
+            realImageHash = await hashImage(imageBytes);
+
+            // Update the job's content_hash to the real bytes-hash so future dedup works
+            if (realImageHash !== job.content_hash) {
+                await supabase
+                    .from('import_jobs')
+                    .update({ content_hash: realImageHash })
+                    .eq('job_id', jobId)
+                    .catch(() => null);
+                job.content_hash = realImageHash;
+            }
+        }
+    }
+
+    // Try cache first (using the real hash for images)
+    const cacheKey = realImageHash ?? job.content_hash;
+    if (cacheKey) {
+        extracted = await readExtractionCache(supabase, cacheKey);
     }
 
     if (!extracted) {
-        if (imagePath) {
-            // Vision path
-            const { data: imageData } = await supabase.storage
-                .from('import-uploads')
-                .download(imagePath);
-            if (imageData) {
-                const imageBytes = new Uint8Array(await (imageData as Blob).arrayBuffer());
-                const imageBase64 = btoa(String.fromCharCode(...imageBytes));
-                extracted = await extractFromVision(imageBase64, 'image/jpeg', captionText ?? undefined);
-            }
+        if (imageBytes) {
+            // Vision path — use the already-downloaded bytes
+            const imageBase64 = btoa(String.fromCharCode(...imageBytes));
+            extracted = await extractFromVision(imageBase64, 'image/jpeg', captionText ?? undefined);
         } else if (captionText || sourceUrl) {
-            // Text path
+            // Text path (prefer text before vision when both present — L-1 partial)
             const textInput = [captionText, sourceUrl].filter(Boolean).join('\n');
             extracted = await extractFromText(textInput);
         }
 
-        if (extracted && job.content_hash) {
-            await writeExtractionCache(supabase, job.content_hash, sourceUrl, extracted, modelId).catch(() => null);
+        if (extracted && cacheKey) {
+            await writeExtractionCache(supabase, cacheKey, sourceUrl, extracted, modelId).catch(() => null);
         }
     }
 
     if (!extracted) {
-        // Fail soft — mark job as needs_confirm, never fail the save
-        await supabase.from('import_jobs').update({ status: 'needs_confirm' }).eq('job_id', jobId);
-        await supabase.from('wishlist_items').update({ extraction_status: 'needs_confirm' }).eq('job_id', jobId);
-        await supabase.from('table_shares').update({ extraction_status: 'needs_confirm' }).eq('job_id', jobId);
+        // Fail soft — use transactional completion (CX-5)
+        await supabase.rpc('fn_complete_import_job', {
+            p_job_id: jobId,
+            p_status: 'needs_confirm',
+            p_restaurant_id: null,
+        }).catch((e: unknown) => console.error('fn_complete_import_job (no-extract) error:', e));
         return jsonResponse({ data: { job_id: jobId, status: 'needs_confirm' } });
     }
 
@@ -665,26 +724,61 @@ async function handleAsyncExtract(
 
     if (extracted.name) {
         const result = await upsertRestaurantFromExtracted(
-            supabase, extracted, user.id, supabaseUrl, supabaseAnonKey, authHeader, abortController.signal,
+            supabase, extracted, job.user_id, supabaseUrl, supabaseAnonKey, authHeader, abortController.signal,
         );
         restaurantId = result.restaurantId;
         finalStatus = result.confidence === 'low' || !restaurantId ? 'needs_confirm' : 'resolved';
     }
 
-    // Propagate to all destination rows
-    const updateData: Record<string, unknown> = {
-        status: finalStatus,
-        restaurant_id: restaurantId,
-        resolved_at: new Date().toISOString(),
-    };
-    await supabase.from('import_jobs').update(updateData).eq('job_id', jobId);
+    // [CX-5 FIX] Transactional job completion via SECURITY DEFINER RPC
+    const { error: completeErr } = await supabase.rpc('fn_complete_import_job', {
+        p_job_id: jobId,
+        p_status: finalStatus,
+        p_restaurant_id: restaurantId ?? null,
+    });
 
-    const destUpdate = {
-        restaurant_id: restaurantId,
-        extraction_status: finalStatus,
-    };
-    await supabase.from('wishlist_items').update(destUpdate).eq('job_id', jobId);
-    await supabase.from('table_shares').update(destUpdate).eq('job_id', jobId);
+    if (completeErr) {
+        console.error('fn_complete_import_job error:', completeErr);
+        // The save already landed — log but don't fail the response
+    }
+
+    // [H-1 FIX] After a successful resolved save, trigger float detection for each Table.
+    // Only trigger if restaurant is verified (restaurantId is non-null and status=resolved).
+    if (finalStatus === 'resolved' && restaurantId) {
+        try {
+            // Get the tables this job fanned into
+            const { data: shareRows } = await supabase
+                .from('table_shares')
+                .select('table_id')
+                .eq('job_id', jobId);
+
+            const tableIds = [...new Set(
+                (shareRows ?? []).map((s: { table_id: string }) => s.table_id).filter(Boolean)
+            )];
+
+            // Also check personal wishlist Tables via table_members
+            const { data: memberRows } = await supabase
+                .from('table_members')
+                .select('table_id')
+                .eq('member_id', job.user_id);
+
+            const allTableIds = [...new Set([
+                ...tableIds,
+                ...(memberRows ?? []).map((m: { table_id: string }) => m.table_id),
+            ])];
+
+            for (const tableId of allTableIds) {
+                await supabase.rpc('fn_detect_and_surface_float', {
+                    p_table_id: tableId,
+                    p_restaurant_id: restaurantId,
+                    p_window_days: 14,
+                    p_threshold: 3,
+                }).catch(() => null); // Float detection is best-effort
+            }
+        } catch {
+            // Float detection must never block or fail the save response
+        }
+    }
 
     return jsonResponse({
         data: {
@@ -744,11 +838,37 @@ serve(async (req) => {
         return errorResponse('INVALID_BODY', 'Request body must be JSON', 400);
     }
 
-    // ── Async extract action (TICKET-060 R1) ──────────────────────────────────
+    // ── Async extract action (TICKET-060 R1 / CX-1 fix) ─────────────────────
     // Called by table-shares after job creation to run extraction asynchronously.
-    // PATCHes the import_jobs row on completion and propagates restaurant to destinations.
+    // [CX-1 FIX] Detect internal service-role calls via x-internal-secret header.
+    // When called internally (service-role bearer), auth.getUser() does NOT return
+    // the job owner — we load the owner from import_jobs.user_id instead.
     if (body?.action === 'extract' && body?.job_id) {
-        return await handleAsyncExtract(supabase, user, body.job_id, supabaseUrl, supabaseAnonKey, authHeader);
+        const internalSecret = Deno.env.get('INTERNAL_CALL_SECRET') ?? '';
+        const callerSecret = req.headers.get('x-internal-secret') ?? '';
+        const isInternalCall = internalSecret.length > 0 && callerSecret === internalSecret;
+
+        let jobOwnerId: string;
+        if (isInternalCall) {
+            // Load the job owner from DB — the user JWT is the service-role key
+            const { data: jobRow } = await supabase
+                .from('import_jobs')
+                .select('user_id')
+                .eq('job_id', body.job_id)
+                .maybeSingle();
+            if (!jobRow?.user_id) {
+                return errorResponse('JOB_NOT_FOUND', 'Import job not found', 404);
+            }
+            jobOwnerId = jobRow.user_id as string;
+        } else {
+            // Normal user-facing call — use the authenticated user
+            jobOwnerId = user.id;
+        }
+
+        return await handleAsyncExtract(
+            supabase, isInternalCall, jobOwnerId,
+            body.job_id, supabaseUrl, supabaseAnonKey, authHeader,
+        );
     }
 
     const rawUrl = body?.url;

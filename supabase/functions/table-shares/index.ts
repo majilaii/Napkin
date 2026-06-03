@@ -242,23 +242,34 @@ async function handleCreateImport(
 
     // ── Fire async extract (non-awaited) — R1 ────────────────────────────────
     // The extract runs in the background; this request returns immediately.
-    // Status: pending → resolved | needs_confirm | failed via PATCHes from resolve-url.
+    // Status: pending → resolved | needs_confirm | failed via fn_complete_import_job.
+    //
+    // [CX-1 FIX] Pass x-internal-secret so resolve-url detects this as an internal
+    // call and skips the user-JWT ownership check (loads owner from import_jobs.user_id).
+    // The service-role key is NOT a valid user JWT; using it as bearer and then calling
+    // auth.getUser(serviceKey) never returns the job owner → would always 403.
     if (image_path || source_url) {
         const extractUrl = `${supabaseUrl}/functions/v1/resolve-url`;
-        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-        // Fire and forget — don't await
+        const localServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+        const internalSecret = Deno.env.get('INTERNAL_CALL_SECRET') ?? '';
+        // Fire and forget — observe failures by logging (not silently swallowing)
         fetch(extractUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                // Use the service role key for the extract action so it can PATCH the job
-                Authorization: `Bearer ${supabaseServiceKey}`,
+                Authorization: `Bearer ${localServiceKey}`,
                 apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+                'x-internal-secret': internalSecret,
             },
             body: JSON.stringify({
                 action: 'extract',
                 job_id: jobId,
             }),
+        }).then(async (res) => {
+            if (!res.ok) {
+                const body = await res.text().catch(() => '');
+                console.error(`Async extract failed (${res.status}): ${body}`);
+            }
         }).catch((e) => console.error('Async extract fire failed:', e));
     }
 

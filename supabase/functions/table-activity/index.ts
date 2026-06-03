@@ -478,20 +478,70 @@ serve(async (req) => {
                     // booking_url deliberately NOT included (L3/KEEP — TICKET-061 seam)
                 }]));
 
+                // [H-6 FIX] Fetch my_reactions for ALL share ids (top-level + digest children)
+                const allShareTargetIds = deduped;
+                const myShareReactionMap = new Map<string, string[]>();
+                if (allShareTargetIds.length > 0) {
+                    const { data: allShareRxns } = await supabase
+                        .from('post_reactions')
+                        .select('target_id, emoji')
+                        .eq('target_type', 'table_share')
+                        .eq('user_id', user.id)
+                        .eq('scope', 'table')
+                        .in('target_id', allShareTargetIds);
+                    for (const r of (allShareRxns ?? []) as { target_id: string; emoji: string }[]) {
+                        const list = myShareReactionMap.get(r.target_id) ?? [];
+                        list.push(r.emoji);
+                        myShareReactionMap.set(r.target_id, list);
+                    }
+                }
+
+                // Map hydrated DB row → SharedSaveCardProps (camelCase for client — H-6 fix)
+                const toSharedSaveCardProps = (child: any) => ({
+                    shareId: child.id,                              // camelCase (was missing; broke key + I'm-in)
+                    tableId: child.table_id ?? tableId,
+                    author: child.author ?? null,
+                    restaurant: child.restaurant ?? null,
+                    note: child.note ?? null,
+                    extractionStatus: child.extraction_status ?? null,
+                    reactionCount: child.reaction_count ?? 0,
+                    topEmojis: child.top_emojis ?? [],
+                    myReactions: myShareReactionMap.get(child.id) ?? [],
+                    createdAt: child.created_at,
+                });
+
                 for (const row of shareRpcRows) {
                     const payload = row.payload as any;
                     const childIds: string[] = payload?.child_ids ?? [];
                     const hydratedChildren = childIds.map((cid) => shareRowById.get(cid)).filter(Boolean);
                     if (row.kind === 'shared_save') {
                         const child = hydratedChildren[0];
-                        if (child) sharedSaveItems.push({ id: row.id, type: 'shared_save', sort_date: row.sort_date, ...child });
+                        if (child) {
+                            sharedSaveItems.push({
+                                id: row.id,
+                                type: 'shared_save',
+                                sort_date: row.sort_date,
+                                // [H-6 FIX] flatten into camelCase props the client type expects
+                                ...toSharedSaveCardProps(child),
+                                // also keep the snake_case fields that ActivityItem uses
+                                table_id: child.table_id ?? tableId,
+                                created_at: child.created_at,
+                                reaction_count: child.reaction_count ?? 0,
+                                top_emojis: child.top_emojis ?? [],
+                                my_reactions: myShareReactionMap.get(child.id) ?? [],
+                            });
+                        }
                     } else {
                         const repShare = hydratedChildren[0];
+                        // [H-6 FIX] childShares is mapped to SharedSaveCardProps[] not raw rows
+                        const childShares = hydratedChildren.map(toSharedSaveCardProps);
                         sharedSaveItems.push({
                             id: row.id, type: 'share_digest', sort_date: row.sort_date, table_id: tableId,
+                            created_at: repShare?.created_at ?? row.sort_date,
                             author: repShare?.author ?? null,
                             share_count: payload?.share_count ?? hydratedChildren.length,
-                            child_ids: childIds, children: hydratedChildren, // B3: real stable ids
+                            child_ids: childIds,
+                            childShares, // B3: real stable ids, mapped to SharedSaveCardProps
                         });
                     }
                 }
