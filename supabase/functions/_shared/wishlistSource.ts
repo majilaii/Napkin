@@ -8,7 +8,7 @@
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type WishlistSourceType = 'tiktok' | 'google_maps' | 'web';
+export type WishlistSourceType = 'tiktok' | 'google_maps' | 'web' | 'screenshot' | 'vision';
 
 export interface WishlistSourceTikTok {
     type: 'tiktok';
@@ -32,10 +32,25 @@ export interface WishlistSourceWeb {
     title?: string;
 }
 
+export interface WishlistSourceScreenshot {
+    type: 'screenshot';
+    upload_path: string;
+    caption?: string;
+}
+
+export interface WishlistSourceVision {
+    type: 'vision';
+    source_url?: string;
+    upload_path?: string;
+    caption?: string;
+}
+
 export type WishlistSource =
     | WishlistSourceTikTok
     | WishlistSourceGoogleMaps
-    | WishlistSourceWeb;
+    | WishlistSourceWeb
+    | WishlistSourceScreenshot
+    | WishlistSourceVision;
 
 // ── Validator ─────────────────────────────────────────────────────────────────
 
@@ -63,11 +78,48 @@ export function validateWishlistSource(
     if (typeof raw['type'] !== 'string') {
         return { ok: false, reason: 'missing_type' };
     }
-    if (typeof raw['url'] !== 'string' || raw['url'].trim() === '') {
+
+    // url is required for url-sourced types; optional for screenshot/vision
+    const type = raw['type'];
+    const urlRequired = type !== 'screenshot' && type !== 'vision';
+    if (urlRequired && (typeof raw['url'] !== 'string' || raw['url'].trim() === '')) {
         return { ok: false, reason: 'missing_url' };
     }
 
-    const type = raw['type'];
+    if (type === 'screenshot') {
+        const whitelist = new Set(['type', 'upload_path', 'caption']);
+        const extraKeys = Object.keys(raw).filter((k) => !whitelist.has(k));
+        if (extraKeys.length > 0) {
+            return { ok: false, reason: 'extra_keys', extra_keys: extraKeys };
+        }
+        if (typeof raw['upload_path'] !== 'string' || raw['upload_path'].trim() === '') {
+            return { ok: false, reason: 'missing_upload_path' };
+        }
+        if ('caption' in raw && raw['caption'] !== undefined && typeof raw['caption'] !== 'string') {
+            return { ok: false, reason: 'invalid_field_type:caption' };
+        }
+        const source: WishlistSourceScreenshot = { type: 'screenshot', upload_path: raw['upload_path'] as string };
+        if (typeof raw['caption'] === 'string') source.caption = raw['caption'];
+        return { ok: true, source };
+    }
+
+    if (type === 'vision') {
+        const whitelist = new Set(['type', 'source_url', 'upload_path', 'caption']);
+        const extraKeys = Object.keys(raw).filter((k) => !whitelist.has(k));
+        if (extraKeys.length > 0) {
+            return { ok: false, reason: 'extra_keys', extra_keys: extraKeys };
+        }
+        for (const field of ['source_url', 'upload_path', 'caption'] as const) {
+            if (field in raw && raw[field] !== undefined && typeof raw[field] !== 'string') {
+                return { ok: false, reason: `invalid_field_type:${field}` };
+            }
+        }
+        const source: WishlistSourceVision = { type: 'vision' };
+        if (typeof raw['source_url'] === 'string') source.source_url = raw['source_url'];
+        if (typeof raw['upload_path'] === 'string') source.upload_path = raw['upload_path'];
+        if (typeof raw['caption'] === 'string') source.caption = raw['caption'];
+        return { ok: true, source };
+    }
 
     if (type === 'tiktok') {
         const whitelist = new Set(['type', 'url', 'thumbnail_url', 'author_handle', 'author_name', 'embed_product_id']);

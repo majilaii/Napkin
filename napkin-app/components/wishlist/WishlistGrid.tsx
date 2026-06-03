@@ -79,14 +79,17 @@ function PersonalGrid({ userId }: PersonalGridProps) {
 
     const renderItem = useCallback(({ item }: { item: PersonalWishlistItem }) => (
         <View style={styles.itemWrapper}>
-            <WishlistCard
-                mode="personal"
-                id={item.id}
-                note={item.note}
-                created_at={item.created_at}
-                restaurant={item.restaurant}
-                source={item.source}
-            />
+            {/* TICKET-060: skip pending rows (restaurant null until extraction resolves) */}
+            {item.restaurant ? (
+                <WishlistCard
+                    mode="personal"
+                    id={item.id}
+                    note={item.note}
+                    created_at={item.created_at}
+                    restaurant={item.restaurant}
+                    source={item.source}
+                />
+            ) : null}
         </View>
     ), []);
 

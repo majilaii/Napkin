@@ -13,6 +13,11 @@ export { ActiveRoundsShelf } from './ActiveRoundsShelf';
 export { FeedActionRow } from './FeedActionRow';
 export { ReactionPicker } from './ReactionPicker';
 
+// TICKET-060: multimodal import feed cards
+export { SharedSaveCard, type SharedSaveCardProps, type SharedSaveCardRestaurant } from './SharedSaveCard';
+export { ShareDigestCard, type ShareDigestCardProps } from './ShareDigestCard';
+export { RestaurantFloatCard, type RestaurantFloatCardProps, type FloatMember } from './RestaurantFloatCard';
+
 // Feed tab (cross-Table chronological feed)
 export { FeedHeader } from './FeedHeader';
 export { ScopePills, type FeedScope } from './ScopePills';

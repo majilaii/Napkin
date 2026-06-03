@@ -30,9 +30,10 @@ export function useMyTikTokSourceForRestaurant(
         const allItems = wishlist.data?.pages.flatMap((p) => p.data) ?? [];
 
         // Filter to rows matching this restaurant with a TikTok source
+        // TICKET-060: skip pending rows (restaurant may be null)
         const tiktokRows = allItems.filter(
             (item) =>
-                item.restaurant.id === restaurantId &&
+                item.restaurant?.id === restaurantId &&
                 item.source?.type === 'tiktok',
         );
 

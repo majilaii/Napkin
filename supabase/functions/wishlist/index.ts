@@ -177,6 +177,9 @@ serve(async (req) => {
                     note,
                     source,
                     created_at,
+                    job_id,
+                    extraction_status,
+                    deleted_at,
                     restaurant:restaurants (
                         id,
                         name,
@@ -187,10 +190,13 @@ serve(async (req) => {
                         cuisine,
                         google_rating,
                         price_level,
-                        external_id
+                        external_id,
+                        verification,
+                        created_by
                     )
                 `)
                 .eq('user_id', user.id)
+                .is('deleted_at', null)            // exclude soft-deleted rows
                 .order('created_at', { ascending: false })
                 .limit(limit + 1); // fetch one extra to determine if there's a next page
 
@@ -247,13 +253,14 @@ serve(async (req) => {
             // Fetch all wishlist items for members of this table, joined to restaurants.
             // NOTE: `source` is intentionally OMITTED here — it contains pasted URLs and
             // TikTok captions (user PII) that must not leak to tablemates. [ARCH-REVIEW-M3]
+            // TICKET-060 H4: filter to verified restaurants only (canonical read).
             const { data: wishlistRows, error: wishlistError } = await supabase
                 .from('wishlist_items')
                 .select(`
                     user_id,
                     restaurant_id,
                     created_at,
-                    restaurant:restaurants (
+                    restaurant:restaurants!inner (
                         id,
                         name,
                         address,
@@ -263,10 +270,14 @@ serve(async (req) => {
                         cuisine,
                         google_rating,
                         price_level,
-                        external_id
+                        external_id,
+                        verification
                     )
                 `)
                 .in('user_id', memberIds)
+                .is('deleted_at', null)
+                .not('restaurant_id', 'is', null)   // exclude pending async captures
+                .eq('restaurant.verification', 'verified')  // [TICKET-060 H4] verified only
                 .order('created_at', { ascending: false });
 
             if (wishlistError) throw wishlistError;

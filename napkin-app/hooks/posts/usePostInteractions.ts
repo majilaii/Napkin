@@ -72,7 +72,8 @@ export interface PostInteractionsData {
     counts: InteractionCounts;
 }
 
-export type TargetType = 'table_night' | 'entry';
+/** TICKET-060 B1: extended with 'table_share' for I'm-in reactions. */
+export type TargetType = 'table_night' | 'entry' | 'table_share';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

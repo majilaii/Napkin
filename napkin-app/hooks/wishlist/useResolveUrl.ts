@@ -13,7 +13,7 @@ import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type SourceType = 'tiktok' | 'google_maps' | 'web';
+type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'screenshot' | 'vision';
 type Confidence = 'exact' | 'high' | 'low';
 
 export interface ResolvedCandidate {
@@ -52,6 +52,12 @@ export interface ResolveUrlData {
     note_prefill: string;
     candidates: ResolvedCandidate[];
     partial_source: Omit<WishlistSourceTikTok, 'type' | 'url'> | null;
+    /** TICKET-060: true when the URL is Instagram-walled; client shows screenshot nudge. */
+    ig_nudge?: boolean;
+    /** TICKET-060: extraction confidence from vision path. */
+    extracted_confidence?: 'exact' | 'high' | 'low';
+    /** TICKET-060: whether this result needs confirmation. */
+    needs_confirm?: boolean;
 }
 
 export type ResolveUrlState = 'idle' | 'loading' | 'success' | 'error';
@@ -73,7 +79,12 @@ export function useResolveUrl() {
     const currentRequestIdRef = useRef<number>(0);
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    const resolve = useCallback(async (url: string) => {
+    const resolve = useCallback(async (
+        url: string,
+        /** TICKET-060: optional image_path for screenshot/vision path */
+        imagePath?: string,
+        caption?: string,
+    ) => {
         // Abort any in-flight request
         abortControllerRef.current?.abort();
         const controller = new AbortController();
@@ -88,7 +99,11 @@ export function useResolveUrl() {
 
         try {
             const result = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                body: { url },
+                body: {
+                    url: url || undefined,
+                    ...(imagePath ? { image_path: imagePath } : {}),
+                    ...(caption ? { caption } : {}),
+                },
                 signal: controller.signal,
             });
 

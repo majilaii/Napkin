@@ -24,9 +24,13 @@ export interface PersonalWishlistItem {
     id: string;
     note: string | null;
     created_at: string;
-    restaurant: WishlistRestaurant;
-    /** TikTok / google_maps / web source data captured at save time (TICKET-053). */
+    /** Null for pending async captures (restaurant not yet resolved). */
+    restaurant: WishlistRestaurant | null;
+    /** TikTok / google_maps / web / screenshot / vision source data (TICKET-053/060). */
     source: WishlistSource | null;
+    /** TICKET-060: async capture status from the linked import_jobs row. */
+    extraction_status?: 'pending' | 'resolved' | 'needs_confirm' | 'failed' | null;
+    job_id?: string | null;
 }
 
 export interface PersonalWishlistPage {
