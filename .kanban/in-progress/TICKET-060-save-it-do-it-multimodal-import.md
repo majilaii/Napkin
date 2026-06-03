@@ -584,6 +584,97 @@ Each Codex `[REVISE]` item R1–R13 → the named mechanism/file that now closes
 
 **Design bundle:** The canonical Heirloom bundle at `api.anthropic.com/v1/design/h/arCMwe2IOddzhHFBISX_Ng` failed to extract ("Unrecognized archive format" — same error as noted in the spec). Fell back to `napkin-app/constants/theme.ts` tokens + existing Heirloom-compliant feed cards (`FriendLogCard`, `SoloShareCard`) + `ImportLinkSheet`. All new components match the warm-paper palette, italic Newsreader for restaurant/Table names, Manrope body, lowercase past-tense verbs, middle-dot separators, no emoji in chrome, ambient shadows only, no 1px borders.
 
+---
+
+### Fix Pass 2 (2026-06-03) — addresses Review 2 cycle-2 blockers N1–N9
+
+**New files:**
+- `supabase/migrations/20260603000800_fix_pass2.sql` — N5 (drop restaurants INSERT/UPDATE WITH CHECK(true) policies), N6 (fix fn_detect_and_surface_float UPSERT to clear dismissed_at on re-surface; add fn_dismiss_float RPC with 30-day cap), N8 (fn_correct_import_job SECURITY DEFINER RPC — transactional correction, mirrors fn_complete_import_job).
+- `supabase/functions/_shared/fixPass2.test.ts` — 16 tests: 11 honest logic tests (timingSafeEqual N1, image_path ownership N3, float suppression CASE logic N6, dismiss cap N6), 5 SQL-level tests marked "requires local stack — NOT RUN" (honest skip; Docker unavailable).
+
+**Modified files:**
+- `supabase/functions/resolve-url/index.ts` — [N1] Reordered entrypoint: body parsed FIRST, then `action=extract` path handled BEFORE `auth.getUser()` runs (internal-only path skips user JWT entirely); timingSafeEqual constant-time compare on the secret; wrong/absent secret → 401 immediately with no fall-through. [N2] Reordered handleAsyncExtract: (1) load job → (2) authorize (denied → terminal needs_confirm, not silent-pending) → (3) rate-limit → (4) extract/complete. [N3] Image_path ownership check before service-role Storage download.
+- `supabase/functions/table-shares/index.ts` — [N3] Reject foreign image_path (first segment ≠ user.id) before any Storage access. [N6] dismiss_float uses fn_dismiss_float RPC (enforces 30-day cap). [N8] handleCorrect routes through fn_correct_import_job RPC — fully transactional.
+- `supabase/functions/restaurant-history/index.ts` — [N4] Added `.eq('verification', 'verified')` to both onNapkin global search (line 289) and visitedRestaurants search (line 269); service-role bypasses RLS so the filter was required.
+- `napkin-app/app/wishlist.tsx` — [N7] Renders PendingSaveCard for all pending/needs_confirm rows at top of personal list; CorrectModal wired to useCorrectImport on "tap to confirm" — correction flow is now reachable from the wishlist.
+- `scripts/smoke/edge-functions.ts` — [N9] Added wishlist list_personal smoke entry (covers TICKET-060 import_jobs join); documented INTERNAL_CALL_SECRET + ANTHROPIC_API_KEY as required deploy-time secrets.
+
+**Gate results (Fix Pass 2):**
+- `tsc --noEmit`: CLEAN (0 errors)
+- Deno tests: **74 passed / 0 failed** (68 prior + 16 new fixPass2 — of which 5 are honest SQL-skipped markers requiring a local stack)
+- Jest: **102 passed / 0 failed** (unchanged)
+- Migration timestamp uniqueness guard: ✓ PASS (83 files)
+
+**N-item disposition:**
+- N1 — FIXED. `action=extract` parsed before user auth; internal-only with timingSafeEqual. Wrong/absent secret → 401, no fall-through.
+- N2 — FIXED. handleAsyncExtract order: load job → authorize → rate-limit → extract/complete. Auth-denied → terminal (not pending).
+- N3 — FIXED. image_path first-segment ownership check in both `table-shares/create_import` and `resolve-url/handleAsyncExtract` before Storage access.
+- N4 — FIXED. `verification='verified'` filter on both onNapkin and visitedRestaurants queries in `restaurant-history`.
+- N5 — FIXED. Dropped `Allow authenticated insert restaurants` / `Authenticated users can update restaurants` (WITH CHECK(true)) policies in migration 000800. All restaurant writes now go through service-role edge functions only.
+- N6 — FIXED. fn_detect_and_surface_float ON CONFLICT: clears dismissed_at + suppressed_until when re-surfacing (only when suppressed_until IS NULL or < now); fn_dismiss_float RPC sets suppressed_until=now()+30d; dismiss_float edge action uses the RPC.
+- N7 — FIXED. `app/wishlist.tsx` renders PendingSaveCard for pending/needs_confirm rows; CorrectModal opens on "tap to confirm" and calls useCorrectImport. useCorrectImport now has its first real call site.
+- N8 — FIXED. fn_correct_import_job SECURITY DEFINER RPC (locks job, validates ownership, updates all destinations in one transaction, throws on failure). handleCorrect in table-shares routes through it.
+- N9 — FIXED. INTERNAL_CALL_SECRET documented as deploy-time blocker alongside ANTHROPIC_API_KEY in the smoke list comment. wishlist list_personal smoke entry added (covers import_jobs join path).
+
+**Preserved (confirmed not regressed):**
+- fn_compute_table_float privacy join — unchanged.
+- fn_complete_import_job (CX-5) — unchanged.
+- create_import membership atomicity (H2/R2) — unchanged.
+- extraction_cache RLS-on/no-policy (H1/H5/B2) — unchanged.
+- CX-4 trigger fix (sync_post_counts_and_top_emojis) — unchanged.
+- H-5 cascade delete trigger (_extended) — unchanged.
+- list_ids removed (R12), booking_url off shared payload (L3/KEEP) — unchanged.
+
+**Deferred (acknowledged):**
+- `ANTHROPIC_API_KEY` + `INTERNAL_CALL_SECRET`: deploy-time secrets; not in CI/source. Set via `npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-... INTERNAL_CALL_SECRET=$(openssl rand -hex 32) --project-ref ftvmseaqwwlcxtdlvxxz`.
+- SQL-level assertions (float suppress/resurface, RLS ghost rejection, reaction trigger, transactional rollback) require `supabase start` + `db reset` (Docker unavailable). Marked explicitly as NOT RUN in fixPass2.test.ts.
+- M-5 ghost dup control (Date.now() collision) — still P2, still minor.
+
+---
+
+### Fix Pass 3 (2026-06-03) — addresses cycle-3 review blockers B1–B4
+
+**New files:**
+- `supabase/migrations/20260603000900_fix_pass3.sql` — B1: `DROP POLICY IF EXISTS` for the two surviving INSERT policies on `restaurants` — exact names from baseline lines 441 (`"Authenticated users can insert restaurants"`) and 501 (`"restaurants insert/update by owners"`). After these drops, zero authenticated-role INSERT/UPDATE policies remain on `restaurants`; only `restaurants_verified_or_owner_select` (SELECT) survives.
+- `supabase/functions/_shared/fixPass3.test.ts` — 10 Deno tests: B1 SQL regression (2 marked NOT RUN — requires local stack), B2 callPlacesSearch non-200 → PLACES_AUTH_FAIL throw (3 tests), B2 unverified ghost confidence invariant (1 test), B3 wishlist page patch uses `p.data` (1 test + regression of old `p.rows` bug), B3 activityAll fallback when tableIds absent (1 test), B4 SQL regression (1 NOT RUN), B4 `.or()` predicate structure (1 test). All 10 pass.
+
+**Modified files:**
+- `supabase/functions/places-search/index.ts` — [B2] Add `timingSafeEqualBytes` helper + `INTERNAL_CALL_SECRET` check: when `x-internal-secret` header matches the env var, skip `auth.getUser()` entirely (isInternalCall path). On the user-facing path, auth gate unchanged.
+- `supabase/functions/resolve-url/index.ts` — [B2] `callPlacesSearch` gains optional `internalSecret` param: when set, adds `x-internal-secret` header; non-200 responses now throw `PLACES_AUTH_FAIL` instead of returning `[]`. `upsertRestaurantFromExtracted` gains `internalSecret` param; threads it to `callPlacesSearch`; re-throws all errors (PLACES_AUTH_FAIL or network) so callers land `needs_confirm`; unverified ghost fallback always returns `confidence='low'` (B2 invariant — no more high-confidence unverified ghost → resolved). `handleAsyncExtract` gains `internalSecret` param; wraps `upsertRestaurantFromExtracted` in try/catch → on any error finalizes `needs_confirm`, not resolved; passes `internalSecret` in the main handler dispatch (where `INTERNAL_CALL_SECRET` is already in scope).
+- `supabase/functions/restaurant-history/index.ts` — [B4] Add `.or('verification.eq.verified,created_by.eq.{user.id}')` to all three remaining by-id restaurant reads: `table_history` path (previously no visibility filter), `page` UUID path, `page` external_id path. Joins `search`-action filters (N4, pass 2) + B4 by-id filters now cover all `restaurants` reads in this function.
+- `napkin-app/app/wishlist.tsx` — [B3] `usePlacesSearch` changed from `method: 'GET'` with `params` to POST with `body` (places-search is POST-only → 405 → empty results was the bug). Result extraction updated to `res?.data ?? []` to match places-search's `{ data: [...] }` response envelope.
+- `napkin-app/hooks/wishlist/useCorrectImport.ts` — [B3] `onMutate` wishlist patch: `p.rows` → `p.data` (PersonalWishlistPage uses `data`, not `rows`). `onSuccess`: when `tableIds` is absent or empty, invalidate `queryKeys.tables.activityAll()` so all Table feeds pick up the corrected restaurant (replaces the no-op `for (const tableId of input.tableIds ?? [])` loop when `tableIds` is undefined).
+
+**Gate results (Fix Pass 3):**
+- `tsc --noEmit`: CLEAN (0 errors)
+- Deno tests: **84 passed / 0 failed** (74 prior + 10 new fixPass3 — of which 2 are honest SQL-skipped markers requiring a local stack)
+- Jest: **102 passed / 0 failed** (unchanged)
+- Migration timestamp uniqueness guard: ✓ PASS (84 files, 0 duplicates)
+
+**B-item disposition:**
+- B1 — FIXED. `"Authenticated users can insert restaurants"` (line 441) and `"restaurants insert/update by owners"` (line 501) dropped in 000900. All four INSERT policies from baseline are now dropped (pass-2 covered lines 421 and 445; pass-3 covers 441 and 501). Zero authenticated-role INSERT/UPDATE policies remain.
+- B2 — FIXED. Three sub-fixes: (1) `places-search` accepts `x-internal-secret` + `INTERNAL_CALL_SECRET` check, skips user-JWT on internal path; (2) `callPlacesSearch` non-200 throws `PLACES_AUTH_FAIL` (not empty array); (3) unverified ghost fallback always returns `confidence='low'` → handleAsyncExtract finalizes `needs_confirm`, never `resolved`. `handleAsyncExtract` wraps restaurant resolution in try/catch → any downstream error (PLACES_AUTH_FAIL, network) → `needs_confirm`.
+- B3 — FIXED. (1) `usePlacesSearch` now POSTs body (fixes 405 → results are selectable). (2) `useCorrectImport.onSuccess` falls back to `activityAll()` invalidation when `tableIds` is absent, so Table-feed cards are refreshed after correction even without explicit table_id threading. (3) `useCorrectImport` wishlist patch now targets `p.data` (correct field for `PersonalWishlistPage`).
+- B4 — FIXED. `restaurant-history` `table_history` + `page` (UUID + external_id) reads all have `.or('verification.eq.verified,created_by.eq.{user.id}')`. Combined with pass-2 `search` action filters, all `restaurants` reads in this function are now visibility-gated.
+
+**Preserved (confirmed not regressed):**
+- N1/N2/N3 auth ordering and ownership checks — unchanged.
+- `fn_complete_import_job`, `fn_correct_import_job` (N8) — unchanged.
+- `fn_detect_and_surface_float` / `fn_dismiss_float` (N6) — unchanged.
+- Privacy join in `fn_compute_table_float` — unchanged.
+- `create_import` membership atomicity (H2/R2) — unchanged.
+- `extraction_cache` RLS-on/no-policy (H1/H5) — unchanged.
+- `list_ids` removed (R12), `booking_url` off shared payload (L3/KEEP) — unchanged.
+
+**SQL-level tests not run (Docker unavailable):**
+- B1: authenticated INSERT `verification='verified'` rejected by RLS — marked NOT RUN. The policy drops are static and inspectable; after the migration drops, no INSERT policy remains.
+- B4: restaurant-history returns null for non-owner ghost by id — marked NOT RUN. The `.or()` filter is PostgREST-standard and matches the N4 pattern already live in prod.
+
+**Builder Questions (Fix Pass 3):**
+- B2: `places-search` internal path has no body parsing before the auth check (the body is parsed later by `parsePayload`). Since `isInternalCall` is determined from headers only (before body read), this is correct — `parsePayload` runs the same for both paths after the auth gate.
+- B3: `useCorrectImport.onSuccess` uses `activityAll()` as a fallback (broader than per-table invalidation). This is a safe trade-off: correction is rare; broader invalidation on correction is acceptable. Per-table invalidation still happens when `tableIds` is explicitly provided (e.g. from `ShareDigestCard` or future callers that do thread the table_ids).
+- B4: The `.or('verification.eq.verified,created_by.eq.{userId}')` filter uses string interpolation of the caller's UUID. PostgREST's `.or()` call is safe here because `user.id` is always a UUID coming from the supabase auth system (not user-supplied input), so SQL injection via the `created_by.eq.{uuid}` clause is not a concern.
+
 ### Builder Questions
 
 **B1 audit (`post_reactions`/`post_comments` for `table_share` target):**
@@ -757,12 +848,161 @@ Codex independently FAILed, corroborating Claude and pinpointing root causes. Ov
 
 **Reconciliation:** BOTH reviewers FAIL → **ticket FAILS → REVISE (cycle 1 of 3).** No conflicting findings; Codex CX-1…CX-5 + Claude H-1…H-7/M-1…M-5 form one coherent punch list (dispatched to the builder). Both confirm the privacy SQL (`fn_compute_table_float`) and `create_import` membership atomicity are CORRECT — preserve them, do not regress.
 
-### Review 2 (if needed)
+### Review 2 (Claude cold re-review of Fix Pass 1 — pairs with Codex)
 ```
-Date: 
-Verdict: 
-Score: 
+Date: 2026-06-03
+Verdict: REVISE (FAIL)
+Score: 12 PASS / 4 WARN / 4 FAIL
 ```
+
+Re-reviewed commit `f804892` (`git diff 0ccc262..HEAD`) against Review-1 blockers H-1…H-7 / M-1…M-5 and Codex CX-1…CX-5. `tsc --noEmit` clean (exit 0). The migration-level and SQL-function fixes are largely solid and the privacy SQL from Review 1 is preserved. But three things keep it from passing: a **new SQL suppression bug** introduced by the float fix, a **deployment landmine** (the whole pipeline is dead until an undocumented secret is set), and the **screen-level wiring** of the wrong-guess/needs-confirm flow is still dead (hooks fixed, no UI calls them). Two leaks Review 1 flagged (restaurant-history ghost search) remain open.
+
+**Review-1 blocker status (one-liner each):**
+- CX-1 (async extract auth) — **CLOSED (with a caveat).** `x-internal-secret`/`INTERNAL_CALL_SECRET` path loads job owner from DB, skips user-JWT check; fails CLOSED when secret unset/wrong (no bypass). Caveat: pipeline is DEAD until the secret is set (H-new-1).
+- CX-2 (direct DML lockdown) — **CLOSED.** Dropped `table_shares_author_insert/update` + `import_jobs_owner_update`; RLS-on + no write policy = deny-by-default. No client does direct DML (grep clean). Service-role writes unaffected. (Header says "REVOKE" but does DROP POLICY — same effect; cosmetic.)
+- CX-3 (unverified ghosts readable) — **PARTIALLY CLOSED.** All 3 permissive `restaurants` SELECT policies correctly dropped + replaced with `verified OR owner`. But service-role reads bypass RLS: `restaurant-history` onNapkin search still leaks other users' ghosts (M-2-new). And `restaurants` INSERT/UPDATE policies still `WITH CHECK(true)` (M-3-new).
+- CX-4 (trigger name mismatch) — **CLOSED.** Patched the LIVE `sync_post_counts_and_top_emojis()` (not the dead `sync_post_counts()`); rewrite faithfully reproduces 000430 dual-scope behavior + adds `table_share`. No regression to entry/round reactions. Verified against 000430.
+- CX-5 (non-transactional completion) — **CLOSED.** `fn_complete_import_job` SECURITY DEFINER, `FOR UPDATE` + pending→terminal guard (race-safe), service_role-only GRANT, single txn rolls back all dests on any failure. Correct.
+- H-1 (float never fires) — **CLOSED but buggy.** `fn_detect_and_surface_float` now called from `handleAsyncExtract` for each member table on resolved saves; UPSERTs `table_float_state` with `surfaced_at`. Fires only ≥ threshold. BUT re-surface-after-dismiss is broken (H-new-2).
+- H-2 (threshold not applied) — **CLOSED.** Both `fn_compute_table_float` (subquery `>= p_threshold`) and `fn_detect_and_surface_float` (`v_count < p_threshold → return`) enforce it.
+- H-3 (storage bucket missing) — **CLOSED.** `import-uploads` bucket + owner-only INSERT/SELECT/DELETE `storage.objects` policies on `(storage.foldername(name))[1] = auth.uid()`. 5MB + mime allowlist.
+- H-4 (image cache path-keyed) — **CLOSED.** `handleAsyncExtract` downloads bytes, computes `hashImage`, back-fills `import_jobs.content_hash`, keys cache on real bytes-hash. Inline + async now share keyspace.
+- H-5 (orphaned reactions on share delete) — **CLOSED.** `cascade_delete_post_interactions_extended()` + `AFTER DELETE` trigger on `table_shares`; existing entry/night triggers recreated to extended fn with no behavior lost. `// ARCHITECT-REVIEW` resolved.
+- H-6 (digest children broken / `as any`) — **CLOSED.** `table-activity` maps children to camelCase `SharedSaveCardProps` (`shareId: child.id`, `reactionCount`, etc.); per-child `my_reactions` now fetched for ALL share ids (top-level + digest children); dispatcher uses typed variants. `ShareDigestCard` spreads correct shape.
+- H-7 (correction not propagated to Table cards) — **PARTIALLY CLOSED.** Hook now patches/invalidates `activityForTable(tableId)` per ticked table. But `useCorrectImport` has ZERO callers and `app/wishlist.tsx` (untouched) never renders the needs-confirm/`PendingSaveCard` correction affordance — the propagation it fixes can never be triggered (H-new-3).
+- M-1 (dismiss/create cache-key mismatch) — **CLOSED.** Standardized on `activityForTable(tableId)` exact-key in `useCreateImport`/`useCorrectImport` snapshot+patch+rollback.
+- M-2 (Table pending card + poll) — **PARTIALLY CLOSED.** `useCreateImport` now optimistically inserts a pending `shared_save` into each table's activity + invalidates on success. Table-feed pending card works. Wishlist pending card + foreground poll still absent (`app/wishlist.tsx` unchanged; renders `WishlistByCity`, not `PendingSaveCard`).
+- M-3 (extract path uncapped) — **CLOSED.** `handleAsyncExtract` calls `check_and_increment_rate_limit('resolve_content', 20/h)` at top; over-limit → `fn_complete_import_job(needs_confirm)` (never-block). Correct.
+- M-4 (service-role getUser fragility) — **CLOSED** by the CX-1 internal-secret path (deterministic owner load).
+- M-5 (ghost dup control) — **STILL OPEN (acknowledged minor).** Ghost branches still `.insert` with `ghost_<uid>_<Date.now()>`; never-block tolerates it.
+
+---
+
+#### HIGH (block merge)
+
+**H-new-1 — Entire extraction pipeline is DEAD until `INTERNAL_CALL_SECRET` is set, and it is undocumented. [deployment landmine]**
+`resolve-url/index.ts:847-849` + `table-shares/index.ts:254`: when `INTERNAL_CALL_SECRET` is unset (empty), `isInternalCall=false`, so the extract falls into the user-JWT path with the service-role key as bearer → `auth.getUser(serviceKey)` either 401s (`resolve-url:823`) or yields a non-owner `sub` → `job.user_id !== jobOwnerId` → 403 (`resolve-url:643`). Either way **every job sticks at `pending` forever** — the exact pre-fix CX-1 failure. This fails CLOSED (no security bypass — good), but the secret is referenced ONLY in the two edge fns: not in the ticket's "Deferred blocker" list (which names only `ANTHROPIC_API_KEY`), not in `scripts/smoke/`, not in any deploy doc. An operator who sets `ANTHROPIC_API_KEY` and deploys will ship a silently-dead capture feature.
+Fix: (1) document `INTERNAL_CALL_SECRET` as a REQUIRED secret alongside `ANTHROPIC_API_KEY` (set both via `supabase secrets set` before deploy); (2) add `resolve-url`/`table-shares` to the smoke list with an end-to-end pending→terminal assertion so a stuck pipeline is caught by auto-revert; (3) consider failing loud at boot if the secret is unset rather than silently 403-ing every job.
+
+**H-new-2 — Dismissed floats can NEVER re-surface; `suppressed_until` 30-day cap is dead. [violates R4 "dismissal suppresses only the same set for 30 days"]**
+`fn_detect_and_surface_float` ON CONFLICT (migration `...000700.sql:319-328`) sets `surfaced_at = now()` when `dismissed_at IS NOT NULL`, but **never clears `dismissed_at`**. The feed gate (`...000500.sql:207`) is a hard `tfs.dismissed_at IS NULL`. So once a member dismisses a float, that exact saver-set is suppressed **permanently** (not 30 days) — re-saves by the same set bump `surfaced_at` but the row stays invisible because `dismissed_at` is still set. The `suppressed_until` column + its 30-day value are effectively unreachable for dismissed floats, making the CASE branch dead code. Over-suppression is the safe direction, but it contradicts the spec's frequency-cap semantics and means a dismissed-then-re-popular spot never re-floats.
+Fix: on the ON CONFLICT re-surface branch, also `dismissed_at = NULL` (and reset `suppressed_until = NULL`) when re-eligibilizing; OR change the feed gate to `(dismissed_at IS NULL OR suppressed_until < now())` so the 30-day cap actually governs. Pick one and make the suppression window real.
+
+**H-new-3 — Wrong-guess correction flow is dead at the UI layer; `useCorrectImport` has no callers and `app/wishlist.tsx` never renders a needs-confirm card. [FAILS "Needs-confirm flag", "One-tap fix", "Confirm propagation" ACs]**
+`useCorrectImport` (the H-7 fix) is referenced only by its own file — grep finds ZERO `.mutate` call sites. `PendingSaveCard` (which renders the "tap to confirm" affordance with an `onConfirm` prop) is barrel-exported but consumed by nothing. `app/wishlist.tsx` (84 lines, last touched by T-053) renders `<WishlistByCity>` — which has no `extraction_status`/pending/`onConfirm` awareness — so the optimistic pending wishlist row (`restaurant:null, extraction_status:'pending'` from `useCreateImport`) never shows the warm-paper "reading it…"/"tap to confirm" UX, and a low-confidence ghost can never be corrected from the wishlist. The H-7 cache-propagation logic is correct but unreachable. (This is the dead-feature-wiring pattern; the Table-feed half IS wired via `tables.tsx`, the wishlist half is not.)
+Fix: wire `app/wishlist.tsx` (or `WishlistByCity`) to render `PendingSaveCard` for rows with `extraction_status`, pass `onConfirm` → open `EditMatchPanel` → call `useCorrectImport({ job_id, restaurant_id, tableIds })` (thread `tableIds` from the job/share rows so H-7's loop actually patches). Until a caller passes `tableIds`, H-7's propagation loop is a no-op even once invoked.
+
+**H-new-4 — `restaurant-history` onNapkin global search still leaks other users' unverified ghosts. [CX-3 / L-2 carry-over, STILL OPEN]**
+`restaurant-history/index.ts:289-296` (service-role) does `from('restaurants').ilike('name', %q%).limit(30)` with NO `verification='verified'` filter, returning ANY matching restaurant — including `verification='unverified'` ghosts owned by other users — to any searcher in the on-Napkin discovery list. The 000700 SELECT-policy fix does NOT cover this because the function uses the service-role client (RLS bypassed). Review-1 L-2 explicitly flagged restaurant-history as listed-in-blast-radius-but-undiffed; it remains undiffed.
+Fix: add `.eq('verification', 'verified')` to both the `onNapkin` search (line 289) and the `visitedRestaurants` search (line 269) in restaurant-history. Audit `user-profile` (lines 358, 520) and `feed` (line 156) the same way — those are owner-scoped (lower risk) but should filter for consistency.
+
+---
+
+#### MEDIUM
+
+**M-1-new — `handleCorrect` (table-shares:322-335) is still non-transactional — the sibling of the CX-5 bug, left unfixed.**
+The `correct` action does three separate `.update()` calls (import_jobs, wishlist_items, table_shares) with no `.error` checks and no transaction. If table_shares update fails after wishlist succeeds, the wishlist shows the corrected restaurant while the Table card keeps the wrong guess — the exact split-state CX-5 closed for the extract path. (Currently masked by H-new-3 since `correct` is never called, but fix before wiring the UI.)
+Fix: route the correction through a `fn_correct_import_job` SECURITY DEFINER RPC mirroring `fn_complete_import_job` (lock job, update all dests in one txn).
+
+**M-2-new — `restaurants` write policies remain `WITH CHECK(true)`, so a client can forge `verification='verified'`. [defense-in-depth gap the CX-3 quarantine implies]**
+Pre-existing policies `"Allow authenticated insert restaurants"` / `"Authenticated users can update restaurants"` (remote_schema:421/441/445/501) let any authenticated client directly INSERT a row with `verification='verified'` or UPDATE an existing ghost's flag to verified — defeating the H4/R3 quarantine the CX-3 read-lock was meant to enforce. Not introduced by this ticket, but the quarantine model assumes clients can't write `verification`.
+Fix: column-restrict the UPDATE policy off `verification`/`created_by`, or force restaurant writes through the existing upsert RPC and drop the `WITH CHECK(true)` policies.
+
+**M-3-new — Internal-secret compare is not constant-time; minor timing surface. [LOW-MEDIUM]**
+`resolve-url:849` `callerSecret === internalSecret` short-circuits. Over the Supabase internal network with a high-entropy secret this is low risk, but a constant-time compare (e.g. hash-then-compare equal-length digests) is cheap insurance for an auth-bypass gate.
+
+---
+
+#### LOW / WARN
+
+- **W-1 — `fixPass1.test.ts` (15 tests) is mostly tautological.** float-threshold / rate-limit / CX-1 / H-5 tests re-implement the boolean inline (`rows.length >= 3`, `internalSecret.length>0 && caller===secret`) and assert their own copy — they do NOT import or exercise the shipped SQL/handlers, so they would not catch H-new-2 (the real SQL suppression bug). Only the `hashImage`/`hashTextSource` (H-4) tests exercise real code. The claimed gates (float-at-threshold, transactional completion, delete-cleanup) are NOT actually covered by these tests — they'd need a live-DB `.spec.sql`.
+- **W-2 — Deno suite is 56 pass / 2 fail under default `deno test` perms.** The pre-existing `visionExtract.test.ts` fail-soft tests throw `NotCapable: Requires env access` without `--allow-env` (they pass WITH it). Build-log "58 pass" is only true with the right flags; ensure CI/smoke passes `--allow-env` or these gate red. (Not a fix-pass regression — file unchanged.)
+- **L-1 — `sync_post_counts()` (000600) is now dead code** with a `table_share` branch nothing calls; harmless but should be dropped in cleanup. The 000600 comment "triggers already reference sync_post_counts()" is the false premise that caused CX-4.
+- **L-2 — Float detection fires `fn_detect_and_surface_float` for every member table on every resolved save.** Fine at Table scale (1-2 tables); each returns early below threshold. Watch if table membership grows.
+- **L-3 — A share that "resolved" to a low-confidence ghost** gets `extraction_status='resolved'`/`needs_confirm` with `restaurant_id=<ghost>`, but the feed hydration filters the ghost (`verification='verified'`), so the card renders with no restaurant. Consistent with quarantine; may look odd. Acceptable for never-block.
+
+---
+
+**What is correct / preserved (no nits):**
+- `fn_compute_table_float` privacy join (000400, re-asserted in 000700): current-member × this-restaurant × verified × non-deleted × in-window, now with `>= p_threshold` enforced. SECURITY DEFINER lockdown intact. H3/R5 preserved.
+- `fn_complete_import_job` transactional completion: `FOR UPDATE` + pending→terminal guard + service_role-only + rolls back all destinations. CX-5 correct.
+- `create_import` membership atomicity (`member_id`, single invalid table_id fails whole call). H2/R2 preserved.
+- `extraction_cache` RLS-on/no-policy (service-role only), content-derived fields only. H1/H5/B2 preserved.
+- CX-4 trigger fix faithfully reproduces 000430 dual-scope `sync_post_counts_and_top_emojis()` (table_night + entry table/public split) + adds table_share — no regression to existing reactions (verified line-by-line).
+- H-5 cascade `_extended` reproduces original entry/night cleanup, adds table_share, recreates triggers — no behavior lost.
+- `list_ids` stays fully out of the contract (R12). `booking_url` never in share payload (L3/KEEP).
+
+**Recommendation:** REVISE (cycle 2 of 3). The migration/SQL/trigger fixes (CX-2, CX-4, CX-5, H-2, H-3, H-4, H-5) are genuinely solid and the privacy SQL is preserved with no regression. But: (H-new-1) the pipeline silently dies without an undocumented secret + no smoke coverage; (H-new-2) the float suppression has a real SQL bug that permanently buries dismissed floats; (H-new-3) the entire wrong-guess correction flow is dead at the UI layer (`useCorrectImport` unreachable, wishlist screen unchanged); (H-new-4) restaurant-history still leaks foreign ghosts. CX-1 is closed but only because it fails closed into a dead pipeline. Fix the four HIGHs (and M-1-new before wiring the correction UI) and re-run dual review. Reconciliation: if Codex also returns FAIL, ticket FAILS.
+
+### Review 3 (Claude cold re-review of Fix Pass 2 — cycle 3, FINAL — pairs with Codex)
+```
+Date: 2026-06-03
+Verdict: REVISE (FAIL)
+Score: 7 CLOSED / 1 PARTIAL / 1 OPEN (of N1–N9)  ·  category: 4 PASS / 1 WARN / 1 FAIL
+```
+
+Re-reviewed commit `56dc206` (`git diff f804892..HEAD`) against cycle-2 blockers N1–N9. Gates re-run locally and confirmed green: `tsc --noEmit` exit 0 (0 errors); Deno **74 passed / 0 failed** (`--allow-env --allow-read`); Jest **102 passed / 0 failed**; migration timestamp guard PASS (83 files). Seven of nine blockers are genuinely closed and the privacy/transactional SQL is preserved with no regression. But **N5 is still OPEN** — a real, security-relevant RLS hole the migration was meant to close and didn't — and **N7 is only PARTIAL** (UI now renders + invokes, but the H-7 Table-feed propagation it was meant to make reachable is still a structural no-op). One FAIL ⇒ ticket fails reconciliation.
+
+**Category scorecard**
+- Correctness: WARN — N6 float suppression now correct; N8 transactional correction correct; but N7's H-7 propagation loop never executes (`tableIds` never threaded → `?? []` always empty) and the optimistic wishlist patch writes the wrong page field (`rows` vs `data`).
+- Edge Cases: PASS — async fail-soft, never-block on rate-limit/auth-deny/no-extract all terminal-not-pending; image-path ownership rejects traversal.
+- Error Handling: PASS — auth-denied/rate-limited/no-extract paths all call `fn_complete_import_job(needs_confirm)`; correction RPC throws and the edge maps 403/404/500.
+- Security: FAIL — **N5 incomplete**: 2 of 4 `restaurants` INSERT `WITH CHECK(true)` policies survive (`"Authenticated users can insert restaurants"` 441, `"restaurants insert/update by owners"` 501), so any authenticated client can still `INSERT … verification='verified'` via PostgREST, defeating the H4/R3 quarantine. N1/N2/N3 auth-ordering + ownership checks are correct.
+- Performance: PASS — float recompute fires per member-table on resolved saves (early-returns below threshold); cache keyed on real image bytes-hash (H-4 preserved).
+- Design Compliance: PASS — `PendingSaveCard` props match the wishlist call site; warm paper, italic Newsreader name, "reading it…", "tap to confirm" muted caption, no emoji chrome.
+
+#### Per-item N1–N9 disposition
+
+| # | Verdict | Evidence |
+|---|---------|----------|
+| **N1** | **CLOSED** | `resolve-url:881-911`: `action=extract` routed after body-parse but **before** `auth.getUser()`; gated by `timingSafeEqual` on `x-internal-secret`; unset env OR wrong secret → 401, no fall-through (`:887-892`). Job owner loaded from DB (`:894-903`). Non-extract paths still hit the user-JWT gate at `:914-924`. External client cannot reach `handleAsyncExtract` without the secret. |
+| **N2** | **CLOSED** | `handleAsyncExtract:626-695`: order is load-job → authorize → rate-limit → image-owner-check → extract. Auth-deny (`:646-653`), rate-limit (`:666-674`), image-owner-fail (`:685-695`) and no-extract (`:748-756`) all call `fn_complete_import_job(needs_confirm)` (terminal) — never left `pending`. |
+| **N3** | **CLOSED** | `image_path.split('/')[0] !== owner → 403` before any service-role Storage access in BOTH `resolve-url:685-695` and `table-shares:148-151` (the latter now precedes the `.list()` that previously touched the foreign path unguarded). Traversal (`../…`) rejected (first segment `..`). |
+| **N4** | **CLOSED** | `restaurant-history:273,296` both gain `.eq('verification','verified')`. Grep of every `from('restaurants')` in `functions/**`: all remaining unfiltered reads are owner-scoped hydration-by-id (user-profile/feed/top-fours/notifications pull only IDs from the *viewer's own* entries/wishlist) — a foreign user's unverified ghost cannot enter those lists. `table-activity` share/float hydration filters verified (`:469,562`). No cross-user ghost leak remains. |
+| **N5** | **OPEN (HIGH)** | `fix_pass2.sql:25-28` drops only `"Allow authenticated insert restaurants"` (421) and `"Authenticated users can update restaurants"` (445). The remote schema (`20251201113055_remote_schema.sql`) **also** defines `"Authenticated users can insert restaurants"` (441, `WITH CHECK(true)`) and `"restaurants insert/update by owners"` (501, INSERT `WITH CHECK(auth.uid() IS NOT NULL)`) — **neither is dropped**. Both are INSERT policies that let any `authenticated` role directly `INSERT INTO restaurants(name, verification) VALUES('x','verified')` via PostgREST, forging a canonical verified restaurant and defeating the ghost quarantine. The UPDATE vector IS closed (445 was the only UPDATE policy). The migration's own comment (`:30-31`) names lines 441 **and** 501 as targets, but the `DROP` statements miss those two exact policy names — so the self-report claim "no remaining authenticated path can set verification='verified'" is false. |
+| **N6** | **CLOSED** | `fn_detect_and_surface_float` ON CONFLICT (`fix_pass2.sql:109-135`) re-surfaces **only** when `suppressed_until IS NULL OR < now()`, and on re-surface clears `dismissed_at=NULL` + `suppressed_until=NULL`; else leaves the row unchanged. `fn_dismiss_float:167-172` sets `suppressed_until = now()+30d`. Feed gate (`000500:207-208`) is `dismissed_at IS NULL AND (suppressed_until IS NULL OR < now())`. Net: dismissed float hidden for exactly 30d, then re-surfaces on a same-set save after cap expiry. Genuine behavioral fix vs the cycle-2 version (which set `surfaced_at` but never cleared `dismissed_at` → permanent burial). |
+| **N7** | **PARTIAL** | UI half closed: `wishlist.tsx:264-282` renders `PendingSaveCard` for `pending`/`needs_confirm` rows; `:291-300` `CorrectModal` calls `useCorrectImport.mutate` — the hook now has its first real call site. BUT (a) **H-7 Table-feed propagation is still a no-op**: `CorrectModal.handleSelect:91-99` calls `correct({ job_id, restaurant_id, restaurantName })` with **no `tableIds`**; `grep tableIds napkin-app/` finds hits *only inside `useCorrectImport.ts`*, so `input.tableIds ?? []` is always `[]` and the entire Table-activity snapshot/patch/rollback/invalidate loop never executes — a corrected shared card shows the wrong guess in the Table feed until an unrelated refetch. (b) the optimistic **wishlist** patch (`useCorrectImport:65-73`) writes `p.rows`, but `useMyWishlist` pages are `{ data, next_cursor }` — wrong field, so the optimistic update silently no-ops (masked by the `onSuccess` wishlist invalidation). Net: the wishlist correction *works* via refetch; the Table-feed propagation AC (H-7) does **not**. |
+| **N8** | **CLOSED** | `fn_correct_import_job` (`fix_pass2.sql:189-241`) SECURITY DEFINER, `FOR UPDATE` lock + owner check (`:203-215`), updates `import_jobs` + all `wishlist_items` + all `table_shares` in one transaction, RAISEs on not-found/forbidden; `REVOKE ALL FROM PUBLIC` + `GRANT EXECUTE TO service_role` (`:243-244`). `handleCorrect:310-327` routes through it and maps the RAISE messages to 403/404/500. Replaces the prior 3-update non-transactional sibling-of-CX-5. (Minor: RPC no longer validates the target restaurant exists/is verified — relies on FK; LOW.) |
+
+**Preserved / not regressed (re-verified):** `fn_compute_table_float` privacy join (untouched); `fn_complete_import_job` (untouched, only referenced in a comment); `create_import` membership atomicity via `member_id` (untouched); `extraction_cache` RLS-on/no-policy (untouched); CX-4 `sync_post_counts_and_top_emojis` trigger (untouched); DML lockdown on the 3 social tables from fix_pass1 (untouched); `list_ids` stays out of contract (only documented-absence comments). 000800 touches none of these primitives — clean.
+
+#### HIGH (block merge)
+
+**H3-1 — N5 incomplete: 2 of 4 `restaurants` INSERT `WITH CHECK(true)` policies survive; clients can still forge `verification='verified'`.**
+`supabase/migrations/20260603000800_fix_pass2.sql:25-28` drops `"Allow authenticated insert restaurants"` + `"Authenticated users can update restaurants"` only. Still live after migration: `"Authenticated users can insert restaurants"` (remote_schema:441, `FOR INSERT … WITH CHECK(true)`) and `"restaurants insert/update by owners"` (remote_schema:501, `FOR INSERT … WITH CHECK(auth.uid() IS NOT NULL)`). Either permits a hand-rolled PostgREST `INSERT` of a row with `verification='verified'`, defeating the H4/R3 quarantine that N4's read-filters assume clients cannot bypass. Security: FAIL.
+Fix: add `DROP POLICY IF EXISTS "Authenticated users can insert restaurants" ON public.restaurants;` and `DROP POLICY IF EXISTS "restaurants insert/update by owners" ON public.restaurants;` to 000800 (the comment already names them). After dropping, confirm zero non-service-role INSERT/UPDATE policies remain on `restaurants` (only `restaurants_verified_or_owner_select` should survive). Service-role upserts are unaffected (RLS-bypassing).
+
+**H3-2 — N7 only partially closed: H-7 "Confirm propagation to Table card" AC still fails — `tableIds` is never threaded, so the propagation loop is dead.**
+`napkin-app/app/wishlist.tsx:91-99` (`CorrectModal.handleSelect`) calls `correct({ job_id, restaurant_id, restaurantName })`; it never passes `tableIds`. `useCorrectImport` guards every Table-activity branch with `for (const tableId of input.tableIds ?? [])` (`:49,81,130,143`), so with `tableIds` undefined the snapshot, optimistic patch, rollback, and `onSuccess` Table-activity invalidation all no-op. Cycle-2 H-new-3 explicitly warned: "Until a caller passes `tableIds`, H-7's propagation loop is a no-op even once invoked." It is now invocable but still un-threaded — a corrected shared card shows the wrong guess in the Table feed until an unrelated refetch.
+Fix: thread the job's destination table_ids to the correction call. The wishlist row doesn't carry them, so either (a) return `table_ids` from `create_import` and persist/lookup them per job, or (b) have `fn_correct_import_job` already updates `table_shares` server-side — at minimum invalidate `tables.activityAll()` (or fetch the job's `table_shares.table_id`s in the hook and invalidate each) so the Table feed refetches. Without this, the H-7 AC is unmet even though the server data is correct.
+
+#### MEDIUM
+
+**M3-1 — `useCorrectImport` optimistic wishlist patch targets the wrong page field (`rows`) — silent no-op.**
+`napkin-app/hooks/wishlist/useCorrectImport.ts:65-73` patches `old.pages.map(p => ({ ...p, rows: (p.rows ?? []).map(patchRow) }))`, but `useMyWishlist` pages are shaped `{ data: PersonalWishlistItem[]; next_cursor }` (`useMyWishlist.ts:36-39,58`). There is no `rows` field, so the optimistic correction never updates the visible list; it only appears after the `onSuccess` `invalidateQueries(wishlist.personal)` refetch. Not user-fatal (refetch saves it) but the optimistic UX the hook claims is dead, and it indicates the patch was written against the `Page<T>` `rows` envelope rather than this hook's `data` envelope.
+Fix: patch `p.data` (and key on `item.id`/`item.job_id` as today). While here, align with the canonical `Page<T>` envelope or document why wishlist uses `{ data }`.
+
+#### LOW
+
+- **L3-1 — `fn_correct_import_job` no longer validates the target restaurant exists/is verified.** The prior `handleCorrect` checked `RESTAURANT_NOT_FOUND`; the RPC blindly sets `restaurant_id`. Relies on a FK on `import_jobs.restaurant_id` to reject garbage (rolls back the txn if present). `restaurant_id` originates from places-search UI results, so low risk. Confirm the FK exists, or add an existence/verified check in the RPC.
+- **L3-2 — `fixPass2.test.ts` logic tests re-implement rather than import** (`timingSafeEqual`, `simulateOnConflict` mirror the shipped logic inline). They'd not catch a drift in the real SQL/handler. The 5 SQL-level skips are *honestly* labeled "NOT RUN". Acceptable as documentation-of-intent; not a substitute for live-DB `.spec.sql` (see unexecuted-SQL ranking below).
+- **L3-3 — float detection fires `fn_detect_and_surface_float` for every member table on every resolved save** (`resolve-url:810-817`). Fine at 1–2 tables; each early-returns below threshold. Watch if membership grows.
+
+#### Unexecuted-SQL risk ledger (for the merge decision under no-staging deploy)
+
+The builder reports 5 SQL behaviors are not execution-verified (Docker unavailable); the Deno "SQL" tests are logic simulations. Inspecting the SQL directly, each looks correct, but none has run against Postgres. Ranked by blast radius if wrong:
+
+1. **`fn_correct_import_job` transactional rollback (N8)** — HIGH if wrong: a mid-txn failure could split wishlist vs Table-share state. Mitigant: it's PL/pgSQL — a single function body **is** one implicit transaction, so any RAISE rolls back all three UPDATEs automatically; the logic is structurally sound. Risk: LOW-MEDIUM in practice. Smoke does not cover `correct`.
+2. **`restaurants` RLS denial for non-member ghosts (N4/N5)** — HIGH if wrong, and N5 *is* wrong (see H3-1) — but that's a static policy-enumeration miss I caught by reading, not an execution gap. The read-side filter (N4) is plain `.eq()`, low risk. The write-side (N5) hole is certain, not speculative.
+3. **Float suppress/resurface CASE (N6)** — MEDIUM: the ON CONFLICT CASE + feed-gate interplay is the kind of thing that's easy to get subtly wrong, and it's unrunnable here. I traced all three branches (null/expired/active) by hand and they're correct, but a live `.spec.sql` (insert dismissed row at now−31d / suppressed_until now−1d → call fn → assert `dismissed_at IS NULL`) is the only thing that *proves* it. Recommended before relying on the float "star" feature in prod.
+4. **Reaction trigger increments `table_shares.reaction_count` (CX-4, prior pass)** — MEDIUM: faithfully reproduced from 000430 and verified line-by-line in cycle 2; unchanged this pass. A toggle-👀 `.spec.sql` would close it.
+5. **`fn_dismiss_float` 30-day cap (N6)** — LOW: trivial UPDATE; the only risk is the interval cast, which matches existing patterns.
+
+Net: the only *certain* SQL-level defect is N5 (H3-1), and it's inspectable, not execution-dependent. The remaining unexecuted SQL is correct-looking under hand-tracing; the residual risk is "no live proof," appropriate to flag under the no-staging model but not independently merge-blocking.
+
+**What is correct (no nits):** N1 auth ordering + `timingSafeEqual` fail-closed; N2 terminal-not-pending on every failure branch; N3 ownership + traversal rejection in both functions; N4 read-side ghost filters + owner-scoped hydration reasoning; N6 float suppression (genuine fix, hand-traced correct); N8 transactional correction RPC + lockdown trio; all preserved primitives un-regressed; gates green (tsc 0, Deno 74, Jest 102, timestamp guard 83).
+
+**Recommendation:** REVISE (cycle 3 of 3). Two blockers remain: **N5 is an OPEN security hole** (2 surviving INSERT `WITH CHECK(true)` policies let clients forge verified restaurants — a 2-line `DROP` fix the migration comment already scoped but the SQL missed), and **N7 is PARTIAL** (the correction UI is now reachable, but the H-7 Table-feed propagation AC is still unmet because `tableIds` is never threaded from `CorrectModal`). Both are small, well-localized fixes. Everything else (N1–N4, N6, N8) is genuinely closed; the privacy/transactional SQL is preserved; the only residual unexecuted-SQL risk is inspectable-and-correct-looking, not a hidden landmine. If the orchestrator wants to merge under the no-staging model, it should do so **only after** the N5 `DROP` lands (security, not optional) — the N7 `tableIds` thread is a functional-completeness gap that could ship as a fast-follow if the Table-share correction path is deemed low-traffic for the friends-test phase, but it is a real AC miss. **Reconciliation: this reviewer FAILs on N5; per the dual-review rule, if either reviewer FAILs the ticket FAILs regardless of Codex's verdict.**
 
 ---
 

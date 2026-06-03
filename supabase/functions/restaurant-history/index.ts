@@ -329,10 +329,15 @@ serve(async (req) => {
             if (memberErr) throw memberErr;
             if (!membership) return fail('Not a member of this table', 403);
 
+            // [TICKET-060 B4] Add visibility predicate: verified OR owned by caller.
+            // Service-role bypasses RLS, so the filter must be explicit.
+            // An unverified ghost not owned by this user must not be returned
+            // even when its id is known (e.g. guessed from URL params).
             const { data: restaurant, error: restErr } = await supabase
                 .from('restaurants')
                 .select('id, name, address, city, country, photo_url')
                 .eq('id', restaurantId)
+                .or(`verification.eq.verified,created_by.eq.${user.id}`)
                 .maybeSingle();
             if (restErr) throw restErr;
 
@@ -496,12 +501,17 @@ serve(async (req) => {
             const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             const isUuid = uuidPattern.test(restaurantId);
 
+            // [TICKET-060 B4] Add visibility predicate to every by-id/external_id lookup.
+            // Service-role bypasses RLS — the filter must be explicit here.
+            // Predicate: verification='verified' OR created_by = authenticated caller.
+            // This prevents a known unverified-ghost id from returning to non-owners.
             let restaurantRow: RestaurantPageData['restaurant'] = null;
             if (isUuid) {
                 const { data, error } = await supabase
                     .from('restaurants')
                     .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html')
                     .eq('id', restaurantId)
+                    .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();
                 if (error) throw error;
                 restaurantRow = data ?? null;
@@ -510,6 +520,7 @@ serve(async (req) => {
                     .from('restaurants')
                     .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html')
                     .eq('external_id', restaurantId)
+                    .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();
                 if (error) throw error;
                 restaurantRow = data ?? null;

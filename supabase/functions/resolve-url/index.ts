@@ -219,6 +219,13 @@ async function unfurlWebTitle(url: string, signal: AbortSignal): Promise<string 
 
 /**
  * Call the internal places-search edge function via HTTP.
+ *
+ * [TICKET-060 B2] When `internalSecret` is provided, sends it as
+ * `x-internal-secret` so places-search bypasses auth.getUser (which fails on
+ * service-role JWTs). When absent, falls back to the Authorization header (user-
+ * facing path). A non-200 from places-search is now a distinct PLACES_AUTH_FAIL
+ * throw (not silent empty result) so handleAsyncExtract can treat it as a
+ * verification failure instead of a no-match → resolved ghost.
  */
 async function callPlacesSearch(
     query: string,
@@ -226,16 +233,22 @@ async function callPlacesSearch(
     supabaseUrl: string,
     supabaseAnonKey: string,
     signal: AbortSignal,
+    internalSecret?: string,
 ): Promise<PlacesPayload[]> {
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: authHeader,
+        apikey: supabaseAnonKey,
+    };
+    if (internalSecret) {
+        headers['x-internal-secret'] = internalSecret;
+    }
+
     let res: Response;
     try {
         res = await fetch(`${supabaseUrl}/functions/v1/places-search`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: authHeader,
-                apikey: supabaseAnonKey,
-            },
+            headers,
             body: JSON.stringify({ query, limit: 3 }),
             signal,
         });
@@ -251,7 +264,9 @@ async function callPlacesSearch(
         throw { code: 'UPSTREAM_UNAVAILABLE', retryable: true };
     }
     if (!res.ok) {
-        return []; // 4xx from places = no results
+        // [B2] Non-200 from places-search must be a VERIFICATION FAILURE on the
+        // internal path (not silent empty). Throw so callers can land needs_confirm.
+        throw { code: 'PLACES_AUTH_FAIL', status: res.status, retryable: false };
     }
 
     let body: any;
@@ -331,6 +346,16 @@ async function writeExtractionCache(
  * Upsert a ghost (unverified) restaurant or verified restaurant from extracted data.
  * Low-confidence → unverified, owned by saver (H4/R3).
  * High-confidence + Places match → verified.
+ *
+ * [TICKET-060 B2] internalSecret: when set, passed to callPlacesSearch as
+ * x-internal-secret so places-search skips the user-JWT check (which fails
+ * for service-role bearer tokens used in the async-extract path).
+ * PLACES_AUTH_FAIL thrown by callPlacesSearch re-throws here so handleAsyncExtract
+ * can land the job as needs_confirm rather than creating an unverified ghost
+ * that would be finalized resolved.
+ *
+ * [B2 invariant] An unverified ghost (no verified Places match) ALWAYS returns
+ * confidence='low' so the caller finalizes the job as needs_confirm, never resolved.
  */
 async function upsertRestaurantFromExtracted(
     supabase: any,
@@ -340,8 +365,9 @@ async function upsertRestaurantFromExtracted(
     supabaseAnonKey: string,
     authHeader: string,
     abortSignal: AbortSignal,
+    internalSecret?: string,
 ): Promise<{ restaurantId: string | null; confidence: ExtractedCandidate['confidence'] }> {
-    if (!extracted.name) return { restaurantId: null, confidence: extracted.confidence };
+    if (!extracted.name) return { restaurantId: null, confidence: 'low' };
 
     // If we have a google_place_id, try a Places lookup first (free/verified path)
     if (extracted.google_place_id) {
@@ -352,6 +378,7 @@ async function upsertRestaurantFromExtracted(
                 supabaseUrl,
                 supabaseAnonKey,
                 abortSignal,
+                internalSecret,
             );
             if (placeCandidates.length > 0) {
                 const top = placeCandidates[0];
@@ -378,8 +405,10 @@ async function upsertRestaurantFromExtracted(
                     .single();
                 return { restaurantId: upserted?.id ?? null, confidence: 'high' };
             }
-        } catch {
-            // Fall through to ghost
+        } catch (e: any) {
+            // [B2] PLACES_AUTH_FAIL: re-throw so handleAsyncExtract lands needs_confirm.
+            // Other errors (network, abort) also re-throw for the same reason.
+            throw e;
         }
     }
 
@@ -398,6 +427,8 @@ async function upsertRestaurantFromExtracted(
             })
             .select('id')
             .single();
+        // [B2 invariant] Always return confidence='low' for unverified ghosts
+        // so the caller finalizes as needs_confirm, never resolved.
         return { restaurantId: ghost?.id ?? null, confidence: 'low' };
     }
 
@@ -405,7 +436,7 @@ async function upsertRestaurantFromExtracted(
     try {
         const query = [extracted.name, extracted.city].filter(Boolean).join(', ');
         const placeCandidates = await callPlacesSearch(
-            query, authHeader, supabaseUrl, supabaseAnonKey, abortSignal,
+            query, authHeader, supabaseUrl, supabaseAnonKey, abortSignal, internalSecret,
         );
         if (placeCandidates.length > 0) {
             const top = placeCandidates[0];
@@ -428,11 +459,13 @@ async function upsertRestaurantFromExtracted(
                 .single();
             return { restaurantId: upserted?.id ?? null, confidence: 'high' };
         }
-    } catch {
-        // Fall through
+    } catch (e: any) {
+        // [B2] PLACES_AUTH_FAIL or network errors: re-throw so caller lands needs_confirm.
+        throw e;
     }
 
-    // No Places match for high-confidence → still create unverified ghost (never-block)
+    // No Places match for high-confidence → create unverified ghost (never-block)
+    // [B2 invariant] Return confidence='low' so this is finalized needs_confirm, not resolved.
     const { data: ghost } = await supabase
         .from('restaurants')
         .insert({
@@ -445,7 +478,7 @@ async function upsertRestaurantFromExtracted(
         })
         .select('id')
         .single();
-    return { restaurantId: ghost?.id ?? null, confidence: extracted.confidence };
+    return { restaurantId: ghost?.id ?? null, confidence: 'low' };
 }
 
 /**
@@ -622,6 +655,7 @@ async function handleAsyncExtract(
     supabaseUrl: string,
     supabaseAnonKey: string,
     authHeader: string,
+    internalSecret?: string,   // [B2] passed to callPlacesSearch on the internal path
 ): Promise<Response> {
     // [N2 FIX] Correct order: (1) load job, (2) authorize, (3) rate-limit, (4) extract/complete.
     // Previously rate-limit ran before the job was loaded or ownership verified, so any
@@ -763,11 +797,22 @@ async function handleAsyncExtract(
     let finalStatus: string = 'needs_confirm';
 
     if (extracted.name) {
-        const result = await upsertRestaurantFromExtracted(
-            supabase, extracted, job.user_id, supabaseUrl, supabaseAnonKey, authHeader, abortController.signal,
-        );
-        restaurantId = result.restaurantId;
-        finalStatus = result.confidence === 'low' || !restaurantId ? 'needs_confirm' : 'resolved';
+        try {
+            const result = await upsertRestaurantFromExtracted(
+                supabase, extracted, job.user_id, supabaseUrl, supabaseAnonKey,
+                authHeader, abortController.signal, internalSecret,
+            );
+            restaurantId = result.restaurantId;
+            // [B2 invariant] confidence='low' means unverified ghost → needs_confirm.
+            // Only a real verified Places match (confidence='high') → resolved.
+            finalStatus = result.confidence === 'low' || !restaurantId ? 'needs_confirm' : 'resolved';
+        } catch (e: any) {
+            // [B2] PLACES_AUTH_FAIL or any verification error → needs_confirm, not resolved.
+            // Never finalize an unverified ghost as resolved.
+            console.error('upsertRestaurantFromExtracted error (→ needs_confirm):', e?.code ?? e);
+            finalStatus = 'needs_confirm';
+            restaurantId = null;
+        }
     }
 
     // [CX-5 FIX] Transactional job completion via SECURITY DEFINER RPC
@@ -905,8 +950,10 @@ serve(async (req) => {
         return await handleAsyncExtract(
             supabase, true, jobOwnerId,
             body.job_id, supabaseUrl, supabaseAnonKey,
-            // authHeader for downstream places-search calls (internal calls pass service key)
+            // authHeader for downstream places-search calls
             `Bearer ${supabaseServiceKey}`,
+            // [B2] Pass the internal secret so places-search bypasses auth.getUser
+            INTERNAL_CALL_SECRET,
         );
     }
 

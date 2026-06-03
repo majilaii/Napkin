@@ -8,6 +8,26 @@ const GOOGLE_PLACES_API_KEY = Deno.env.get('GOOGLE_PLACES_API_KEY');
 const GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com/v1/places:searchText';
 const GOOGLE_PLACE_DETAILS_BASE_URL = 'https://places.googleapis.com/v1/places';
 
+// ── Internal-call support (TICKET-060 B2) ─────────────────────────────────────
+// resolve-url's handleAsyncExtract calls places-search with the service-role key
+// as the bearer token. auth.getUser(serviceKey) returns null (not a user JWT),
+// causing a 401 that callPlacesSearch treats as an empty result, which silently
+// skips Places verification and marks unverified ghosts as resolved.
+//
+// Fix: accept x-internal-secret === INTERNAL_CALL_SECRET (timingSafeEqual,
+// fail-closed) and, when valid, skip the user-JWT check entirely.
+// The service-role key is still needed for the supabase client (upsert), but
+// auth.getUser is NOT called on the internal path.
+
+function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) {
+        diff |= a[i] ^ b[i];
+    }
+    return diff === 0;
+}
+
 // Field mask shared between text-search and place-details responses.
 // For details, drop the "places." prefix (single-place response).
 const PLACE_FIELDS = [
@@ -148,28 +168,42 @@ serve(async req => {
     }
 
     try {
-        // ── Auth gate ──────────────────────────────────────────────────────
-        const authHeader = req.headers.get('Authorization');
-        if (!authHeader) {
-            return new Response(
-                JSON.stringify({ error: 'Missing Authorization header' }),
-                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-            );
-        }
+        const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-        const token = authHeader.replace('Bearer ', '');
-        const supabase = createClient(
-            Deno.env.get('SUPABASE_URL') ?? '',
-            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-        );
+        // ── Internal-call path (TICKET-060 B2) ────────────────────────────
+        // resolve-url's handleAsyncExtract calls places-search using the service-role
+        // key as a bearer, which fails auth.getUser → 401 → empty results →
+        // unverified ghost marked resolved. Fix: accept x-internal-secret header
+        // and skip user-JWT check when the secret is valid (timingSafeEqual, fail-closed).
+        const INTERNAL_CALL_SECRET = Deno.env.get('INTERNAL_CALL_SECRET') ?? '';
+        const callerSecret = req.headers.get('x-internal-secret') ?? '';
+        const enc = new TextEncoder();
+        const isInternalCall =
+            INTERNAL_CALL_SECRET.length > 0 &&
+            timingSafeEqualBytes(enc.encode(callerSecret), enc.encode(INTERNAL_CALL_SECRET));
 
-        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-        if (userError || !user) {
-            return new Response(
-                JSON.stringify({ error: 'Unauthorized' }),
-                { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-            );
+        if (!isInternalCall) {
+            // ── Auth gate (user-facing path) ───────────────────────────────
+            const authHeader = req.headers.get('Authorization');
+            if (!authHeader) {
+                return new Response(
+                    JSON.stringify({ error: 'Missing Authorization header' }),
+                    { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
+
+            const token = authHeader.replace('Bearer ', '');
+            const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+            if (userError || !user) {
+                return new Response(
+                    JSON.stringify({ error: 'Unauthorized' }),
+                    { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
         }
+        // On the internal path: no auth.getUser call; supabase client uses service-role key.
 
         // ── API key check ──────────────────────────────────────────────────
         if (!GOOGLE_PLACES_API_KEY) {

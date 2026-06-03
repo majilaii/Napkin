@@ -52,7 +52,8 @@ export function useCorrectImport(userId: string | null | undefined) {
                 previousActivities[tableId] = queryClient.getQueryData(actKey);
             }
 
-            // Patch wishlist: find the row with this job_id and update it
+            // Patch wishlist: find the row with this job_id and update it.
+            // [TICKET-060 B3] PersonalWishlistPage uses `p.data`, not `p.rows`.
             queryClient.setQueryData(wishlistKey, (old: any) => {
                 if (!old) return old;
                 const patchRow = (item: any) => {
@@ -67,7 +68,7 @@ export function useCorrectImport(userId: string | null | undefined) {
                         ...old,
                         pages: old.pages.map((p: any) => ({
                             ...p,
-                            rows: (p.rows ?? []).map(patchRow),
+                            data: (p.data ?? []).map(patchRow),
                         })),
                     };
                 }
@@ -138,12 +139,22 @@ export function useCorrectImport(userId: string | null | undefined) {
 
         onSuccess: (_result, input) => {
             if (!userId) return;
-            // Narrow invalidation — wishlist + all destination Tables
+            // Narrow invalidation — wishlist + all destination Tables.
+            // [TICKET-060 B3] When tableIds is absent (e.g. called from CorrectModal
+            // which doesn't know the job's table_ids), invalidate the full
+            // tableActivity namespace so all feeds pick up the corrected restaurant.
+            // When tableIds is provided, narrow to those exact keys.
             queryClient.invalidateQueries({ queryKey: queryKeys.wishlist.personal(userId) });
-            for (const tableId of input.tableIds ?? []) {
-                queryClient.invalidateQueries({
-                    queryKey: queryKeys.tables.activityForTable(tableId),
-                });
+            if (input.tableIds && input.tableIds.length > 0) {
+                for (const tableId of input.tableIds) {
+                    queryClient.invalidateQueries({
+                        queryKey: queryKeys.tables.activityForTable(tableId),
+                    });
+                }
+            } else {
+                // No tableIds supplied → invalidate all table activity caches so
+                // any shared cards for this job are refreshed across all Tables.
+                queryClient.invalidateQueries({ queryKey: queryKeys.tables.activityAll() });
             }
         },
     });

@@ -38,6 +38,8 @@ interface SearchResult {
     cuisine: string | null;
 }
 
+// [TICKET-060 B3] places-search is POST-only (405 on GET → empty results).
+// Use POST body instead of GET params.
 function usePlacesSearch(query: string) {
     const [results, setResults] = React.useState<SearchResult[]>([]);
     const [isLoading, setIsLoading] = React.useState(false);
@@ -49,14 +51,13 @@ function usePlacesSearch(query: string) {
         }
         let cancelled = false;
         setIsLoading(true);
-        callEdgeFn<{ candidates?: SearchResult[] } | SearchResult[]>('places-search', {
-            method: 'GET',
-            action: 'search',
-            params: { query: query.trim(), limit: 8 },
+        callEdgeFn<{ data?: SearchResult[] } | SearchResult[]>('places-search', {
+            body: { query: query.trim(), limit: 8 },
         })
             .then((res) => {
                 if (cancelled) return;
-                const list = Array.isArray(res) ? res : (res?.candidates ?? []);
+                // places-search returns { data: [...] } or an array directly
+                const list = Array.isArray(res) ? res : ((res as any)?.data ?? []);
                 setResults(list.slice(0, 8));
             })
             .catch(() => {
