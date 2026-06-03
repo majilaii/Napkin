@@ -21,6 +21,12 @@ import { SharedSaveCard, type SharedSaveCardProps } from './SharedSaveCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Child shape coming from the edge fn hydrator (camelCase — H-6 fix).
+ * Matches SharedSaveCardProps exactly so we can spread directly.
+ */
+export type DigestChildShare = SharedSaveCardProps;
+
 export interface ShareDigestCardProps {
     /** Representative share id (stable, from the bucket's first share) */
     id: string;
@@ -33,8 +39,11 @@ export interface ShareDigestCardProps {
     shareCount: number;
     /** Real stable table_shares.id values for each child (B3) */
     childIds: string[];
-    /** Hydrated child shares — loaded when expanded */
-    childShares?: SharedSaveCardProps[];
+    /**
+     * Hydrated child shares already mapped to SharedSaveCardProps shape (camelCase).
+     * [H-6 FIX] children are now pre-mapped by the edge fn hydrator, not raw snake_case.
+     */
+    childShares?: DigestChildShare[];
     createdAt: string;
     onExpand?: () => void;
 }

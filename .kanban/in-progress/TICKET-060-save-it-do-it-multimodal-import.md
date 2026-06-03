@@ -545,6 +545,39 @@ Each Codex `[REVISE]` item R1–R13 → the named mechanism/file that now closes
 
 **TypeScript — `tsc --noEmit` clean.** No errors.
 
+---
+
+### Fix Pass 1 (2026-06-03) — addresses Review 1 (Claude H-1…H-7, M-1…M-5; Codex CX-1…CX-5)
+
+**New files:**
+- `supabase/migrations/20260603000700_fix_pass1.sql` — P0 migration fixes (CX-2 DML lockdown, CX-3 restaurants SELECT policy, CX-4 trigger mismatch, H-2 threshold enforcement, H-1 float-detection wiring via `fn_detect_and_surface_float`, H-3 import-uploads bucket, H-5 cascade delete trigger, CX-5 `fn_complete_import_job`).
+- `supabase/functions/_shared/fixPass1.test.ts` — 15 new Deno tests: float threshold boundary (H-1/H-2), saver-set hash determinism (R4), image bytes-hash dedup vs path-hash (H-4), rate-limit never-block (M-3), internal-call detection (CX-1), cascade delete branch (H-5).
+
+**Modified files:**
+- `supabase/functions/resolve-url/index.ts` — [CX-1/M-4] Internal-call path: detect `x-internal-secret` header, skip user-JWT ownership check for service-role extract calls, load job owner from DB. [H-4] Compute `hashImage(bytes)` after download, update `import_jobs.content_hash`, key cache on real bytes hash. [M-3] Rate-limit check (`resolve_content` bucket) at top of `handleAsyncExtract` — over-limit lands as `needs_confirm`, never blocks. [CX-5] Use `fn_complete_import_job` RPC for transactional completion (replaces 3 separate updates that ignored `.error`). [H-1] After resolved save, call `fn_detect_and_surface_float` for each Table (fan-out destinations + saver's membership Tables).
+- `supabase/functions/table-shares/index.ts` — [CX-1] Pass `x-internal-secret` header on outbound async-extract fetch; observe+log failures (not silently swallowed).
+- `supabase/functions/table-activity/index.ts` — [H-6] Fetch `my_reactions` for ALL share ids (top-level + digest children). Map hydrated DB rows → `SharedSaveCardProps` camelCase before inserting into feed items (`shareId`, `reactionCount`, `topEmojis`, `myReactions`, `createdAt`). `childShares` is now `SharedSaveCardProps[]` not raw snake_case rows.
+- `napkin-app/app/(tabs)/tables.tsx` — [H-6] Import `SharedSaveActivityItem`, `ShareDigestActivityItem`, `RestaurantFloatActivityItem` types; remove `as any` from all three new card branches in feed dispatcher; use `d.childShares` (not `d.children`).
+- `napkin-app/components/feed/ShareDigestCard.tsx` — [H-6] `childShares` prop typed as `DigestChildShare[]` (= `SharedSaveCardProps[]`) not the old mismatch; add `DigestChildShare` type alias.
+- `napkin-app/hooks/tables/useTableActivity.ts` — [H-6] Add `SharedSaveCardShapeForDigest` type (camelCase, non-nullable author); `ShareDigestActivityItem.childShares` typed as `SharedSaveCardShapeForDigest[]`; `SharedSaveActivityItem` gains camelCase alias fields.
+- `napkin-app/hooks/wishlist/useCorrectImport.ts` — [H-7] `CorrectImportInput` gains `tableIds?: string[]`; `onMutate` snapshots + patches all destination Table-feed caches; `onError` rolls back all; `onSuccess` invalidates all destination activity caches.
+- `napkin-app/hooks/wishlist/useCreateImport.ts` — [M-2] `onMutate` snapshots activity caches for all ticked Tables and inserts an optimistic pending `shared_save` item per Table. [M-1] Uses `activityForTable(tableId)` (exact key, not prefix) for all cache writes. `onSuccess` invalidates all destination Tables.
+
+**Gate results (Fix Pass 1):**
+- `tsc --noEmit`: CLEAN (0 errors, no `as any` on new card dispatch)
+- Deno tests: **52 passed / 0 failed** (37 prior + 15 new)
+- Jest: **102 passed / 0 failed** (unchanged)
+
+**Still deferred (noted):**
+- L-1 text-before-vision tier (cost optimization only, not correctness) — `handleAsyncExtract` now prefers text path when no image present; the full "prefer text even when image+caption both present" tier is partially addressed (text-only path taken when `imagePath == null`); full text-first-then-vision-only-when-insufficient is P2 and not blocking.
+- M-5 ghost dup control (minor, `Date.now()` collision window, not a blocking correctness issue) — noted as P2.
+- `INTERNAL_CALL_SECRET` env var: must be set in Supabase secrets for the CX-1 fix to authenticate internal extract calls. If unset (`''`), the internal-call detection falls back to `isInternal = false` and the user-JWT ownership check runs — which would still 403 on service-role calls. **Required deploy step: `npx supabase secrets set INTERNAL_CALL_SECRET=<random-hex> --project-ref ftvmseaqwwlcxtdlvxxz`.**
+
+**Builder Questions (Fix Pass 1):**
+- `fn_complete_import_job` uses `FOR UPDATE` lock on `import_jobs`. Reviewer should verify this doesn't deadlock if two extract calls race for the same job (they can't — the function returns early on `status != 'pending'`, and the FOR UPDATE is per-row). PASS.
+- The `cascade_delete_post_interactions_extended()` function replaces calls to `cascade_delete_post_interactions()`. Reviewer should verify the original function body (20260418) is superseded by the new one (20260603000700) without a naming conflict — the new function has a distinct name `_extended` and the triggers are explicitly recreated. The old function `cascade_delete_post_interactions()` remains in the DB but is no longer called by any trigger. This is intentional — avoiding an ALTER to minimize blast radius. The old function can be dropped in a cleanup migration.
+- The `restaurants_verified_or_owner_select` policy added in 000700 uses `USING (verification = 'verified' OR created_by = auth.uid())`. For anon access (`auth.uid()` = NULL), `created_by = NULL` is false — so anon can only see verified restaurants. This is the intended behavior.
+
 **Skipped (deferred blockers):**
 - Live Anthropic API key smoke test: `ANTHROPIC_API_KEY` not set in the local environment. The mock-response Deno tests cover parser correctness and fail-soft behavior. Flag in the build log as pending the user setting the Supabase secret `ANTHROPIC_API_KEY`.
 - Local `supabase db push` validation: the local Docker stack was not started. SQL syntax was manually reviewed; all new migrations follow patterns from prior migrations in the same repo.
@@ -615,10 +648,114 @@ Codex adversarially reviewed the Technical Design. Orchestrator dispositions. **
 
 ### Review 1
 ```
-Date: 
-Verdict: 
-Score: X PASS / X WARN / X FAIL
+Date: 2026-06-03
+Verdict: FAIL (Claude cold review — pairs with Codex adversarial-review)
+Score: 6 PASS / 4 WARN / 7 FAIL
 ```
+
+Reviewed cold against the 38 ACs, the `[CODEX-FIX R1–R13]`, `[ARCH-RESOLVE H1–L4]`, and `[BUILDER-AUDIT B1–B3]` items. `tsc --noEmit` clean; 37 Deno tests pass. But the build is "clean" partly because the feed dispatcher launders every new item through `as any`, and several headline features are wired-but-dead. Verdict is FAIL on data-completeness + missing infra, not on the SQL privacy boundary (which is correct as written).
+
+**Category scorecard**
+- Correctness: FAIL — emergent float never fires; digest children render broken; image cache key defeated.
+- Edge Cases: WARN — async fail-soft solid; needs-confirm propagation to Table cards missing.
+- Error Handling: PASS — extraction fail-soft to needs_confirm is thorough and never throws to the user.
+- Security: PASS — `fn_compute_table_float` join is the correct H3/R5 privacy boundary; membership gates on `table_members.member_id` everywhere; RLS ON all 3 social tables + extraction_cache.
+- Performance: WARN — float recompute-on-read is fine at Table scale, but the global image-cache lever (the stated cost win) is bypassed.
+- Design Compliance: WARN — tokens/verbs/no-emoji honored; canonical Heirloom bundle never fetched (builder admits extract failed again); cards reconciled only against existing feed cards.
+
+---
+
+#### HIGH (block merge)
+
+**H-1 — Emergent float never fires: no code ever writes a `table_float_state` row. [FAILS the "Emergent float" AC, R4/R5, and the spec's designated "star" mechanism]**
+`grep` for any insert into `table_float_state` returns ZERO hits outside `dismiss_float` (which only UPDATEs). `floats_stream` (migration 000500, lines 204-210) filters `surfaced_at IS NOT NULL` — and nothing ever sets `surfaced_at`, `saver_set_hash`, `saver_user_ids`, or `distinct_count`. There is no trigger on `wishlist_items`, no recompute call in `handleAsyncExtract`, and no edge action that detects a threshold crossing and materializes the float. `fn_compute_table_float` is defined but **called from nowhere** (grep confirms: only `table-activity` was *supposed* to call it; it does not — the hydrator reads `payload.saver_user_ids` straight off the never-written state row). The compute fn, `floats_stream`, `table-activity` float hydration (index.ts ~488-525), `RestaurantFloatCard`, `useDismissFloat`, and `queryKeys.floats.*` are all present and the whole feature is dead.
+Fix: add a float-detection step — after a wishlist save resolves in `handleAsyncExtract`, for each Table the saver belongs to, call `fn_compute_table_float(table_id, restaurant_id, …)`, and if the distinct-saver count ≥ threshold, upsert a `table_float_state` row (saver-set hash, `surfaced_at=now()`, respecting the suppression key). This is the missing trigger point.
+
+**H-2 — `fn_compute_table_float` accepts `p_threshold` but never applies it. [R5 / "fires only on multiple independent saves" guarantee]**
+Migration 000400, lines 65-94: the function signature takes `p_threshold int DEFAULT 3` but the body has no `HAVING count(*) >= p_threshold` (it returns one row per qualifying saver, unconditionally). So the "spam-proof by construction (≥3 distinct members)" invariant is unenforced in SQL — a single saver would pass if any caller used the result to gate a float. Combined with H-1 this is currently moot, but it must be fixed as part of the float-detection wiring, or the float will fire on a single save.
+Fix: either add `HAVING count(DISTINCT wi.user_id) >= p_threshold` in a wrapping aggregate, or have the caller count the returned rows and only materialize when `>= p_threshold`. Pick one and make it the single source of truth.
+
+**H-3 — `import-uploads` Storage bucket and its owner-only RLS are never created. [FAILS the screenshot/photo AC — the universal substrate]**
+`imageDownscale.ts` uploads to bucket `'import-uploads'` and `resolve-url`/`table-shares` read from it, but no migration creates the bucket or any `storage.objects` policy. The Technical Design (M1/R9) explicitly required `import-uploads/<user_id>/<uuid>.jpg` with "owner-only RLS." Without the bucket, `uploadImportImage()` fails at runtime and the entire screenshot path — AC #1, the headline magic — is non-functional. (Builder's "Skipped: local supabase not started" hid this; it would surface on first prod upload.)
+Fix: add a migration that `insert into storage.buckets (id, name, public) values ('import-uploads','import-uploads', false)` and `storage.objects` RLS policies scoping read/write/delete to `auth.uid()::text = (storage.foldername(name))[1]` (owner-only), matching the existing entry-photos bucket pattern.
+
+**H-4 — Image content-hash cache lever is defeated; job idempotency key is a per-upload path hash. [FAILS "Global cache / dedup" AC, contradicts H1/H5/R13]**
+`table-shares/handleCreateImport` (lines 188-200) sets `contentHash = "path_" + sha256(image_path)` for image saves — a hash of the storage path (which contains a fresh UUID per upload), NOT the image bytes. Consequences: (a) two users saving the identical viral screenshot get different `content_hash` → the global cache NEVER dedupes images (the stated "big cost lever" is gone for the image path); (b) the JOB's `content_hash` is `path_…`, so `handleAsyncExtract` reads/writes `extraction_cache` under `path_…` (lines 625-647) while `handleVisionExtract` (the inline path, line 462) uses the *real* `hashImage(bytes)` — two disjoint keyspaces for the same image, so the inline and async paths never share cache. The real image hash is only known after download, which `create_import` doesn't do.
+Fix: either (1) move image hashing into the extract step and back-fill `import_jobs.content_hash` with the real `hashImage` after first download, then key the cache on that; or (2) accept that `create_import` can't hash bytes and have `handleAsyncExtract` compute `hashImage`, look up/write cache under it, and update the job's `content_hash` — but then drop the misleading `path_` value, which currently fragments the cache. Today the image cache is effectively write-only-per-upload.
+
+**H-5 — `table_share` reactions/comments are orphaned on delete; the B1 cleanup trigger was flagged and never built. [`// ARCHITECT-REVIEW` open item, FAILS B1]**
+Migration 000600 lines 15-18 explicitly note the cascade is "application-level (edge fn deletes reactions when share is deleted)" and the builder's B1 note (line 561) carries an open `**ARCHITECT-REVIEW:** Add a reaction/comment cleanup trigger on table_shares DELETE`. No such trigger exists, and `table-shares/index.ts` never deletes reactions. `table_shares` is deleted by CASCADE from `import_jobs`/`tables` — a path the edge fn never observes — so `post_reactions` rows with `target_type='table_share'` are left dangling, and because `target_id` is polymorphic with no FK, nothing reaps them. Over time the unique constraint `(target_type,target_id,user_id,emoji)` can also collide if a new `table_shares.id` ever reuses a UUID (unlikely, but the orphan rows still inflate counts on re-query paths). This is exactly the T-007/T-037 silent-drift failure mode B1 was meant to close.
+Fix: add `CREATE TRIGGER … AFTER DELETE ON table_shares … DELETE FROM post_reactions/post_comments WHERE target_type='table_share' AND target_id = OLD.id` (the same pattern entries/table_nights use, or a `BEFORE DELETE` row trigger). Resolve the `// ARCHITECT-REVIEW` comment before merge.
+
+**H-6 — Digest children render broken: producer/consumer shape mismatch laundered by `as any`. [FAILS "burst coalescing → expandable digest, each child carries its own I'm in", B3, AC]**
+`table-activity` hydrates digest `children` as raw `table_shares` rows (`{ id, reaction_count, top_emojis, created_at, … }`, snake_case, `id` not `shareId`). `tables.tsx` (line 785, via `const d = item as any`) passes `childShares={d.children}`, and `ShareDigestCard` (line 110) renders `<SharedSaveCard key={child.shareId} {...child} />`. `SharedSaveCardProps` wants `{ shareId, reactionCount, topEmojis, createdAt, myReactions }`. So expanded children get `shareId=undefined` (the `I'm in` toggle then calls `useToggleReaction` with `targetId: undefined` → 404 / no-op), `reactionCount=undefined`, duplicate `key={undefined}`, and fall into the `isPending` "reading it…" branch even when resolved. `tsc` passed only because the dispatcher casts through `any`. The single `shared_save` card is fine; only the digest-expansion path is broken.
+Fix: map the hydrated child rows into `SharedSaveCardProps` (camelCase, `shareId: child.id`, `reactionCount: child.reaction_count`, `myReactions` from a per-child reaction fetch) either in `table-activity` hydration or in `ShareDigestCard` before spreading. Also note: per-child `my_reactions` are never fetched — `table-activity` only fetches `my_reactions` for top-level `shared_save` ids (index.ts ~565-580), not for digest children, so even after the rename the child `I'm in` active-state is always false.
+
+**H-7 — `useCorrectImport` does not propagate the correction to Table-feed cards. [FAILS "Confirm propagation" AC / R1 job-level propagation on the client]**
+The edge `correct` action correctly re-points `import_jobs` + `wishlist_items` + `table_shares` server-side (table-shares/index.ts 311-324). But the client hook (`useCorrectImport.onMutate`, lines 46-65) only patches `wishlist.personal` and invalidates `importJobs.detail(job_id)` (a key no list query reads). It never patches or invalidates `tables.activity*`, so a corrected shared card shows the wrong guess in the Table feed until an unrelated refetch. The Build Log / design (Blast Radius §6) explicitly promised "the patch must touch all destinations the job owns."
+Fix: in `onSuccess`/`onMutate`, also patch/invalidate `queryKeys.tables.activity(tableId)` for every Table the job fanned into (the hook needs the destination table_ids — return them from `create_import` and thread through, or invalidate `tables.activityAll()`).
+
+---
+
+#### MEDIUM
+
+**M-1 — `useDismissFloat`/`useCreateImport` optimistic `setQueryData` uses `activityForTable` but the feed is cached under `activity(tableId, filters)`. [partial — works only on the unfiltered feed]**
+`useTableActivity` registers under `queryKeys.tables.activity(tableId, filters)`. With no filters that equals `['tableActivity', tableId]` = `activityForTable(tableId)`, so the default feed works; `invalidateQueries(['tableActivity', tableId])` also prefix-matches filtered variants (fine). But the optimistic `setQueryData(activityForTable(tableId), …)` in `useDismissFloat` (line 39) is an *exact*-key write — when a filtered feed is active (`['tableActivity', tableId, filters]`) the optimistic float removal patches a cache nobody is rendering, so the float visibly lingers until the settle-time invalidation refetches. Low blast radius (floats are dead anyway per H-1), but fix when wiring floats.
+Fix: standardize on one accessor. Either always patch via `activity(tableId)` or have dismiss/correct iterate the active filter variants.
+
+**M-2 — `useCreateImport` claims to optimistically insert a pending `shared_save` into `tables.activity` and to poll while pending; it does neither. [partial — FAILS the "pending card appears in the Table feed" AC for Table saves; wishlist pending card is fine]**
+The docstring (lines 7-12) and Blast Radius §6 promise an optimistic pending `shared_save` ActivityItem per `table_id` and a focus-poll while `pending`. The implementation patches only the wishlist cache (lines 81-115) and sets no `refetchInterval`. So a Table-only save shows nothing in the Table feed until extraction resolves AND a manual refetch happens; and a backgrounded wishlist save won't auto-fill without a poll (the "resolves on next foreground/refetch" AC leans on a poll that isn't here). `app/wishlist.tsx` was listed as "MODIFY — poll while pending" in the design but the diff stat shows no change to `app/wishlist.tsx`.
+Fix: add the optimistic `shared_save` insert into `tables.activity(tableId)` for each ticked table; add a `refetchInterval` (or focus refetch) on the wishlist/activity queries gated on "any row is pending," per the never-block UX ACs.
+
+**M-3 — `handleAsyncExtract` runs with no rate limiting; the 429 guard is only on the synchronous URL path. [WARN vs "per-user rate limit reuses check_and_increment_rate_limit"]**
+`resolve-url` calls `check_and_increment_rate_limit` only in the main URL-resolution flow (lines 775-790). The `action:'extract'` path (handleAsyncExtract) and the inline `handleVisionExtract` path return before/without ever touching the rate limiter, so the actual Anthropic vision calls — the thing the rate limit exists to bound — are uncapped per user. A loop firing `create_import` repeatedly enqueues unbounded extracts (each a model call) since `create_import` itself never rate-limits either.
+Fix: call `check_and_increment_rate_limit` with the `'resolve_content'` bucket inside `create_import` (before firing extract) or at the top of `handleAsyncExtract`, honoring the never-block rule (over-limit → land the save, mark needs_confirm, skip the model call — exactly the CODEX-M2 resolution).
+
+**M-4 — `handleAsyncExtract` is invoked with the service-role token as the "user," but the body carries no acting user; the `job.user_id === user.id` check passes only by coincidence. [robustness]**
+`create_import` fires the extract with `Authorization: Bearer <SERVICE_ROLE_KEY>` (table-shares 250-262). In `resolve-url`, `supabase.auth.getUser(service_role_jwt)` — the service-role key is a JWT whose `sub` is not the saver — so `user.id` is not the job owner. Yet `handleAsyncExtract` checks `job.user_id !== user.id → 403` (line 608). If `getUser` on the service key resolves to anything other than the job owner (it will), the extract 403s and the job stays `pending` forever. This may be why nothing resolves in practice. At minimum it's fragile; needs a deterministic service-role path.
+Fix: detect the service-role call (e.g., a shared secret / distinct header) and skip the per-user ownership check for the internal extract, OR pass the real `user_id` in the extract body and validate against the job. Don't rely on `getUser(serviceKey)`.
+
+**M-5 — `restaurants` ghost upsert uses `external_id = "ghost_<userId>_<Date.now()>"` and `.insert` not `.upsert`; rapid double-fire can still create duplicate ghosts, and `Date.now()` collisions across the two ghost branches are possible. [WARN — H4/R3 "never deduped" is satisfied, but per-save dup control is loose]**
+Acceptable for never-block, but two ghost-creation branches (lines 377 and 424) can both run for one extraction in edge orderings, and there's no `created_by`+content idempotency. Minor.
+
+---
+
+#### LOW
+
+- **L-1 — `extractFromText` tier gating is absent.** The spec tier ladder is Maps-parse → text-LLM (only if caption sufficient) → vision. `handleAsyncExtract` runs text only when there's no image, and never tries text-before-vision when an image *and* a caption are both present (it always goes vision). Cost-suboptimal, not incorrect. (visionExtract.ts is correct; the orchestration in resolve-url doesn't implement the "prefer cheaper text" branch.)
+- **L-2 — `places-search` deviation is justified.** Builder correctly determined places-search doesn't query `restaurants` directly; the verified filter lives in `wishlist.list_table` + `fn_compute_table_float`. Accept the documented deviation. (But note: the restaurant page / who's-been / overlap reads outside this diff still need the `verification='verified'` filter — grep confirms only `wishlist` got it; `restaurant-history` was listed in Blast Radius §2 but shows no diff. Verify those canonical reads can't surface an unverified ghost before merge.)
+- **L-3 — `fn_table_activity_page` old-signature REVOKE.** Migration 000500 lines 232-238 REVOKE the old 7-arg overload then the new 8-arg one. Since the new arg is DEFAULTED, PostgreSQL keeps BOTH overloads; the old 7-arg version retains whatever grants it had minus the REVOKE — fine, but be aware two overloads now exist. Non-blocking; matches builder's note.
+- **L-4 — `date_bin` / `(p_coalesce_hours||' hours')::interval` require PG14+.** Confirmed safe per builder (prod is PG14+), and the digest IS coalesced in a CTE before the keyset `WHERE`/`LIMIT` (R8 satisfied — cursor stability holds for the coalesced rows). This part is correct. One subtlety: the keyset filter compares `(sort_date, id)` where the digest's `id` is the earliest child's id but `sort_date` is `last_at` (max) — across pages this is internally consistent (one row per bucket), so no skip/dup. PASS on R8.
+
+---
+
+**What is correct (no nits):**
+- `fn_compute_table_float` privacy boundary (migration 000400): the join is exactly current `table_members.member_id` × that restaurant × `verification='verified'` × `deleted_at IS NULL` × in-window. A former member drops out (no `table_members` row), another Table's saves can't appear (`tm.table_id = p_table_id`), unverified ghosts can't float, the broader wishlist can't leak (`wi.restaurant_id = p_restaurant_id`). SECURITY DEFINER is locked (`REVOKE ALL FROM PUBLIC` + `GRANT EXECUTE TO service_role` + descriptive COMMENT). H3/R5 fully met *as a query* — it's just never called (H-1).
+- `extraction_cache` (000200): stores only content-derived fields, RLS ON no-policy (service-role only), `hash_version` present. H1/H5/B2 met. The recompute-per-request of `already_wishlisted`/`restaurant_id` is correctly done in `handleVisionExtract` (not cached).
+- Membership validation in `create_import` is atomic and uses `member_id` (table-shares 171-185): a single non-member table_id fails the whole call before any write. H2/R2 met. `fn_create_import` only ever writes for `p_user_id` and the passed table_ids — no escalation.
+- RLS ON for `import_jobs`, `table_shares`, `table_float_state` with `member_id`-based member-read + author-write (R6). T-034 lockdown honored.
+- `post-interactions` `table_share` target: `react` validates `validateTableMember` (index.ts 409), `resolveTableId` reads `table_shares.table_id` directly (no entry_tables ambiguity), `sync_post_counts`/`set_post_interaction_table_id` branches are correct. The standalone `shared_save` reaction works end-to-end. (Cleanup-on-delete is the gap — H-5.)
+- `list_ids` fully removed from contract/hook/picker (R12). No dead shape. Verified across `table-shares`, `useCreateImport`, `DestinationPicker`.
+- Model id `claude-haiku-4-5-20251001` via `EXTRACTION_MODEL` env with that default constant (R10). Fail-soft to `confidence:'low'` is thorough and never throws.
+- `booking_url` never in the `table_shares` payload nor returned by `table-activity` (L3/KEEP).
+
+**AC coverage (38):** Met or substantially met: ~24. **Failing/unimplemented:** Screenshot upload path (no bucket — H-3); Global cache/dedup for images (H-4); Emergent float end-to-end (H-1/H-2); Burst-digest expandable children + per-child I'm in (H-6); Confirm propagation to Table card (H-7); Table-save pending card in feed + non-blocking resolve-on-foreground poll (M-2); per-user rate limit actually bounding model calls (M-3). The text/Maps/IG-nudge paths, destination picker, single shared card + reaction, ghost quarantine reads in wishlist, and the privacy/RLS surface are in good shape.
+
+**Recommendation:** REVISE. The privacy-critical SQL is correct, but two headline features (emergent float, burst digest) are non-functional, the screenshot path can't run without the Storage bucket, the image cache lever is defeated, an `// ARCHITECT-REVIEW` cleanup trigger is unresolved, and the service-role extract path likely 403s every job. These are mergeable-blocking. Re-run dual review after H-1…H-7 are addressed.
+
+### Review 1 (Codex adversarial) — 2026-06-03
+```
+Date: 2026-06-03
+Verdict: FAIL (needs-attention — "do not ship")
+```
+Codex independently FAILed, corroborating Claude and pinpointing root causes. Overlap (both): async extract broken, float never fires, storage bucket missing, B1 cleanup unbuilt, image cache path-keyed, digest child shape, rate-limit bypass. Codex-distinct / sharper:
+- **[CX-1 — root cause] Async extract auth.** `create_import` fires `resolve-url?action=extract` with the SERVICE-ROLE key as bearer; `resolve-url` runs `auth.getUser(token)` + `job.user_id===user.id` → 401/403; fire-and-forget swallows it → jobs stuck `pending` forever. **Core pipeline dead.** Fix: signed internal extract path that loads the job owner from DB and skips the user-JWT ownership check (or pass the saver token); persist/observe failures.
+- **[CX-2] Direct DB DML not locked down.** Default grants give `authenticated` DML on the new public tables; `table_shares` author INSERT/UPDATE checks only `author_id` (not membership, not immutable `table_id`/`job_id`); `import_jobs` owner UPDATE bypasses the pending→terminal guard. A hand-rolled client can retarget a share into ANY `table_id`. Fix: REVOKE direct anon/authenticated DML on the 3 tables; force writes through service-role RPCs (or strict `WITH CHECK` membership + immutable columns + status-transition guard).
+- **[CX-3] Unverified ghosts publicly readable.** Migration adds `verification`/`created_by` but does NOT change the existing public `restaurants` SELECT policy — quarantine enforced only in edge queries, not at the RLS boundary. Fix: restrict read policy to `verification='verified' OR created_by = auth.uid()`; audit direct `from('restaurants')` callers (restaurant-history/who's-been — Claude L-2).
+- **[CX-4 — precise] B1 trigger mismatch.** Migration 000600 creates `sync_post_counts()`, but the live triggers call `sync_post_counts_and_top_emojis()` — never invoking the new fn; `table_share` counts never update. Fix: patch the EXISTING `sync_post_counts_and_top_emojis()` (or recreate triggers); test toggling 👀 changes `table_shares.reaction_count`.
+- **[CX-5] Job completion non-transactional + errors ignored.** `handleAsyncExtract` updates `import_jobs` + `wishlist_items` + `table_shares` as separate calls, never checking `.error` — a conflict/FK error leaves the job `resolved` while destinations stay `pending`. Fix: a SECURITY DEFINER RPC that locks the pending job, validates the transition, updates all destinations in ONE transaction, throws on any failure.
+
+**Reconciliation:** BOTH reviewers FAIL → **ticket FAILS → REVISE (cycle 1 of 3).** No conflicting findings; Codex CX-1…CX-5 + Claude H-1…H-7/M-1…M-5 form one coherent punch list (dispatched to the builder). Both confirm the privacy SQL (`fn_compute_table_float`) and `create_import` membership atomicity are CORRECT — preserve them, do not regress.
 
 ### Review 2 (if needed)
 ```

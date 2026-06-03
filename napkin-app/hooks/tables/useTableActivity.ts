@@ -144,6 +144,26 @@ export interface SharedSaveActivityItem {
     top_emojis: string[];
     my_reactions?: string[];
     created_at: string;
+    // [H-6 FIX] camelCase aliases set by edge fn hydrator so SharedSaveCard props match
+    shareId?: string;
+    extractionStatus?: string | null;
+    reactionCount?: number;
+    topEmojis?: string[];
+    myReactions?: string[];
+    createdAt?: string;
+}
+
+export interface SharedSaveCardShapeForDigest {
+    shareId: string;
+    tableId: string;
+    author: { user_id: string; display_name: string | null; avatar_url: string | null };
+    restaurant: { id: string | null; name: string | null; city: string | null; cuisine: string | null; photo_url: string | null; verification?: string } | null;
+    note?: string | null;
+    extractionStatus?: string | null;
+    reactionCount: number;
+    topEmojis: string[];
+    myReactions?: string[];
+    createdAt: string;
 }
 
 export interface ShareDigestActivityItem {
@@ -155,7 +175,8 @@ export interface ShareDigestActivityItem {
     author: { user_id: string; display_name: string | null; avatar_url: string | null } | null;
     share_count: number;
     child_ids: string[];
-    childShares?: SharedSaveActivityItem[];
+    /** [H-6 FIX] Hydrated children already mapped to SharedSaveCardProps shape (camelCase) */
+    childShares?: SharedSaveCardShapeForDigest[];
 }
 
 export interface RestaurantFloatActivityItem {

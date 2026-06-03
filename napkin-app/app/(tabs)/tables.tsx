@@ -38,6 +38,9 @@ import {
     type SoloShareActivity,
     type TableNightActivity,
     type TopFourEditedActivity,
+    type SharedSaveActivityItem,
+    type ShareDigestActivityItem,
+    type RestaurantFloatActivityItem,
 } from '@/hooks/tables/useTableActivity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
@@ -754,16 +757,19 @@ export default function TablesScreen() {
                                                       );
                                                   }
                                                   // TICKET-060: shared restaurant cards
+                                                  // [H-6 FIX] Use typed ActivityItem variants — no more `as any`.
+                                                  // The edge fn now returns camelCase SharedSaveCardProps-shaped
+                                                  // children for digests (see table-activity hydration fix).
                                                   if (item.type === 'shared_save') {
-                                                      const s = item as any;
+                                                      const s = item as SharedSaveActivityItem;
                                                       return (
                                                           <SharedSaveCard
-                                                              key={`share-${item.id}`}
-                                                              shareId={s.id}
+                                                              key={`share-${s.id}`}
+                                                              shareId={(s as any).shareId ?? s.id}
                                                               tableId={s.table_id ?? activeTable?.id ?? ''}
                                                               author={s.author ?? { user_id: '', display_name: null, avatar_url: null }}
                                                               restaurant={s.restaurant}
-                                                              note={s.note}
+                                                              note={(s as any).note}
                                                               extractionStatus={s.extraction_status}
                                                               reactionCount={s.reaction_count ?? 0}
                                                               topEmojis={s.top_emojis ?? []}
@@ -773,26 +779,26 @@ export default function TablesScreen() {
                                                       );
                                                   }
                                                   if (item.type === 'share_digest') {
-                                                      const d = item as any;
+                                                      const d = item as ShareDigestActivityItem;
                                                       return (
                                                           <ShareDigestCard
-                                                              key={`digest-${item.id}`}
+                                                              key={`digest-${d.id}`}
                                                               id={d.id}
                                                               tableId={d.table_id ?? activeTable?.id ?? ''}
                                                               author={d.author ?? { user_id: '', display_name: null, avatar_url: null }}
                                                               shareCount={d.share_count ?? 0}
                                                               childIds={d.child_ids ?? []}
-                                                              childShares={d.children}
+                                                              childShares={d.childShares}
                                                               createdAt={d.sort_date}
                                                           />
                                                       );
                                                   }
                                                   if (item.type === 'restaurant_float') {
-                                                      const f = item as any;
+                                                      const f = item as RestaurantFloatActivityItem;
                                                       if (!f.restaurant) return null;
                                                       return (
                                                           <RestaurantFloatCard
-                                                              key={`float-${item.id}`}
+                                                              key={`float-${f.id}`}
                                                               floatId={f.float_id ?? f.id}
                                                               tableId={f.table_id ?? activeTable?.id ?? ''}
                                                               restaurant={f.restaurant}
