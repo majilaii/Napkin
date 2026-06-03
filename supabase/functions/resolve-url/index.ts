@@ -1,19 +1,25 @@
 /**
- * resolve-url edge function — TICKET-053
+ * resolve-url edge function — TICKET-053 + TICKET-060
  *
- * POST { url: string }
- * 1. validateUrl
- * 2. check_and_increment_rate_limit (30/hr per user)
- * 3. Source detection from URL host pattern
- * 4. oEmbed (TikTok) or <title>/JSON-LD unfurl (web) — 8s overall timeout
- * 5. Internal HTTP call to places-search to resolve candidates
- * 6. Join restaurants.external_id → restaurant_id
- * 7. Join wishlist_items for already_wishlisted per candidate
- * 8. Build ResolveUrlResponse (including note_prefill from captionToNote)
+ * TICKET-053: POST { url: string }
+ * TICKET-060: POST { url?, image_path?, caption?, action?, job_id? }
+ *   action='extract' (async path): fetches image from storage, extracts,
+ *   PATCHes the import_jobs row, propagates restaurant to all destination rows.
  *
- * Error mapping [M4]:
+ * Extraction tiering (T-060):
+ * 1. google_maps URL parse (no AI) — existing T-053 path
+ * 2. If usable caption/title: extractFromText (~10× cheaper)
+ * 3. If image present AND text insufficient: extractFromVision
+ *
+ * Ghost quarantine (H4/R3): low-confidence extractions write
+ *   verification='unverified', created_by=<saver> — never deduped/shared.
+ *
+ * Cache (H1/H5/R13/B2): content-derived fields only in extraction_cache.
+ *   already_wishlisted + restaurant_id recomputed per-request.
+ *
+ * Error mapping [M4] (T-053 paths unchanged):
  * - TikTok oEmbed 200 valid → success
- * - TikTok oEmbed 200 malformed/empty → zero-candidate (empty candidates)
+ * - TikTok oEmbed 200 malformed/empty → zero-candidate
  * - TikTok oEmbed 400/404 → zero-candidate
  * - TikTok oEmbed 429 → 503 UPSTREAM_RATE_LIMITED
  * - TikTok oEmbed 5xx / timeout → 503 UPSTREAM_UNAVAILABLE
@@ -28,10 +34,16 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { validateUrl } from '../_shared/urlValidation.ts';
 import type { WishlistSourceTikTok } from '../_shared/wishlistSource.ts';
 import { captionToNote } from '../_shared/captionToNote.ts';
+import {
+    extractFromVision,
+    extractFromText,
+    type ExtractedCandidate,
+} from '../_shared/visionExtract.ts';
+import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type SourceType = 'tiktok' | 'google_maps' | 'web';
+type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'screenshot' | 'vision';
 type Confidence = 'exact' | 'high' | 'low';
 
 /** Shape identical to places-search output */
@@ -74,6 +86,8 @@ interface ResolveUrlResponse {
     note_prefill: string;
     candidates: ResolvedCandidate[];
     partial_source: Omit<WishlistSourceTikTok, 'type' | 'url'> | null;
+    /** True when the URL is Instagram-walled; client shows "add a screenshot" nudge. */
+    ig_nudge?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -87,6 +101,12 @@ function jsonResponse(body: unknown, status = 200) {
 
 function errorResponse(code: string, message: string, status: number, details?: unknown) {
     return jsonResponse({ error: { code, message, details } }, status);
+}
+
+/** Check if a URL is Instagram (login-walled) */
+function isInstagramUrl(url: URL): boolean {
+    const host = url.hostname.toLowerCase();
+    return host === 'instagram.com' || host === 'www.instagram.com';
 }
 
 /** Detect source type from URL host pattern */
@@ -107,6 +127,9 @@ function detectSourceType(url: URL): SourceType {
         host === 'goo.gl'
     ) {
         return 'google_maps';
+    }
+    if (host === 'instagram.com' || host === 'www.instagram.com') {
+        return 'instagram';
     }
     return 'web';
 }
@@ -231,6 +254,453 @@ async function callPlacesSearch(
     return Array.isArray(candidates) ? candidates : [];
 }
 
+// ── Vision helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Read extraction_cache for a given content_hash (B2: service-role only).
+ * Returns cached extracted fields or null on miss.
+ */
+async function readExtractionCache(
+    supabase: any,
+    contentHash: string,
+): Promise<ExtractedCandidate | null> {
+    const { data } = await supabase
+        .from('extraction_cache')
+        .select('extracted, hash_version')
+        .eq('content_hash', contentHash)
+        .maybeSingle();
+    if (!data?.extracted) return null;
+    const e = data.extracted as Record<string, unknown>;
+    return {
+        name: (e['name'] as string) ?? null,
+        city: (e['city'] as string) ?? null,
+        cuisine: (e['cuisine'] as string) ?? null,
+        address: (e['address'] as string) ?? null,
+        booking_url: (e['booking_url'] as string) ?? null,
+        hours: (e['hours'] as string) ?? null,
+        confidence: (['high', 'low', 'exact'].includes(e['confidence'] as string)
+            ? e['confidence'] : 'low') as ExtractedCandidate['confidence'],
+        google_place_id: (e['google_place_id'] as string) ?? null,
+    };
+}
+
+/**
+ * Write extraction result to cache (service-role only, content-derived fields only — H1/B2).
+ * Never stores restaurant_id or already_wishlisted.
+ */
+async function writeExtractionCache(
+    supabase: any,
+    contentHash: string,
+    sourceUrl: string | null,
+    extracted: ExtractedCandidate,
+    modelId: string,
+): Promise<void> {
+    await supabase
+        .from('extraction_cache')
+        .upsert({
+            content_hash: contentHash,
+            hash_version: HASH_VERSION,
+            source_url: sourceUrl,
+            extracted: {
+                name: extracted.name,
+                city: extracted.city,
+                cuisine: extracted.cuisine,
+                address: extracted.address,
+                booking_url: extracted.booking_url,
+                hours: extracted.hours,
+                confidence: extracted.confidence,
+                google_place_id: extracted.google_place_id,
+            },
+            model: modelId,
+        }, { onConflict: 'content_hash' });
+}
+
+/**
+ * Upsert a ghost (unverified) restaurant or verified restaurant from extracted data.
+ * Low-confidence → unverified, owned by saver (H4/R3).
+ * High-confidence + Places match → verified.
+ */
+async function upsertRestaurantFromExtracted(
+    supabase: any,
+    extracted: ExtractedCandidate,
+    userId: string,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
+    authHeader: string,
+    abortSignal: AbortSignal,
+): Promise<{ restaurantId: string | null; confidence: ExtractedCandidate['confidence'] }> {
+    if (!extracted.name) return { restaurantId: null, confidence: extracted.confidence };
+
+    // If we have a google_place_id, try a Places lookup first (free/verified path)
+    if (extracted.google_place_id) {
+        try {
+            const placeCandidates = await callPlacesSearch(
+                extracted.name,
+                authHeader,
+                supabaseUrl,
+                supabaseAnonKey,
+                abortSignal,
+            );
+            if (placeCandidates.length > 0) {
+                const top = placeCandidates[0];
+                const { data: existing } = await supabase
+                    .from('restaurants')
+                    .select('id')
+                    .eq('external_id', top.id)
+                    .maybeSingle();
+                if (existing) {
+                    return { restaurantId: existing.id, confidence: 'high' };
+                }
+                // Upsert the verified restaurant
+                const { data: upserted } = await supabase
+                    .from('restaurants')
+                    .upsert({
+                        external_id: top.id,
+                        name: top.name ?? extracted.name,
+                        city: top.city ?? extracted.city,
+                        country: top.country,
+                        address: top.formattedAddress ?? extracted.address,
+                        verification: 'verified',
+                    }, { onConflict: 'external_id' })
+                    .select('id')
+                    .single();
+                return { restaurantId: upserted?.id ?? null, confidence: 'high' };
+            }
+        } catch {
+            // Fall through to ghost
+        }
+    }
+
+    // Low-confidence → unverified ghost, owned per-save (H4/R3)
+    if (extracted.confidence === 'low' || !extracted.name) {
+        // Create an unverified ghost owned by this user
+        const { data: ghost } = await supabase
+            .from('restaurants')
+            .insert({
+                external_id: `ghost_${userId}_${Date.now()}`,
+                name: extracted.name,
+                city: extracted.city,
+                address: extracted.address,
+                verification: 'unverified',
+                created_by: userId,
+            })
+            .select('id')
+            .single();
+        return { restaurantId: ghost?.id ?? null, confidence: 'low' };
+    }
+
+    // High-confidence but no Places match → try Places search by name
+    try {
+        const query = [extracted.name, extracted.city].filter(Boolean).join(', ');
+        const placeCandidates = await callPlacesSearch(
+            query, authHeader, supabaseUrl, supabaseAnonKey, abortSignal,
+        );
+        if (placeCandidates.length > 0) {
+            const top = placeCandidates[0];
+            const { data: existing } = await supabase
+                .from('restaurants')
+                .select('id')
+                .eq('external_id', top.id)
+                .maybeSingle();
+            if (existing) return { restaurantId: existing.id, confidence: 'high' };
+            const { data: upserted } = await supabase
+                .from('restaurants')
+                .upsert({
+                    external_id: top.id,
+                    name: top.name ?? extracted.name,
+                    city: top.city ?? extracted.city,
+                    address: top.formattedAddress ?? extracted.address,
+                    verification: 'verified',
+                }, { onConflict: 'external_id' })
+                .select('id')
+                .single();
+            return { restaurantId: upserted?.id ?? null, confidence: 'high' };
+        }
+    } catch {
+        // Fall through
+    }
+
+    // No Places match for high-confidence → still create unverified ghost (never-block)
+    const { data: ghost } = await supabase
+        .from('restaurants')
+        .insert({
+            external_id: `ghost_${userId}_${Date.now()}`,
+            name: extracted.name,
+            city: extracted.city,
+            address: extracted.address,
+            verification: 'unverified',
+            created_by: userId,
+        })
+        .select('id')
+        .single();
+    return { restaurantId: ghost?.id ?? null, confidence: extracted.confidence };
+}
+
+/**
+ * Handle inline vision extraction (not async — used when image_path is in body).
+ * Returns candidates just like the URL-resolution path.
+ */
+async function handleVisionExtract(
+    supabase: any,
+    user: { id: string },
+    imagePath: string,
+    caption: string | null,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
+    authHeader: string,
+): Promise<Response> {
+    // Download the image from Storage
+    const { data: imageData, error: imgError } = await supabase.storage
+        .from('import-uploads')
+        .download(imagePath);
+
+    if (imgError || !imageData) {
+        return errorResponse('IMAGE_NOT_FOUND', 'Could not read the uploaded image', 404);
+    }
+
+    const imageBytes = new Uint8Array(await (imageData as Blob).arrayBuffer());
+    const imageHash = await hashImage(imageBytes);
+
+    // Check cache first (H1/B2)
+    let extracted = await readExtractionCache(supabase, imageHash);
+    const modelId = Deno.env.get('EXTRACTION_MODEL') ?? 'claude-haiku-4-5-20251001';
+
+    if (!extracted) {
+        const imageBase64 = btoa(String.fromCharCode(...imageBytes));
+        extracted = await extractFromVision(imageBase64, 'image/jpeg', caption ?? undefined);
+        // Write content-derived fields only to cache (H1)
+        await writeExtractionCache(supabase, imageHash, null, extracted, modelId).catch(() => null);
+    }
+
+    if (!extracted || !extracted.name) {
+        return jsonResponse({
+            data: {
+                source_type: 'screenshot',
+                best_query: null,
+                note_prefill: caption ? captionToNote(caption) : '',
+                candidates: [],
+                partial_source: null,
+                extracted_confidence: extracted?.confidence ?? 'low',
+                needs_confirm: true,
+            },
+        });
+    }
+
+    // Try to resolve extracted name to a Places candidate
+    const abortController = new AbortController();
+    setTimeout(() => abortController.abort(), 8000);
+
+    const query = [extracted.name, extracted.city].filter(Boolean).join(', ');
+    let placeCandidates: PlacesPayload[] = [];
+    try {
+        placeCandidates = await callPlacesSearch(
+            query, authHeader, supabaseUrl, supabaseAnonKey, abortController.signal,
+        );
+    } catch { /* zero-candidate */ }
+
+    const googlePlaceIds = placeCandidates.map((p) => p.id).filter(Boolean);
+    const { data: restaurantRows } = googlePlaceIds.length > 0
+        ? await supabase.from('restaurants').select('id, external_id')
+            .in('external_id', googlePlaceIds)
+            .eq('verification', 'verified')
+        : { data: [] };
+
+    const placeIdToRestaurantId = new Map<string, string>();
+    for (const row of (restaurantRows ?? [])) {
+        if (row.external_id) placeIdToRestaurantId.set(row.external_id, row.id);
+    }
+
+    const knownRestaurantIds = [...placeIdToRestaurantId.values()];
+    const wishlistedSet = new Set<string>();
+    if (knownRestaurantIds.length > 0) {
+        const { data: wishlistRows } = await supabase
+            .from('wishlist_items')
+            .select('restaurant_id')
+            .eq('user_id', user.id)
+            .in('restaurant_id', knownRestaurantIds);
+        for (const row of (wishlistRows ?? [])) {
+            if (row.restaurant_id) wishlistedSet.add(row.restaurant_id);
+        }
+    }
+
+    const topN = placeCandidates.slice(0, 3);
+    const candidates: ResolvedCandidate[] = topN.map((place, idx): ResolvedCandidate => {
+        const restaurantId = placeIdToRestaurantId.get(place.id) ?? null;
+        const alreadyWishlisted = restaurantId ? wishlistedSet.has(restaurantId) : false;
+        const confidence: Confidence = idx === 0 && extracted!.confidence === 'high' ? 'high' : 'low';
+        const restaurant: PlacesPayload = {
+            ...place,
+            external_id: place.id,
+            location: {
+                address: place.formattedAddress ?? undefined,
+                locality: place.city ?? undefined,
+                country: place.country ?? undefined,
+            },
+        };
+        return { restaurant, confidence, google_place_id: place.id, restaurant_id: restaurantId, already_wishlisted: alreadyWishlisted };
+    });
+
+    // If no Places candidates, create a ghost candidate from extracted data
+    if (candidates.length === 0 && extracted.name) {
+        const ghostCandidate: ResolvedCandidate = {
+            restaurant: {
+                id: `ghost_pending`,
+                name: extracted.name,
+                formattedAddress: extracted.address,
+                city: extracted.city,
+                country: null,
+                latitude: null,
+                longitude: null,
+                categories: [],
+                cuisine: extracted.cuisine,
+                googleRating: null,
+                googleRatingCount: null,
+                priceLevel: null,
+                photoReference: null,
+                website: null,
+                link: null,
+                external_id: `ghost_pending`,
+                location: { address: extracted.address ?? undefined, locality: extracted.city ?? undefined },
+            },
+            confidence: extracted.confidence === 'high' ? 'high' : 'low',
+            google_place_id: extracted.google_place_id ?? `ghost_pending`,
+            restaurant_id: null,
+            already_wishlisted: false,
+        };
+        candidates.push(ghostCandidate);
+    }
+
+    return jsonResponse({
+        data: {
+            source_type: 'screenshot' as SourceType,
+            best_query: query || null,
+            note_prefill: caption ? captionToNote(caption) : '',
+            candidates,
+            partial_source: null,
+            extracted_confidence: extracted.confidence,
+        },
+    });
+}
+
+/**
+ * Async extract action (R1): called by table-shares after job creation.
+ * Fetches the job, runs extraction, PATCHes import_jobs, propagates restaurant
+ * to all destination rows (wishlist_items + table_shares for this job).
+ */
+async function handleAsyncExtract(
+    supabase: any,
+    user: { id: string },
+    jobId: string,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
+    authHeader: string,
+): Promise<Response> {
+    // Fetch the job (verify it belongs to this user or is a service-role call)
+    const { data: job } = await supabase
+        .from('import_jobs')
+        .select('*')
+        .eq('job_id', jobId)
+        .maybeSingle();
+
+    if (!job) {
+        return errorResponse('JOB_NOT_FOUND', 'Import job not found', 404);
+    }
+    if (job.user_id !== user.id) {
+        return errorResponse('FORBIDDEN', 'Not your import job', 403);
+    }
+    if (job.status !== 'pending') {
+        // Already processed — idempotent
+        return jsonResponse({ data: { job_id: jobId, status: job.status } });
+    }
+
+    const source = job.source as Record<string, unknown> | null;
+    const imagePath = (source?.['upload_path'] as string) ?? null;
+    const captionText = (source?.['caption'] as string) ?? null;
+    const sourceUrl = (source?.['source_url'] as string) ?? null;
+
+    let extracted: ExtractedCandidate | null = null;
+    const modelId = Deno.env.get('EXTRACTION_MODEL') ?? 'claude-haiku-4-5-20251001';
+
+    // Try cache first
+    if (job.content_hash) {
+        extracted = await readExtractionCache(supabase, job.content_hash);
+    }
+
+    if (!extracted) {
+        if (imagePath) {
+            // Vision path
+            const { data: imageData } = await supabase.storage
+                .from('import-uploads')
+                .download(imagePath);
+            if (imageData) {
+                const imageBytes = new Uint8Array(await (imageData as Blob).arrayBuffer());
+                const imageBase64 = btoa(String.fromCharCode(...imageBytes));
+                extracted = await extractFromVision(imageBase64, 'image/jpeg', captionText ?? undefined);
+            }
+        } else if (captionText || sourceUrl) {
+            // Text path
+            const textInput = [captionText, sourceUrl].filter(Boolean).join('\n');
+            extracted = await extractFromText(textInput);
+        }
+
+        if (extracted && job.content_hash) {
+            await writeExtractionCache(supabase, job.content_hash, sourceUrl, extracted, modelId).catch(() => null);
+        }
+    }
+
+    if (!extracted) {
+        // Fail soft — mark job as needs_confirm, never fail the save
+        await supabase.from('import_jobs').update({ status: 'needs_confirm' }).eq('job_id', jobId);
+        await supabase.from('wishlist_items').update({ extraction_status: 'needs_confirm' }).eq('job_id', jobId);
+        await supabase.from('table_shares').update({ extraction_status: 'needs_confirm' }).eq('job_id', jobId);
+        return jsonResponse({ data: { job_id: jobId, status: 'needs_confirm' } });
+    }
+
+    // Try to resolve a verified restaurant
+    const abortController = new AbortController();
+    setTimeout(() => abortController.abort(), 8000);
+
+    let restaurantId: string | null = null;
+    let finalStatus: string = 'needs_confirm';
+
+    if (extracted.name) {
+        const result = await upsertRestaurantFromExtracted(
+            supabase, extracted, user.id, supabaseUrl, supabaseAnonKey, authHeader, abortController.signal,
+        );
+        restaurantId = result.restaurantId;
+        finalStatus = result.confidence === 'low' || !restaurantId ? 'needs_confirm' : 'resolved';
+    }
+
+    // Propagate to all destination rows
+    const updateData: Record<string, unknown> = {
+        status: finalStatus,
+        restaurant_id: restaurantId,
+        resolved_at: new Date().toISOString(),
+    };
+    await supabase.from('import_jobs').update(updateData).eq('job_id', jobId);
+
+    const destUpdate = {
+        restaurant_id: restaurantId,
+        extraction_status: finalStatus,
+    };
+    await supabase.from('wishlist_items').update(destUpdate).eq('job_id', jobId);
+    await supabase.from('table_shares').update(destUpdate).eq('job_id', jobId);
+
+    return jsonResponse({
+        data: {
+            job_id: jobId,
+            status: finalStatus,
+            restaurant_id: restaurantId,
+            extracted: {
+                name: extracted.name,
+                city: extracted.city,
+                cuisine: extracted.cuisine,
+                confidence: extracted.confidence,
+            },
+        },
+    });
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -261,24 +731,45 @@ serve(async (req) => {
     }
 
     // ── Parse body ────────────────────────────────────────────────────────────
-    let body: { url?: string };
+    let body: {
+        url?: string;
+        image_path?: string;
+        caption?: string;
+        action?: string;
+        job_id?: string;
+    };
     try {
         body = await req.json();
     } catch {
         return errorResponse('INVALID_BODY', 'Request body must be JSON', 400);
     }
 
+    // ── Async extract action (TICKET-060 R1) ──────────────────────────────────
+    // Called by table-shares after job creation to run extraction asynchronously.
+    // PATCHes the import_jobs row on completion and propagates restaurant to destinations.
+    if (body?.action === 'extract' && body?.job_id) {
+        return await handleAsyncExtract(supabase, user, body.job_id, supabaseUrl, supabaseAnonKey, authHeader);
+    }
+
     const rawUrl = body?.url;
-    if (typeof rawUrl !== 'string') {
+    // For vision/screenshot paths, url is optional (image_path may be supplied instead)
+    const hasImage = typeof body?.image_path === 'string';
+    if (!hasImage && (typeof rawUrl !== 'string' || !rawUrl)) {
         return errorResponse('INVALID_URL', 'url is required', 400);
     }
 
     // ── URL validation [M2] ───────────────────────────────────────────────────
-    const urlResult = validateUrl(rawUrl);
-    if (!urlResult.ok) {
-        return errorResponse('INVALID_URL', `URL rejected: ${urlResult.reason}`, 400);
+    // For vision/screenshot paths, url validation is skipped (no url required)
+    let parsedUrl: URL | null = null;
+    let sourceType: SourceType = 'screenshot';
+
+    if (rawUrl) {
+        const urlResult = validateUrl(rawUrl);
+        if (!urlResult.ok) {
+            return errorResponse('INVALID_URL', `URL rejected: ${urlResult.reason}`, 400);
+        }
+        parsedUrl = urlResult.url;
     }
-    const parsedUrl = urlResult.url;
 
     // ── Rate limit [H3] ───────────────────────────────────────────────────────
     const { data: rateRows, error: rateError } = await supabase.rpc(
@@ -299,7 +790,9 @@ serve(async (req) => {
     }
 
     // ── Source detection ──────────────────────────────────────────────────────
-    const sourceType = detectSourceType(parsedUrl);
+    if (parsedUrl) {
+        sourceType = detectSourceType(parsedUrl);
+    }
 
     // ── 8-second overall timeout ──────────────────────────────────────────────
     const abortController = new AbortController();
@@ -314,7 +807,7 @@ serve(async (req) => {
         if (sourceType === 'tiktok') {
             let oEmbed: Awaited<ReturnType<typeof fetchTikTokOEmbed>> = null;
             try {
-                oEmbed = await fetchTikTokOEmbed(rawUrl, abortController.signal);
+                oEmbed = await fetchTikTokOEmbed(rawUrl!, abortController.signal);
             } catch (e: any) {
                 if (e?.name === 'AbortError') {
                     return errorResponse('TIMEOUT', 'Resolver timed out', 503);
@@ -343,7 +836,7 @@ serve(async (req) => {
         }
 
         // ── Google Maps: use resolved URL for place_id extraction ────────────
-        if (sourceType === 'google_maps') {
+        if (sourceType === 'google_maps' && parsedUrl) {
             // Google Maps URLs often contain the place name in the path
             const pathParts = parsedUrl.pathname.split('/');
             const placeIndex = pathParts.findIndex((p) => p === 'place' || p === 'Place');
@@ -358,11 +851,42 @@ serve(async (req) => {
         // ── Web: unfurl <title> ───────────────────────────────────────────────
         if (sourceType === 'web') {
             // Non-fatal: if it fails we just have no query
-            const title = await unfurlWebTitle(rawUrl, abortController.signal).catch(() => null);
+            const title = await unfurlWebTitle(rawUrl!, abortController.signal).catch(() => null);
             if (title) {
                 // Strip common "- Restaurant Name | NYC" suffixes from page titles
                 query = title.replace(/\s*[\|—\-]\s*.+$/, '').trim();
             }
+        }
+
+        // ── Instagram: login-walled — nudge screenshot, best-effort text-LLM ─
+        if (sourceType === 'instagram') {
+            // If caption text rode along (future share-ext), run text extraction
+            const caption = body?.caption?.trim();
+            if (caption) {
+                notePrefill = captionToNote(caption);
+                query = caption.split(/\n/)[0].trim() || caption;
+            }
+            // Always return ig_nudge=true so client can show "add a screenshot" prompt
+            clearTimeout(timeoutId);
+            return jsonResponse({
+                data: {
+                    source_type: 'instagram',
+                    best_query: query,
+                    note_prefill: notePrefill,
+                    candidates: [],
+                    partial_source: null,
+                    ig_nudge: true,
+                } satisfies ResolveUrlResponse,
+            });
+        }
+
+        // ── Vision/screenshot path (TICKET-060): image_path supplied ─────────
+        if (hasImage && body?.image_path) {
+            clearTimeout(timeoutId);
+            return handleVisionExtract(
+                supabase, user, body.image_path, body?.caption ?? null,
+                supabaseUrl, supabaseAnonKey, authHeader,
+            );
         }
 
         // ── Places search ────────────────────────────────────────────────────

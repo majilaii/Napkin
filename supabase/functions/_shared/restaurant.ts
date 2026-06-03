@@ -34,6 +34,11 @@ export interface RestaurantInput {
     googleRatingCount?: number;
     priceLevel?: number;
     cuisine?: string;
+    // TICKET-060 H4/R3: ghost quarantine.
+    // 'verified' (default) = canonical Places-matched or confirmed restaurant.
+    // 'unverified' = model-created ghost, owned per-save by createdBy.
+    verification?: 'verified' | 'unverified';
+    createdBy?: string;    // user_id for unverified ghosts
 }
 
 /**
@@ -83,6 +88,9 @@ export async function upsertRestaurant(
     if (country) upsertRow.country = country;
     if (input.latitude !== undefined && input.latitude !== null) upsertRow.lat = input.latitude;
     if (input.longitude !== undefined && input.longitude !== null) upsertRow.lng = input.longitude;
+    // TICKET-060 H4/R3: preserve verification + created_by for ghost management.
+    if (input.verification !== undefined) upsertRow.verification = input.verification;
+    if (input.createdBy !== undefined) upsertRow.created_by = input.createdBy;
 
     const { data, error } = await supabase
         .from('restaurants')

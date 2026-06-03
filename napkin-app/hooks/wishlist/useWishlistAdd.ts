@@ -44,10 +44,15 @@ export interface WishlistAddInput {
 export interface WishlistItem {
     id: string;
     user_id: string;
-    restaurant_id: string;
+    restaurant_id: string | null;  // null for pending async captures
     note: string | null;
     source: WishlistSource | null;
     created_at: string;
+    /** TICKET-060: async capture status from import_jobs. */
+    extraction_status?: 'pending' | 'resolved' | 'needs_confirm' | 'failed' | null;
+    job_id?: string | null;
+    /** TICKET-060: verification from the linked restaurant. */
+    verification?: 'verified' | 'unverified' | null;
 }
 
 async function addToWishlist(input: WishlistAddInput): Promise<WishlistItem> {

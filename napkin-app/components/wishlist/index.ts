@@ -7,3 +7,6 @@ export { AvatarStack } from './AvatarStack';
 export { RemoveConfirmationSheet } from './RemoveConfirmationSheet';
 export { WishlistEmpty } from './WishlistEmpty';
 export { ImportLinkSheet } from './ImportLinkSheet';
+// TICKET-060: multimodal import components
+export { PendingSaveCard, type PendingSaveCardProps, type PendingSaveStatus } from './PendingSaveCard';
+export { DestinationPicker, type DestinationPickerProps, type DestinationSelection } from './DestinationPicker';

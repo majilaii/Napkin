@@ -178,6 +178,29 @@ export const queryKeys = {
         detail: (roundId: string) => ['rounds', 'detail', roundId] as const,
     },
 
+    // Import Jobs — async capture (TICKET-060 R1)
+    importJobs: {
+        all: (userId: string) => ['importJobs', userId] as const,
+        detail: (jobId: string) => ['importJobs', 'detail', jobId] as const,
+    },
+
+    // Table Shares — shared-restaurant feed cards (TICKET-060)
+    tableShares: {
+        forTable: (tableId: string) => ['tableShares', tableId] as const,
+        detail: (shareId: string) => ['tableShares', 'detail', shareId] as const,
+    },
+
+    // Floats — emergent overlap floats, saver-set keyed (TICKET-060 R4)
+    floats: {
+        forTable: (tableId: string) => ['floats', tableId] as const,
+        detail: (floatId: string) => ['floats', 'detail', floatId] as const,
+    },
+
+    // Extraction — content-hash keyed cache (TICKET-060 R13)
+    extraction: {
+        byHash: (contentHash: string) => ['extraction', contentHash] as const,
+    },
+
     // Admin — operator surfaces (TICKET-033)
     admin: {
         // Critics list paginated by (scraped_at desc, id desc)

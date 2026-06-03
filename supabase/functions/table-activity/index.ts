@@ -100,6 +100,7 @@ serve(async (req) => {
         const decoded = decodeCursor(cursor ?? null);
 
         // ── Call fn_table_activity_page RPC ───────────────────────────────────
+        // TICKET-060 R7: pass p_coalesce_hours (defaulted to 6 in SQL — non-breaking)
         const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_table_activity_page', {
             p_table_id: tableId,
             p_caller_id: user.id,
@@ -108,6 +109,7 @@ serve(async (req) => {
             p_limit: PAGE_SIZE + 1,
             p_filter_type: filterType ?? null,
             p_filter_user_id: filterUserId ?? null,
+            p_coalesce_hours: 6,   // R7: explicit, matches the DEFAULT 6 in fn_table_activity_page
         });
 
         if (rpcErr) {
@@ -131,6 +133,9 @@ serve(async (req) => {
         const entryRpcRows = keptRpc.filter((r) => r.kind === 'entry');
         const nightRpcRows = keptRpc.filter((r) => r.kind === 'table_night');
         const tt4RpcRows = keptRpc.filter((r) => r.kind === 'top_4_edited');
+        // TICKET-060: new share/float kinds
+        const shareRpcRows = keptRpc.filter((r) => r.kind === 'shared_save' || r.kind === 'share_digest');
+        const floatRpcRows = keptRpc.filter((r) => r.kind === 'restaurant_float');
 
         const entryIds = entryRpcRows.map((r) => r.id);
         const nightIds = nightRpcRows.map((r) => r.id);
@@ -430,6 +435,98 @@ serve(async (req) => {
             });
         }
 
+        // ── TICKET-060: Hydrate shared_save / share_digest items ────────────────
+        let sharedSaveItems: any[] = [];
+
+        if (shareRpcRows.length > 0) {
+            const allShareIds: string[] = [];
+            for (const row of shareRpcRows) {
+                const payload = row.payload as any;
+                const childIds: string[] = payload?.child_ids ?? [];
+                allShareIds.push(...childIds);
+            }
+            const deduped = [...new Set(allShareIds)];
+
+            if (deduped.length > 0) {
+                const { data: shareRows } = await supabase
+                    .from('table_shares')
+                    .select('id, job_id, table_id, author_id, restaurant_id, note, source, extraction_status, reaction_count, top_emojis, created_at')
+                    .in('id', deduped);
+
+                const shareAuthorIds = [...new Set((shareRows ?? []).map((s: any) => s.author_id as string))];
+                const shareAuthorMap = new Map<string, any>();
+                if (shareAuthorIds.length > 0) {
+                    const { data: shareAuthors } = await supabase
+                        .from('profiles').select('user_id, display_name, avatar_url')
+                        .in('user_id', shareAuthorIds);
+                    for (const p of (shareAuthors ?? []) as any[]) shareAuthorMap.set(p.user_id, p);
+                }
+
+                const shareRestaurantIds = [...new Set((shareRows ?? []).filter((s: any) => s.restaurant_id).map((s: any) => s.restaurant_id as string))];
+                const shareRestaurantMap = new Map<string, any>();
+                if (shareRestaurantIds.length > 0) {
+                    const { data: shareRestaurants } = await supabase
+                        .from('restaurants').select('id, name, city, cuisine, photo_url, verification')
+                        .in('id', shareRestaurantIds).eq('verification', 'verified');
+                    for (const r of (shareRestaurants ?? []) as any[]) shareRestaurantMap.set(r.id, r);
+                }
+
+                const shareRowById = new Map((shareRows ?? []).map((s: any) => [s.id, {
+                    ...s,
+                    author: shareAuthorMap.get(s.author_id) ?? null,
+                    restaurant: s.restaurant_id ? (shareRestaurantMap.get(s.restaurant_id) ?? null) : null,
+                    // booking_url deliberately NOT included (L3/KEEP — TICKET-061 seam)
+                }]));
+
+                for (const row of shareRpcRows) {
+                    const payload = row.payload as any;
+                    const childIds: string[] = payload?.child_ids ?? [];
+                    const hydratedChildren = childIds.map((cid) => shareRowById.get(cid)).filter(Boolean);
+                    if (row.kind === 'shared_save') {
+                        const child = hydratedChildren[0];
+                        if (child) sharedSaveItems.push({ id: row.id, type: 'shared_save', sort_date: row.sort_date, ...child });
+                    } else {
+                        const repShare = hydratedChildren[0];
+                        sharedSaveItems.push({
+                            id: row.id, type: 'share_digest', sort_date: row.sort_date, table_id: tableId,
+                            author: repShare?.author ?? null,
+                            share_count: payload?.share_count ?? hydratedChildren.length,
+                            child_ids: childIds, children: hydratedChildren, // B3: real stable ids
+                        });
+                    }
+                }
+            }
+        }
+
+        // ── TICKET-060: Hydrate restaurant_float items ────────────────────────
+        let floatItems: any[] = [];
+
+        if (floatRpcRows.length > 0) {
+            for (const row of floatRpcRows) {
+                const payload = row.payload as any;
+                const restaurantId = payload?.restaurant_id as string | undefined;
+                const saverUserIds = (payload?.saver_user_ids as string[]) ?? [];
+                let restaurant: any = null;
+                if (restaurantId) {
+                    const { data: r } = await supabase.from('restaurants').select('id, name, city, cuisine, photo_url')
+                        .eq('id', restaurantId).eq('verification', 'verified').maybeSingle();
+                    restaurant = r ?? null;
+                }
+                const memberProfiles: any[] = [];
+                if (saverUserIds.length > 0) {
+                    const { data: floatProfiles } = await supabase.from('profiles')
+                        .select('user_id, display_name, avatar_url').in('user_id', saverUserIds);
+                    memberProfiles.push(...(floatProfiles ?? []));
+                }
+                floatItems.push({
+                    id: row.id, type: 'restaurant_float', sort_date: row.sort_date,
+                    float_id: row.id, table_id: tableId, restaurant,
+                    distinct_count: payload?.distinct_count ?? saverUserIds.length,
+                    members: memberProfiles, first_crossed_at: payload?.first_crossed_at,
+                });
+            }
+        }
+
         // ── Reactions ────────────────────────────────────────────────────────
         const myReactionsByTarget = new Map<string, string[]>();
         const targetKey = (targetType: string, targetId: string) => `${targetType}:${targetId}`;
@@ -466,10 +563,33 @@ serve(async (req) => {
             }
         }
 
+        // TICKET-060: fetch my reactions for table_share targets too
+        const shareIds = sharedSaveItems
+            .filter((s: any) => s.type === 'shared_save')
+            .map((s: any) => s.id as string);
+        if (shareIds.length > 0) {
+            const { data: myShareReactions } = await supabase
+                .from('post_reactions')
+                .select('target_id, emoji')
+                .eq('target_type', 'table_share')
+                .eq('user_id', user.id)
+                .eq('scope', 'table')
+                .in('target_id', shareIds);
+            for (const r of (myShareReactions ?? []) as { target_id: string; emoji: string }[]) {
+                const k = targetKey('table_share', r.target_id);
+                const list = myReactionsByTarget.get(k) ?? [];
+                list.push(r.emoji);
+                myReactionsByTarget.set(k, list);
+            }
+        }
+
         // ── Merge in RPC order (sort_date DESC already from fn_table_activity_page) ──
         const entryById = new Map(taggedEntries.map((e: { id: string }) => [e.id, e]));
         const nightById = new Map(nightsWithParticipants.map((n: { id: string }) => [n.id, n]));
         const tt4ById = new Map(tt4Events.map((t: { id: string }) => [t.id, t]));
+        // TICKET-060: maps for new kinds
+        const sharedSaveById = new Map(sharedSaveItems.map((s: any) => [s.id, s]));
+        const floatById = new Map(floatItems.map((f: any) => [f.id, f]));
 
         const orderedItems = keptRpc
             .map((rpcRow) => {
@@ -484,6 +604,15 @@ serve(async (req) => {
                 } else if (rpcRow.kind === 'top_4_edited') {
                     item = tt4ById.get(rpcRow.id);
                     // top_4_edited events don't have reactions in v1
+                } else if (rpcRow.kind === 'shared_save') {
+                    item = sharedSaveById.get(rpcRow.id);
+                    if (item) tk = targetKey('table_share', item.id);
+                } else if (rpcRow.kind === 'share_digest') {
+                    item = sharedSaveById.get(rpcRow.id);
+                    // digest reactions are per-child, not on the digest itself
+                } else if (rpcRow.kind === 'restaurant_float') {
+                    item = floatById.get(rpcRow.id);
+                    // floats don't have direct reactions
                 }
                 if (!item) return null;
                 return {

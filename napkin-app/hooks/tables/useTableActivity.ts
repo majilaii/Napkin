@@ -130,7 +130,55 @@ export interface TopFourEditedActivity {
     my_reactions?: string[];
 }
 
-export type ActivityItem = SoloShareActivity | TableNightActivity | CollaborativeEntryActivity | TopFourEditedActivity;
+// TICKET-060: new feed item types (shape is hydrated by table-activity edge fn)
+export interface SharedSaveActivityItem {
+    type: 'shared_save';
+    id: string;
+    sort_date: string;
+    table_id: string;
+    author: { user_id: string; display_name: string | null; avatar_url: string | null } | null;
+    restaurant: { id: string | null; name: string | null; city: string | null; cuisine: string | null; photo_url: string | null; verification?: string } | null;
+    note?: string | null;
+    extraction_status?: string | null;
+    reaction_count: number;
+    top_emojis: string[];
+    my_reactions?: string[];
+    created_at: string;
+}
+
+export interface ShareDigestActivityItem {
+    type: 'share_digest';
+    id: string;
+    sort_date: string;
+    created_at: string;
+    table_id: string;
+    author: { user_id: string; display_name: string | null; avatar_url: string | null } | null;
+    share_count: number;
+    child_ids: string[];
+    childShares?: SharedSaveActivityItem[];
+}
+
+export interface RestaurantFloatActivityItem {
+    type: 'restaurant_float';
+    id: string;
+    sort_date: string;
+    created_at: string;
+    float_id: string;
+    table_id: string;
+    restaurant: { id: string; name: string | null; city: string | null; cuisine: string | null; photo_url?: string | null } | null;
+    distinct_count: number;
+    members: { user_id: string; display_name: string | null; avatar_url: string | null }[];
+    first_crossed_at?: string;
+}
+
+export type ActivityItem =
+    | SoloShareActivity
+    | TableNightActivity
+    | CollaborativeEntryActivity
+    | TopFourEditedActivity
+    | SharedSaveActivityItem
+    | ShareDigestActivityItem
+    | RestaurantFloatActivityItem;
 
 export interface TableActivityFilters {
     filterType?: string;   // 'round' | 'solo_share'

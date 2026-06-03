@@ -37,6 +37,7 @@ import {
     Image,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -46,8 +47,11 @@ import { useAuth } from '@/providers/AuthProvider';
 import { validateUrl } from '@/lib/urlValidation';
 import { useResolveUrl, type ResolvedCandidate, type ResolveUrlData } from '@/hooks/wishlist/useResolveUrl';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
+import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
+import { downscaleAndUpload } from '@/lib/imageDownscale';
+import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,7 +63,11 @@ type SheetState =
     | 'editing-match'
     | 'zero'
     | 'error'
-    | 'rate-limited';
+    | 'rate-limited'
+    // TICKET-060: screenshot/vision path states
+    | 'screenshot-uploading'    // uploading + running resolve-url with image_path
+    | 'destination'             // DestinationPicker for async capture fan-out
+    | 'ig-nudge';               // Instagram link detected — show screenshot suggestion
 
 /**
  * Shape returned by `places-search` (see supabase/functions/places-search/index.ts).
@@ -219,9 +227,13 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
     const [editMatchLoading, setEditMatchLoading] = useState(false);
     const editMatchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // TICKET-060: screenshot/vision capture state
+    const [screenshotStoragePath, setScreenshotStoragePath] = useState<string | null>(null);
+
     const inputRef = useRef<TextInput>(null);
     const { resolve, cancel, state: resolverState, data: resolverData, error: resolverError } = useResolveUrl();
     const wishlistAdd = useWishlistAdd(user?.id);
+    const createImport = useCreateImport(user?.id);
 
     // ── Clipboard probe on mount ───────────────────────────────────────
     useEffect(() => {
@@ -266,6 +278,19 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
     useEffect(() => {
         if (resolverState === 'success' && resolverData) {
             setResolvedData(resolverData);
+
+            // TICKET-060: IG nudge
+            if (resolverData.ig_nudge) {
+                setSheetState('ig-nudge');
+                return;
+            }
+
+            // TICKET-060: screenshot/vision path goes to destination picker
+            if (resolverData.source_type === 'screenshot' || resolverData.source_type === 'vision') {
+                setSheetState('destination');
+                return;
+            }
+
             if (resolverData.candidates.length === 0) {
                 setSheetState('zero');
             } else if (
@@ -334,6 +359,8 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         setErrorCode(null);
         setEditMatchQuery('');
         setEditMatchResults([]);
+        // TICKET-060: clear screenshot state
+        setScreenshotStoragePath(null);
         onDismiss();
     }, [cancel, onDismiss]);
 
@@ -399,6 +426,49 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         setSheetState('idle');
         resolve(lastUrl);
     }, [resolve, lastUrl]);
+
+    // TICKET-060: handle screenshot/photo pick from OS image picker
+    const handlePickScreenshot = useCallback(async () => {
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: false,
+            quality: 1,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        const asset = result.assets[0];
+
+        setSheetState('screenshot-uploading');
+        try {
+            if (!user?.id) throw new Error('Not authenticated');
+            const { storagePath } = await downscaleAndUpload(asset.uri, user.id);
+            setScreenshotStoragePath(storagePath);
+            // Run resolve-url with the uploaded image path (no url needed)
+            resolve('', storagePath);
+        } catch {
+            setErrorCode('UPLOAD_FAILED');
+            setSheetState('error');
+        }
+    }, [user?.id, resolve]);
+
+    // TICKET-060: handle destination confirm (async capture fan-out)
+    const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
+        if (!user?.id) return;
+        createImport.mutate(
+            {
+                image_path: screenshotStoragePath ?? undefined,
+                source_url: lastUrl || undefined,
+                destinations: selection,
+            },
+            {
+                onSuccess: () => {
+                    handleDismiss();
+                },
+                onError: () => {
+                    // Keep sheet open on error
+                },
+            },
+        );
+    }, [user?.id, createImport, screenshotStoragePath, lastUrl, handleDismiss]);
 
     // ── Edit-match inline search ───────────────────────────────────────
     const runEditMatchSearch = useCallback(async (q: string) => {
@@ -531,6 +601,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                                 clipboardUrl={clipboardUrl}
                                 onClipboardChip={handleClipboardChip}
                                 inputRef={inputRef}
+                                onPickScreenshot={handlePickScreenshot}
                             />
                         )}
 
@@ -619,6 +690,33 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                                 onRetry={handleRetry}
                             />
                         )}
+
+                        {/* ── SCREENSHOT UPLOADING panel ───────────────── */}
+                        {sheetState === 'screenshot-uploading' && (
+                            <LoadingPanel
+                                palette={palette}
+                                onCancel={handleCancel}
+                                copy="reading it..."
+                            />
+                        )}
+
+                        {/* ── DESTINATION picker panel ─────────────────── */}
+                        {sheetState === 'destination' && (
+                            <DestinationPicker
+                                onConfirm={handleDestinationConfirm}
+                                onCancel={() => setSheetState('idle')}
+                                isSaving={createImport.isPending}
+                            />
+                        )}
+
+                        {/* ── IG NUDGE panel ───────────────────────────── */}
+                        {sheetState === 'ig-nudge' && (
+                            <IgNudgePanel
+                                palette={palette}
+                                onPickScreenshot={handlePickScreenshot}
+                                onDismiss={() => setSheetState('idle')}
+                            />
+                        )}
                     </View>
                 </KeyboardAvoidingView>
             </Pressable>
@@ -640,6 +738,8 @@ interface IdlePanelProps {
     clipboardUrl: string | null;
     onClipboardChip: () => void;
     inputRef: React.RefObject<TextInput | null>;
+    /** TICKET-060: launch OS image picker for screenshot capture */
+    onPickScreenshot?: () => void;
 }
 
 function IdlePanel({
@@ -652,6 +752,7 @@ function IdlePanel({
     clipboardUrl,
     onClipboardChip,
     inputRef,
+    onPickScreenshot,
 }: IdlePanelProps) {
     return (
         <View>
@@ -733,17 +834,31 @@ function IdlePanel({
                     find it
                 </Text>
             </Pressable>
+
+            {/* TICKET-060: screenshot row — "or add a screenshot" */}
+            {onPickScreenshot && (
+                <Pressable
+                    onPress={onPickScreenshot}
+                    hitSlop={8}
+                    style={styles.textLinkRow}
+                    accessibilityLabel="add a screenshot instead"
+                >
+                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
+                        or add a screenshot
+                    </Text>
+                </Pressable>
+            )}
         </View>
     );
 }
 
 // Loading
-function LoadingPanel({ palette, onCancel }: { palette: Palette; onCancel: () => void }) {
+function LoadingPanel({ palette, onCancel, copy = 'reading the link...' }: { palette: Palette; onCancel: () => void; copy?: string }) {
     return (
         <View style={styles.centeredPanel}>
             <ActivityIndicator color={palette.primary} size="small" />
             <Text style={[Type.headlineItalic, styles.loadingCopy, { color: palette.text }]}>
-                reading the link...
+                {copy}
             </Text>
             <Pressable
                 onPress={onCancel}
@@ -1105,6 +1220,42 @@ function RateLimitedPanel({
                 accessibilityLabel="retry"
             >
                 <Text style={[Type.label, { color: palette.textMuted }]}>retry</Text>
+            </Pressable>
+        </View>
+    );
+}
+
+// IgNudge — TICKET-060: shown when an Instagram link is pasted
+function IgNudgePanel({
+    palette,
+    onPickScreenshot,
+    onDismiss,
+}: {
+    palette: Palette;
+    onPickScreenshot: () => void;
+    onDismiss: () => void;
+}) {
+    return (
+        <View style={styles.centeredPanel}>
+            <Text style={[Type.headlineItalic, { color: palette.text, textAlign: 'center' }]}>
+                instagram links are tricky
+            </Text>
+            <Text style={[Type.bodySmall, styles.zeroCopy, { color: palette.textMuted }]}>
+                add a screenshot instead — works every time.
+            </Text>
+            <Pressable
+                onPress={onPickScreenshot}
+                style={({ pressed }) => [
+                    styles.primaryButton,
+                    styles.zeroButton,
+                    { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 },
+                ]}
+                accessibilityLabel="add a screenshot"
+            >
+                <Text style={[Type.label, { color: palette.textInverse }]}>add a screenshot</Text>
+            </Pressable>
+            <Pressable onPress={onDismiss} hitSlop={8} style={styles.textLinkRow}>
+                <Text style={[Type.bodySmall, { color: palette.textMuted }]}>back</Text>
             </Pressable>
         </View>
     );

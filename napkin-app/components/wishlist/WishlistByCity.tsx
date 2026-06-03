@@ -44,6 +44,8 @@ interface CityGroup {
 function groupByCity(items: PersonalWishlistItem[]): CityGroup[] {
     const map = new Map<string, PersonalWishlistItem[]>();
     for (const item of items) {
+        // TICKET-060: skip pending async captures (restaurant not yet resolved)
+        if (!item.restaurant) continue;
         const key = item.restaurant.city?.trim() || UNCITIED_LABEL;
         const bucket = map.get(key);
         if (bucket) bucket.push(item);
@@ -67,6 +69,7 @@ interface PosterProps {
 
 function Poster({ item, palette, onPress, onLongPress }: PosterProps) {
     const { restaurant } = item;
+    if (!restaurant) return null;  // TICKET-060: skip pending captures
     return (
         <Pressable
             onPress={onPress}
@@ -245,12 +248,13 @@ export function WishlistByCity({ userId }: WishlistByCityProps) {
     }
 
     const handlePosterPress = (item: PersonalWishlistItem) => {
-        if (item.restaurant.id) router.push(`/restaurant/${item.restaurant.id}`);
+        if (item.restaurant?.id) router.push(`/restaurant/${item.restaurant.id}`);
     };
 
     const handleConfirmRemove = () => {
         if (!pending) return;
-        const id = pending.restaurant.id;
+        const id = pending.restaurant?.id;
+        if (!id) return;
         setPending(null);
         removeMutation.mutate(id, {
             onError: () => Alert.alert("Couldn't remove", 'Try again'),
@@ -323,7 +327,7 @@ export function WishlistByCity({ userId }: WishlistByCityProps) {
             </ScrollView>
             <RemoveConfirmationSheet
                 visible={pending !== null}
-                restaurantName={pending?.restaurant.name ?? ''}
+                restaurantName={pending?.restaurant?.name ?? ''}
                 onConfirm={handleConfirmRemove}
                 onCancel={() => setPending(null)}
             />

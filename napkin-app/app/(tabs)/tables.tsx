@@ -61,6 +61,10 @@ import {
 import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
 import { useTableTopFour } from '@/hooks/tables/useTableTopFour';
+// TICKET-060: new feed cards
+import { SharedSaveCard } from '@/components/feed/SharedSaveCard';
+import { ShareDigestCard } from '@/components/feed/ShareDigestCard';
+import { RestaurantFloatCard } from '@/components/feed/RestaurantFloatCard';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -746,6 +750,54 @@ export default function TablesScreen() {
                                                               item={item as TopFourEditedActivity}
                                                               palette={palette}
                                                               currentUserId={user?.id}
+                                                          />
+                                                      );
+                                                  }
+                                                  // TICKET-060: shared restaurant cards
+                                                  if (item.type === 'shared_save') {
+                                                      const s = item as any;
+                                                      return (
+                                                          <SharedSaveCard
+                                                              key={`share-${item.id}`}
+                                                              shareId={s.id}
+                                                              tableId={s.table_id ?? activeTable?.id ?? ''}
+                                                              author={s.author ?? { user_id: '', display_name: null, avatar_url: null }}
+                                                              restaurant={s.restaurant}
+                                                              note={s.note}
+                                                              extractionStatus={s.extraction_status}
+                                                              reactionCount={s.reaction_count ?? 0}
+                                                              topEmojis={s.top_emojis ?? []}
+                                                              myReactions={s.my_reactions ?? []}
+                                                              createdAt={s.created_at ?? s.sort_date}
+                                                          />
+                                                      );
+                                                  }
+                                                  if (item.type === 'share_digest') {
+                                                      const d = item as any;
+                                                      return (
+                                                          <ShareDigestCard
+                                                              key={`digest-${item.id}`}
+                                                              id={d.id}
+                                                              tableId={d.table_id ?? activeTable?.id ?? ''}
+                                                              author={d.author ?? { user_id: '', display_name: null, avatar_url: null }}
+                                                              shareCount={d.share_count ?? 0}
+                                                              childIds={d.child_ids ?? []}
+                                                              childShares={d.children}
+                                                              createdAt={d.sort_date}
+                                                          />
+                                                      );
+                                                  }
+                                                  if (item.type === 'restaurant_float') {
+                                                      const f = item as any;
+                                                      if (!f.restaurant) return null;
+                                                      return (
+                                                          <RestaurantFloatCard
+                                                              key={`float-${item.id}`}
+                                                              floatId={f.float_id ?? f.id}
+                                                              tableId={f.table_id ?? activeTable?.id ?? ''}
+                                                              restaurant={f.restaurant}
+                                                              distinctCount={f.distinct_count ?? 0}
+                                                              members={f.members ?? []}
                                                           />
                                                       );
                                                   }

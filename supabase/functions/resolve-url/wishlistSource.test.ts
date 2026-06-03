@@ -21,7 +21,7 @@ Deno.test('validateWishlistSource: tiktok happy path', () => {
     assertEquals(result.ok, true);
     const ok = result as Extract<typeof result, { ok: true }>;
     assertEquals(ok.source.type, 'tiktok');
-    assertEquals(ok.source.url, input['url'] as string);
+    assertEquals((ok.source as any).url, input['url'] as string);
     // Returned object is freshly constructed (not reference-equal to input)
     assertNotStrictEquals(ok.source as unknown, input);
 });
@@ -107,6 +107,60 @@ Deno.test('validateWishlistSource: array top-level rejected', () => {
 
 Deno.test('validateWishlistSource: wrong type for optional field rejected (tiktok)', () => {
     const result = validateWishlistSource({ type: 'tiktok', url: 'https://t.co', thumbnail_url: 42 });
+    assertEquals(result.ok, false);
+});
+
+// ── TICKET-060: screenshot + vision variants ────────────────────────────────
+
+Deno.test('validateWishlistSource: screenshot happy path (no url required)', () => {
+    const input: Record<string, unknown> = {
+        type: 'screenshot',
+        upload_path: 'user123/1234567890-abc.jpg',
+        caption: 'Joe Beef in Montreal',
+    };
+    const result = validateWishlistSource(input);
+    assertEquals(result.ok, true);
+    const ok = result as Extract<typeof result, { ok: true }>;
+    assertEquals(ok.source.type, 'screenshot');
+    assertNotStrictEquals(ok.source as unknown, input);
+});
+
+Deno.test('validateWishlistSource: screenshot missing upload_path rejected', () => {
+    const result = validateWishlistSource({ type: 'screenshot' });
+    assertEquals(result.ok, false);
+    const err = result as Extract<typeof result, { ok: false }>;
+    assertEquals(err.reason, 'missing_upload_path');
+});
+
+Deno.test('validateWishlistSource: screenshot extra key rejected', () => {
+    const result = validateWishlistSource({ type: 'screenshot', upload_path: 'a/b.jpg', bad_key: 'nope' });
+    assertEquals(result.ok, false);
+    const err = result as Extract<typeof result, { ok: false }>;
+    assertEquals(err.reason, 'extra_keys');
+});
+
+Deno.test('validateWishlistSource: vision happy path (all optional fields)', () => {
+    const input: Record<string, unknown> = {
+        type: 'vision',
+        source_url: 'https://www.tiktok.com/@user/video/123',
+        upload_path: 'user/abc.jpg',
+        caption: 'great place',
+    };
+    const result = validateWishlistSource(input);
+    assertEquals(result.ok, true);
+    const ok = result as Extract<typeof result, { ok: true }>;
+    assertEquals(ok.source.type, 'vision');
+});
+
+Deno.test('validateWishlistSource: vision with no fields is valid (all optional)', () => {
+    const result = validateWishlistSource({ type: 'vision' });
+    assertEquals(result.ok, true);
+    const ok = result as Extract<typeof result, { ok: true }>;
+    assertEquals(ok.source.type, 'vision');
+});
+
+Deno.test('validateWishlistSource: vision extra key rejected', () => {
+    const result = validateWishlistSource({ type: 'vision', source_url: 'https://x.com', bad: true });
     assertEquals(result.ok, false);
 });
 

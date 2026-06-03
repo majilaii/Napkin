@@ -42,8 +42,9 @@ function isValidEmoji(v: unknown): v is ValidEmoji {
     return typeof v === 'string' && (VALID_EMOJIS as readonly string[]).includes(v);
 }
 
-function isValidTargetType(v: unknown): v is 'table_night' | 'entry' {
-    return v === 'table_night' || v === 'entry';
+/** TICKET-060 B1: extended with 'table_share' for I'm-in reactions. */
+function isValidTargetType(v: unknown): v is 'table_night' | 'entry' | 'table_share' {
+    return v === 'table_night' || v === 'entry' || v === 'table_share';
 }
 
 function isValidScope(v: unknown): v is 'table' | 'public' {
@@ -169,13 +170,21 @@ serve(async (req) => {
         }
 
         async function resolveTableId(
-            targetType: 'table_night' | 'entry',
+            targetType: 'table_night' | 'entry' | 'table_share',
             targetId: string,
             suppliedTableId?: string
         ): Promise<string | null> {
             if (targetType === 'table_night') {
                 const { data } = await supabase
                     .from('table_nights')
+                    .select('table_id')
+                    .eq('id', targetId)
+                    .single();
+                return data?.table_id ?? null;
+            } else if (targetType === 'table_share') {
+                // TICKET-060 B1: read table_id directly from table_shares.
+                const { data } = await supabase
+                    .from('table_shares')
                     .select('table_id')
                     .eq('id', targetId)
                     .single();
@@ -231,11 +240,14 @@ serve(async (req) => {
         // extra round-trip and without invalidating the postInteractions query.
         // (TICKET-036 P0-5)
         async function readReactionCounts(
-            targetType: 'table_night' | 'entry',
+            targetType: 'table_night' | 'entry' | 'table_share',
             targetId: string,
             scope: 'table' | 'public',
         ): Promise<{ reactions: number; top_emojis: Array<{ emoji: string; count: number; last_reacted_at: string }> }> {
-            const table = targetType === 'table_night' ? 'table_nights' : 'entries';
+            // TICKET-060 B1: table_share uses its own table
+            const table = targetType === 'table_night' ? 'table_nights'
+                : targetType === 'table_share' ? 'table_shares'
+                : 'entries';
             const countCol = scope === 'public' ? 'public_reaction_count' : 'reaction_count';
             const topCol = scope === 'public' ? 'public_top_emojis' : 'top_emojis';
             const { data } = await supabase
@@ -261,7 +273,7 @@ serve(async (req) => {
             // Without this, a B-only viewer of [A,B] entry resolves A → 403.
             const suppliedTableId = url.searchParams.get('table_id') ?? undefined;
 
-            if (!isValidTargetType(targetType)) return fail('target_type must be table_night or entry');
+            if (!isValidTargetType(targetType)) return fail('target_type must be table_night, entry, or table_share');
             if (!targetId) return fail('target_id is required');
             if (!isValidScope(scope)) return fail('scope must be table or public');
 
@@ -379,7 +391,7 @@ serve(async (req) => {
             if (action === 'react') {
                 const { target_type, target_id, emoji, scope } = body;
 
-                if (!isValidTargetType(target_type)) return fail('target_type must be table_night or entry');
+                if (!isValidTargetType(target_type)) return fail('target_type must be table_night, entry, or table_share');
                 if (!target_id) return fail('target_id is required');
                 if (!isValidEmoji(emoji)) return fail('emoji must be one of: 🔥 😋 ❤️ 💯 👀');
                 if (!isValidScope(scope)) return fail('scope must be table or public');
@@ -466,7 +478,7 @@ serve(async (req) => {
             if (action === 'comment') {
                 const { target_type, target_id, body: commentBody, client_nonce, scope } = body;
 
-                if (!isValidTargetType(target_type)) return fail('target_type must be table_night or entry');
+                if (!isValidTargetType(target_type)) return fail('target_type must be table_night, entry, or table_share');
                 if (!target_id) return fail('target_id is required');
                 if (!commentBody || typeof commentBody !== 'string') return fail('body is required');
                 const trimmed = commentBody.trim();
