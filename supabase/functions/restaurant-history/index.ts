@@ -266,11 +266,15 @@ serve(async (req) => {
 
                 if (restaurantTableMap.size > 0) {
                     const visitedIds = Array.from(restaurantTableMap.keys());
+                    // [N4] Filter verification='verified' — service-role bypasses RLS,
+                    // so the verified filter must be explicit to avoid leaking other
+                    // users' unverified ghost restaurants.
                     const { data: restaurants, error: restErr } = await supabase
                         .from('restaurants')
                         .select('id, name, city, cuisine, photo_url, external_id')
                         .in('id', visitedIds)
                         .ilike('name', `%${q}%`)
+                        .eq('verification', 'verified')
                         .limit(10);
                     if (restErr) throw restErr;
 
@@ -286,10 +290,13 @@ serve(async (req) => {
             const visitedSet = new Set(visitedIds);
             // TICKET-037 (P2-16): fetch unfiltered, then JS-filter to avoid string-injection
             // risk from building a raw `NOT IN (uuid, uuid, ...)` SQL string.
+            // [N4] Filter verification='verified' — service-role bypasses RLS; the filter
+            // prevents unverified model-hallucinated ghosts from appearing in the global search.
             const { data: onNapkinRaw, error: onNapkinErr } = await supabase
                 .from('restaurants')
                 .select('id, name, city, cuisine, photo_url, external_id')
                 .ilike('name', `%${q}%`)
+                .eq('verification', 'verified')
                 .limit(30); // fetch extra to account for JS-side filter
             const onNapkin = onNapkinRaw
                 ? onNapkinRaw.filter((r: any) => !visitedSet.has(r.id)).slice(0, 10)

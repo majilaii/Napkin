@@ -138,9 +138,18 @@ async function handleCreateImport(
     const { image_path, source_url, caption, destinations, note } = body;
     const { wishlist = true, table_ids = [] } = destinations ?? {};
 
-    // ── Upload validation (R9/M1) — THE SINGLE pre-extraction block ──────────
+    // ── Upload validation (R9/M1/N3) — THE SINGLE pre-extraction block ────────
     // Validate before ANY row is written. Only runs if an image path is provided.
     if (image_path) {
+        // [N3] Reject foreign image_path BEFORE any service-role Storage access.
+        // Paths are structured as {userId}/{uuid}.ext — the first segment must
+        // equal the authenticated caller's user_id. A caller who knows another
+        // user's path cannot extract their private screenshot.
+        const firstSegment = image_path.split('/')[0];
+        if (firstSegment !== user.id) {
+            return err('FORBIDDEN', 'image_path does not belong to this user', 403);
+        }
+
         // Fetch the upload metadata from Storage to check size and type
         const { data: fileData, error: fileErr } = await supabase.storage
             .from('import-uploads')
@@ -293,46 +302,29 @@ async function handleCorrect(
         return err('MISSING_PARAMS', 'job_id and restaurant_id are required', 400);
     }
 
-    // Validate: caller must be the job's author (R1)
-    const { data: job } = await supabase
-        .from('import_jobs')
-        .select('job_id, user_id, status')
-        .eq('job_id', job_id)
-        .maybeSingle();
+    // [N8] Route the correction through fn_correct_import_job SECURITY DEFINER RPC.
+    // This mirrors fn_complete_import_job: locks the job, validates ownership,
+    // updates import_jobs + all wishlist_items + all table_shares in ONE transaction.
+    // Throws on any failure so the caller observes the error rather than silently
+    // leaving destinations in split-state (the M-1-new CX-5-sibling bug).
+    const { error: correctErr } = await supabase.rpc('fn_correct_import_job', {
+        p_job_id: job_id,
+        p_user_id: user.id,
+        p_restaurant_id: restaurant_id,
+    });
 
-    if (!job) {
-        return err('NOT_FOUND', 'Import job not found', 404);
+    if (correctErr) {
+        // Distinguish owner-mismatch (403) from not-found (404) from other errors (500)
+        const msg = (correctErr as { message?: string }).message ?? '';
+        if (msg.includes('not found')) {
+            return err('NOT_FOUND', 'Import job not found', 404);
+        }
+        if (msg.includes('Forbidden') || msg.includes('not owned by')) {
+            return err('FORBIDDEN', 'Not your import job', 403);
+        }
+        console.error('fn_correct_import_job error:', correctErr);
+        return err('CORRECT_FAILED', 'Failed to correct import job', 500);
     }
-    if (job.user_id !== user.id) {
-        return err('FORBIDDEN', 'Not your import job', 403);
-    }
-
-    // Validate the target restaurant exists and is accessible
-    const { data: restaurant } = await supabase
-        .from('restaurants')
-        .select('id, verification, created_by')
-        .eq('id', restaurant_id)
-        .maybeSingle();
-
-    if (!restaurant) {
-        return err('RESTAURANT_NOT_FOUND', 'Restaurant not found', 404);
-    }
-
-    // Re-point the job and all destination rows (R1 — job-level propagation)
-    await supabase
-        .from('import_jobs')
-        .update({ restaurant_id, status: 'resolved', resolved_at: new Date().toISOString() })
-        .eq('job_id', job_id);
-
-    await supabase
-        .from('wishlist_items')
-        .update({ restaurant_id, extraction_status: 'resolved' })
-        .eq('job_id', job_id);
-
-    await supabase
-        .from('table_shares')
-        .update({ restaurant_id, extraction_status: 'resolved' })
-        .eq('job_id', job_id);
 
     return json({ job_id, restaurant_id, status: 'resolved' });
 }
@@ -352,7 +344,7 @@ async function handleDismissFloat(
     // Validate: caller must be a member of the float's table
     const { data: floatRow } = await supabase
         .from('table_float_state')
-        .select('id, table_id, saver_set_hash')
+        .select('id, table_id, restaurant_id, saver_set_hash')
         .eq('id', float_id)
         .maybeSingle();
 
@@ -372,15 +364,20 @@ async function handleDismissFloat(
         return err('FORBIDDEN', 'Not a member of this table', 403);
     }
 
-    // Dismiss and suppress for 30 days (R4)
-    const suppressedUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await supabase
-        .from('table_float_state')
-        .update({
-            dismissed_at: new Date().toISOString(),
-            suppressed_until: suppressedUntil,
-        })
-        .eq('id', float_id);
+    // [N6] Dismiss via fn_dismiss_float RPC — sets dismissed_at + suppressed_until=now()+30d
+    // in one SQL call. This enforces the 30-day cap that the inline UPDATE was missing.
+    const { error: dismissErr } = await supabase.rpc('fn_dismiss_float', {
+        p_table_id:       floatRow.table_id,
+        p_restaurant_id:  floatRow.restaurant_id,
+        p_saver_set_hash: floatRow.saver_set_hash,
+        p_suppress_days:  30,
+    });
 
+    if (dismissErr) {
+        console.error('fn_dismiss_float error:', dismissErr);
+        return err('DISMISS_FAILED', 'Failed to dismiss float', 500);
+    }
+
+    const suppressedUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     return json({ float_id, dismissed: true, suppressed_until: suppressedUntil });
 }

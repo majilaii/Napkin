@@ -114,6 +114,29 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-060: wishlist list_personal smoke — verifies the import_jobs join
+    // added in TICKET-060 (extraction_status + job_id columns) doesn't 500.
+    // This endpoint is the read path for pending/needs_confirm cards in the wishlist.
+    //
+    // NOTE (N9 — deploy-time requirement):
+    //   Both ANTHROPIC_API_KEY and INTERNAL_CALL_SECRET must be set in Supabase
+    //   secrets before the extraction pipeline is live. If INTERNAL_CALL_SECRET is
+    //   unset, every async extract call 401s and jobs stay pending forever.
+    //   Set both via:
+    //     npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-... \
+    //       INTERNAL_CALL_SECRET=$(openssl rand -hex 32) \
+    //       --project-ref ftvmseaqwwlcxtdlvxxz
+    {
+        name: 'wishlist?action=list_personal (TICKET-060 import_jobs join)',
+        method: 'POST',
+        fn: 'wishlist',
+        body: { action: 'list_personal', limit: 5 },
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!data) return 'missing data envelope';
+            return null;
+        },
+    },
 ];
 
 // ── Runner ─────────────────────────────────────────────────────────────────

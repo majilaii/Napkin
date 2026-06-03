@@ -41,6 +41,18 @@ import {
 } from '../_shared/visionExtract.ts';
 import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Constant-time byte comparison — prevents timing oracle on the internal secret. */
+function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) {
+        diff |= a[i] ^ b[i];
+    }
+    return diff === 0;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'screenshot' | 'vision';
@@ -611,7 +623,41 @@ async function handleAsyncExtract(
     supabaseAnonKey: string,
     authHeader: string,
 ): Promise<Response> {
-    // [M-3] Rate-limit check: count against the job owner's extraction bucket
+    // [N2 FIX] Correct order: (1) load job, (2) authorize, (3) rate-limit, (4) extract/complete.
+    // Previously rate-limit ran before the job was loaded or ownership verified, so any
+    // authenticated caller with a known job_id could force another user's job to terminal.
+
+    // Step 1: Load the job
+    const { data: job } = await supabase
+        .from('import_jobs')
+        .select('*')
+        .eq('job_id', jobId)
+        .maybeSingle();
+
+    if (!job) {
+        // Job not found → terminal failure so callers don't poll forever
+        return errorResponse('JOB_NOT_FOUND', 'Import job not found', 404);
+    }
+
+    // Step 2: Authorize — for internal calls jobOwnerId was loaded from DB before this call.
+    // For user-facing (non-internal) calls, validate the caller is the job owner.
+    // On authorization failure → transition to needs_confirm (terminal) so the job is NOT
+    // left pending (a missing/wrong secret must fail visibly, not silently).
+    if (!isInternalCall && job.user_id !== jobOwnerId) {
+        await supabase.rpc('fn_complete_import_job', {
+            p_job_id: jobId,
+            p_status: 'needs_confirm',
+            p_restaurant_id: null,
+        }).catch((e: unknown) => console.error('fn_complete_import_job (auth-denied) error:', e));
+        return errorResponse('FORBIDDEN', 'Not your import job', 403);
+    }
+
+    if (job.status !== 'pending') {
+        // Already processed — idempotent
+        return jsonResponse({ data: { job_id: jobId, status: job.status } });
+    }
+
+    // Step 3: Rate-limit check (after auth; never-block: over-limit → needs_confirm, not stuck pending)
     const { data: rateRows } = await supabase.rpc(
         'check_and_increment_rate_limit',
         { p_user_id: jobOwnerId, p_bucket_key: 'resolve_content', p_max: 20, p_window_seconds: 3600 },
@@ -627,32 +673,26 @@ async function handleAsyncExtract(
         return jsonResponse({ data: { job_id: jobId, status: 'needs_confirm', reason: 'rate_limited' } });
     }
 
-    // Fetch the job
-    const { data: job } = await supabase
-        .from('import_jobs')
-        .select('*')
-        .eq('job_id', jobId)
-        .maybeSingle();
-
-    if (!job) {
-        return errorResponse('JOB_NOT_FOUND', 'Import job not found', 404);
-    }
-
-    // [CX-1 FIX] For internal calls, ownership is validated by loading the job owner from DB
-    // (jobOwnerId was set from job.user_id before this call). For user-facing calls, validate.
-    if (!isInternalCall && job.user_id !== jobOwnerId) {
-        return errorResponse('FORBIDDEN', 'Not your import job', 403);
-    }
-
-    if (job.status !== 'pending') {
-        // Already processed — idempotent
-        return jsonResponse({ data: { job_id: jobId, status: job.status } });
-    }
-
     const source = job.source as Record<string, unknown> | null;
     const imagePath = (source?.['upload_path'] as string) ?? null;
     const captionText = (source?.['caption'] as string) ?? null;
     const sourceUrl = (source?.['source_url'] as string) ?? null;
+
+    // [N3] Verify image_path ownership BEFORE any service-role Storage download.
+    // The job's upload_path is {userId}/{uuid}.ext — first segment must match the
+    // job owner. This prevents a path injected via a crafted job from reading
+    // another user's private screenshot under service-role.
+    if (imagePath) {
+        const firstSegment = imagePath.split('/')[0];
+        if (firstSegment !== jobOwnerId) {
+            await supabase.rpc('fn_complete_import_job', {
+                p_job_id: jobId,
+                p_status: 'needs_confirm',
+                p_restaurant_id: null,
+            }).catch(() => null);
+            return errorResponse('FORBIDDEN', 'image_path does not belong to job owner', 403);
+        }
+    }
 
     let extracted: ExtractedCandidate | null = null;
     const modelId = Deno.env.get('EXTRACTION_MODEL') ?? 'claude-haiku-4-5-20251001';
@@ -806,25 +846,18 @@ serve(async (req) => {
         return errorResponse('METHOD_NOT_ALLOWED', 'POST only', 405);
     }
 
-    // ── Auth ──────────────────────────────────────────────────────────────────
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-        return errorResponse('UNAUTHORIZED', 'Missing Authorization header', 401);
-    }
-
-    const token = authHeader.replace('Bearer ', '');
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
+    // Service-role client used throughout (bypasses RLS; auth validated manually below)
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-    if (userError || !user) {
-        return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
-    }
-
-    // ── Parse body ────────────────────────────────────────────────────────────
+    // ── Parse body first — needed to route action=extract BEFORE user auth ───
+    // [N1 FIX] action=extract is INTERNAL ONLY. It must be authorized via the
+    // x-internal-secret header and load the job owner from DB — NEVER via user JWT.
+    // Parsing the body first lets us detect this path and skip auth.getUser()
+    // entirely for internal calls (which carry the service-role key, not a user JWT).
     let body: {
         url?: string;
         image_path?: string;
@@ -838,37 +871,56 @@ serve(async (req) => {
         return errorResponse('INVALID_BODY', 'Request body must be JSON', 400);
     }
 
-    // ── Async extract action (TICKET-060 R1 / CX-1 fix) ─────────────────────
-    // Called by table-shares after job creation to run extraction asynchronously.
-    // [CX-1 FIX] Detect internal service-role calls via x-internal-secret header.
-    // When called internally (service-role bearer), auth.getUser() does NOT return
-    // the job owner — we load the owner from import_jobs.user_id instead.
+    // ── [N1] Async extract action — INTERNAL ONLY, authorized before user auth ─
+    // This path is called by table-shares after job creation (service-role key as
+    // bearer). We MUST NOT call auth.getUser(token) here because:
+    //   (a) the service-role JWT is not a user JWT — getUser would return null or
+    //       a non-owner sub, causing a spurious 401/403 (the pre-fix CX-1 failure).
+    //   (b) the internal secret IS the gate; a wrong/absent secret → 401 immediately,
+    //       with no fall-through to the user-auth path.
     if (body?.action === 'extract' && body?.job_id) {
-        const internalSecret = Deno.env.get('INTERNAL_CALL_SECRET') ?? '';
+        const INTERNAL_CALL_SECRET = Deno.env.get('INTERNAL_CALL_SECRET') ?? '';
         const callerSecret = req.headers.get('x-internal-secret') ?? '';
-        const isInternalCall = internalSecret.length > 0 && callerSecret === internalSecret;
 
-        let jobOwnerId: string;
-        if (isInternalCall) {
-            // Load the job owner from DB — the user JWT is the service-role key
-            const { data: jobRow } = await supabase
-                .from('import_jobs')
-                .select('user_id')
-                .eq('job_id', body.job_id)
-                .maybeSingle();
-            if (!jobRow?.user_id) {
-                return errorResponse('JOB_NOT_FOUND', 'Import job not found', 404);
-            }
-            jobOwnerId = jobRow.user_id as string;
-        } else {
-            // Normal user-facing call — use the authenticated user
-            jobOwnerId = user.id;
+        // Fail closed: if the env var is unset OR the secret doesn't match → 401.
+        // Never log the secret value.
+        if (
+            !INTERNAL_CALL_SECRET ||
+            !timingSafeEqual(new TextEncoder().encode(callerSecret), new TextEncoder().encode(INTERNAL_CALL_SECRET))
+        ) {
+            return errorResponse('UNAUTHORIZED', 'Invalid or missing internal secret', 401);
         }
 
+        // Load the job to get the owner — DO NOT call auth.getUser here.
+        const { data: jobRow } = await supabase
+            .from('import_jobs')
+            .select('user_id')
+            .eq('job_id', body.job_id)
+            .maybeSingle();
+        if (!jobRow?.user_id) {
+            return errorResponse('JOB_NOT_FOUND', 'Import job not found', 404);
+        }
+        const jobOwnerId = jobRow.user_id as string;
+
         return await handleAsyncExtract(
-            supabase, isInternalCall, jobOwnerId,
-            body.job_id, supabaseUrl, supabaseAnonKey, authHeader,
+            supabase, true, jobOwnerId,
+            body.job_id, supabaseUrl, supabaseAnonKey,
+            // authHeader for downstream places-search calls (internal calls pass service key)
+            `Bearer ${supabaseServiceKey}`,
         );
+    }
+
+    // ── Auth — all NON-extract paths require a valid user JWT ─────────────────
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+        return errorResponse('UNAUTHORIZED', 'Missing Authorization header', 401);
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !user) {
+        return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
     }
 
     const rawUrl = body?.url;
