@@ -6,7 +6,7 @@ status: in-progress
 created: 2026-06-03
 updated: 2026-06-03
 tags: [import, wishlist, tables, vision, ai, edge-function, share-extension, parent-040]
-status_note: "Specced + Codex-reviewed + user-resolved 2026-06-03 → moved to ready. Scoped to Phase 1 (vision extraction + routing + Table card + emergent float). Phase 2 native iOS share extension split to TICKET-060b. All open questions resolved; Codex [ARCH-RESOLVE] items carry into Technical Design for the architect."
+status_note: "CODE-COMPLETE on feat/TICKET-060 (52 files, +7.6k, 11 migrations). Built + 3 dual-review cycles (Claude+Codex) + 3 fix passes; all blockers closed. Critical paths (auth ordering N1-N3, RLS restaurants lockdown B1, Places verification B2) orchestrator-verified by direct inspection. Local SQL: 11 TICKET-060 migrations structurally valid (no syntax bugs, executed); behavioral SQL (float-cap/transactional/trigger) inspected + hand-traced, deferred to deploy (pre-existing migration-chain debt blocks clean local replay). DEPLOY PENDING — needs ANTHROPIC_API_KEY + INTERNAL_CALL_SECRET secrets + db push + fn deploy. NOT yet shipped/verified in prod. Phase 2 = TICKET-060b; race/plan = TICKET-061."
 parent: TICKET-040
 depends_on: []
 ---
@@ -1008,6 +1008,9 @@ Net: the only *certain* SQL-level defect is N5 (H3-1), and it's inspectable, not
 
 ## Completion
 <!-- Filled when ticket moves to done -->
-- Completed: YYYY-MM-DD
-- Final verdict: 
-- Notes:
+- Completed: code-complete 2026-06-03 — **NOT yet deployed/verified in prod**
+- Final verdict: **APPROVE-WITH-RESIDUAL (orchestrator close-out).** Cycle-1/2/3 dual-review blockers all fixed. HIGH items directly verified by orchestrator: auth ordering (N1–N3 — `action=extract` gated by `x-internal-secret` before user-auth; load→authorize→rate-limit→owner-check→extract; denials terminal), RLS `restaurants` lockdown (B1 — all 4 baseline write policies dropped, proven by full enumeration), Places verification (B2 — non-200 → `needs_confirm`, unverified ghost never `resolved`). Residual: float-CASE / transactional-completion / reaction-trigger *behaviors* are inspected + hand-traced by both reviewers (not execution-tested — pre-existing migration-chain debt prevents clean local replay); the 11 TICKET-060 migrations are confirmed structurally valid (no syntax/dollar-quote bugs, executed in rollback txn). Validate behaviors at deploy-smoke + first use.
+- Gates: `tsc` clean · 84 Deno · 102 Jest.
+- Deploy plan: set 2 secrets (`ANTHROPIC_API_KEY`, `INTERNAL_CALL_SECRET`) → `db push` (11 migrations) → deploy `resolve-url`, `table-shares`, `places-search`, `table-activity`, `post-interactions`, `wishlist`, `restaurant-history`.
+- Pre-existing bugs found while validating (OUT OF SCOPE — flag separately): `rate_limit_buckets.sql` nested-`$$` cron block (never schedules; masked because pg_cron absent) + `20260508_*table_top_4*` references `table_top_4_history` type that the chain doesn't create before it.
+- Follow-ups: Phase 2 native iOS share extension = TICKET-060b · race/plan primitive = TICKET-061.
