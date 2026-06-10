@@ -34,11 +34,11 @@ import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import type { ResolvedCandidate } from '@/hooks/wishlist/useResolveUrl';
-import { keyFor, buildInitialTicked } from './candidatePickerUtils';
+import { keyFor, buildInitialTicked, isResolved } from './candidatePickerUtils';
 
 // Re-export for external consumers (ImportLinkSheet + tests) without requiring
 // them to import from the utils file separately.
-export { keyFor, buildInitialTicked };
+export { keyFor, buildInitialTicked, isResolved };
 
 type Palette = typeof Colors.light;
 
@@ -76,6 +76,20 @@ export interface CandidatePickerPanelProps {
     noteText: string;
     /** Called when the user changes the note TextInput. */
     onNoteChange: (text: string) => void;
+    // ── TICKET-063b: share-to-table affordance ─────────────────────────────────
+    /**
+     * When set, shows a quiet "share to a table" secondary affordance below the
+     * primary CTA. Visible only when ≥1 ticked spot is Places-resolved.
+     * Opens the DestinationPicker in singleTableOnly mode.
+     */
+    onShareToTable?: () => void;
+    /**
+     * The table chosen via the DestinationPicker (if any).
+     * When set, shows "sharing to {name}" + × instead of "share to a table".
+     */
+    chosenTable?: { id: string; name: string } | null;
+    /** Clears the chosen table when the user taps ×. */
+    onClearTable?: () => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -99,6 +113,9 @@ export function CandidatePickerPanel({
     onToggleTicked,
     noteText,
     onNoteChange,
+    onShareToTable,
+    chosenTable,
+    onClearTable,
 }: CandidatePickerPanelProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = paletteProp ?? (Colors[scheme] as Palette);
@@ -114,6 +131,20 @@ export function CandidatePickerPanel({
 
     const tickedCount = tickedCandidates.length;
     const isSingleTicked = tickedCount === 1;
+
+    // ── TICKET-063b: share-to-table eligibility ───────────────────────────────
+    // "share to a table" appears only when ≥1 ticked spot has a confirmed Places
+    // identity (restaurant_id OR external_id).  Ghosts save wishlist-only.
+    const hasResolvedTicked = useMemo(
+        () => tickedCandidates.some((c) => isResolved(c)),
+        [tickedCandidates],
+    );
+    // True when a table is chosen AND some ticked spots are still ghosts — shows
+    // "confirm it first · pinned to your wishlist only" quietly.
+    const hasGhostTicked = useMemo(
+        () => !!chosenTable && tickedCandidates.some((c) => !isResolved(c)),
+        [tickedCandidates, chosenTable],
+    );
 
     // CTA label
     const ctaLabel = useMemo(() => {
@@ -226,6 +257,51 @@ export function CandidatePickerPanel({
                     </Text>
                 )}
             </Pressable>
+
+            {/* ── TICKET-063b: share-to-table secondary affordance ─────────────── */}
+            {/* Visible only when ≥1 ticked spot is Places-resolved. */}
+            {onShareToTable && hasResolvedTicked && (
+                <View style={styles.shareTableBlock}>
+                    <View style={styles.shareTableRow}>
+                        {chosenTable ? (
+                            <>
+                                <Text style={[Type.caption, { color: palette.textMuted }]}>
+                                    {'sharing to '}
+                                    <Text style={{ fontFamily: 'Newsreader_400Regular_Italic' }}>
+                                        {chosenTable.name}
+                                    </Text>
+                                </Text>
+                                <Pressable
+                                    onPress={onClearTable}
+                                    hitSlop={8}
+                                    accessibilityLabel="remove table selection"
+                                    style={styles.clearTableButton}
+                                >
+                                    <Text style={[Type.caption, { color: palette.textMuted }]}>
+                                        {'×'}
+                                    </Text>
+                                </Pressable>
+                            </>
+                        ) : (
+                            <Pressable
+                                onPress={onShareToTable}
+                                hitSlop={8}
+                                accessibilityLabel="share to a table"
+                            >
+                                <Text style={[Type.caption, { color: palette.textMuted }]}>
+                                    share to a table
+                                </Text>
+                            </Pressable>
+                        )}
+                    </View>
+                    {/* Ghost note: ticked spots that are unresolved save wishlist-only */}
+                    {hasGhostTicked && (
+                        <Text style={[Type.caption, styles.ghostNote, { color: palette.textMuted }]}>
+                            {'confirm it first · pinned to your wishlist only'}
+                        </Text>
+                    )}
+                </View>
+            )}
         </View>
     );
 }
@@ -468,5 +544,22 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.xs,
         alignSelf: 'flex-start',
         flexShrink: 0,
+    },
+    shareTableBlock: {
+        marginTop: Spacing.sm,
+        alignItems: 'center',
+    },
+    shareTableRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    clearTableButton: {
+        paddingHorizontal: Spacing.xs,
+    },
+    ghostNote: {
+        marginTop: 4,
+        textAlign: 'center',
+        opacity: 0.7,
     },
 });

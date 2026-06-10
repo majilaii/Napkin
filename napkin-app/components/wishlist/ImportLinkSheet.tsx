@@ -66,7 +66,7 @@ import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
-import { CandidatePickerPanel, buildInitialTicked, keyFor } from './CandidatePickerPanel';
+import { CandidatePickerPanel, buildInitialTicked, keyFor, isResolved } from './CandidatePickerPanel';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +80,7 @@ type SheetState =
     | 'rate-limited'
     | 'screenshot-uploading'
     | 'destination'
+    | 'share-destination'     // TICKET-063b: single-table picker launched from picking
     | 'ig-nudge';
 
 interface InlineSearchResult {
@@ -176,6 +177,12 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     // Track which candidate keys have already been saved successfully (skip on retry).
     const savedCandidateIdsRef = useRef<Set<string>>(new Set());
 
+    // TICKET-063b: table chosen via the "share to a table" secondary affordance.
+    const [chosenTable, setChosenTable] = useState<{ id: string; name: string } | null>(null);
+    // Stable table_client_nonce per (candidateKey, tableId) — reused across retries.
+    // Key format: `${keyFor(c)}:${table_id}`.
+    const tableNonceMapRef = useRef<Map<string, string>>(new Map());
+
     // Inline edit-match search (per-row correction)
     const [editMatchQuery, setEditMatchQuery] = useState('');
     const [editMatchResults, setEditMatchResults] = useState<InlineSearchResult[]>([]);
@@ -224,8 +231,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             importNonceRef.current = initialImportNonce ?? generateNonce();
             spotNonceMapRef.current.clear();
             savedCandidateIdsRef.current.clear();
+            tableNonceMapRef.current.clear();
             setFailedCandidateKeys(new Set());
             setTickedKeys(new Set()); // re-initialized when resolver succeeds
+            setChosenTable(null);
             resolve(trimmed);
         } else {
             setErrorCode('INVALID_URL');
@@ -306,8 +315,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         importNonceRef.current = generateNonce();
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
+        tableNonceMapRef.current.clear();
         setFailedCandidateKeys(new Set());
         setTickedKeys(new Set()); // candidates not yet known; re-initialized on success
+        setChosenTable(null);
         resolve(url);
     }, [inputOk, inputValue, resolve]);
 
@@ -334,8 +345,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         // Clear nonce maps on dismiss (new import gets fresh nonces).
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
+        tableNonceMapRef.current.clear();
         setFailedCandidateKeys(new Set());
         setTickedKeys(new Set());
+        setChosenTable(null);
         onDismiss();
     }, [cancel, onDismiss]);
 
@@ -349,6 +362,8 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     // TICKET-063: save N ticked spots via useSaveImportSpots.
     // Fix 7: stable nonces — use spotNonceMapRef to get/mint nonces per candidate_id.
     // Fix 8: partial-failure UI — keep sheet open if any spots failed.
+    // TICKET-063b: attach table_id + table_client_nonce for resolved spots when
+    // a table is chosen via the "share to a table" affordance.
     const handleSaveSpots = useCallback((
         ticked: ResolvedCandidate[],
         note: string,
@@ -364,6 +379,16 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             return spotNonceMapRef.current.get(key)!;
         };
 
+        // TICKET-063b: stable table_client_nonce per (candidateKey, tableId).
+        // Key: `${keyFor(c)}:${table_id}` — reused across retries (spec AC).
+        const getOrMintTableNonce = (c: ResolvedCandidate, tableId: string): string => {
+            const mapKey = `${keyFor(c)}:${tableId}`;
+            if (!tableNonceMapRef.current.has(mapKey)) {
+                tableNonceMapRef.current.set(mapKey, generateNonce());
+            }
+            return tableNonceMapRef.current.get(mapKey)!;
+        };
+
         // Fix 8: on retry, only send spots that aren't already saved.
         const spotsToSend = ticked.filter((c) => {
             const key = c.candidate_id ?? c.restaurant.external_id ?? '';
@@ -376,29 +401,38 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             return;
         }
 
-        const spots = spotsToSend.map((c) => ({
-            candidate: c,
-            client_nonce: getOrMintNonce(c),
-            // Fix-pass-2 item 3: forward full place payload so the server upserts
-            // restaurants with all metadata, not just name+city.
-            place: {
-                external_id: c.restaurant.external_id ?? null,
-                name: c.restaurant.name ?? null,
-                location: {
-                    address: c.restaurant.location?.address ?? c.restaurant.formattedAddress ?? undefined,
-                    locality: c.restaurant.location?.locality ?? c.restaurant.city ?? undefined,
-                    country: c.restaurant.location?.country ?? c.restaurant.country ?? undefined,
+        const spots = spotsToSend.map((c) => {
+            // TICKET-063b: only resolved spots get table fan-out.
+            // Ghost spots save wishlist-only even when a table is chosen.
+            const spotResolved = isResolved(c);
+            return {
+                candidate: c,
+                client_nonce: getOrMintNonce(c),
+                table_id: (chosenTable && spotResolved) ? chosenTable.id : null,
+                table_client_nonce: (chosenTable && spotResolved)
+                    ? getOrMintTableNonce(c, chosenTable.id)
+                    : null,
+                // Fix-pass-2 item 3: forward full place payload so the server upserts
+                // restaurants with all metadata, not just name+city.
+                place: {
+                    external_id: c.restaurant.external_id ?? null,
+                    name: c.restaurant.name ?? null,
+                    location: {
+                        address: c.restaurant.location?.address ?? c.restaurant.formattedAddress ?? undefined,
+                        locality: c.restaurant.location?.locality ?? c.restaurant.city ?? undefined,
+                        country: c.restaurant.location?.country ?? c.restaurant.country ?? undefined,
+                    },
+                    latitude: c.restaurant.latitude ?? null,
+                    longitude: c.restaurant.longitude ?? null,
+                    photoReference: c.restaurant.photoReference ?? null,
+                    photoAttributionHtml: null, // not available on client candidate type
+                    googleRating: c.restaurant.googleRating ?? null,
+                    googleRatingCount: c.restaurant.googleRatingCount ?? null,
+                    priceLevel: c.restaurant.priceLevel ?? null,
+                    cuisine: c.restaurant.cuisine ?? null,
                 },
-                latitude: c.restaurant.latitude ?? null,
-                longitude: c.restaurant.longitude ?? null,
-                photoReference: c.restaurant.photoReference ?? null,
-                photoAttributionHtml: null, // not available on client candidate type
-                googleRating: c.restaurant.googleRating ?? null,
-                googleRatingCount: c.restaurant.googleRatingCount ?? null,
-                priceLevel: c.restaurant.priceLevel ?? null,
-                cuisine: c.restaurant.cuisine ?? null,
-            },
-        }));
+            };
+        });
 
         const source = buildSource(inputValue.trim(), resolvedData);
 
@@ -448,7 +482,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                 },
             },
         );
-    }, [user?.id, inputValue, resolvedData, saveImportSpots, handleDismiss]);
+    }, [user?.id, inputValue, resolvedData, saveImportSpots, handleDismiss, chosenTable]);
 
     const handleSearchManually = useCallback((query?: string) => {
         handleDismiss();
@@ -457,6 +491,15 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             params: { q: query ?? resolvedData?.best_query ?? '' },
         });
     }, [handleDismiss, router, resolvedData]);
+
+    // TICKET-063b: called when user picks a table in singleTableOnly DestinationPicker.
+    // Stores the chosen table and returns to the picking state.
+    const handleShareDestConfirm = useCallback((selection: DestinationSelection) => {
+        if (selection.table_ids.length === 1 && selection.table_names?.length === 1) {
+            setChosenTable({ id: selection.table_ids[0], name: selection.table_names[0] });
+        }
+        setSheetState('picking');
+    }, []);
 
     const handleRetry = useCallback(() => {
         setSheetState('idle');
@@ -695,8 +738,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 })}
                                 noteText={noteText}
                                 onNoteChange={setNoteText}
+                                chosenTable={chosenTable}
+                                onShareToTable={() => setSheetState('share-destination')}
+                                onClearTable={() => setChosenTable(null)}
                             />
-                            // Fix 12: "share to a table" CTA removed (descoped to TICKET-063b).
                         )}
 
                         {/* ── EDITING-MATCH ────────────────────────── */}
@@ -758,6 +803,17 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 onConfirm={handleDestinationConfirm}
                                 onCancel={() => setSheetState('idle')}
                                 isSaving={createImport.isPending}
+                            />
+                        )}
+
+                        {/* ── SHARE DESTINATION (TICKET-063b) ──────── */}
+                        {/* Single-table picker launched from the picking panel. */}
+                        {sheetState === 'share-destination' && (
+                            <DestinationPicker
+                                onConfirm={handleShareDestConfirm}
+                                onCancel={() => setSheetState('picking')}
+                                isSaving={false}
+                                singleTableOnly
                             />
                         )}
 
