@@ -1,21 +1,33 @@
 /**
- * ImportLinkSheet — paste-a-link wishlist import (TICKET-053).
+ * ImportLinkSheet — paste-a-link wishlist import (TICKET-053 + TICKET-060 + TICKET-063).
+ *
+ * TICKET-063: replaces 'picking' + 'confirming' with a single CandidatePickerPanel
+ * that handles 1–N candidates with multi-select, per-row correction, note field
+ * (single-ticked-only), and the save_spots action via useSaveImportSpots.
  *
  * State machine:
- *   'idle'         → user types / clipboard chip / tap "find it"
- *   'loading'      → resolver in-flight; cancel button aborts
- *   'picking'      → 2–3 candidates shown (or 1 low/high confidence)
- *   'confirming'   → single candidate selected; editable note; "save to wishlist"
- *   'editing-match'→ wrong restaurant? — inline Places search replaces candidate
- *   'zero'         → resolver returned 0 candidates → "search manually"
- *   'error'        → retryable network/5xx error
- *   'rate-limited' → 429 from resolver
+ *   'idle'                → user types / clipboard chip / tap "find it"
+ *   'loading'             → resolver in-flight; cancel button aborts
+ *   'picking'             → CandidatePickerPanel (1–N candidates, multi-select)
+ *   'editing-match'       → wrong restaurant? — inline Places search, per-row
+ *   'zero'                → resolver returned 0 candidates → "search manually"
+ *   'error'               → retryable network/5xx error
+ *   'rate-limited'        → 429 from resolver
+ *   'screenshot-uploading'→ uploading + running resolve-url with image_path
+ *   'destination'         → DestinationPicker for async capture fan-out
+ *   'ig-nudge'            → Instagram link detected — show screenshot suggestion
  *
- * Entry points: app/wishlist.tsx header + PlusActionMenu in app/_layout.tsx.
+ * TICKET-063 changes:
+ *   - 'confirming' removed; 'picking' handles both 1 and N candidates.
+ *   - useSaveImportSpots replaces useWishlistAdd for the save_spots path.
+ *   - useWishlistAdd retained for the legacy single-candidate 'editing-match' path.
+ *   - per-row correction: onCorrectRow(candidate) sets editCorrectionForCandidate
+ *     and transitions to 'editing-match'; picking a result swaps that row.
+ *   - pendingImport.stash now carries import_nonce (ARCH-REVIEW-2 #12).
+ *   - import_nonce generated once per URL/share and carried through save.
  *
- * Design refs: Heirloom Journal — warm paper bg, Newsreader italic titles,
- * Manrope body, terracotta primary CTA, olive "best match" chip. No emoji in
- * chrome. No 1px solid borders. Ambient shadow only.
+ * Design refs: Heirloom Journal. Warm paper bg, Newsreader italic, Manrope body.
+ * No emoji in chrome. No 1px solid borders. Ambient shadow only.
  */
 import React, {
     useState,
@@ -45,38 +57,36 @@ import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { validateUrl } from '@/lib/urlValidation';
-import { useResolveUrl, type ResolvedCandidate, type ResolveUrlData } from '@/hooks/wishlist/useResolveUrl';
+import {
+    useResolveUrl,
+    type ResolvedCandidate,
+    type ResolveUrlData,
+} from '@/hooks/wishlist/useResolveUrl';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
+import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
+import { CandidatePickerPanel } from './CandidatePickerPanel';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type SheetState =
     | 'idle'
     | 'loading'
-    | 'picking'
-    | 'confirming'
+    | 'picking'               // TICKET-063: replaces picking + confirming
     | 'editing-match'
     | 'zero'
     | 'error'
     | 'rate-limited'
-    // TICKET-060: screenshot/vision path states
-    | 'screenshot-uploading'    // uploading + running resolve-url with image_path
-    | 'destination'             // DestinationPicker for async capture fan-out
-    | 'ig-nudge';               // Instagram link detected — show screenshot suggestion
+    | 'screenshot-uploading'
+    | 'destination'
+    | 'ig-nudge';
 
-/**
- * Shape returned by `places-search` (see supabase/functions/places-search/index.ts).
- * `id` is the Google place_id (e.g. `ChIJ...`), NOT a Napkin UUID — picking a
- * row makes the candidate a ghost; the wishlist add path will upsert via
- * `restaurants.external_id` server-side.
- */
 interface InlineSearchResult {
-    id: string;                    // Google place_id
+    id: string;
     name: string | null;
     formattedAddress: string | null;
     city: string | null;
@@ -90,7 +100,7 @@ interface InlineSearchResult {
     photoReference: string | null;
 }
 
-interface ImportLinkSheetProps {
+export interface ImportLinkSheetProps {
     visible: boolean;
     onDismiss: () => void;
     /**
@@ -106,7 +116,6 @@ type Palette = typeof Colors.light;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Truncate a URL to "example.com" for the clipboard chip label. */
 function truncateHost(url: string): string {
     try {
         const host = new URL(url).hostname.replace(/^www\./, '');
@@ -116,88 +125,18 @@ function truncateHost(url: string): string {
     }
 }
 
-/** Build a Places photo thumb URL via the project's `places-photo` proxy. */
 function photoUrl(photoReference: string | null | undefined): string | null {
     return placesPhotoProxyUrl(photoReference, { width: 200 }) ?? null;
 }
 
-// ── Sub-panels ───────────────────────────────────────────────────────────────
-
-interface CandidateCardProps {
-    candidate: ResolvedCandidate;
-    isSelected?: boolean;
-    onSelect: () => void;
-    palette: Palette;
-}
-
-function CandidateCard({ candidate, isSelected, onSelect, palette }: CandidateCardProps) {
-    const r = candidate.restaurant;
-    const thumbUrl = r.photoReference ? photoUrl(r.photoReference) : null;
-    const cityLine = [r.city, r.cuisine].filter(Boolean).join(' · ');
-
-    return (
-        <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Select ${r.name ?? 'restaurant'}`}
-            onPress={onSelect}
-            style={({ pressed }) => [
-                styles.candidateCard,
-                {
-                    backgroundColor: isSelected
-                        ? palette.primaryMuted
-                        : palette.surfaceJournalLow,
-                    opacity: pressed ? 0.85 : 1,
-                    borderWidth: isSelected ? 1.5 : 0,
-                    borderColor: isSelected ? palette.terracottaBorder : 'transparent',
-                },
-            ]}
-        >
-            {/* Photo thumb */}
-            {thumbUrl ? (
-                <Image
-                    source={{ uri: thumbUrl }}
-                    style={styles.candidateThumb}
-                    accessibilityIgnoresInvertColors
-                />
-            ) : (
-                <View
-                    style={[
-                        styles.candidateThumb,
-                        { backgroundColor: palette.surfaceContainerHigh },
-                    ]}
-                />
-            )}
-
-            {/* Text block */}
-            <View style={styles.candidateText}>
-                <View style={styles.candidateNameRow}>
-                    <Text
-                        style={[styles.candidateName, { color: palette.text }]}
-                        numberOfLines={1}
-                    >
-                        {r.name ?? 'Unknown'}
-                    </Text>
-                    {candidate.confidence === 'exact' && (
-                        <View style={[styles.bestMatchChip, { backgroundColor: palette.oliveCream }]}>
-                            <Text style={[Type.labelSmall, { color: palette.secondary, textTransform: 'none' }]}>
-                                best match
-                            </Text>
-                        </View>
-                    )}
-                </View>
-                {cityLine ? (
-                    <Text style={[Type.bodySmall, { color: palette.textMuted }]} numberOfLines={1}>
-                        {cityLine}
-                    </Text>
-                ) : null}
-                {candidate.already_wishlisted && (
-                    <Text style={[Type.caption, { color: palette.primary, marginTop: 2 }]}>
-                        already on your wishlist
-                    </Text>
-                )}
-            </View>
-        </Pressable>
-    );
+function generateNonce(): string {
+    if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) {
+        return (crypto as any).randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -215,17 +154,23 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
     const [touched, setTouched] = useState(false);
     const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);
     const [resolvedData, setResolvedData] = useState<ResolveUrlData | null>(null);
-    const [selectedCandidate, setSelectedCandidate] = useState<ResolvedCandidate | null>(null);
     const [noteText, setNoteText] = useState('');
     const [lastUrl, setLastUrl] = useState('');
     const [errorCode, setErrorCode] = useState<string | null>(null);
     const [retryAfter, setRetryAfter] = useState<number>(0);
 
-    // Inline edit-match search
+    // TICKET-063: stable job-level import_nonce per URL/share
+    const importNonceRef = useRef<string>(generateNonce());
+
+    // Inline edit-match search (per-row correction)
     const [editMatchQuery, setEditMatchQuery] = useState('');
     const [editMatchResults, setEditMatchResults] = useState<InlineSearchResult[]>([]);
     const [editMatchLoading, setEditMatchLoading] = useState(false);
+    const [editCorrectionForCandidate, setEditCorrectionForCandidate] = useState<ResolvedCandidate | null>(null);
     const editMatchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Patched candidates (corrections applied before save)
+    const [patchedCandidates, setPatchedCandidates] = useState<ResolvedCandidate[] | null>(null);
 
     // TICKET-060: screenshot/vision capture state
     const [screenshotStoragePath, setScreenshotStoragePath] = useState<string | null>(null);
@@ -234,12 +179,14 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
     const { resolve, cancel, state: resolverState, data: resolverData, error: resolverError } = useResolveUrl();
     const wishlistAdd = useWishlistAdd(user?.id);
     const createImport = useCreateImport(user?.id);
+    const saveImportSpots = useSaveImportSpots(user?.id);
+
+    // Effective candidates (patched overrides original)
+    const effectiveCandidates = patchedCandidates ?? resolvedData?.candidates ?? [];
 
     // ── Clipboard probe on mount ───────────────────────────────────────
     useEffect(() => {
         if (!visible) return;
-        // When a deep-link initialUrl is present, skip clipboard — it would
-        // race with the initialUrl effect and render an unwanted chip.
         if (initialUrl) return;
         Clipboard.getStringAsync().then((str) => {
             if (str && /^https?:\/\/\S+$/.test(str.trim())) {
@@ -251,8 +198,6 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
     }, [visible, initialUrl]);
 
     // ── initialUrl (share extension deep-link) effect ─────────────────
-    // When the sheet is opened with a pre-provided URL (from app/import.tsx),
-    // skip the idle/paste step and jump straight to 'loading'.
     useEffect(() => {
         if (!visible || !initialUrl || sheetState !== 'idle') return;
         const trimmed = initialUrl.trim();
@@ -260,6 +205,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         if (validation.ok) {
             setLastUrl(trimmed);
             setInputValue(trimmed);
+            importNonceRef.current = generateNonce(); // fresh nonce per share
             resolve(trimmed);
         } else {
             setErrorCode('INVALID_URL');
@@ -278,6 +224,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
     useEffect(() => {
         if (resolverState === 'success' && resolverData) {
             setResolvedData(resolverData);
+            setPatchedCandidates(null); // clear any previous corrections
 
             // TICKET-060: IG nudge
             if (resolverData.ig_nudge) {
@@ -293,16 +240,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
 
             if (resolverData.candidates.length === 0) {
                 setSheetState('zero');
-            } else if (
-                resolverData.candidates.length === 1 &&
-                resolverData.candidates[0].confidence === 'exact'
-            ) {
-                // Single exact match — skip picker, go straight to confirm
-                const c = resolverData.candidates[0];
-                setSelectedCandidate(c);
-                setNoteText(resolverData.note_prefill ?? '');
-                setSheetState('confirming');
             } else {
+                // TICKET-063: both single and multi-candidate go to 'picking'
+                // (CandidatePickerPanel handles the N=1 case as a 1-row list)
+                setNoteText(resolverData.note_prefill ?? '');
                 setSheetState('picking');
             }
         }
@@ -338,6 +279,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         }
         const url = inputValue.trim();
         setLastUrl(url);
+        importNonceRef.current = generateNonce(); // fresh nonce per resolve
         resolve(url);
     }, [inputOk, inputValue, resolve]);
 
@@ -353,13 +295,13 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         setTouched(false);
         setClipboardUrl(null);
         setResolvedData(null);
-        setSelectedCandidate(null);
+        setPatchedCandidates(null);
         setNoteText('');
         setLastUrl('');
         setErrorCode(null);
         setEditMatchQuery('');
         setEditMatchResults([]);
-        // TICKET-060: clear screenshot state
+        setEditCorrectionForCandidate(null);
         setScreenshotStoragePath(null);
         onDismiss();
     }, [cancel, onDismiss]);
@@ -371,48 +313,37 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         }
     }, [clipboardUrl]);
 
-    const handleSelectCandidate = useCallback((c: ResolvedCandidate) => {
-        setSelectedCandidate(c);
-        setNoteText(resolvedData?.note_prefill ?? '');
-        setSheetState('confirming');
-    }, [resolvedData]);
+    // TICKET-063: save N ticked spots via useSaveImportSpots
+    const handleSaveSpots = useCallback((
+        ticked: ResolvedCandidate[],
+        note: string,
+    ) => {
+        if (!user?.id || ticked.length === 0) return;
 
-    const handleSave = useCallback(() => {
-        if (!selectedCandidate) return;
-        const r = selectedCandidate.restaurant;
+        const spots = ticked.map((c) => ({
+            candidate: c,
+            client_nonce: generateNonce(),
+        }));
+
         const source = buildSource(inputValue.trim(), resolvedData);
-        wishlistAdd.mutate(
+
+        saveImportSpots.mutate(
             {
-                restaurant_id: selectedCandidate.restaurant_id ?? undefined,
-                restaurant: selectedCandidate.restaurant_id ? undefined : {
-                    external_id: r.external_id,
-                    name: r.name ?? '',
-                    location: {
-                        address: r.formattedAddress ?? undefined,
-                        locality: r.city ?? undefined,
-                        country: r.country ?? undefined,
-                    },
-                    latitude: r.latitude ?? undefined,
-                    longitude: r.longitude ?? undefined,
-                    photoReference: r.photoReference ?? undefined,
-                    googleRating: r.googleRating ?? undefined,
-                    googleRatingCount: r.googleRatingCount ?? undefined,
-                    priceLevel: r.priceLevel ?? undefined,
-                    cuisine: r.cuisine ?? undefined,
-                },
-                note: noteText.trim() || undefined,
-                source,
+                import_nonce: importNonceRef.current,
+                spots,
+                note: note || undefined,
+                source: source as any,
             },
             {
                 onSuccess: () => {
                     handleDismiss();
                 },
                 onError: () => {
-                    // Keep sheet open on error — user can retry
+                    // Keep sheet open — partial failures shown per-row on retry
                 },
             },
         );
-    }, [selectedCandidate, inputValue, resolvedData, noteText, wishlistAdd, handleDismiss]);
+    }, [user?.id, inputValue, resolvedData, saveImportSpots, handleDismiss]);
 
     const handleSearchManually = useCallback((query?: string) => {
         handleDismiss();
@@ -426,6 +357,16 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         setSheetState('idle');
         resolve(lastUrl);
     }, [resolve, lastUrl]);
+
+    // TICKET-063: per-row "not this?" opens edit-match for that specific candidate
+    const handleCorrectRow = useCallback((candidate: ResolvedCandidate) => {
+        setEditCorrectionForCandidate(candidate);
+        const defaultQuery = resolvedData?.best_query ?? candidate.restaurant.name ?? '';
+        setEditMatchQuery(defaultQuery);
+        setEditMatchResults([]);
+        setSheetState('editing-match');
+        runEditMatchSearch(defaultQuery);
+    }, [resolvedData]);
 
     // TICKET-060: handle screenshot/photo pick from OS image picker
     const handlePickScreenshot = useCallback(async () => {
@@ -442,7 +383,6 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
             if (!user?.id) throw new Error('Not authenticated');
             const { storagePath } = await downscaleAndUpload(asset.uri, user.id);
             setScreenshotStoragePath(storagePath);
-            // Run resolve-url with the uploaded image path (no url needed)
             resolve('', storagePath);
         } catch {
             setErrorCode('UPLOAD_FAILED');
@@ -460,12 +400,8 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                 destinations: selection,
             },
             {
-                onSuccess: () => {
-                    handleDismiss();
-                },
-                onError: () => {
-                    // Keep sheet open on error
-                },
+                onSuccess: () => { handleDismiss(); },
+                onError: () => { /* Keep sheet open */ },
             },
         );
     }, [user?.id, createImport, screenshotStoragePath, lastUrl, handleDismiss]);
@@ -478,9 +414,6 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         }
         setEditMatchLoading(true);
         try {
-            // `places-search` returns Place objects (id = Google place_id).
-            // callEdgeFn already unwraps the response envelope's `data` field,
-            // so we receive the array directly.
             const rows = await callEdgeFn<InlineSearchResult[]>('places-search', {
                 body: { query: q.trim(), limit: 5 },
             });
@@ -499,16 +432,14 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
     }, [runEditMatchSearch]);
 
     const handleEditMatchSelect = useCallback((row: InlineSearchResult) => {
-        if (!selectedCandidate) return;
-        // Picked row is a Google Places result — `row.id` is a Google place_id,
-        // NOT a Napkin restaurant UUID. Treat the patched candidate as a ghost
-        // so the save path takes the `restaurant: RestaurantPayload` branch
-        // (server upserts via restaurants.external_id) instead of the UUID branch.
-        const patched: ResolvedCandidate = {
-            ...selectedCandidate,
+        if (!editCorrectionForCandidate) return;
+
+        const patchedCandidate: ResolvedCandidate = {
+            ...editCorrectionForCandidate,
+            candidate_id: editCorrectionForCandidate.candidate_id, // preserve stable id
             restaurant: {
-                ...selectedCandidate.restaurant,
-                id: row.id,                                  // Google place_id (used as external_id at save time)
+                ...editCorrectionForCandidate.restaurant,
+                id: row.id,
                 external_id: row.id,
                 name: row.name,
                 formattedAddress: row.formattedAddress,
@@ -523,14 +454,26 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                 photoReference: row.photoReference,
             },
             google_place_id: row.id,
-            restaurant_id: null,                              // ghost — server resolves via external_id upsert
+            restaurant_id: null, // ghost — server resolves via external_id upsert
             already_wishlisted: false,
         };
-        setSelectedCandidate(patched);
+
+        // Patch the candidates list in place
+        const current = patchedCandidates ?? resolvedData?.candidates ?? [];
+        const correctionKey = editCorrectionForCandidate.candidate_id
+            ?? editCorrectionForCandidate.google_place_id
+            ?? editCorrectionForCandidate.restaurant.external_id;
+        const patched = current.map((c) => {
+            const k = c.candidate_id ?? c.google_place_id ?? c.restaurant.external_id;
+            return k === correctionKey ? patchedCandidate : c;
+        });
+        setPatchedCandidates(patched);
+
         setEditMatchQuery('');
         setEditMatchResults([]);
-        setSheetState('confirming');
-    }, [selectedCandidate]);
+        setEditCorrectionForCandidate(null);
+        setSheetState('picking');
+    }, [editCorrectionForCandidate, patchedCandidates, resolvedData]);
 
     // ── Source builder ─────────────────────────────────────────────────
     function buildSource(url: string, data: ResolveUrlData | null) {
@@ -542,15 +485,14 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
             if (ps?.author_handle) src.author_handle = ps.author_handle;
             if (ps?.author_name) src.author_name = ps.author_name;
             if (ps?.embed_product_id) src.embed_product_id = ps.embed_product_id;
-            return src as any;
+            return src;
         }
         if (data.source_type === 'google_maps') {
-            return { type: 'google_maps', url } as any;
+            return { type: 'google_maps', url };
         }
-        return { type: 'web', url } as any;
+        return { type: 'web', url };
     }
 
-    // ── Source tag label ───────────────────────────────────────────────
     function sourceTagLabel(): string | null {
         if (!resolvedData) return null;
         if (resolvedData.source_type === 'tiktok') return 'saved from tiktok';
@@ -558,7 +500,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         return 'from the web';
     }
 
-    // ── Render helpers ─────────────────────────────────────────────────
+    // ── Render ─────────────────────────────────────────────────────────
     const sheetBg = palette.surfaceContainerLow;
     const pb = Math.max(insets.bottom, Spacing.lg);
 
@@ -583,12 +525,11 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                             { backgroundColor: sheetBg, paddingBottom: pb },
                             Shadow.ambient,
                         ]}
-                        // Prevent backdrop tap from propagating into the sheet
                         onStartShouldSetResponder={() => true}
                     >
                         <View style={[styles.handle, { backgroundColor: palette.outlineVariant }]} />
 
-                        {/* ── IDLE panel ──────────────────────────────── */}
+                        {/* ── IDLE ──────────────────────────────────── */}
                         {sheetState === 'idle' && (
                             <IdlePanel
                                 palette={palette}
@@ -605,53 +546,44 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                             />
                         )}
 
-                        {/* ── LOADING panel ───────────────────────────── */}
+                        {/* ── LOADING ──────────────────────────────── */}
                         {sheetState === 'loading' && (
-                            <LoadingPanel palette={palette} onCancel={handleCancel} />
-                        )}
-
-                        {/* ── PICKING panel ───────────────────────────── */}
-                        {sheetState === 'picking' && resolvedData && (
-                            <PickingPanel
+                            <LoadingPanel
                                 palette={palette}
-                                data={resolvedData}
-                                sourceTag={sourceTagLabel()}
-                                onSelect={handleSelectCandidate}
-                                onBack={() => setSheetState('idle')}
+                                onCancel={handleCancel}
+                                copy="reading the video…"
                             />
                         )}
 
-                        {/* ── CONFIRMING panel ────────────────────────── */}
-                        {sheetState === 'confirming' && selectedCandidate && (
-                            <ConfirmPanel
-                                palette={palette}
-                                candidate={selectedCandidate}
-                                sourceTag={sourceTagLabel()}
-                                note={noteText}
-                                onNoteChange={setNoteText}
-                                onSave={handleSave}
-                                isSaving={wishlistAdd.isPending}
-                                onPickDifferent={resolvedData && resolvedData.candidates.length > 1
-                                    ? () => setSheetState('picking')
-                                    : undefined}
-                                onWrongRestaurant={() => {
-                                    setEditMatchQuery(resolvedData?.best_query ?? selectedCandidate.restaurant.name ?? '');
-                                    setEditMatchResults([]);
-                                    setSheetState('editing-match');
-                                    runEditMatchSearch(resolvedData?.best_query ?? selectedCandidate.restaurant.name ?? '');
-                                }}
-                                onOpenRestaurant={
-                                    selectedCandidate.already_wishlisted && selectedCandidate.restaurant_id
-                                        ? () => {
-                                            handleDismiss();
-                                            router.push(`/restaurant/${selectedCandidate.restaurant_id}`);
-                                        }
-                                        : undefined
-                                }
-                            />
+                        {/* ── PICKING (TICKET-063: 1–N candidates) ── */}
+                        {sheetState === 'picking' && effectiveCandidates.length > 0 && (
+                            <View>
+                                <CandidatePickerPanel
+                                    candidates={effectiveCandidates}
+                                    onSave={handleSaveSpots}
+                                    isSaving={saveImportSpots.isPending}
+                                    sourceTag={sourceTagLabel()}
+                                    onCorrectRow={handleCorrectRow}
+                                    initialNote={noteText}
+                                    palette={palette}
+                                />
+                                {/* "share to a table" secondary affordance */}
+                                <Pressable
+                                    onPress={() => {
+                                        /* TODO TICKET-063 stretch: open destination picker
+                                           pre-loaded with Places-resolved ticked spots only */
+                                    }}
+                                    hitSlop={8}
+                                    style={styles.textLinkRow}
+                                >
+                                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
+                                        share to a table
+                                    </Text>
+                                </Pressable>
+                            </View>
                         )}
 
-                        {/* ── EDITING-MATCH panel ─────────────────────── */}
+                        {/* ── EDITING-MATCH ────────────────────────── */}
                         {sheetState === 'editing-match' && (
                             <EditMatchPanel
                                 palette={palette}
@@ -660,11 +592,15 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                                 results={editMatchResults}
                                 isLoading={editMatchLoading}
                                 onSelect={handleEditMatchSelect}
-                                onBack={() => setSheetState('confirming')}
+                                onBack={() => {
+                                    setEditCorrectionForCandidate(null);
+                                    setSheetState('picking');
+                                }}
+                                correcting={editCorrectionForCandidate?.restaurant.name ?? null}
                             />
                         )}
 
-                        {/* ── ZERO panel ──────────────────────────────── */}
+                        {/* ── ZERO ────────────────────────────────── */}
                         {sheetState === 'zero' && (
                             <ZeroPanel
                                 palette={palette}
@@ -672,7 +608,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                             />
                         )}
 
-                        {/* ── ERROR panel ─────────────────────────────── */}
+                        {/* ── ERROR ───────────────────────────────── */}
                         {sheetState === 'error' && (
                             <ErrorPanel
                                 palette={palette}
@@ -682,7 +618,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                             />
                         )}
 
-                        {/* ── RATE-LIMITED panel ──────────────────────── */}
+                        {/* ── RATE-LIMITED ─────────────────────────── */}
                         {sheetState === 'rate-limited' && (
                             <RateLimitedPanel
                                 palette={palette}
@@ -691,16 +627,16 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                             />
                         )}
 
-                        {/* ── SCREENSHOT UPLOADING panel ───────────────── */}
+                        {/* ── SCREENSHOT UPLOADING ─────────────────── */}
                         {sheetState === 'screenshot-uploading' && (
                             <LoadingPanel
                                 palette={palette}
                                 onCancel={handleCancel}
-                                copy="reading it..."
+                                copy="reading it…"
                             />
                         )}
 
-                        {/* ── DESTINATION picker panel ─────────────────── */}
+                        {/* ── DESTINATION ──────────────────────────── */}
                         {sheetState === 'destination' && (
                             <DestinationPicker
                                 onConfirm={handleDestinationConfirm}
@@ -709,7 +645,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                             />
                         )}
 
-                        {/* ── IG NUDGE panel ───────────────────────────── */}
+                        {/* ── IG NUDGE ─────────────────────────────── */}
                         {sheetState === 'ig-nudge' && (
                             <IgNudgePanel
                                 palette={palette}
@@ -738,7 +674,6 @@ interface IdlePanelProps {
     clipboardUrl: string | null;
     onClipboardChip: () => void;
     inputRef: React.RefObject<TextInput | null>;
-    /** TICKET-060: launch OS image picker for screenshot capture */
     onPickScreenshot?: () => void;
 }
 
@@ -758,7 +693,6 @@ function IdlePanel({
         <View>
             <Text style={[styles.sheetTitle, { color: palette.text }]}>add from link</Text>
 
-            {/* Clipboard chip */}
             {clipboardUrl ? (
                 <Pressable
                     onPress={onClipboardChip}
@@ -777,7 +711,6 @@ function IdlePanel({
                 </Pressable>
             ) : null}
 
-            {/* URL input */}
             <TextInput
                 ref={inputRef}
                 value={inputValue}
@@ -801,7 +734,6 @@ function IdlePanel({
                 autoFocus
             />
 
-            {/* Helper / validation message */}
             {validationMessage ? (
                 <Text style={[Type.bodySmall, styles.helperText, { color: palette.error }]}>
                     {validationMessage}
@@ -812,7 +744,6 @@ function IdlePanel({
                 </Text>
             )}
 
-            {/* "find it" CTA — always a Pressable; disabled look when !inputOk */}
             <Pressable
                 onPress={onFindIt}
                 disabled={false}
@@ -835,7 +766,6 @@ function IdlePanel({
                 </Text>
             </Pressable>
 
-            {/* TICKET-060: screenshot row — "or add a screenshot" */}
             {onPickScreenshot && (
                 <Pressable
                     onPress={onPickScreenshot}
@@ -853,7 +783,11 @@ function IdlePanel({
 }
 
 // Loading
-function LoadingPanel({ palette, onCancel, copy = 'reading the link...' }: { palette: Palette; onCancel: () => void; copy?: string }) {
+function LoadingPanel({ palette, onCancel, copy = 'reading the link…' }: {
+    palette: Palette;
+    onCancel: () => void;
+    copy?: string;
+}) {
     return (
         <View style={styles.centeredPanel}>
             <ActivityIndicator color={palette.primary} size="small" />
@@ -872,168 +806,7 @@ function LoadingPanel({ palette, onCancel, copy = 'reading the link...' }: { pal
     );
 }
 
-// Picking
-interface PickingPanelProps {
-    palette: Palette;
-    data: ResolveUrlData;
-    sourceTag: string | null;
-    onSelect: (c: ResolvedCandidate) => void;
-    onBack: () => void;
-}
-
-function PickingPanel({ palette, data, sourceTag, onSelect, onBack }: PickingPanelProps) {
-    return (
-        <View>
-            <Text style={[styles.sheetTitle, { color: palette.text }]}>add from link</Text>
-            {sourceTag ? (
-                <Text style={[Type.caption, styles.sourceTag, { color: palette.textMuted }]}>
-                    {sourceTag}
-                </Text>
-            ) : null}
-            <ScrollView
-                style={styles.candidateList}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-            >
-                {data.candidates.map((c, i) => (
-                    <CandidateCard
-                        key={c.google_place_id ?? i}
-                        candidate={c}
-                        palette={palette}
-                        onSelect={() => onSelect(c)}
-                    />
-                ))}
-            </ScrollView>
-            <Pressable onPress={onBack} hitSlop={8} style={styles.textLinkRow}>
-                <Text style={[Type.bodySmall, { color: palette.textMuted }]}>back</Text>
-            </Pressable>
-        </View>
-    );
-}
-
-// Confirming
-interface ConfirmPanelProps {
-    palette: Palette;
-    candidate: ResolvedCandidate;
-    sourceTag: string | null;
-    note: string;
-    onNoteChange: (t: string) => void;
-    onSave: () => void;
-    isSaving: boolean;
-    onPickDifferent?: () => void;
-    onWrongRestaurant: () => void;
-    onOpenRestaurant?: () => void;
-}
-
-function ConfirmPanel({
-    palette,
-    candidate,
-    sourceTag,
-    note,
-    onNoteChange,
-    onSave,
-    isSaving,
-    onPickDifferent,
-    onWrongRestaurant,
-    onOpenRestaurant,
-}: ConfirmPanelProps) {
-    const r = candidate.restaurant;
-    const cityLine = [r.city, r.cuisine].filter(Boolean).join(' · ');
-
-    return (
-        <View>
-            {sourceTag ? (
-                <Text style={[Type.caption, styles.sourceTag, { color: palette.textMuted }]}>
-                    {sourceTag}
-                </Text>
-            ) : null}
-
-            {/* Restaurant summary */}
-            <Text style={[styles.confirmName, { color: palette.text }]} numberOfLines={2}>
-                {r.name ?? 'Unknown restaurant'}
-            </Text>
-            {cityLine ? (
-                <Text style={[Type.bodySmall, { color: palette.textMuted }, styles.confirmCity]}>
-                    {cityLine}
-                </Text>
-            ) : null}
-
-            {/* Note textarea */}
-            <TextInput
-                value={note}
-                onChangeText={onNoteChange}
-                placeholder="add a note (optional)"
-                placeholderTextColor={palette.textMuted}
-                multiline
-                style={[
-                    styles.noteInput,
-                    {
-                        color: palette.text,
-                        borderColor: palette.ruleInkSoft,
-                        backgroundColor: palette.card,
-                    },
-                ]}
-                maxLength={280}
-            />
-
-            {/* Save CTA — or already-saved state */}
-            {candidate.already_wishlisted ? (
-                <View>
-                    <View
-                        style={[
-                            styles.primaryButton,
-                            { backgroundColor: palette.surfaceContainerHigh },
-                        ]}
-                    >
-                        <Text style={[Type.label, { color: palette.textMuted }]}>
-                            already on your wishlist
-                        </Text>
-                    </View>
-                    {onOpenRestaurant ? (
-                        <Pressable onPress={onOpenRestaurant} hitSlop={8} style={styles.textLinkRow}>
-                            <Text style={[Type.body, { color: palette.primary }]}>open restaurant</Text>
-                        </Pressable>
-                    ) : null}
-                </View>
-            ) : (
-                <Pressable
-                    onPress={onSave}
-                    disabled={isSaving}
-                    style={({ pressed }) => [
-                        styles.primaryButton,
-                        {
-                            backgroundColor: palette.primary,
-                            opacity: pressed || isSaving ? 0.75 : 1,
-                        },
-                    ]}
-                    accessibilityLabel="save to wishlist"
-                >
-                    {isSaving ? (
-                        <ActivityIndicator color={palette.textInverse} size="small" />
-                    ) : (
-                        <Text style={[Type.label, { color: palette.textInverse }]}>
-                            save to wishlist
-                        </Text>
-                    )}
-                </Pressable>
-            )}
-
-            {/* Secondary: pick a different one */}
-            {onPickDifferent ? (
-                <Pressable onPress={onPickDifferent} hitSlop={8} style={styles.textLinkRow}>
-                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>pick a different one</Text>
-                </Pressable>
-            ) : null}
-
-            {/* Tertiary: wrong restaurant? */}
-            <Pressable onPress={onWrongRestaurant} hitSlop={8} style={styles.textLinkRow}>
-                <Text style={[Type.bodySmall, { color: palette.textMuted }]}>wrong restaurant?</Text>
-            </Pressable>
-        </View>
-    );
-}
-
-// EditMatch
+// EditMatch (per-row correction)
 interface EditMatchPanelProps {
     palette: Palette;
     query: string;
@@ -1042,6 +815,8 @@ interface EditMatchPanelProps {
     isLoading: boolean;
     onSelect: (r: InlineSearchResult) => void;
     onBack: () => void;
+    /** Name of the candidate being corrected. */
+    correcting: string | null;
 }
 
 function EditMatchPanel({
@@ -1052,10 +827,16 @@ function EditMatchPanel({
     isLoading,
     onSelect,
     onBack,
+    correcting,
 }: EditMatchPanelProps) {
     return (
         <View>
             <Text style={[styles.sheetTitle, { color: palette.text }]}>find the right one</Text>
+            {correcting ? (
+                <Text style={[Type.caption, styles.sourceTag, { color: palette.textMuted }]}>
+                    replacing: {correcting}
+                </Text>
+            ) : null}
             <TextInput
                 value={query}
                 onChangeText={onQueryChange}
@@ -1130,7 +911,7 @@ function ZeroPanel({ palette, onSearchManually }: { palette: Palette; onSearchMa
     return (
         <View style={styles.centeredPanel}>
             <Text style={[Type.headlineItalic, { color: palette.text, textAlign: 'center' }]}>
-                {`couldn't find a restaurant in that link`}
+                {`couldn't spot a restaurant in that video`}
             </Text>
             <Text style={[Type.bodySmall, styles.zeroCopy, { color: palette.textMuted }]}>
                 try a different link, or search by name.
@@ -1151,14 +932,12 @@ function ZeroPanel({ palette, onSearchManually }: { palette: Palette; onSearchMa
 }
 
 // Error
-interface ErrorPanelProps {
+function ErrorPanel({ palette, code, onRetry, onSearchManually }: {
     palette: Palette;
     code: string | null;
     onRetry: () => void;
     onSearchManually: () => void;
-}
-
-function ErrorPanel({ palette, code, onRetry, onSearchManually }: ErrorPanelProps) {
+}) {
     const isTikTokBusy = code === 'UPSTREAM_RATE_LIMITED';
     const msg = isTikTokBusy
         ? 'tiktok is busy — try again in a minute'
@@ -1188,11 +967,7 @@ function ErrorPanel({ palette, code, onRetry, onSearchManually }: ErrorPanelProp
 }
 
 // RateLimited
-function RateLimitedPanel({
-    palette,
-    retryAfter,
-    onRetry,
-}: {
+function RateLimitedPanel({ palette, retryAfter, onRetry }: {
     palette: Palette;
     retryAfter: number;
     onRetry: () => void;
@@ -1225,12 +1000,8 @@ function RateLimitedPanel({
     );
 }
 
-// IgNudge — TICKET-060: shown when an Instagram link is pasted
-function IgNudgePanel({
-    palette,
-    onPickScreenshot,
-    onDismiss,
-}: {
+// IgNudge
+function IgNudgePanel({ palette, onPickScreenshot, onDismiss }: {
     palette: Palette;
     onPickScreenshot: () => void;
     onDismiss: () => void;
@@ -1342,48 +1113,13 @@ const styles = StyleSheet.create({
         minHeight: 64,
         ...Shadow.clip,
     },
-    candidateThumb: {
-        width: 48,
-        height: 48,
-        borderRadius: Radius.sm,
-        marginRight: Spacing.md,
-        flexShrink: 0,
-    },
     candidateText: {
         flex: 1,
-    },
-    candidateNameRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: Spacing.xs,
     },
     candidateName: {
         ...Type.headlineItalic,
         fontSize: 16,
         flex: 1,
-    },
-    bestMatchChip: {
-        paddingHorizontal: Spacing.xs,
-        paddingVertical: 2,
-        borderRadius: Radius.sm,
-    },
-    confirmName: {
-        ...Type.headlineItalic,
-        fontSize: 18,
-        marginBottom: Spacing.xs,
-    },
-    confirmCity: {
-        marginBottom: Spacing.md,
-    },
-    noteInput: {
-        ...Type.body,
-        borderWidth: 1,
-        borderRadius: Radius.md,
-        padding: Spacing.sm,
-        minHeight: 72,
-        textAlignVertical: 'top',
-        marginBottom: Spacing.xs,
     },
     zeroCopy: {
         textAlign: 'center',

@@ -20,9 +20,11 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
+// Radius kept for saveButton style
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTables } from '@/hooks/tables/useTables';
 import { useAuth } from '@/providers/AuthProvider';
+import { RowToggle } from './RowToggle';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -164,51 +166,7 @@ export function DestinationPicker({
     );
 }
 
-// ── RowToggle ─────────────────────────────────────────────────────────────────
-
-interface RowToggleProps {
-    label: string;
-    italic?: boolean;
-    checked: boolean;
-    onToggle: () => void;
-    palette: Palette;
-}
-
-function RowToggle({ label, italic, checked, onToggle, palette }: RowToggleProps) {
-    return (
-        <Pressable
-            onPress={onToggle}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked }}
-            accessibilityLabel={label}
-            style={({ pressed }) => [
-                styles.row,
-                {
-                    backgroundColor: checked
-                        ? palette.primaryMuted
-                        : palette.surfaceJournalLow,
-                    opacity: pressed ? 0.85 : 1,
-                },
-            ]}
-        >
-            <Text
-                style={[
-                    italic ? styles.rowLabelItalic : styles.rowLabel,
-                    { color: palette.text },
-                ]}
-                numberOfLines={1}
-            >
-                {label}
-            </Text>
-            {/* Checkmark */}
-            {checked && (
-                <Text style={[Type.bodySmall, { color: palette.primary, marginLeft: Spacing.sm }]}>
-                    {'✓'}
-                </Text>
-            )}
-        </Pressable>
-    );
-}
+// RowToggle is now imported from ./RowToggle (TICKET-063: shared component)
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
@@ -220,24 +178,6 @@ const styles = StyleSheet.create({
     listScroll: {
         maxHeight: 300,
     },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: Spacing.md,
-        paddingHorizontal: Spacing.md,
-        borderRadius: Radius.md,
-        marginBottom: Spacing.sm,
-        minHeight: 48,
-    },
-    rowLabel: {
-        ...Type.body,
-        flex: 1,
-    } as any,
-    rowLabelItalic: {
-        ...Type.headlineItalic,
-        fontSize: 15,
-        flex: 1,
-    } as any,
     saveButton: {
         paddingVertical: Spacing.md,
         borderRadius: Radius.full,

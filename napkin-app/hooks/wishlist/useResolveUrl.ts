@@ -17,6 +17,8 @@ type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'screenshot' 
 type Confidence = 'exact' | 'high' | 'low';
 
 export interface ResolvedCandidate {
+    /** TICKET-063: stable sha256-derived id for this candidate (used as key + save nonce). */
+    candidate_id?: string;
     restaurant: {
         id: string;
         name: string | null;
@@ -44,6 +46,8 @@ export interface ResolvedCandidate {
     google_place_id: string;
     restaurant_id: string | null;
     already_wishlisted: boolean;
+    /** TICKET-063: true when city was inferred from hashtags/handle/context. */
+    city_inferred?: boolean;
 }
 
 export interface ResolveUrlData {
@@ -58,6 +62,8 @@ export interface ResolveUrlData {
     extracted_confidence?: 'exact' | 'high' | 'low';
     /** TICKET-060: whether this result needs confirmation. */
     needs_confirm?: boolean;
+    /** TICKET-063: advertised list count from the listicle heuristic (≤6). */
+    list_count?: number | null;
 }
 
 export type ResolveUrlState = 'idle' | 'loading' | 'success' | 'error';
