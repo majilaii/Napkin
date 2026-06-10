@@ -10,6 +10,7 @@ import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { Avatar } from '@/components/feed/Avatar';
 import { TableTopFourPlaceholder } from './TableTopFourPlaceholder';
+import { FRIEND_TEST } from '@/constants/flags';
 
 type Palette = typeof Colors.light;
 
@@ -100,8 +101,11 @@ export function FoundedHero({
                 ) : null}
             </View>
 
-            {/* Top 4 placeholder — week-one waiting state from the design system. */}
-            <TableTopFourPlaceholder palette={palette} onStart={onEditTopFour} />
+            {/* Top 4 placeholder — week-one waiting state from the design system.
+                Hidden during friend-test. */}
+            {!FRIEND_TEST.hideTopFours && (
+                <TableTopFourPlaceholder palette={palette} onStart={onEditTopFour} />
+            )}
 
             {/* Invite prompt — shown only when member count is under 6 and onInvite is wired */}
             {memberCount < 6 && !!onInvite ? (

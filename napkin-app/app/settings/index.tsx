@@ -15,6 +15,7 @@ import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { PrivacySection } from '@/components/settings/PrivacySection';
+import { FRIEND_TEST } from '@/constants/flags';
 
 export default function SettingsScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -67,24 +68,26 @@ export default function SettingsScreen() {
                     <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
                 </Pressable>
 
-                {/* My Lists */}
-                <Pressable
-                    onPress={() => router.push('/lists')}
-                    style={({ pressed }) => [
-                        styles.row,
-                        {
-                            backgroundColor: pressed
-                                ? palette.surfaceContainerHigh
-                                : palette.surfaceContainerLow,
-                        },
-                    ]}
-                >
-                    <View style={styles.rowLeft}>
-                        <Ionicons name="list-outline" size={20} color={palette.primary} />
-                        <Text style={[Type.titleSmall, { color: palette.text }]}>My Lists</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
-                </Pressable>
+                {/* My Lists — hidden during friend-test */}
+                {!FRIEND_TEST.hideLists && (
+                    <Pressable
+                        onPress={() => router.push('/lists')}
+                        style={({ pressed }) => [
+                            styles.row,
+                            {
+                                backgroundColor: pressed
+                                    ? palette.surfaceContainerHigh
+                                    : palette.surfaceContainerLow,
+                            },
+                        ]}
+                    >
+                        <View style={styles.rowLeft}>
+                            <Ionicons name="list-outline" size={20} color={palette.primary} />
+                            <Text style={[Type.titleSmall, { color: palette.text }]}>My Lists</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
+                    </Pressable>
+                )}
 
                 {/* Sign out */}
                 <Pressable

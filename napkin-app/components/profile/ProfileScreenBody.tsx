@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUserProfile } from '@/hooks/users/useUserProfile';
+import { FRIEND_TEST } from '@/constants/flags';
 
 import { ProfileHeader } from './ProfileHeader';
 import { TopFour } from './TopFour';
@@ -105,8 +106,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         disabled: true,
     });
 
-    // Lists — only for self or public profiles
-    if (hasPalateAccess) {
+    // Lists — only for self or public profiles; hidden during friend-test
+    if (!FRIEND_TEST.hideLists && hasPalateAccess) {
         const listsCount = profileData.public_lists?.length ?? 0;
         const listHint =
             profileData.public_lists && profileData.public_lists.length > 0
@@ -134,9 +135,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         });
     }
 
-    // Top 4s — self, or public profile viewers
-    // TICKET-047: deep-linked sub-screen; owner sees edit chrome, viewer sees picks only.
-    if (hasPalateAccess) {
+    // Top 4s — self, or public profile viewers; hidden during friend-test
+    if (!FRIEND_TEST.hideTopFours && hasPalateAccess) {
         indexSections.push({
             title: 'Top 4s',
             count: null,
@@ -179,13 +179,13 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             {/* Hairline divider */}
             <View style={[styles.hairline, { backgroundColor: palette.dividerSoft }]} />
 
-            {/* Top 4 */}
-            {hasPalateAccess && (
+            {/* Top 4 — hidden during friend-test */}
+            {!FRIEND_TEST.hideTopFours && hasPalateAccess && (
                 <TopFour picks={profileData.top_four ?? []} />
             )}
 
-            {/* Cold-start nudge under top 4 */}
-            {isColdStart && isSelf && (
+            {/* Cold-start nudge under top 4 — hidden with top fours */}
+            {!FRIEND_TEST.hideTopFours && isColdStart && isSelf && (
                 <Text
                     style={[
                         Type.headlineItalic,
