@@ -179,13 +179,27 @@ export function useSaveImportSpots(userId: string | null | undefined) {
             }
         },
 
-        onSuccess: (_result, _input: SaveImportSpotsInput) => {
+        onSuccess: (_result, input: SaveImportSpotsInput) => {
             if (!userId) return;
-            // Narrow invalidation: personal wishlist only.
-            // Per-spot table activity (TICKET-063b) will invalidate when table_id is wired.
+            // Narrow invalidation: personal wishlist.
             queryClient.invalidateQueries({
                 queryKey: queryKeys.wishlist.personal(userId),
             });
+            // TICKET-063b: when spots carry a table_id, narrowly invalidate that
+            // table's activity feed so the shared-spot digest card surfaces.
+            // NO optimistic digest patch (spec AC: skip optimistic on share).
+            const tableIds = new Set<string>(
+                input.spots
+                    .filter((s): s is SaveImportSpotInput & { table_id: string } =>
+                        typeof s.table_id === 'string' && s.table_id.length > 0,
+                    )
+                    .map((s) => s.table_id),
+            );
+            for (const tid of tableIds) {
+                queryClient.invalidateQueries({
+                    queryKey: queryKeys.tables.activityForTable(tid),
+                });
+            }
         },
     });
 }

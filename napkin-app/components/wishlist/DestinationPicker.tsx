@@ -10,7 +10,7 @@
  * Heirloom Journal: lowercase italic title "where does this go?",
  * surfaceJournalLow rows, terracotta primary CTA. No 1px borders. No emoji in chrome.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -31,6 +31,12 @@ import { RowToggle } from './RowToggle';
 export interface DestinationSelection {
     wishlist: boolean;
     table_ids: string[];
+    /**
+     * Parallel array of table names corresponding to table_ids.
+     * Populated by the singleTableOnly flow (TICKET-063b) so the caller
+     * can display the chosen table name without a separate lookup.
+     */
+    table_names?: string[];
 }
 
 export interface DestinationPickerProps {
@@ -40,6 +46,14 @@ export interface DestinationPickerProps {
     onCancel: () => void;
     /** Whether the confirm mutation is in-flight. */
     isSaving?: boolean;
+    /**
+     * TICKET-063b: when true, constrains to single-table selection only.
+     * - Hides the "my wishlist" row.
+     * - Table rows behave as single-select (selecting one deselects others).
+     * - Title reads "share to a table"; CTA reads "share".
+     * - onConfirm returns { wishlist: false, table_ids: [id], table_names: [name] }.
+     */
+    singleTableOnly?: boolean;
 }
 
 type Palette = typeof Colors.light;
@@ -50,6 +64,7 @@ export function DestinationPicker({
     onConfirm,
     onCancel,
     isSaving = false,
+    singleTableOnly = false,
 }: DestinationPickerProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
@@ -57,36 +72,67 @@ export function DestinationPicker({
 
     const { data: memberships, isLoading: tablesLoading } = useTables(user?.id);
 
-    // My Wishlist is pre-ticked (OQ3 resolution — always default)
+    // My Wishlist is pre-ticked (OQ3 resolution — always default).
+    // Hidden + unused in singleTableOnly mode.
     const [wishlistTicked, setWishlistTicked] = useState(true);
     const [tickedTableIds, setTickedTableIds] = useState<Set<string>>(new Set());
 
+    // Memoised so handleSave can look up the table name without stale closure.
+    const tables = useMemo(
+        () => (memberships ?? []).map((m: any) => m.tables ?? m) as Array<{ id: string; name: string }>,
+        [memberships],
+    );
+
     const toggleTable = useCallback((tableId: string) => {
-        setTickedTableIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(tableId)) {
-                next.delete(tableId);
-            } else {
-                next.add(tableId);
-            }
-            return next;
-        });
-    }, []);
+        if (singleTableOnly) {
+            // Single-select: selecting a new table deselects the previous.
+            // Tapping the already-selected table deselects it (empty state).
+            setTickedTableIds((prev) => {
+                const next = new Set<string>();
+                if (!prev.has(tableId)) next.add(tableId);
+                return next;
+            });
+        } else {
+            setTickedTableIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(tableId)) next.delete(tableId);
+                else next.add(tableId);
+                return next;
+            });
+        }
+    }, [singleTableOnly]);
+
+    // Whether the CTA is enabled.
+    const hasSelection = singleTableOnly
+        ? tickedTableIds.size === 1
+        : (wishlistTicked || tickedTableIds.size > 0);
 
     const handleSave = useCallback(() => {
-        onConfirm({
-            wishlist: wishlistTicked,
-            table_ids: [...tickedTableIds],
-        });
-    }, [onConfirm, wishlistTicked, tickedTableIds]);
+        if (singleTableOnly) {
+            const selectedId = [...tickedTableIds][0];
+            if (!selectedId) return;
+            const selectedTable = tables.find((t) => t.id === selectedId);
+            onConfirm({
+                wishlist: false,
+                table_ids: [selectedId],
+                table_names: selectedTable ? [selectedTable.name] : [],
+            });
+        } else {
+            onConfirm({
+                wishlist: wishlistTicked,
+                table_ids: [...tickedTableIds],
+            });
+        }
+    }, [onConfirm, wishlistTicked, tickedTableIds, singleTableOnly, tables]);
 
-    const tables = (memberships ?? []).map((m: any) => m.tables ?? m);
+    const title = singleTableOnly ? 'share to a table' : 'where does this go?';
+    const ctaLabel = singleTableOnly ? 'share' : 'save';
 
     return (
         <View>
             {/* Sheet title */}
             <Text style={[styles.title, { color: palette.text }]}>
-                where does this go?
+                {title}
             </Text>
 
             <ScrollView
@@ -94,13 +140,15 @@ export function DestinationPicker({
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
             >
-                {/* My Wishlist row — always shown, pre-ticked */}
-                <RowToggle
-                    label="my wishlist"
-                    checked={wishlistTicked}
-                    onToggle={() => setWishlistTicked((v) => !v)}
-                    palette={palette}
-                />
+                {/* My Wishlist row — hidden in singleTableOnly mode */}
+                {!singleTableOnly && (
+                    <RowToggle
+                        label="my wishlist"
+                        checked={wishlistTicked}
+                        onToggle={() => setWishlistTicked((v) => !v)}
+                        palette={palette}
+                    />
+                )}
 
                 {/* Table rows */}
                 {tablesLoading ? (
@@ -110,7 +158,7 @@ export function DestinationPicker({
                         style={{ marginVertical: Spacing.md }}
                     />
                 ) : (
-                    tables.map((table: { id: string; name: string }) => (
+                    tables.map((table) => (
                         <RowToggle
                             key={table.id}
                             label={table.name}
@@ -126,18 +174,17 @@ export function DestinationPicker({
             {/* Primary CTA */}
             <Pressable
                 onPress={handleSave}
-                disabled={isSaving || (!wishlistTicked && tickedTableIds.size === 0)}
+                disabled={isSaving || !hasSelection}
                 style={({ pressed }) => [
                     styles.saveButton,
                     {
-                        backgroundColor:
-                            wishlistTicked || tickedTableIds.size > 0
-                                ? palette.primary
-                                : palette.surfaceContainerHigh,
+                        backgroundColor: hasSelection
+                            ? palette.primary
+                            : palette.surfaceContainerHigh,
                         opacity: pressed || isSaving ? 0.75 : 1,
                     },
                 ]}
-                accessibilityLabel="save"
+                accessibilityLabel={ctaLabel}
             >
                 {isSaving ? (
                     <ActivityIndicator color={palette.textInverse} size="small" />
@@ -146,14 +193,13 @@ export function DestinationPicker({
                         style={[
                             Type.label,
                             {
-                                color:
-                                    wishlistTicked || tickedTableIds.size > 0
-                                        ? palette.textInverse
-                                        : palette.textMuted,
+                                color: hasSelection
+                                    ? palette.textInverse
+                                    : palette.textMuted,
                             },
                         ]}
                     >
-                        save
+                        {ctaLabel}
                     </Text>
                 )}
             </Pressable>
