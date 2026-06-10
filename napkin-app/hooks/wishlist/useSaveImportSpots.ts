@@ -37,8 +37,10 @@ export interface SaveImportSpotsInput {
     note?: string;
     /** Source provenance (TikTok/Maps/web) for wishlist rows. */
     source?: Record<string, string>;
-    /** Optional Table to post a coalesced digest card to. */
-    table_id?: string | null;
+    // NOTE: top-level table_id removed (TICKET-063 fix-pass-1 item 12).
+    // The mutationFn never sent it to the edge function — it was a dead field
+    // that keyed off an unimplemented CTA and created a latent feed-cache landmine.
+    // Per-spot table_id plumbing is preserved in SaveImportSpotInput for TICKET-063b.
 }
 
 export interface SpotSaveResult {
@@ -135,73 +137,28 @@ export function useSaveImportSpots(userId: string | null | undefined) {
                 return old;
             });
 
-            // Snapshot + optimistic-patch per-Table activity if a table_id is set
-            const tableId = input.table_id;
-            let previousTableActivity: unknown;
-            if (tableId) {
-                const actKey = queryKeys.tables.activityForTable(tableId);
-                await queryClient.cancelQueries({ queryKey: actKey });
-                previousTableActivity = queryClient.getQueryData(actKey);
+            // NOTE: top-level table_id optimistic digest patch removed (fix-pass-1 item 12).
+            // The mutationFn never sent table_id to the edge function — the patch was dead
+            // code and a latent feed-cache landmine. Per-spot table_id is preserved.
 
-                const optimisticDigest: any = {
-                    id: `pending_digest_${input.import_nonce}`,
-                    type: 'share_digest',
-                    sort_date: now,
-                    created_at: now,
-                    table_id: tableId,
-                    author: { user_id: userId, display_name: null, avatar_url: null },
-                    childShares: input.spots.map((s) => ({
-                        shareId: `pending_share_${s.client_nonce}`,
-                        restaurant: s.candidate.restaurant,
-                        extractionStatus: 'resolved',
-                    })),
-                    reaction_count: 0,
-                    reactionCount: 0,
-                    top_emojis: [],
-                    topEmojis: [],
-                };
-
-                queryClient.setQueryData(actKey, (old: any) => {
-                    if (!old) return old;
-                    if (old?.pages?.[0]) {
-                        const newPages = [...old.pages];
-                        newPages[0] = {
-                            ...newPages[0],
-                            rows: [optimisticDigest, ...(newPages[0].rows ?? [])],
-                        };
-                        return { ...old, pages: newPages };
-                    }
-                    if (Array.isArray(old)) return [optimisticDigest, ...old];
-                    return old;
-                });
-            }
-
-            return { previousWishlist, previousTableActivity, tableId };
+            return { previousWishlist };
         },
 
-        onError: (_err, input: SaveImportSpotsInput, ctx: any) => {
+        onError: (_err, _input: SaveImportSpotsInput, ctx: any) => {
             if (!userId) return;
             const wishlistKey = queryKeys.wishlist.personal(userId);
             if (ctx?.previousWishlist !== undefined) {
                 queryClient.setQueryData(wishlistKey, ctx.previousWishlist);
             }
-            if (ctx?.tableId && ctx?.previousTableActivity !== undefined) {
-                const actKey = queryKeys.tables.activityForTable(ctx.tableId);
-                queryClient.setQueryData(actKey, ctx.previousTableActivity);
-            }
         },
 
-        onSuccess: (_result, input: SaveImportSpotsInput) => {
+        onSuccess: (_result, _input: SaveImportSpotsInput) => {
             if (!userId) return;
-            // Narrow invalidation: personal wishlist + table activity if applicable.
+            // Narrow invalidation: personal wishlist only.
+            // Per-spot table activity (TICKET-063b) will invalidate when table_id is wired.
             queryClient.invalidateQueries({
                 queryKey: queryKeys.wishlist.personal(userId),
             });
-            if (input.table_id) {
-                queryClient.invalidateQueries({
-                    queryKey: queryKeys.tables.activityForTable(input.table_id),
-                });
-            }
         },
     });
 }
