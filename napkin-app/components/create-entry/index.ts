@@ -1,11 +1,13 @@
 export { ComposerMasthead } from './ComposerMasthead';
 export { WritingSurface } from './WritingSurface';
-export { ChipRow } from './ChipRow';
 export { AddDetailsDrawer } from './AddDetailsDrawer';
 export { TablePickerSheet } from './TablePickerSheet';
 export type { TablePickerSheetTable } from './TablePickerSheet';
-export { TableChipsRow } from './TableChipsRow';
-export type { TableChip } from './TableChipsRow';
 export { DateChip } from './DateChip';
 export { PublicVisibilityChip } from './PublicVisibilityChip';
 export { MergeCandidateCard } from './MergeCandidateCard';
+export { RatingBand } from './RatingBand';
+export { PhotoStrip } from './PhotoStrip';
+export type { PhotoStripSlot } from './PhotoStrip';
+export { TableRowChecklist } from './TableRowChecklist';
+export type { TableRowItem } from './TableRowChecklist';
