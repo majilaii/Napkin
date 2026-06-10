@@ -23,6 +23,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import {
     View,
     Text,
+    TextInput,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -40,7 +41,6 @@ type Palette = typeof Colors.light;
 
 export interface CandidatePickerPanelProps {
     candidates: ResolvedCandidate[];
-    /** Number of ticked spots before the note field appears (1 = single note field). */
     onSave: (
         ticked: ResolvedCandidate[],
         note: string,
@@ -49,8 +49,12 @@ export interface CandidatePickerPanelProps {
     sourceTag: string | null;
     /** Called when the user taps "not this?" on a specific row. */
     onCorrectRow: (candidate: ResolvedCandidate) => void;
+    /** Called when the user taps "open restaurant" on an already_pinned row. */
+    onOpenRestaurant?: (restaurantId: string) => void;
     /** Pre-filled note text (from note_prefill). */
     initialNote?: string;
+    /** Set of candidate keys that failed on last save attempt (shown as "couldn't pin · tap to retry"). */
+    failedCandidateKeys?: Set<string>;
     palette?: Palette;
 }
 
@@ -88,7 +92,9 @@ export function CandidatePickerPanel({
     isSaving,
     sourceTag,
     onCorrectRow,
+    onOpenRestaurant,
     initialNote = '',
+    failedCandidateKeys,
     palette: paletteProp,
 }: CandidatePickerPanelProps) {
     const scheme = useColorScheme() ?? 'light';
@@ -160,20 +166,23 @@ export function CandidatePickerPanel({
                 {candidates.map((c) => {
                     const k = keyFor(c);
                     const isChecked = ticked.has(k);
+                    const hasFailed = failedCandidateKeys?.has(k) ?? false;
                     return (
                         <CandidateRow
                             key={k}
                             candidate={c}
                             checked={isChecked}
+                            hasFailed={hasFailed}
                             onToggle={() => toggleCandidate(c)}
                             onCorrect={() => onCorrectRow(c)}
+                            onOpenRestaurant={onOpenRestaurant}
                             palette={palette}
                         />
                     );
                 })}
             </ScrollView>
 
-            {/* Single-ticked note field */}
+            {/* Single-ticked note field — real TextInput (fix-pass-1 item 10) */}
             {isSingleTicked && (
                 <View style={styles.noteWrapper}>
                     <Text
@@ -187,11 +196,14 @@ export function CandidatePickerPanel({
                             { borderColor: palette.ruleInkSoft, backgroundColor: palette.card },
                         ]}
                     >
-                        <Text
-                            style={[Type.body, { color: palette.text }]}
-                            // ARCH: real TextInput would be here; using Text as placeholder
-                            // to keep this component pure for test isolation.
-                            // ImportLinkSheet wires a real TextInput below.
+                        <TextInput
+                            value={noteText}
+                            onChangeText={setNoteText}
+                            placeholder="what made it memorable…"
+                            placeholderTextColor={palette.textMuted}
+                            multiline
+                            style={[Type.body, { color: palette.text, minHeight: 36 }]}
+                            accessibilityLabel="add a note"
                         />
                     </View>
                 </View>
@@ -232,12 +244,23 @@ export function CandidatePickerPanel({
 interface CandidateRowProps {
     candidate: ResolvedCandidate;
     checked: boolean;
+    /** True when this spot failed on the last save attempt. */
+    hasFailed: boolean;
     onToggle: () => void;
     onCorrect: () => void;
+    onOpenRestaurant?: (restaurantId: string) => void;
     palette: Palette;
 }
 
-function CandidateRow({ candidate, checked, onToggle, onCorrect, palette }: CandidateRowProps) {
+function CandidateRow({
+    candidate,
+    checked,
+    hasFailed,
+    onToggle,
+    onCorrect,
+    onOpenRestaurant,
+    palette,
+}: CandidateRowProps) {
     const r = candidate.restaurant;
     const thumbUrl = r.photoReference ? photoUrl(r.photoReference) : null;
     const isLow = candidate.confidence === 'low';
@@ -322,17 +345,37 @@ function CandidateRow({ candidate, checked, onToggle, onCorrect, palette }: Cand
                 ) : null}
 
                 {/* Low confidence quiet treatment */}
-                {isLow && !isAlreadySaved && (
+                {isLow && !isAlreadySaved && !hasFailed && (
                     <Text style={[Type.caption, { color: palette.textMuted }, styles.lowConfMeta]}>
                         not certain · tap to check
                     </Text>
                 )}
 
-                {/* Already wishlisted */}
-                {isAlreadySaved && (
-                    <Text style={[Type.caption, { color: palette.primary }, styles.meta]}>
-                        pinned
+                {/* Partial-failure: "couldn't pin · tap to retry" (fix-pass-1 item 8) */}
+                {hasFailed && (
+                    <Text style={[Type.caption, { color: palette.textMuted }, styles.lowConfMeta]}>
+                        {"couldn't pin · tap to retry"}
                     </Text>
+                )}
+
+                {/* Already wishlisted + "open restaurant" affordance (fix-pass-1 item 11) */}
+                {isAlreadySaved && (
+                    <View style={styles.alreadySavedRow}>
+                        <Text style={[Type.caption, { color: palette.primary }]}>
+                            pinned
+                        </Text>
+                        {candidate.restaurant_id && onOpenRestaurant && (
+                            <Pressable
+                                onPress={() => onOpenRestaurant(candidate.restaurant_id!)}
+                                hitSlop={8}
+                                accessibilityLabel="open restaurant page"
+                            >
+                                <Text style={[Type.caption, { color: palette.textMuted, marginLeft: Spacing.xs }]}>
+                                    · open restaurant
+                                </Text>
+                            </Pressable>
+                        )}
+                    </View>
                 )}
             </View>
 
@@ -404,6 +447,11 @@ const styles = StyleSheet.create({
         marginTop: 2,
     },
     lowConfMeta: {
+        marginTop: 2,
+    },
+    alreadySavedRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
         marginTop: 2,
     },
     noteWrapper: {

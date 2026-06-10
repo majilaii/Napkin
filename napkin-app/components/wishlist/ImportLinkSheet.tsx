@@ -46,7 +46,6 @@ import {
     ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
-    Image,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -62,11 +61,9 @@ import {
     type ResolvedCandidate,
     type ResolveUrlData,
 } from '@/hooks/wishlist/useResolveUrl';
-import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
-import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
 import { CandidatePickerPanel } from './CandidatePickerPanel';
@@ -110,6 +107,13 @@ export interface ImportLinkSheetProps {
      * the same validateUrl() helper the paste step uses.
      */
     initialUrl?: string;
+    /**
+     * TICKET-063 fix-pass-1 item 9: pre-minted import_nonce from the signed-out
+     * stash, threaded through auth → /import → this prop.
+     * When set, the importNonceRef is seeded from it so a retry after sign-in
+     * uses the same job-level idempotency key as the original share.
+     */
+    initialImportNonce?: string;
 }
 
 type Palette = typeof Colors.light;
@@ -125,10 +129,6 @@ function truncateHost(url: string): string {
     }
 }
 
-function photoUrl(photoReference: string | null | undefined): string | null {
-    return placesPhotoProxyUrl(photoReference, { width: 200 }) ?? null;
-}
-
 function generateNonce(): string {
     if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) {
         return (crypto as any).randomUUID();
@@ -141,7 +141,7 @@ function generateNonce(): string {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSheetProps) {
+export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportNonce }: ImportLinkSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const insets = useSafeAreaInsets();
@@ -159,8 +159,18 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
     const [errorCode, setErrorCode] = useState<string | null>(null);
     const [retryAfter, setRetryAfter] = useState<number>(0);
 
-    // TICKET-063: stable job-level import_nonce per URL/share
-    const importNonceRef = useRef<string>(generateNonce());
+    // TICKET-063: stable job-level import_nonce per URL/share.
+    // Fix 9: seeded from initialImportNonce prop (carries through signed-out → auth → resume).
+    const importNonceRef = useRef<string>(initialImportNonce ?? generateNonce());
+
+    // Fix 7: stable per-spot client nonces keyed by candidate key.
+    // Minted once per import; reused across retry taps for idempotency.
+    const spotNonceMapRef = useRef<Map<string, string>>(new Map());
+
+    // Fix 8: track which candidate keys failed on last save (for partial-failure display).
+    const [failedCandidateKeys, setFailedCandidateKeys] = useState<Set<string>>(new Set());
+    // Track which candidate keys have already been saved successfully (skip on retry).
+    const savedCandidateIdsRef = useRef<Set<string>>(new Set());
 
     // Inline edit-match search (per-row correction)
     const [editMatchQuery, setEditMatchQuery] = useState('');
@@ -177,7 +187,6 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
 
     const inputRef = useRef<TextInput>(null);
     const { resolve, cancel, state: resolverState, data: resolverData, error: resolverError } = useResolveUrl();
-    const wishlistAdd = useWishlistAdd(user?.id);
     const createImport = useCreateImport(user?.id);
     const saveImportSpots = useSaveImportSpots(user?.id);
 
@@ -205,7 +214,13 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         if (validation.ok) {
             setLastUrl(trimmed);
             setInputValue(trimmed);
-            importNonceRef.current = generateNonce(); // fresh nonce per share
+            // Fix 9: use initialImportNonce from prop if provided (preserves job-level
+            // idempotency through the signed-out → auth → resume flow).
+            // Fall back to a fresh nonce when launching a new share directly.
+            importNonceRef.current = initialImportNonce ?? generateNonce();
+            spotNonceMapRef.current.clear();
+            savedCandidateIdsRef.current.clear();
+            setFailedCandidateKeys(new Set());
             resolve(trimmed);
         } else {
             setErrorCode('INVALID_URL');
@@ -279,7 +294,11 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         }
         const url = inputValue.trim();
         setLastUrl(url);
-        importNonceRef.current = generateNonce(); // fresh nonce per resolve
+        // Fresh nonce per new URL resolve — also clear per-spot nonce map.
+        importNonceRef.current = generateNonce();
+        spotNonceMapRef.current.clear();
+        savedCandidateIdsRef.current.clear();
+        setFailedCandidateKeys(new Set());
         resolve(url);
     }, [inputOk, inputValue, resolve]);
 
@@ -303,6 +322,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         setEditMatchResults([]);
         setEditCorrectionForCandidate(null);
         setScreenshotStoragePath(null);
+        // Clear nonce maps on dismiss (new import gets fresh nonces).
+        spotNonceMapRef.current.clear();
+        savedCandidateIdsRef.current.clear();
+        setFailedCandidateKeys(new Set());
         onDismiss();
     }, [cancel, onDismiss]);
 
@@ -313,16 +336,39 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
         }
     }, [clipboardUrl]);
 
-    // TICKET-063: save N ticked spots via useSaveImportSpots
+    // TICKET-063: save N ticked spots via useSaveImportSpots.
+    // Fix 7: stable nonces — use spotNonceMapRef to get/mint nonces per candidate_id.
+    // Fix 8: partial-failure UI — keep sheet open if any spots failed.
     const handleSaveSpots = useCallback((
         ticked: ResolvedCandidate[],
         note: string,
     ) => {
         if (!user?.id || ticked.length === 0) return;
 
-        const spots = ticked.map((c) => ({
+        // Fix 7: get or mint a stable nonce per candidate (reused across retries).
+        const getOrMintNonce = (c: ResolvedCandidate): string => {
+            const key = c.candidate_id ?? c.restaurant.external_id ?? generateNonce();
+            if (!spotNonceMapRef.current.has(key)) {
+                spotNonceMapRef.current.set(key, generateNonce());
+            }
+            return spotNonceMapRef.current.get(key)!;
+        };
+
+        // Fix 8: on retry, only send spots that aren't already saved.
+        const spotsToSend = ticked.filter((c) => {
+            const key = c.candidate_id ?? c.restaurant.external_id ?? '';
+            return !savedCandidateIdsRef.current.has(key);
+        });
+
+        if (spotsToSend.length === 0) {
+            // All ticked spots already saved — dismiss.
+            handleDismiss();
+            return;
+        }
+
+        const spots = spotsToSend.map((c) => ({
             candidate: c,
-            client_nonce: generateNonce(),
+            client_nonce: getOrMintNonce(c),
         }));
 
         const source = buildSource(inputValue.trim(), resolvedData);
@@ -335,11 +381,41 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
                 source: source as any,
             },
             {
-                onSuccess: () => {
-                    handleDismiss();
+                onSuccess: (result) => {
+                    // Track saved candidates so retry skips them.
+                    const newFailed = new Set<string>();
+                    for (const r of result.results ?? []) {
+                        // Find the candidate whose nonce matches.
+                        const matchedSpot = spots.find((s) => s.client_nonce === r.client_nonce);
+                        if (!matchedSpot) continue;
+                        const key = matchedSpot.candidate.candidate_id
+                            ?? matchedSpot.candidate.restaurant.external_id ?? '';
+                        if (r.status === 'saved' || r.status === 'already_pinned') {
+                            savedCandidateIdsRef.current.add(key);
+                        } else if (r.status === 'failed') {
+                            newFailed.add(key);
+                        }
+                    }
+
+                    if (newFailed.size > 0) {
+                        // Fix 8: partial failure — keep sheet open, mark failed rows.
+                        setFailedCandidateKeys(newFailed);
+                        // Clear prev failures that now succeeded.
+                        setFailedCandidateKeys((prev) => {
+                            const next = new Set(prev);
+                            for (const [key] of spotNonceMapRef.current) {
+                                if (savedCandidateIdsRef.current.has(key)) next.delete(key);
+                            }
+                            for (const k of newFailed) next.add(k);
+                            return next;
+                        });
+                    } else {
+                        // All ticked spots saved — dismiss with confirmation.
+                        handleDismiss();
+                    }
                 },
                 onError: () => {
-                    // Keep sheet open — partial failures shown per-row on retry
+                    // Network/server error: keep sheet open, user can retry.
                 },
             },
         );
@@ -557,30 +633,21 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl }: ImportLinkSh
 
                         {/* ── PICKING (TICKET-063: 1–N candidates) ── */}
                         {sheetState === 'picking' && effectiveCandidates.length > 0 && (
-                            <View>
-                                <CandidatePickerPanel
-                                    candidates={effectiveCandidates}
-                                    onSave={handleSaveSpots}
-                                    isSaving={saveImportSpots.isPending}
-                                    sourceTag={sourceTagLabel()}
-                                    onCorrectRow={handleCorrectRow}
-                                    initialNote={noteText}
-                                    palette={palette}
-                                />
-                                {/* "share to a table" secondary affordance */}
-                                <Pressable
-                                    onPress={() => {
-                                        /* TODO TICKET-063 stretch: open destination picker
-                                           pre-loaded with Places-resolved ticked spots only */
-                                    }}
-                                    hitSlop={8}
-                                    style={styles.textLinkRow}
-                                >
-                                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
-                                        share to a table
-                                    </Text>
-                                </Pressable>
-                            </View>
+                            <CandidatePickerPanel
+                                candidates={effectiveCandidates}
+                                onSave={handleSaveSpots}
+                                isSaving={saveImportSpots.isPending}
+                                sourceTag={sourceTagLabel()}
+                                onCorrectRow={handleCorrectRow}
+                                onOpenRestaurant={(id) => {
+                                    handleDismiss();
+                                    router.push(('/restaurant/' + id) as any);
+                                }}
+                                initialNote={noteText}
+                                failedCandidateKeys={failedCandidateKeys}
+                                palette={palette}
+                            />
+                            // Fix 12: "share to a table" CTA removed (descoped to TICKET-063b).
                         )}
 
                         {/* ── EDITING-MATCH ────────────────────────── */}

@@ -54,6 +54,7 @@ import {
 import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
 import { detectListMarker } from '../_shared/listicle.ts';
 import { resizeImageToLimit } from '../_shared/imageResize.ts';
+import { upsertRestaurant } from '../_shared/restaurant.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -127,7 +128,8 @@ interface PlacesPayload {
     photoReference: string | null;
     website: string | null;
     link: string | null;
-    external_id: string;
+    /** null for unresolved ghost candidates (no confirmed Places id). */
+    external_id: string | null;
     location?: {
         address?: string;
         locality?: string;
@@ -139,7 +141,8 @@ interface ResolvedCandidate {
     candidate_id: string;
     restaurant: PlacesPayload;
     confidence: Confidence;
-    google_place_id: string;
+    /** null for unresolved ghost candidates (no confirmed Places id). */
+    google_place_id: string | null;
     restaurant_id: string | null;
     already_wishlisted: boolean;
     /** TICKET-063: true when city was inferred from context, not stated. */
@@ -574,11 +577,57 @@ async function callPlacesSearch(
     return Array.isArray(candidates) ? candidates : [];
 }
 
+// ── Exported decision helpers (TICKET-063 fix-pass-1, testable) ──────────────
+// Implementations live in _helpers.ts (no serve() call) so test files can
+// import them without triggering the HTTP server.
+import { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds } from './_helpers.ts';
+export { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds };
+
+// ── Places Details by place_id (FIX #5: never text-search for place_id candidates) ──
+
+/**
+ * Call places-search with a `place_id` (Details endpoint) instead of a text query.
+ * ARCH-REVIEW-2 #8: on DB miss for a google_place_id, call Details — NEVER text search.
+ * Returns null on any failure (fail-soft).
+ */
+async function callPlacesDetails(
+    placeId: string,
+    authHeader: string,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
+    signal: AbortSignal,
+): Promise<PlacesPayload | null> {
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: authHeader,
+        apikey: supabaseAnonKey,
+    };
+    let res: Response;
+    try {
+        res = await fetch(`${supabaseUrl}/functions/v1/places-search`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ place_id: placeId }),
+            signal,
+        });
+    } catch (e) {
+        if ((e as Error)?.name === 'AbortError') throw e;
+        return null;
+    }
+    if (!res.ok) return null;
+    let body: any;
+    try { body = await res.json(); } catch { return null; }
+    const candidates = body?.data?.candidates ?? body?.data ?? body?.candidates ?? [];
+    const arr = Array.isArray(candidates) ? candidates : [];
+    return arr[0] ?? null;
+}
+
 // ── Per-candidate Places resolution (ARCH-REVIEW-2 #8) ───────────────────────
 
 /**
  * Resolve a single extracted candidate to a Places result.
- * - If candidate has google_place_id: DB lookup by external_id first, else Places Details.
+ * - If candidate has google_place_id: DB lookup by external_id first,
+ *   then Places Details by id on miss (NEVER text-search for a place_id candidate).
  * - Otherwise: text search by name+city.
  * - Never-block: returns null on any failure.
  */
@@ -592,7 +641,8 @@ async function resolveCandidateToPlace(
 ): Promise<PlacesPayload | null> {
     if (!candidate.name) return null;
 
-    // ARCH-REVIEW-2 #8: if google_place_id → DB lookup first, else Places Details
+    // ARCH-REVIEW-2 #8: if google_place_id → DB lookup first, else Places Details.
+    // FIX #5: NEVER fall through to text search for a place_id candidate.
     if (candidate.google_place_id) {
         const { data: existing } = await supabase
             .from('restaurants')
@@ -602,12 +652,22 @@ async function resolveCandidateToPlace(
         if (existing) {
             return buildPlacesPayloadFromDb(existing, candidate);
         }
-        // DB miss → try Places text search by name+city (Details by id would require
-        // the Maps Places API v1 endpoint which takes a place ID; text search is simpler
-        // and equivalent for our resolution needs)
+        // DB miss → Places Details by id (binding #8 / fix #5: never text-search here).
+        try {
+            return await callPlacesDetails(
+                candidate.google_place_id,
+                authHeader,
+                supabaseUrl,
+                supabaseAnonKey,
+                signal,
+            );
+        } catch {
+            // Fail-soft: unresolved → ghost candidate
+            return null;
+        }
     }
 
-    // Text search by name + city
+    // No google_place_id → text search by name + city (candidates without a known place_id)
     const query = [candidate.name, candidate.city].filter(Boolean).join(', ');
     try {
         const results = await callPlacesSearch(
@@ -785,11 +845,14 @@ async function handleVisionExtract(
     );
 
     if (candidates.length === 0 && extracted.name) {
+        // FIX #2: ghost candidates use google_place_id=null and external_id=null.
+        // The sentinel 'ghost_pending' caused cross-user row collapse in fn_save_import_spot.
+        // The RPC mints a stable 'ghost_{user}_{nonce}' external_id at save time.
         const candidateId = await computeCandidateId(imageHash, normalizeName(extracted.name), 0);
         const ghostCandidate: ResolvedCandidate = {
             candidate_id: candidateId,
             restaurant: {
-                id: 'ghost_pending',
+                id: '',
                 name: extracted.name,
                 formattedAddress: extracted.address,
                 city: extracted.city,
@@ -804,11 +867,11 @@ async function handleVisionExtract(
                 photoReference: null,
                 website: null,
                 link: null,
-                external_id: 'ghost_pending',
+                external_id: null,
                 location: { address: extracted.address ?? undefined, locality: extracted.city ?? undefined },
             },
             confidence: extracted.confidence === 'high' ? 'high' : 'low',
-            google_place_id: extracted.google_place_id ?? 'ghost_pending',
+            google_place_id: extracted.google_place_id ?? null,
             restaurant_id: null,
             already_wishlisted: false,
             city_inferred: extracted.city_inferred,
@@ -1146,6 +1209,10 @@ async function handleSaveSpots(
 ): Promise<Response> {
     const importNonce = body['import_nonce'] as string | undefined;
     const spots = body['spots'] as SaveSpotInput[] | undefined;
+    // FIX #1: pass source as-is (object), never JSON.stringify — supabase-js
+    // serializes jsonb objects itself; stringifying produces a jsonb STRING
+    // which fails the wishlist_items_source_shape CHECK (jsonb_typeof='object').
+    // cf. table-shares/index.ts:227 canonical pattern.
     const source = body['source'] as unknown;
     const note = typeof body['note'] === 'string' ? body['note'] : null;
 
@@ -1155,6 +1222,32 @@ async function handleSaveSpots(
 
     // Cap at 6 per spec
     const capped = spots.slice(0, 6);
+
+    // ── FIX #3 (P1): validate table memberships BEFORE calling the RPC ──────
+    // member_id doctrine (TICKET-034): the column is member_id, NOT user_id.
+    // Unauthorized table_ids are short-circuited here and never reach the RPC.
+    const tableIdsToCheck = [...new Set(
+        capped
+            .map((s) => s.table_id ?? null)
+            .filter((t): t is string => t !== null),
+    )];
+
+    const unauthorizedTableIds = new Set<string>();
+    if (tableIdsToCheck.length > 0) {
+        const { data: memberRows } = await supabase
+            .from('table_members')
+            .select('table_id')
+            .eq('member_id', user.id)  // member_id, NOT user_id (TICKET-034)
+            .in('table_id', tableIdsToCheck);
+
+        const authorizedTableIds = new Set(
+            (memberRows ?? []).map((r: { table_id: string }) => r.table_id),
+        );
+        for (const tid of tableIdsToCheck) {
+            if (!authorizedTableIds.has(tid)) unauthorizedTableIds.add(tid);
+        }
+    }
+
     const results: Array<{
         candidate_id: string;
         client_nonce: string;
@@ -1162,19 +1255,59 @@ async function handleSaveSpots(
         wishlist_id?: string | null;
         restaurant_id?: string | null;
         error?: string;
+        code?: string;
     }> = [];
 
     for (const spot of capped) {
+        // FIX #3: early fail for unauthorized table_ids
+        if (spot.table_id && unauthorizedTableIds.has(spot.table_id)) {
+            results.push({
+                candidate_id: spot.candidate_id,
+                client_nonce: spot.client_nonce,
+                status: 'failed',
+                error: 'not a member of this table',
+                code: 'NOT_A_MEMBER',
+            });
+            continue;
+        }
+
+        // FIX #2: sanitize client-sent 'ghost_pending' sentinel to null.
+        // The RPC mints a stable ghost external_id from (user, client_nonce) when
+        // both restaurant_id and external_id are null.
+        const safeExternalId = isGhostExternalId(spot.external_id) ? null : (spot.external_id ?? null);
+
+        // FIX #4 (High): for resolved-Places spots (real external_id, no restaurant_id),
+        // upsert the restaurant NOW and pass the resulting restaurant_id to the RPC.
+        // This prevents Places-resolved candidates from degrading to unverified ghosts
+        // via the external_id branch of fn_save_import_spot.
+        let resolvedRestaurantId = spot.restaurant_id ?? null;
+        if (!resolvedRestaurantId && safeExternalId) {
+            try {
+                resolvedRestaurantId = await upsertRestaurant(supabase, {
+                    external_id: safeExternalId,
+                    name: spot.restaurant_name ?? 'Unknown',
+                    location: {
+                        locality: spot.restaurant_city ?? undefined,
+                    },
+                    verification: 'verified',
+                });
+            } catch {
+                // Non-fatal: fall through to the RPC's external_id branch
+                // (it will retry the upsert there as verified as well).
+            }
+        }
+
         try {
             const { data: rpcResult, error: rpcError } = await supabase.rpc('fn_save_import_spot', {
                 p_user_id: user.id,
                 p_import_nonce: importNonce,
                 p_client_nonce: spot.client_nonce,
-                p_restaurant_id: spot.restaurant_id ?? null,
-                p_external_id: spot.external_id ?? null,
+                p_restaurant_id: resolvedRestaurantId,
+                p_external_id: resolvedRestaurantId ? null : safeExternalId,
                 p_restaurant_name: spot.restaurant_name ?? null,
                 p_restaurant_city: spot.restaurant_city ?? null,
-                p_source: source ? JSON.stringify(source) : null,
+                // FIX #1: pass source as the object value, not JSON.stringify(source)
+                p_source: source ?? null,
                 p_note: note,
                 p_table_id: spot.table_id ?? null,
                 p_table_client_nonce: spot.table_client_nonce ?? null,
@@ -1401,8 +1534,9 @@ async function handleUrlResolve(
             (resolvedPlaces.filter(Boolean) as PlacesPayload[]).slice(0, 3).map(async (place, idx) => {
                 const restaurantId = placeIdToRestaurantId.get(place.id) ?? null;
                 const alreadyWishlisted = restaurantId ? wishlistedSet.has(restaurantId) : false;
-                let confidence: Confidence = 'low';
-                if (idx === 0 && (place.googleRatingCount ?? 0) > 50) confidence = 'high';
+                // FIX #6: Google Maps URL parse is a deterministic source → 'exact' for top result.
+                // Confidence enum: exact = deterministic source (google_maps URL parse or visible place_id).
+                const confidence: Confidence = idx === 0 ? 'exact' : 'low';
                 const restaurant: PlacesPayload = {
                     ...place,
                     external_id: place.id,
@@ -1552,7 +1686,9 @@ async function handleUrlResolve(
                     },
                 }
                 : {
-                    id: s.extracted.google_place_id ?? 'ghost_pending',
+                    // FIX #2: ghost candidates use external_id=null (not 'ghost_pending').
+                    // The RPC mints 'ghost_{user}_{nonce}' at save time for true ghosts.
+                    id: '',
                     name: s.extracted.name,
                     formattedAddress: s.extracted.address,
                     city: s.extracted.city,
@@ -1567,7 +1703,7 @@ async function handleUrlResolve(
                     photoReference: null,
                     website: null,
                     link: null,
-                    external_id: s.extracted.google_place_id ?? 'ghost_pending',
+                    external_id: null,
                     location: {
                         address: s.extracted.address ?? undefined,
                         locality: s.extracted.city ?? undefined,
@@ -1578,7 +1714,8 @@ async function handleUrlResolve(
                 candidate_id: candidateId,
                 restaurant,
                 confidence,
-                google_place_id: place?.id ?? s.extracted.google_place_id ?? 'ghost_pending',
+                // FIX #2: google_place_id is null for unresolved ghosts.
+                google_place_id: place?.id ?? s.extracted.google_place_id ?? null,
                 restaurant_id: restaurantId,
                 already_wishlisted: alreadyWishlisted,
                 city_inferred: s.extracted.city_inferred,
@@ -1790,7 +1927,7 @@ serve(async (req) => {
 
     if (rawUrl) {
         const urlResult = validateUrl(rawUrl);
-        if (!urlResult.ok) {
+        if (urlResult.ok === false) {
             return errorResponse('INVALID_URL', `URL rejected: ${urlResult.reason}`, 400);
         }
         parsedUrl = urlResult.url;

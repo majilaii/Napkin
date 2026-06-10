@@ -78,10 +78,17 @@ export default function AuthScreen() {
                 const stashed = await pendingImport.consume();
                 const { error } = await supabase.auth.signInWithPassword({ email, password });
                 if (error) {
-                    if (stashed) await pendingImport.stash(stashed.url);
+                    // Fix 9: re-stash WITH the same import_nonce so the next sign-in attempt
+                    // resumes with the same job-level idempotency key.
+                    if (stashed) await pendingImport.stash(stashed.url, stashed.import_nonce);
                     Alert.alert("Couldn't sign in", error.message);
                 } else if (stashed) {
-                    router.replace({ pathname: '/import', params: { url: stashed.url } } as any);
+                    // Fix 9: thread import_nonce through the redirect so ImportLinkSheet
+                    // initializes its importNonceRef from the pre-auth nonce.
+                    router.replace({
+                        pathname: '/import',
+                        params: { url: stashed.url, nonce: stashed.import_nonce },
+                    } as any);
                     return; // RootLayoutNav redirect now harmless — segments[0] === 'import'
                 }
                 // No pending import — RootLayoutNav handles the /feed redirect.

@@ -35,7 +35,8 @@ export interface ResolvedCandidate {
         photoReference: string | null;
         website: string | null;
         link: string | null;
-        external_id: string;
+        /** null for unresolved ghost candidates (RPC mints external_id at save time). */
+        external_id: string | null;
         location?: {
             address?: string;
             locality?: string;
@@ -43,7 +44,8 @@ export interface ResolvedCandidate {
         };
     };
     confidence: Confidence;
-    google_place_id: string;
+    /** null for unresolved ghost candidates (no confirmed Places id). */
+    google_place_id: string | null;
     restaurant_id: string | null;
     already_wishlisted: boolean;
     /** TICKET-063: true when city was inferred from hashtags/handle/context. */

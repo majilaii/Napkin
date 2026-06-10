@@ -29,7 +29,7 @@ import * as pendingImport from '@/lib/pendingImport';
 import { ImportLinkSheet } from '@/components/wishlist';
 
 export default function ImportScreen() {
-    const { url } = useLocalSearchParams<{ url?: string }>();
+    const { url, nonce } = useLocalSearchParams<{ url?: string; nonce?: string }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -144,11 +144,14 @@ export default function ImportScreen() {
             </View>
 
             {/* ImportLinkSheet — opens with initialUrl pre-set so the resolver
-                fires immediately, skipping the paste step. */}
+                fires immediately, skipping the paste step.
+                Fix 9: also passes initialImportNonce from the stash so the sheet
+                seeds its importNonceRef from the pre-auth nonce. */}
             {rawUrl && !urlIsInvalid && (
                 <ImportLinkSheet
                     visible={sheetVisible}
                     initialUrl={rawUrl}
+                    initialImportNonce={typeof nonce === 'string' ? nonce : undefined}
                     onDismiss={handleDismiss}
                 />
             )}
