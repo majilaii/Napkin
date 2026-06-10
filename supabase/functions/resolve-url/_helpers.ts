@@ -21,6 +21,10 @@ export function isGhostExternalId(id: string | null | undefined): boolean {
  * Builds the stable ghost external_id for a (user, nonce) pair.
  * Pattern mirrors the SQL in fn_save_import_spot:
  *   'ghost_' || p_user_id::text || '_' || p_client_nonce::text
+ *
+ * NOTE: The SQL expression in migration 20260610000300_fix_save_import_spot.sql is
+ * AUTHORITATIVE. This TypeScript mirror must stay in sync with that SQL. If the SQL
+ * pattern changes, update this function to match.
  */
 export function buildGhostExternalId(userId: string, clientNonce: string): string {
     return `ghost_${userId}_${clientNonce}`;

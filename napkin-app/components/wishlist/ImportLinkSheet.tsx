@@ -66,7 +66,7 @@ import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
-import { CandidatePickerPanel } from './CandidatePickerPanel';
+import { CandidatePickerPanel, buildInitialTicked, keyFor } from './CandidatePickerPanel';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -167,6 +167,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     // Minted once per import; reused across retry taps for idempotency.
     const spotNonceMapRef = useRef<Map<string, string>>(new Map());
 
+    // Fix-pass-2 item 5: tickedKeys lifted to parent so it survives picking↔editing-match
+    // transitions (panel unmounts during correction, wiping internal state).
+    const [tickedKeys, setTickedKeys] = useState<Set<string>>(new Set());
+
     // Fix 8: track which candidate keys failed on last save (for partial-failure display).
     const [failedCandidateKeys, setFailedCandidateKeys] = useState<Set<string>>(new Set());
     // Track which candidate keys have already been saved successfully (skip on retry).
@@ -221,6 +225,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             spotNonceMapRef.current.clear();
             savedCandidateIdsRef.current.clear();
             setFailedCandidateKeys(new Set());
+            setTickedKeys(new Set()); // re-initialized when resolver succeeds
             resolve(trimmed);
         } else {
             setErrorCode('INVALID_URL');
@@ -259,6 +264,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                 // TICKET-063: both single and multi-candidate go to 'picking'
                 // (CandidatePickerPanel handles the N=1 case as a 1-row list)
                 setNoteText(resolverData.note_prefill ?? '');
+                // Fix-pass-2 item 5: initialize ticked set in parent so it persists
+                // across picking↔editing-match transitions.
+                setTickedKeys(buildInitialTicked(resolverData.candidates));
                 setSheetState('picking');
             }
         }
@@ -299,6 +307,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
         setFailedCandidateKeys(new Set());
+        setTickedKeys(new Set()); // candidates not yet known; re-initialized on success
         resolve(url);
     }, [inputOk, inputValue, resolve]);
 
@@ -326,6 +335,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
         setFailedCandidateKeys(new Set());
+        setTickedKeys(new Set());
         onDismiss();
     }, [cancel, onDismiss]);
 
@@ -369,6 +379,25 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         const spots = spotsToSend.map((c) => ({
             candidate: c,
             client_nonce: getOrMintNonce(c),
+            // Fix-pass-2 item 3: forward full place payload so the server upserts
+            // restaurants with all metadata, not just name+city.
+            place: {
+                external_id: c.restaurant.external_id ?? null,
+                name: c.restaurant.name ?? null,
+                location: {
+                    address: c.restaurant.location?.address ?? c.restaurant.formattedAddress ?? undefined,
+                    locality: c.restaurant.location?.locality ?? c.restaurant.city ?? undefined,
+                    country: c.restaurant.location?.country ?? c.restaurant.country ?? undefined,
+                },
+                latitude: c.restaurant.latitude ?? null,
+                longitude: c.restaurant.longitude ?? null,
+                photoReference: c.restaurant.photoReference ?? null,
+                photoAttributionHtml: null, // not available on client candidate type
+                googleRating: c.restaurant.googleRating ?? null,
+                googleRatingCount: c.restaurant.googleRatingCount ?? null,
+                priceLevel: c.restaurant.priceLevel ?? null,
+                cuisine: c.restaurant.cuisine ?? null,
+            },
         }));
 
         const source = buildSource(inputValue.trim(), resolvedData);
@@ -536,14 +565,26 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
 
         // Patch the candidates list in place
         const current = patchedCandidates ?? resolvedData?.candidates ?? [];
-        const correctionKey = editCorrectionForCandidate.candidate_id
-            ?? editCorrectionForCandidate.google_place_id
-            ?? editCorrectionForCandidate.restaurant.external_id;
+        const oldKey = keyFor(editCorrectionForCandidate);
+        const newKey = keyFor(patchedCandidate);
         const patched = current.map((c) => {
-            const k = c.candidate_id ?? c.google_place_id ?? c.restaurant.external_id;
-            return k === correctionKey ? patchedCandidate : c;
+            const k = keyFor(c);
+            return k === oldKey ? patchedCandidate : c;
         });
         setPatchedCandidates(patched);
+
+        // Fix-pass-2 item 5: remap old key → new key in the lifted ticked set so the
+        // corrected row stays ticked (AC: correction "keeps it ticked").
+        if (oldKey !== newKey) {
+            setTickedKeys((prev) => {
+                const next = new Set(prev);
+                if (prev.has(oldKey)) {
+                    next.delete(oldKey);
+                    next.add(newKey);
+                }
+                return next;
+            });
+        }
 
         setEditMatchQuery('');
         setEditMatchResults([]);
@@ -643,9 +684,17 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                     handleDismiss();
                                     router.push(('/restaurant/' + id) as any);
                                 }}
-                                initialNote={noteText}
                                 failedCandidateKeys={failedCandidateKeys}
                                 palette={palette}
+                                ticked={tickedKeys}
+                                onToggleTicked={(key) => setTickedKeys((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(key)) next.delete(key);
+                                    else next.add(key);
+                                    return next;
+                                })}
+                                noteText={noteText}
+                                onNoteChange={setNoteText}
                             />
                             // Fix 12: "share to a table" CTA removed (descoped to TICKET-063b).
                         )}

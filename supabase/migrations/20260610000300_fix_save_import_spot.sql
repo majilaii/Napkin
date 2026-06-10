@@ -45,6 +45,7 @@ DECLARE
   v_share_id        uuid;
   v_existing        boolean;
   v_ghost_ext_id    text;
+  v_verification    text;
 BEGIN
   -- ── 1. Upsert or find the import_jobs row for this import_nonce ──────────
   -- ON CONFLICT DO NOTHING + re-select so replays reuse the same job.
@@ -108,6 +109,16 @@ BEGIN
     END IF;
   END IF;
 
+  -- ── 2b. Read verification status of the resolved restaurant ─────────────
+  -- Used in step 5 ghost quarantine: minted ghosts (unverified) are never
+  -- written to table_shares, even though they DO have a v_restaurant_id.
+  -- Codex round-2 finding: the old `IS NULL` check was unreachable for ghosts.
+  IF v_restaurant_id IS NOT NULL THEN
+    SELECT verification INTO v_verification
+    FROM public.restaurants
+    WHERE id = v_restaurant_id;
+  END IF;
+
   -- ── 3. Check existing wishlist row (already_pinned via restaurant_id) ─────
   IF v_restaurant_id IS NOT NULL THEN
     SELECT EXISTS (
@@ -127,13 +138,34 @@ BEGIN
   END IF;
 
   -- ── 4. Insert wishlist row (ON CONFLICT DO NOTHING for nonce replay) ──────
-  INSERT INTO public.wishlist_items
-    (user_id, restaurant_id, job_id, extraction_status, source, note, client_nonce)
-  VALUES
-    (p_user_id, v_restaurant_id, v_job_id, 'resolved', p_source, p_note, p_client_nonce)
-  ON CONFLICT (user_id, client_nonce) WHERE client_nonce IS NOT NULL AND deleted_at IS NULL
-  DO NOTHING
-  RETURNING id INTO v_wishlist_id;
+  -- Soft-delete resurrection (Claude cycle-2 P2):
+  -- wishlist_items_user_restaurant_idx is a NON-partial UNIQUE(user_id, restaurant_id).
+  -- A soft-deleted row for the same (user, restaurant) causes the INSERT below to collide
+  -- and fall into EXCEPTION WHEN OTHERS → status 'failed', deterministically non-retriable.
+  -- Fix: resurrect the soft-deleted row first; only INSERT when no resurrection happened.
+  IF v_restaurant_id IS NOT NULL THEN
+    UPDATE public.wishlist_items
+    SET
+      deleted_at   = NULL,
+      job_id       = v_job_id,
+      source       = p_source,
+      note         = COALESCE(p_note, note),
+      client_nonce = p_client_nonce
+    WHERE user_id       = p_user_id
+      AND restaurant_id = v_restaurant_id
+      AND deleted_at IS NOT NULL
+    RETURNING id INTO v_wishlist_id;
+  END IF;
+
+  IF v_wishlist_id IS NULL THEN
+    INSERT INTO public.wishlist_items
+      (user_id, restaurant_id, job_id, extraction_status, source, note, client_nonce)
+    VALUES
+      (p_user_id, v_restaurant_id, v_job_id, 'resolved', p_source, p_note, p_client_nonce)
+    ON CONFLICT (user_id, client_nonce) WHERE client_nonce IS NOT NULL AND deleted_at IS NULL
+    DO NOTHING
+    RETURNING id INTO v_wishlist_id;
+  END IF;
 
   -- ── 5. Insert table_share row if a table was specified ────────────────────
   -- FIX P1 + ghost quarantine: only write if (a) we have a resolved restaurant
@@ -141,15 +173,19 @@ BEGIN
   --   (b) the user is actually a member of the table (tenant isolation).
   IF p_table_id IS NOT NULL THEN
 
-    -- FIX P1: Ghost quarantine — no table_share for unresolved ghosts.
-    IF v_restaurant_id IS NULL THEN
+    -- FIX P1 + Codex round-2: Ghost quarantine.
+    -- Exclude BOTH: (a) unresolved spots (v_restaurant_id IS NULL) AND (b) minted ghosts
+    -- that have a v_restaurant_id but are still 'unverified'. The old NULL-only check was
+    -- unreachable for ghosts minted in step 2 (they always produce a v_restaurant_id).
+    -- Only Places-resolved, verified restaurants are eligible for table_shares.
+    IF v_restaurant_id IS NULL OR v_verification IS DISTINCT FROM 'verified' THEN
       -- Wishlist row was written above. Skip the share silently.
       RETURN jsonb_build_object(
         'status',      'saved',
         'job_id',      v_job_id,
         'wishlist_id', v_wishlist_id,
         'share_id',    NULL,
-        'restaurant_id', NULL
+        'restaurant_id', v_restaurant_id
       );
     END IF;
 
@@ -196,4 +232,7 @@ GRANT EXECUTE ON FUNCTION public.fn_save_import_spot TO service_role;
 COMMENT ON FUNCTION public.fn_save_import_spot IS
   'SECURITY DEFINER: idempotent per-spot wishlist save with optional table share. '
   'Fix-pass-1: ghost external_id minting (user+nonce), membership check (member_id), '
-  'ghost quarantine (no table_share for unresolved ghosts). [TICKET-063 fix-pass-1]';
+  'ghost quarantine (no table_share for unresolved ghosts). '
+  'Fix-pass-2: v_verification read + extended quarantine (unverified ghosts excluded from '
+  'table_shares); soft-delete resurrection (avoids UNIQUE(user_id,restaurant_id) collision '
+  'on re-import of a soft-deleted wishlist row). [TICKET-063 fix-pass-2]';

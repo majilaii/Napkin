@@ -171,3 +171,41 @@ describe('import_nonce field (TICKET-063 ARCH-REVIEW-2 #12)', () => {
         expect(result?.stashedAt).toBeLessThanOrEqual(after);
     });
 });
+
+// ── TICKET-063 fix-pass-2: signed-out restash preserves nonce (item 4) ───────
+//
+// import.tsx signed-out branch used to call stash(rawUrl) without the nonce
+// route param, causing the nonce to be dropped. Fix: stash(rawUrl, rawNonce).
+// This test mirrors the corrected behavior.
+
+describe('signed-out restash preserves nonce (fix-pass-2 item 4)', () => {
+    it('stash with nonce from route param → consume returns that nonce', async () => {
+        // Simulates: import.tsx receives ?url=…&nonce=abc → stash(rawUrl, rawNonce)
+        const url = 'https://tiktok.com/v/42';
+        const nonce = 'route-param-nonce-abc';
+        await stash(url, nonce);
+        const result = await consume();
+        expect(result?.url).toBe(url);
+        expect(result?.import_nonce).toBe(nonce);
+    });
+
+    it('stash without nonce (missing route param) → consume returns a generated nonce', async () => {
+        // Simulates: import.tsx receives ?url=… but nonce param absent
+        const url = 'https://eater.com/article';
+        await stash(url, undefined);
+        const result = await consume();
+        expect(result?.url).toBe(url);
+        expect(result?.import_nonce).toBeDefined();
+        expect(typeof result?.import_nonce).toBe('string');
+    });
+
+    it('nonce survives a round-trip: stash → peek → nonce matches', async () => {
+        const nonce = 'survives-round-trip-nonce';
+        await stash('https://maps.google.com/xyz', nonce);
+        const peeked = await peek();
+        expect(peeked?.import_nonce).toBe(nonce);
+        // Still present after peek (not consumed)
+        const peeked2 = await peek();
+        expect(peeked2?.import_nonce).toBe(nonce);
+    });
+});

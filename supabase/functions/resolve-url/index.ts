@@ -650,7 +650,26 @@ async function resolveCandidateToPlace(
             .eq('external_id', candidate.google_place_id)
             .maybeSingle();
         if (existing) {
-            return buildPlacesPayloadFromDb(existing, candidate);
+            if (existing.verification === 'verified') {
+                // Verified row: return cached DB payload immediately.
+                return buildPlacesPayloadFromDb(existing, candidate);
+            }
+            // Stale unverified row — attempt a Places Details refresh.
+            // On success, the candidate flows the external_id save path which upserts
+            // the row to verified with full metadata (item 1, fix-pass-2).
+            // On failure, degrade gracefully to what we have in DB (item 2's quarantine
+            // keeps unverified rows out of Table shares regardless).
+            try {
+                return await callPlacesDetails(
+                    candidate.google_place_id,
+                    authHeader,
+                    supabaseUrl,
+                    supabaseAnonKey,
+                    signal,
+                );
+            } catch {
+                return buildPlacesPayloadFromDb(existing, candidate);
+            }
         }
         // DB miss → Places Details by id (binding #8 / fix #5: never text-search here).
         try {
@@ -1191,6 +1210,21 @@ async function upsertRestaurantFromExtracted(
 
 // ── save_spots action (ARCH-REVIEW-2 #1 — lives in resolve-url) ───────────────
 
+/** Full place payload forwarded by the client for metadata-complete upserts (fix-pass-2 item 3). */
+interface SaveSpotPlacePayload {
+    external_id?: string | null;
+    name?: string | null;
+    location?: { address?: string; locality?: string; country?: string };
+    latitude?: number | null;
+    longitude?: number | null;
+    photoReference?: string | null;
+    photoAttributionHtml?: string | null;
+    googleRating?: number | null;
+    googleRatingCount?: number | null;
+    priceLevel?: number | null;
+    cuisine?: string | null;
+}
+
 interface SaveSpotInput {
     candidate_id: string;
     client_nonce: string;            // uuid string
@@ -1200,6 +1234,8 @@ interface SaveSpotInput {
     restaurant_city: string | null;
     table_id?: string | null;
     table_client_nonce?: string | null;
+    /** Full Places payload from the client — used in FIX#4 to upsert with all metadata. */
+    place?: SaveSpotPlacePayload | null;
 }
 
 async function handleSaveSpots(
@@ -1232,20 +1268,16 @@ async function handleSaveSpots(
             .filter((t): t is string => t !== null),
     )];
 
-    const unauthorizedTableIds = new Set<string>();
+    // Item 6 (fix-pass-2): call the exported helper so the deno test guards this path
+    // rather than maintaining a duplicate implementation here.
+    let unauthorizedTableIds = new Set<string>();
     if (tableIdsToCheck.length > 0) {
         const { data: memberRows } = await supabase
             .from('table_members')
             .select('table_id')
             .eq('member_id', user.id)  // member_id, NOT user_id (TICKET-034)
             .in('table_id', tableIdsToCheck);
-
-        const authorizedTableIds = new Set(
-            (memberRows ?? []).map((r: { table_id: string }) => r.table_id),
-        );
-        for (const tid of tableIdsToCheck) {
-            if (!authorizedTableIds.has(tid)) unauthorizedTableIds.add(tid);
-        }
+        unauthorizedTableIds = filterUnauthorizedTableIds(tableIdsToCheck, memberRows ?? []);
     }
 
     const results: Array<{
@@ -1280,15 +1312,29 @@ async function handleSaveSpots(
         // upsert the restaurant NOW and pass the resulting restaurant_id to the RPC.
         // This prevents Places-resolved candidates from degrading to unverified ghosts
         // via the external_id branch of fn_save_import_spot.
+        // Fix-pass-2 item 3: when the client forwards a full `place` payload, use ALL
+        // metadata fields so first-time saves get the complete restaurant record rather
+        // than name+city only (metadata regression fix).
         let resolvedRestaurantId = spot.restaurant_id ?? null;
         if (!resolvedRestaurantId && safeExternalId) {
             try {
+                const p = spot.place;
                 resolvedRestaurantId = await upsertRestaurant(supabase, {
                     external_id: safeExternalId,
-                    name: spot.restaurant_name ?? 'Unknown',
+                    name: p?.name ?? spot.restaurant_name ?? 'Unknown',
                     location: {
-                        locality: spot.restaurant_city ?? undefined,
+                        address: p?.location?.address ?? undefined,
+                        locality: p?.location?.locality ?? spot.restaurant_city ?? undefined,
+                        country: p?.location?.country ?? undefined,
                     },
+                    latitude: p?.latitude ?? undefined,
+                    longitude: p?.longitude ?? undefined,
+                    photoReference: p?.photoReference ?? undefined,
+                    photoAttributionHtml: p?.photoAttributionHtml ?? null,
+                    googleRating: p?.googleRating ?? undefined,
+                    googleRatingCount: p?.googleRatingCount ?? undefined,
+                    priceLevel: p?.priceLevel ?? undefined,
+                    cuisine: p?.cuisine ?? undefined,
                     verification: 'verified',
                 });
             } catch {

@@ -52,9 +52,13 @@ export default function ImportScreen() {
 
         // Signed out — stash and redirect to auth.
         // ARCH-REVIEW-4: do NOT consume() here.
+        // Fix-pass-2 item 4: pass the `nonce` route param through to stash so a
+        // transient-null-session render cannot rotate the import_nonce, and the
+        // signed-out → resume flow reuses the same job-level idempotency key.
         if (!session) {
             setDidRoute(true);
-            pendingImport.stash(rawUrl).then(() => {
+            const rawNonce = typeof nonce === 'string' ? nonce : undefined;
+            pendingImport.stash(rawUrl, rawNonce).then(() => {
                 router.replace('/auth');
             });
             return;

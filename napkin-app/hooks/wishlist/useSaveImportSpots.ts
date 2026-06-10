@@ -21,12 +21,37 @@ import type { ResolvedCandidate } from './useResolveUrl';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Full Places payload forwarded to the server for metadata-complete upserts.
+ * Mirrors TopFourPlacePayload shape pattern (fix-pass-2 item 3).
+ * When present, the server upserts the restaurant with ALL fields rather than
+ * name+city only — prevents metadata regression on first-time saves.
+ */
+export interface SaveImportPlacePayload {
+    external_id?: string | null;
+    name?: string | null;
+    location?: { address?: string; locality?: string; country?: string };
+    latitude?: number | null;
+    longitude?: number | null;
+    photoReference?: string | null;
+    photoAttributionHtml?: string | null;
+    googleRating?: number | null;
+    googleRatingCount?: number | null;
+    priceLevel?: number | null;
+    cuisine?: string | null;
+}
+
 export interface SaveImportSpotInput {
     candidate: ResolvedCandidate;
     /** Fresh uuid per spot, minted at save time (post-auth). */
     client_nonce: string;
     table_id?: string | null;
     table_client_nonce?: string | null;
+    /**
+     * Full Places payload from the resolved candidate (fix-pass-2 item 3).
+     * When present, the server upserts with all metadata; absent → name+city only.
+     */
+    place?: SaveImportPlacePayload | null;
 }
 
 export interface SaveImportSpotsInput {
@@ -79,6 +104,8 @@ export function useSaveImportSpots(userId: string | null | undefined) {
                 restaurant_city: s.candidate.restaurant.city ?? null,
                 table_id: s.table_id ?? null,
                 table_client_nonce: s.table_client_nonce ?? null,
+                // Fix-pass-2 item 3: forward full place payload for metadata-complete upserts.
+                place: s.place ?? null,
             }));
 
             return callEdgeFn<SaveImportSpotsResult>('resolve-url', {
