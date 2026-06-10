@@ -29,6 +29,7 @@ import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { FRIEND_TEST } from '@/constants/flags';
 import { useTables } from '@/hooks/tables/useTables';
 import { useLastSeenAt, useMarkSeen } from '@/hooks/tables/useLastSeenAt';
 import {
@@ -351,9 +352,10 @@ export default function TablesScreen() {
                 />
             )}
 
-            {/* Activity | Wishlist | Atlas — editorial section-label style */}
+            {/* Activity | Wishlist | Atlas — editorial section-label style.
+                Atlas hidden during friend-test. */}
             <View style={styles.tabRow}>
-                {(['activity', 'wishlist', ...(isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'atlas')[]).map((tab) => {
+                {(['activity', 'wishlist', ...(!FRIEND_TEST.hideAtlas && isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'atlas')[]).map((tab) => {
                     const isActive = activeTab === tab;
                     const tabLabel =
                         tab === 'activity'
@@ -406,7 +408,7 @@ export default function TablesScreen() {
                         <WishlistGrid mode="table" tableId={activeTable.id} />
                     )}
                 </View>
-            ) : activeTab === 'atlas' ? (
+            ) : !FRIEND_TEST.hideAtlas && activeTab === 'atlas' ? (
                 /* Atlas tab — AtlasCityIndex owns its own ScrollView */
                 <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
                     {headerAndControl}
@@ -453,8 +455,9 @@ export default function TablesScreen() {
                 >
                     {headerAndControl}
 
-                    {/* Empty-chair invitation — users with a single table, dismissable */}
-                    {(tables?.length ?? 0) <= 1 && !invitationDismissed && (
+                    {/* Empty-chair invitation — users with a single table, dismissable.
+                        Hidden during friend-test because its CTA lands on seed-from-solo. */}
+                    {!FRIEND_TEST.hideEmergenceArc && (tables?.length ?? 0) <= 1 && !invitationDismissed && (
                         <EmptyChairInvitation
                             palette={palette}
                             onGatherPress={() =>
@@ -486,7 +489,7 @@ export default function TablesScreen() {
                                     'Inviting members will be available in a future update.',
                                 )
                             }
-                            onEditTopFour={() => handleOpenEditTopFour()}
+                            onEditTopFour={FRIEND_TEST.hideTopFours ? undefined : () => handleOpenEditTopFour()}
                         />
                     ) : isEmpty ? (
                         /* Empty table after filtering */
@@ -571,8 +574,9 @@ export default function TablesScreen() {
                             {/* Anniversary tick — fires only within a 2-week
                                 window around the table's actual anniversary.
                                 This is the ONLY entry to Looking Back; we do
-                                not surface it daily on the hero. */}
-                            {(() => {
+                                not surface it daily on the hero.
+                                Hidden during friend-test. */}
+                            {!FRIEND_TEST.hideEmergenceArc && (() => {
                                 if (
                                     !activeTable?.created_at
                                 ) {
@@ -617,8 +621,9 @@ export default function TablesScreen() {
                             })()}
 
                             {/* Top 4 — shown when at least one slot is filled;
-                                placeholder shown when empty (0/4) for social tables */}
-                            {isSocialTable && (
+                                placeholder shown when empty (0/4) for social tables.
+                                Hidden during friend-test. */}
+                            {!FRIEND_TEST.hideTopFours && isSocialTable && (
                                 topFourData && topFourData.slots.length > 0 ? (
                                     <TableTopFourGrid
                                         slots={topFourData.slots}
@@ -826,8 +831,8 @@ export default function TablesScreen() {
                 </ScrollView>
             )}
 
-            {/* Edit Top 4 sheet */}
-            {activeTable && (
+            {/* Edit Top 4 sheet — hidden during friend-test */}
+            {!FRIEND_TEST.hideTopFours && activeTable && (
                 <EditTop4Sheet
                     visible={editTopFourOpen}
                     onClose={() => setEditTopFourOpen(false)}
@@ -849,7 +854,7 @@ export default function TablesScreen() {
                 onClose={() => setShowTablePicker(false)}
                 palette={palette}
                 liveRoundTableIds={liveRoundTableIds}
-                onGatherNew={() => {
+                onGatherNew={FRIEND_TEST.hideEmergenceArc ? undefined : () => {
                     setShowTablePicker(false);
                     router.push({
                         pathname: '/seed-from-solo',

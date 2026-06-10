@@ -33,6 +33,7 @@ import { StatusBar } from 'expo-status-bar';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { pickDefaultTier, populatedTiers } from '@/lib/restaurantSignal';
+import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
@@ -551,14 +552,18 @@ export default function RestaurantScreen() {
                                 </View>
                             ) : null}
 
-                            {/* Professional takes band — TICKET-026 */}
-                            <ProfessionalTakesBand
-                                critics={pageData?.professional_critics ?? []}
-                            />
+                            {/* Professional takes band — TICKET-026.
+                                Hidden during friend-test. */}
+                            {!FRIEND_TEST.hideCritics && (
+                                <ProfessionalTakesBand
+                                    critics={pageData?.professional_critics ?? []}
+                                />
+                            )}
 
                             {/* Atlas cross-link chip — after voices + professional takes (AC 3).
-                                A cold reader sees VOICES first; the chip is contextual chrome, not content. */}
-                            {restaurant?.city && hasAnyTable ? (
+                                A cold reader sees VOICES first; the chip is contextual chrome, not content.
+                                Hidden during friend-test. */}
+                            {!FRIEND_TEST.hideAtlas && restaurant?.city && hasAnyTable ? (
                                 <View style={styles.chipRow}>
                                     <AtlasCrossLinkChip
                                         tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
