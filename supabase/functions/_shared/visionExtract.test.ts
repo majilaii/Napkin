@@ -115,3 +115,103 @@ Deno.test('HASH_VERSION is a positive integer', async () => {
     assertEquals(HASH_VERSION >= 1, true);
     assertEquals(Number.isInteger(HASH_VERSION), true);
 });
+
+Deno.test('HASH_VERSION is 2 (TICKET-063 cache-bust of pre-overhaul rows)', async () => {
+    const { HASH_VERSION } = await import('./contentHash.ts');
+    assertEquals(HASH_VERSION, 2);
+});
+
+// ── parseMultiExtractionResponse ─────────────────────────────────────────────
+
+Deno.test('parseMultiExtractionResponse: well-formed array → array of candidates', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    const raw = JSON.stringify([
+        { name: 'Nobu', city: 'London', city_inferred: false, cuisine: 'Japanese', address: null, booking_url: null, hours: null, confidence: 'high', google_place_id: null },
+        { name: 'Zuma', city: 'London', city_inferred: false, cuisine: 'Japanese', address: null, booking_url: null, hours: null, confidence: 'high', google_place_id: null },
+    ]);
+    const results = parseMultiExtractionResponse(raw);
+    assertEquals(results.length, 2);
+    assertEquals(results[0].name, 'Nobu');
+    assertEquals(results[1].name, 'Zuma');
+    assertEquals(results[0].city_inferred, false);
+});
+
+Deno.test('parseMultiExtractionResponse: city_inferred=true preserved', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    const raw = JSON.stringify([
+        { name: 'Sketch', city: 'London', city_inferred: true, cuisine: 'Modern European', address: null, booking_url: null, hours: null, confidence: 'high', google_place_id: null },
+    ]);
+    const results = parseMultiExtractionResponse(raw);
+    assertEquals(results.length, 1);
+    assertEquals(results[0].city_inferred, true);
+});
+
+Deno.test('parseMultiExtractionResponse: markdown-fenced JSON is stripped', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    const raw = '```json\n[{"name":"Ramen Nagi","city":"Tokyo","city_inferred":false,"cuisine":"Ramen","address":null,"booking_url":null,"hours":null,"confidence":"high","google_place_id":null}]\n```';
+    const results = parseMultiExtractionResponse(raw);
+    assertEquals(results.length, 1);
+    assertEquals(results[0].name, 'Ramen Nagi');
+});
+
+Deno.test('parseMultiExtractionResponse: entries without name are filtered', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    const raw = JSON.stringify([
+        { name: null, city: 'Tokyo', city_inferred: false, cuisine: null, address: null, booking_url: null, hours: null, confidence: 'low', google_place_id: null },
+        { name: 'Narisawa', city: 'Tokyo', city_inferred: false, cuisine: 'Japanese', address: null, booking_url: null, hours: null, confidence: 'high', google_place_id: null },
+    ]);
+    const results = parseMultiExtractionResponse(raw);
+    assertEquals(results.length, 1);
+    assertEquals(results[0].name, 'Narisawa');
+});
+
+Deno.test('parseMultiExtractionResponse: capped at 6 candidates', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    const items = Array.from({ length: 8 }, (_, i) => ({
+        name: `Restaurant ${i + 1}`,
+        city: 'Tokyo',
+        city_inferred: false,
+        cuisine: 'Japanese',
+        address: null,
+        booking_url: null,
+        hours: null,
+        confidence: 'high',
+        google_place_id: null,
+    }));
+    const results = parseMultiExtractionResponse(JSON.stringify(items));
+    assertEquals(results.length, 6);
+});
+
+Deno.test('parseMultiExtractionResponse: malformed tail salvage recovers first valid element', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    // Well-formed first element, truncated second element
+    const truncated = '[{"name":"Sketch","city":"London","city_inferred":false,"cuisine":"European","address":null,"booking_url":null,"hours":null,"confidence":"high","google_place_id":null},{"name":"Brat","city":"London","city_inferred":false,"cui';
+    const results = parseMultiExtractionResponse(truncated);
+    // Should salvage at least the first complete element
+    assertEquals(results.length >= 1, true);
+    assertEquals(results[0].name, 'Sketch');
+});
+
+Deno.test('parseMultiExtractionResponse: total garbage → returns empty array (fail-soft)', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    const results = parseMultiExtractionResponse('not json at all, sorry!');
+    assertEquals(Array.isArray(results), true);
+    assertEquals(results.length, 0);
+});
+
+Deno.test('parseMultiExtractionResponse: empty array response → returns []', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    const results = parseMultiExtractionResponse('[]');
+    assertEquals(results.length, 0);
+});
+
+Deno.test('parseMultiExtractionResponse: unknown confidence → coerced to low', async () => {
+    const { parseMultiExtractionResponse } = await import('./visionExtract.ts');
+    const raw = JSON.stringify([
+        { name: 'Kikunoi', city: null, city_inferred: false, cuisine: null, address: null, booking_url: null, hours: null, confidence: 'exact', google_place_id: null },
+    ]);
+    const results = parseMultiExtractionResponse(raw);
+    assertEquals(results.length, 1);
+    // 'exact' is not a valid LLM confidence level; coerceCandidate maps non-'high' to 'low'
+    assertEquals(results[0].confidence, 'low');
+});

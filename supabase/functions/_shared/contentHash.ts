@@ -16,8 +16,12 @@
  * HASH_VERSION: bump when normalization logic changes to invalidate old cache entries.
  */
 
-/** Current hash normalization version. Bump on any normalization change. */
-export const HASH_VERSION = 1;
+/**
+ * Current hash normalization version.
+ * TICKET-063: bumped 1→2 to invalidate pre-overhaul single-object cache rows.
+ * All v1 rows are a guaranteed miss; the cache re-fills with the new array shape.
+ */
+export const HASH_VERSION = 2;
 
 // ── sha256 helper ─────────────────────────────────────────────────────────────
 

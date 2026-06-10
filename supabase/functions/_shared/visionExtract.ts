@@ -1,17 +1,26 @@
 /**
  * visionExtract.ts — Anthropic vision/text extraction for multimodal import.
- * TICKET-060 Step 2.
+ * TICKET-063 Step 2 (rewrites TICKET-060 Step 2).
  *
- * Exported functions:
+ * Exported functions (multi-candidate, TICKET-063):
+ *   extractFromTextMulti(caption, signal?) → ExtractedCandidate[]
+ *   extractFromVisionMulti(imageBase64, mimeType, caption?, signal?) → ExtractedCandidate[]
+ *
+ * Single-candidate wrappers (thin, for async screenshot path back-compat):
+ *   extractFromText(caption) → ExtractedCandidate       (returns [0] ?? fallback)
  *   extractFromVision(imageBase64, mimeType, caption?) → ExtractedCandidate
- *   extractFromText(caption) → ExtractedCandidate
  *
- * Model: claude-haiku-4-5-20251001 via EXTRACTION_MODEL env (R10).
+ * Model: claude-haiku-4-5-20251001 via EXTRACTION_MODEL env.
  * Returns content-derived fields ONLY — NO restaurant_id, NO already_wishlisted.
- * On any parse/model error → returns confidence:'low' (never throws to the caller).
+ * On any parse/model error → returns [] / confidence:'low' (never throws to the caller).
  *
- * The caller is responsible for the cache read/write (extraction_cache table).
- * This module is ONLY the Anthropic API call + response parser.
+ * TICKET-063 additions:
+ *   - `city_inferred: boolean` on ExtractedCandidate
+ *   - Multi-restaurant prompt: extract EVERY distinct restaurant per item
+ *   - City inference: hashtags/handle/context → city (mark city_inferred=true)
+ *   - Array JSON response format with malformed-tail salvage
+ *   - MAX_TOKENS bumped to 1024
+ *   - AbortSignal threading for budget compliance
  */
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -21,11 +30,13 @@ export type ExtractionConfidence = 'exact' | 'high' | 'low';
 /**
  * Content-derived extraction result.
  * Deliberately omits user-specific fields (already_wishlisted, restaurant_id).
- * booking_url and hours are carried but not acted on in TICKET-060 (TICKET-061 seam).
+ * TICKET-063: added city_inferred.
  */
 export interface ExtractedCandidate {
     name: string | null;
     city: string | null;
+    /** TICKET-063: true when city was inferred from hashtags/handle/context, not explicit. */
+    city_inferred: boolean;
     cuisine: string | null;
     address: string | null;
     booking_url: string | null;
@@ -37,21 +48,29 @@ export interface ExtractedCandidate {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /**
- * Real Haiku model id (R10). Never use the bare string "Haiku 4.5".
+ * Real Haiku model id. Never use the bare string "Haiku 4.5".
  * Read from env at runtime; this is the fallback default.
  */
 export const EXTRACTION_MODEL_DEFAULT = 'claude-haiku-4-5-20251001';
 
-// Maximum tokens for the extraction response (small JSON output)
-const MAX_TOKENS = 512;
+// TICKET-063: bumped from 512 to 1024 for multi-restaurant listicle output
+const MAX_TOKENS = 1024;
 
-// ── System prompt ─────────────────────────────────────────────────────────────
+// ── System prompts ─────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a restaurant extraction assistant. Given an image and/or text, extract restaurant information.
-Respond with ONLY a JSON object matching this exact schema — no prose, no markdown:
+/**
+ * Multi-restaurant prompt (TICKET-063).
+ * Instructs the model to:
+ *   1. Extract EVERY distinct restaurant (not just the most prominent)
+ *   2. Infer city from hashtags/handle/context when explicit city is absent
+ *   3. Return a top-level JSON array, one object per restaurant
+ */
+const MULTI_SYSTEM_PROMPT = `You are a restaurant extraction assistant. Given an image and/or text, extract ALL distinct restaurants mentioned or visible.
+Respond with ONLY a JSON array — no prose, no markdown, no wrapper object. Each element matches this schema:
 {
   "name": string | null,
   "city": string | null,
+  "city_inferred": boolean,
   "cuisine": string | null,
   "address": string | null,
   "booking_url": string | null,
@@ -59,14 +78,18 @@ Respond with ONLY a JSON object matching this exact schema — no prose, no mark
   "confidence": "high" | "low",
   "google_place_id": string | null
 }
+
 Rules:
-- confidence "high": you are reasonably certain of the restaurant name and city.
-- confidence "low": name is uncertain, multiple restaurants visible, or this is not clearly a restaurant.
-- booking_url: only include if explicitly visible in the content (Resy, OpenTable, etc.).
-- google_place_id: only if a Google Maps place_id is visible in the content (rare).
-- Return null for any field you cannot extract. Never guess a city from context clues.
-- If no restaurant is identifiable, return all null fields with confidence "low".
-- Output ONLY the JSON object. No explanation.`;
+- Extract EVERY distinct restaurant visible or mentioned. Do NOT collapse multiple restaurants into one.
+- confidence "high": you are reasonably certain of the restaurant name AND city.
+- confidence "low": name is uncertain, or city cannot be determined even by inference.
+- city: include the city name when known OR inferable. If the caption/title/hashtags signal a city (e.g. "#londonfood", "@nycfoodie", "my faves in soho"), use that city and set city_inferred=true.
+- city_inferred: set true when you inferred the city from context clues (hashtags, handle, phrases like "in soho", "my nyc picks") rather than an explicit label. Set false when the city is stated outright.
+- booking_url: only if explicitly visible (Resy, OpenTable URL). Otherwise null.
+- google_place_id: only if a Google Maps place_id is visible. Otherwise null.
+- If no restaurant is identifiable, return an empty array: []
+- Cap at 6 restaurants. If more are present, include only the first 6 mentioned.
+- Output ONLY the JSON array. No explanation. No markdown fences.`;
 
 // ── Anthropic API call ────────────────────────────────────────────────────────
 
@@ -82,6 +105,7 @@ async function callAnthropic(
     messages: AnthropicMessage[],
     modelId: string,
     apiKey: string,
+    signal?: AbortSignal,
 ): Promise<string> {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -93,9 +117,10 @@ async function callAnthropic(
         body: JSON.stringify({
             model: modelId,
             max_tokens: MAX_TOKENS,
-            system: SYSTEM_PROMPT,
+            system: MULTI_SYSTEM_PROMPT,
             messages,
         }),
+        signal,
     });
 
     if (!res.ok) {
@@ -104,7 +129,6 @@ async function callAnthropic(
     }
 
     const data = await res.json();
-    // Extract text from the first content block
     const textBlock = data?.content?.find((b: any) => b.type === 'text');
     if (!textBlock?.text) {
         throw new Error('Anthropic response missing text content');
@@ -112,75 +136,210 @@ async function callAnthropic(
     return textBlock.text as string;
 }
 
-// ── Response parser ───────────────────────────────────────────────────────────
+// ── Array response parser ─────────────────────────────────────────────────────
 
 /**
- * Parse the model's JSON response into an ExtractedCandidate.
- * Any parse failure or schema mismatch → returns confidence:'low' with nulls.
- * Never throws — extraction must fail soft.
+ * Coerce a raw parsed object element into an ExtractedCandidate.
+ * Any parse failure → returns a low-confidence null candidate.
  */
-function parseExtractionResponse(raw: string): ExtractedCandidate {
-    const fallback: ExtractedCandidate = {
-        name: null,
-        city: null,
-        cuisine: null,
-        address: null,
-        booking_url: null,
-        hours: null,
-        confidence: 'low',
-        google_place_id: null,
-    };
-
-    let parsed: unknown;
-    try {
-        // Strip potential markdown code fences the model might emit
-        const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-        parsed = JSON.parse(cleaned);
-    } catch {
-        return fallback;
-    }
-
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return fallback;
-    }
-
-    const p = parsed as Record<string, unknown>;
+function coerceCandidate(p: unknown): ExtractedCandidate {
+    const obj = (p && typeof p === 'object' && !Array.isArray(p))
+        ? p as Record<string, unknown>
+        : {};
 
     const confidence: ExtractionConfidence =
-        p['confidence'] === 'high' ? 'high' : 'low';
+        obj['confidence'] === 'high' ? 'high' : 'low';
 
     return {
-        name: typeof p['name'] === 'string' ? p['name'].trim() || null : null,
-        city: typeof p['city'] === 'string' ? p['city'].trim() || null : null,
-        cuisine: typeof p['cuisine'] === 'string' ? p['cuisine'].trim() || null : null,
-        address: typeof p['address'] === 'string' ? p['address'].trim() || null : null,
-        booking_url: typeof p['booking_url'] === 'string' ? p['booking_url'].trim() || null : null,
-        hours: typeof p['hours'] === 'string' ? p['hours'].trim() || null : null,
+        name: typeof obj['name'] === 'string' ? obj['name'].trim() || null : null,
+        city: typeof obj['city'] === 'string' ? obj['city'].trim() || null : null,
+        city_inferred: obj['city_inferred'] === true,
+        cuisine: typeof obj['cuisine'] === 'string' ? obj['cuisine'].trim() || null : null,
+        address: typeof obj['address'] === 'string' ? obj['address'].trim() || null : null,
+        booking_url: typeof obj['booking_url'] === 'string' ? obj['booking_url'].trim() || null : null,
+        hours: typeof obj['hours'] === 'string' ? obj['hours'].trim() || null : null,
         confidence,
-        google_place_id: typeof p['google_place_id'] === 'string' ? p['google_place_id'].trim() || null : null,
+        google_place_id: typeof obj['google_place_id'] === 'string' ? obj['google_place_id'].trim() || null : null,
     };
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+/**
+ * Parse the model's JSON array response into ExtractedCandidate[].
+ *
+ * Strategy:
+ *   1. Strip markdown fences if present.
+ *   2. Try full JSON.parse on the cleaned string.
+ *   3. On failure, attempt malformed-tail salvage: find the longest valid
+ *      `[...]` prefix and parse that (handles truncated 1024-token output).
+ *   4. If salvage also fails → return [] (never throws; fail-soft preserved).
+ *
+ * Elements that don't have a parseable name are filtered out.
+ * Result is capped at 6.
+ */
+export function parseMultiExtractionResponse(raw: string): ExtractedCandidate[] {
+    const cleaned = raw
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/```\s*$/i, '')
+        .trim();
+
+    let parsed: unknown;
+
+    // ── Attempt 1: full parse ─────────────────────────────────────────────────
+    try {
+        parsed = JSON.parse(cleaned);
+    } catch {
+        // ── Attempt 2: malformed-tail salvage ─────────────────────────────────
+        parsed = salvageTruncatedArray(cleaned);
+    }
+
+    if (!Array.isArray(parsed)) return [];
+
+    const candidates = (parsed as unknown[])
+        .map(coerceCandidate)
+        .filter((c) => c.name !== null) // drop unnamed entries
+        .slice(0, 6);                   // cap 6
+
+    return candidates;
+}
 
 /**
- * Extract restaurant info from an image (± caption text).
+ * Bracket-balance salvage: find the longest `[...]` prefix that is valid JSON.
+ * Used when the model output is truncated mid-element.
+ * Returns parsed array or null on total failure.
+ *
+ * Two-pass strategy:
+ *   1. Walk brackets tracking depth; if the array closes naturally, parse that slice.
+ *   2. If truncated (no closing `]` found), trim at the last *array-level* comma
+ *      (depth === 1) and close the array. This correctly discards the incomplete
+ *      last element without cutting inside a nested object.
+ */
+function salvageTruncatedArray(text: string): unknown[] | null {
+    const start = text.indexOf('[');
+    if (start === -1) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    // Track the last comma that appears at array depth (depth === 1).
+    // This marks the end of the last *complete* element.
+    let lastArrayLevelCommaAt = -1;
+
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (ch === '\\' && inString) {
+            escape = true;
+            continue;
+        }
+        if (ch === '"') {
+            inString = !inString;
+            continue;
+        }
+        if (inString) continue;
+
+        if (ch === '[' || ch === '{') {
+            depth++;
+        } else if (ch === ']' || ch === '}') {
+            depth--;
+            if (depth === 0) {
+                // Found the balanced closing bracket — parse the full slice.
+                const candidate = text.slice(start, i + 1);
+                try {
+                    const result = JSON.parse(candidate);
+                    return Array.isArray(result) ? result : null;
+                } catch {
+                    return null;
+                }
+            }
+        } else if (ch === ',' && depth === 1) {
+            // Comma at array level: marks boundary between complete elements.
+            lastArrayLevelCommaAt = i;
+        }
+    }
+
+    // String ended without finding the closing `]` — truncated output.
+    // Trim at the last array-level comma and close the array.
+    if (lastArrayLevelCommaAt > start) {
+        const trimmed = text.slice(start, lastArrayLevelCommaAt) + ']';
+        try {
+            const result = JSON.parse(trimmed);
+            return Array.isArray(result) ? result : null;
+        } catch {
+            // nothing
+        }
+    }
+
+    return null;
+}
+
+// ── Public multi-candidate API ────────────────────────────────────────────────
+
+/**
+ * Extract ALL restaurant info from text (caption/title/hashtags).
+ * Returns ExtractedCandidate[] (0–6 entries).
+ * On any error → fails soft to [].
+ *
+ * TICKET-063: multi-candidate, city inference, AbortSignal threading.
+ */
+export async function extractFromTextMulti(
+    caption: string,
+    signal?: AbortSignal,
+): Promise<ExtractedCandidate[]> {
+    if (signal?.aborted) return [];
+
+    const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
+    if (!apiKey) {
+        console.warn('ANTHROPIC_API_KEY not set — text extraction returning []');
+        return [];
+    }
+
+    const modelId = Deno.env.get('EXTRACTION_MODEL') ?? EXTRACTION_MODEL_DEFAULT;
+
+    try {
+        const raw = await callAnthropic(
+            [{
+                role: 'user',
+                content: [{
+                    type: 'text',
+                    text: `Extract all restaurant information from this text:\n\n${caption.trim()}\n\nOutput ONLY the JSON array.`,
+                }],
+            }],
+            modelId,
+            apiKey,
+            signal,
+        );
+        return parseMultiExtractionResponse(raw);
+    } catch (e) {
+        if ((e as Error)?.name === 'AbortError') throw e;
+        console.error('visionExtract.extractFromTextMulti error:', e);
+        return [];
+    }
+}
+
+/**
+ * Extract ALL restaurant info from an image (± caption text).
  * Image must be pre-downscaled to ≤768px long edge, normalized to JPEG.
  * Returns content-derived fields only; confidence is at most 'high' (never 'exact').
- * On any error → fails soft to confidence:'low'.
+ * On any error → fails soft to [].
+ *
+ * TICKET-063: multi-candidate, city inference, AbortSignal threading.
  */
-export async function extractFromVision(
+export async function extractFromVisionMulti(
     imageBase64: string,
     mimeType: string = 'image/jpeg',
     caption?: string,
-): Promise<ExtractedCandidate> {
+    signal?: AbortSignal,
+): Promise<ExtractedCandidate[]> {
+    if (signal?.aborted) return [];
+
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
     if (!apiKey) {
-        console.warn('ANTHROPIC_API_KEY not set — vision extraction returning needs_confirm');
-        return {
-            name: null, city: null, cuisine: null, address: null,
-            booking_url: null, hours: null, confidence: 'low', google_place_id: null,
-        };
+        console.warn('ANTHROPIC_API_KEY not set — vision extraction returning []');
+        return [];
     }
 
     const modelId = Deno.env.get('EXTRACTION_MODEL') ?? EXTRACTION_MODEL_DEFAULT;
@@ -201,7 +360,7 @@ export async function extractFromVision(
 
     contentBlocks.push({
         type: 'text',
-        text: 'Extract the restaurant information from the image (and caption if provided). Output ONLY the JSON object.',
+        text: 'Extract all restaurant information from the image (and caption if provided). Output ONLY the JSON array.',
     });
 
     try {
@@ -209,52 +368,72 @@ export async function extractFromVision(
             [{ role: 'user', content: contentBlocks }],
             modelId,
             apiKey,
+            signal,
         );
-        return parseExtractionResponse(raw);
+        return parseMultiExtractionResponse(raw);
+    } catch (e) {
+        if ((e as Error)?.name === 'AbortError') throw e;
+        console.error('visionExtract.extractFromVisionMulti error:', e);
+        return [];
+    }
+}
+
+// ── Single-candidate wrappers (back-compat for async screenshot path) ─────────
+
+const SINGLE_FALLBACK: ExtractedCandidate = {
+    name: null,
+    city: null,
+    city_inferred: false,
+    cuisine: null,
+    address: null,
+    booking_url: null,
+    hours: null,
+    confidence: 'low',
+    google_place_id: null,
+};
+
+/**
+ * Single-candidate wrapper — returns the first result or a low-confidence fallback.
+ * Used by the async screenshot path (handleAsyncExtract) which expects one candidate.
+ * On any error → fails soft to confidence:'low'.
+ */
+export async function extractFromVision(
+    imageBase64: string,
+    mimeType: string = 'image/jpeg',
+    caption?: string,
+): Promise<ExtractedCandidate> {
+    const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
+    if (!apiKey) {
+        console.warn('ANTHROPIC_API_KEY not set — vision extraction returning needs_confirm');
+        return SINGLE_FALLBACK;
+    }
+
+    try {
+        const results = await extractFromVisionMulti(imageBase64, mimeType, caption);
+        return results[0] ?? SINGLE_FALLBACK;
     } catch (e) {
         console.error('visionExtract.extractFromVision error:', e);
-        return {
-            name: null, city: null, cuisine: null, address: null,
-            booking_url: null, hours: null, confidence: 'low', google_place_id: null,
-        };
+        return SINGLE_FALLBACK;
     }
 }
 
 /**
- * Extract restaurant info from text only (caption/title, ~10x cheaper than vision).
- * Used when text is sufficient (TikTok caption, web title) and no image is needed.
+ * Single-candidate wrapper — returns the first result or a low-confidence fallback.
+ * Used by the async screenshot path which expects one candidate.
  * On any error → fails soft to confidence:'low'.
  */
 export async function extractFromText(caption: string): Promise<ExtractedCandidate> {
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
     if (!apiKey) {
         console.warn('ANTHROPIC_API_KEY not set — text extraction returning needs_confirm');
-        return {
-            name: null, city: null, cuisine: null, address: null,
-            booking_url: null, hours: null, confidence: 'low', google_place_id: null,
-        };
+        return SINGLE_FALLBACK;
     }
 
-    const modelId = Deno.env.get('EXTRACTION_MODEL') ?? EXTRACTION_MODEL_DEFAULT;
-
     try {
-        const raw = await callAnthropic(
-            [{
-                role: 'user',
-                content: [{
-                    type: 'text',
-                    text: `Extract restaurant information from this text:\n\n${caption.trim()}\n\nOutput ONLY the JSON object.`,
-                }],
-            }],
-            modelId,
-            apiKey,
-        );
-        return parseExtractionResponse(raw);
+        const results = await extractFromTextMulti(caption);
+        return results[0] ?? SINGLE_FALLBACK;
     } catch (e) {
         console.error('visionExtract.extractFromText error:', e);
-        return {
-            name: null, city: null, cuisine: null, address: null,
-            booking_url: null, hours: null, confidence: 'low', google_place_id: null,
-        };
+        return SINGLE_FALLBACK;
     }
 }
