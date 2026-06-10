@@ -25,6 +25,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         // the home-screen icon label reads "Napkin" (not "dining-journal-app").
         infoPlist: {
             CFBundleDisplayName: 'Napkin',
+            // HTTPS-only networking = exempt; without this every TestFlight
+            // upload stalls on the Missing Compliance questionnaire.
+            ITSAppUsesNonExemptEncryption: false,
             // ARCH-REVIEW-3: Belt-and-suspenders in case Expo SDK 54 string-array
             // scheme doesn't emit both entries. Explicit declaration guarantees both.
             CFBundleURLTypes: [
