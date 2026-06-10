@@ -45,6 +45,13 @@ interface Props {
     onMore?: () => void;
     bookmarked?: boolean;
     onBookmarkPress?: () => void;
+    /**
+     * True when the page has at least one voice (self / tablemate / public).
+     * When true the no-photo invitation hero shows name + meta only —
+     * no "be the first" copy (reviews already exist below the fold).
+     * When false (genuinely empty) shows table-agnostic invitation copy.
+     */
+    hasVoices?: boolean;
 }
 
 export function RestaurantHero({
@@ -54,6 +61,7 @@ export function RestaurantHero({
     onMore,
     bookmarked = false,
     onBookmarkPress,
+    hasVoices = false,
 }: Props) {
     const insets = useSafeAreaInsets();
     const scheme = useColorScheme();
@@ -118,12 +126,18 @@ export function RestaurantHero({
                             {restaurant.address}
                         </Text>
                     ) : null}
-                    <Text
-                        style={[styles.invitationCopy, { color: palette.textMuted }]}
-                        numberOfLines={2}
-                    >
-                        no one at your table has been here yet — be the first to note it.
-                    </Text>
+                    {/* Invitation copy — only when genuinely empty.
+                        When voices exist the copy is suppressed: reviews are visible
+                        below the fold so "be the first" would be self-contradicting.
+                        Table-agnostic: solo readers without a table see this too. */}
+                    {!hasVoices ? (
+                        <Text
+                            style={[styles.invitationCopy, { color: palette.textMuted }]}
+                            numberOfLines={2}
+                        >
+                            — no notes yet. be the first.
+                        </Text>
+                    ) : null}
                 </View>
             </View>
         );
