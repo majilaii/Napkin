@@ -19,7 +19,7 @@
  * Design: Heirloom Journal — warm paper, Newsreader italic names, Manrope body.
  * Accents: terracotta (CTA + ticked) + olive (confirmed chip). No red. No emoji in chrome.
  */
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -34,6 +34,11 @@ import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import type { ResolvedCandidate } from '@/hooks/wishlist/useResolveUrl';
+import { keyFor, buildInitialTicked } from './candidatePickerUtils';
+
+// Re-export for external consumers (ImportLinkSheet + tests) without requiring
+// them to import from the utils file separately.
+export { keyFor, buildInitialTicked };
 
 type Palette = typeof Colors.light;
 
@@ -51,37 +56,32 @@ export interface CandidatePickerPanelProps {
     onCorrectRow: (candidate: ResolvedCandidate) => void;
     /** Called when the user taps "open restaurant" on an already_pinned row. */
     onOpenRestaurant?: (restaurantId: string) => void;
-    /** Pre-filled note text (from note_prefill). */
-    initialNote?: string;
     /** Set of candidate keys that failed on last save attempt (shown as "couldn't pin · tap to retry"). */
     failedCandidateKeys?: Set<string>;
     palette?: Palette;
+    // ── Controlled ticked + note (fix-pass-2 item 5) ──────────────────────────
+    /**
+     * Controlled ticked set — owned by ImportLinkSheet so it survives
+     * picking ↔ editing-match transitions.
+     */
+    ticked: Set<string>;
+    /**
+     * Called when the user toggles a row. ImportLinkSheet updates tickedKeys state.
+     */
+    onToggleTicked: (key: string) => void;
+    /**
+     * Note text value — owned by ImportLinkSheet so it survives
+     * picking ↔ editing-match transitions.
+     */
+    noteText: string;
+    /** Called when the user changes the note TextInput. */
+    onNoteChange: (text: string) => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function photoUrl(photoReference: string | null | undefined): string | null {
     return placesPhotoProxyUrl(photoReference, { width: 200 }) ?? null;
-}
-
-function buildInitialTicked(candidates: ResolvedCandidate[]): Set<string> {
-    const ticked = new Set<string>();
-    if (candidates.length === 1) {
-        // Always pre-tick the single candidate regardless of confidence
-        ticked.add(keyFor(candidates[0]));
-    } else {
-        // Multi: pre-tick high/exact, leave low un-ticked
-        for (const c of candidates) {
-            if (c.confidence === 'high' || c.confidence === 'exact') {
-                ticked.add(keyFor(c));
-            }
-        }
-    }
-    return ticked;
-}
-
-function keyFor(c: ResolvedCandidate): string {
-    return c.candidate_id ?? c.google_place_id ?? c.restaurant.external_id ?? '';
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -93,28 +93,19 @@ export function CandidatePickerPanel({
     sourceTag,
     onCorrectRow,
     onOpenRestaurant,
-    initialNote = '',
     failedCandidateKeys,
     palette: paletteProp,
+    ticked,
+    onToggleTicked,
+    noteText,
+    onNoteChange,
 }: CandidatePickerPanelProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = paletteProp ?? (Colors[scheme] as Palette);
 
-    const [ticked, setTicked] = useState<Set<string>>(() => buildInitialTicked(candidates));
-    const [noteText, setNoteText] = useState(initialNote);
-
     const toggleCandidate = useCallback((c: ResolvedCandidate) => {
-        const k = keyFor(c);
-        setTicked((prev) => {
-            const next = new Set(prev);
-            if (next.has(k)) {
-                next.delete(k);
-            } else {
-                next.add(k);
-            }
-            return next;
-        });
-    }, []);
+        onToggleTicked(keyFor(c));
+    }, [onToggleTicked]);
 
     const tickedCandidates = useMemo(
         () => candidates.filter((c) => ticked.has(keyFor(c)) && !c.already_wishlisted),
@@ -198,7 +189,7 @@ export function CandidatePickerPanel({
                     >
                         <TextInput
                             value={noteText}
-                            onChangeText={setNoteText}
+                            onChangeText={onNoteChange}
                             placeholder="what made it memorable…"
                             placeholderTextColor={palette.textMuted}
                             multiline
