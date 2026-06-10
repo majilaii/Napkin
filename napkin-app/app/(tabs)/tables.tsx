@@ -854,7 +854,10 @@ export default function TablesScreen() {
                 onClose={() => setShowTablePicker(false)}
                 palette={palette}
                 liveRoundTableIds={liveRoundTableIds}
-                onGatherNew={FRIEND_TEST.hideEmergenceArc ? undefined : () => {
+                onGatherNew={() => {
+                    // Deliberate create-table path — stays visible during the
+                    // friend test (it is the ONLY creation entry point in the
+                    // UI). Only unsolicited emergence NUDGES are curtained.
                     setShowTablePicker(false);
                     router.push({
                         pathname: '/seed-from-solo',
