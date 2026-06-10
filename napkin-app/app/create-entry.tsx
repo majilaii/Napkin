@@ -1,13 +1,15 @@
 /**
- * Create Entry — Concept A "The Page" composer.
+ * Create Entry — Heirloom Journal composer (TICKET-064 redesign).
  *
- * Layout: masthead (restaurant name + inline stars) / writing surface / chip row / drawer.
- * Table share footer appears only when user has ≥1 Table — defaults OFF.
- * Breakdown ratings live inside the AddDetailsDrawer, off the primary surface.
- * Round mode still reachable via `mode=round` URL param.
+ * Canvas section order (logger-canvas.jsx Fast Log grammar):
+ *   SheetHeader → ComposerMasthead (RestaurantHeader) → RatingBand
+ *   → PhotoStrip → WritingSurface → with/companions + date
+ *   → TableRowChecklist → AddDetailsDrawer → round-attendee picker
+ *   → in-flow merge card → primary CTA
  *
+ * Route: /create-entry (unchanged — all six router.push call sites untouched)
  * Submit labels: Save (solo) / Share (Table share ON) / Start Round (round mode).
- * "LOG IT" is removed.
+ * Success toast: "tried <name>" (brand grammar, lowercase past-tense).
  */
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
@@ -15,7 +17,6 @@ import {
     Text,
     StyleSheet,
     ScrollView,
-    TextInput,
     Pressable,
     ActivityIndicator,
     Alert,
@@ -40,7 +41,6 @@ import { useStartRound } from '@/hooks/tables/useStartRound';
 import {
     SheetHeader,
     FieldUnderline,
-    PhotoCollage,
 } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
@@ -48,17 +48,19 @@ import { CompanionChipsRow, CompanionPickerSheet } from '@/components/logging';
 import {
     ComposerMasthead,
     WritingSurface,
-    ChipRow,
     AddDetailsDrawer,
     TablePickerSheet,
-    TableChipsRow,
+    DateChip,
+    RatingBand,
+    PhotoStrip,
+    TableRowChecklist,
 } from '@/components/create-entry';
 import { MergeCandidateCard } from '@/components/create-entry/MergeCandidateCard';
 import { useMergeCandidate } from '@/hooks/rounds/useMergeCandidate';
 import { useCreateEntryWithMerge } from '@/hooks/rounds/useCreateEntryWithMerge';
 import { useToast } from '@/providers/ToastProvider';
+import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
-import { useQuery } from '@tanstack/react-query';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -135,8 +137,8 @@ export default function CreateEntryScreen() {
         return [...pinned, ...recent, ...rest];
     }, [tables, recentlyPosted, tableIdParam]);
 
-    // Mode picker (round mode reachable via `mode=round` param — not surfaced in solo chrome)
-    const [postMode, setPostMode] = useState<PostMode>(modeParam === 'round' ? 'round' : 'solo');
+    // Mode — derived from param, no setter needed (setPostMode was never called)
+    const postMode: PostMode = modeParam === 'round' ? 'round' : 'solo';
 
     // TICKET-043: Table selection is now multi-select (selectedTableIds: string[]).
     // Default: pre-select from URL param if provided. Empty = feed-only (private journal).
@@ -169,7 +171,6 @@ export default function CreateEntryScreen() {
     // TICKET-043: pass onTableNotAuthorized to handle revoked-Table 403.
     const createEntry = useCreateEntry(user?.id, null, {
         onTableNotAuthorized: (offendingIds) => {
-            // Remove offending ids from selection so user can re-submit without them.
             setSelectedTableIds(prev => prev.filter(id => !offendingIds.includes(id)));
         },
     });
@@ -281,11 +282,6 @@ export default function CreateEntryScreen() {
     });
 
     // ── TICKET-044: merge-candidate detection (Trigger B) ────────────────────
-    // Card fires when: exactly one Table selected, real restaurant_id (UUID),
-    // visited_at known. The query is gated on a real UUID — Places-search flows
-    // (only external_id available) won't fire the card; users navigating from a
-    // restaurant page (restaurantIdParam set) get the full UX.
-    // Per-session [separate] suppression keyed on the candidate entry id.
     const mergeTableId = selectedTableIds.length === 1 ? selectedTableIds[0] : null;
     const mergeRestaurantId = restaurantIdParam ?? null;
     const visitedAtIso = visitedAt.toISOString();
@@ -317,9 +313,6 @@ export default function CreateEntryScreen() {
     const [selectedCompanions, setSelectedCompanions] = useState<UserSearchResult[]>([]);
     const [companionSheetVisible, setCompanionSheetVisible] = useState(false);
 
-    // Dish picker sheet — we show the drawer inline via the chip tap
-    const [dishSheetVisible, setDishSheetVisible] = useState(false);
-
     const toggleCompanion = useCallback((u: UserSearchResult) => {
         if (!user || u.user_id === user.id) return;
         setSelectedCompanions(prev => {
@@ -337,9 +330,8 @@ export default function CreateEntryScreen() {
     const isSubmitting = createEntry.isPending || startRound.isPending || createEntryWithMerge.isPending;
 
     // Device location for search bias.
-    // Use getLastKnownPositionAsync() first — it returns instantly so the very first
-    // search has location bias. getCurrentPositionAsync() takes seconds and would race
-    // the user's typing, causing un-biased searches for nearby restaurants.
+    // Use getLastKnownPositionAsync() first — returns instantly so the very first
+    // search has location bias.
     const [deviceLocation, setDeviceLocation] = useState<{ latitude: number; longitude: number } | null>(null);
     useEffect(() => {
         (async () => {
@@ -561,9 +553,6 @@ export default function CreateEntryScreen() {
     };
 
     // ── TICKET-044: merge handler ─────────────────────────────────────────────
-    // Tapping [merge] on the in-flow card commits B's entry AND binds both
-    // entries to a new merged round atomically. On round_conflict / fall-back,
-    // the entry still saves as solo and a toast tells the user.
 
     const handleMerge = useCallback(async () => {
         if (!canSubmit) return;
@@ -606,7 +595,6 @@ export default function CreateEntryScreen() {
             if (result.merge_outcome === 'merged') {
                 toast.show('became a round.');
             }
-            // 'conflict_fell_back' / 'solo' toast is fired by useCreateEntryWithMerge.
             setPhotos([]);
             router.back();
         } catch (e: any) {
@@ -661,6 +649,9 @@ export default function CreateEntryScreen() {
         const ratingValue = Math.round(rating * 2) / 2;
         const photoUrls = photos.filter(p => p.publicUrl !== null).map(p => p.publicUrl as string);
 
+        // Post-save confirmation verb (brand grammar: "tried <name>" for rated logs)
+        const restaurantLabel = selectedPlace?.name ?? query.trim();
+
         try {
             if (postMode === 'round') {
                 await startRound.mutateAsync({
@@ -691,11 +682,13 @@ export default function CreateEntryScreen() {
                 });
             }
             setPhotos([]);
+            // Post-save toast: brand grammar lowercase past-tense
+            if (restaurantLabel) {
+                toast.show(`tried ${restaurantLabel}`);
+            }
             router.back();
         } catch (e: any) {
-            // table_not_authorized errors are handled by onTableNotAuthorized callback
-            // (already shows toast and removes offending ids). Only show Alert for
-            // other failures.
+            // table_not_authorized errors are handled by onTableNotAuthorized callback.
             if ((e as any)?.code !== 'table_not_authorized') {
                 Alert.alert('Error', e.message ?? 'Could not save entry');
             }
@@ -704,7 +697,7 @@ export default function CreateEntryScreen() {
         canSubmit, rating, notes, dish, selectedPlace, query,
         selectedTableIds, roundTableId, postMode, selectedParticipantIds,
         breakdown, visitedAt, photos, selectedCompanions,
-        createEntry, startRound, router,
+        createEntry, startRound, toast, router,
     ]);
 
     // ── Submit label ──────────────────────────────────────────────────────
@@ -715,6 +708,18 @@ export default function CreateEntryScreen() {
         : selectedTableIds.length > 0
             ? 'Share'
             : 'Save';
+
+    // ── Derived masthead data ─────────────────────────────────────────────
+
+    const mastheadMeta = React.useMemo(() => {
+        if (!selectedPlace) return undefined;
+        return selectedPlace.categories.slice(0, 2).filter(Boolean).join(' · ') || undefined;
+    }, [selectedPlace]);
+
+    const mastheadThumbnail = React.useMemo(() => {
+        if (!selectedPlace?.photoReference) return null;
+        return placesPhotoProxyUrl(selectedPlace.photoReference, { width: 96 });
+    }, [selectedPlace?.photoReference]);
 
     // ── Render ────────────────────────────────────────────────────────────
 
@@ -729,7 +734,7 @@ export default function CreateEntryScreen() {
                     <SheetHeader
                         title="a new entry"
                         leftLabel="Cancel"
-                        rightLabel={canSubmit ? submitLabel : submitLabel}
+                        rightLabel={submitLabel}
                         onLeftPress={() => router.back()}
                         onRightPress={handleSubmit}
                         rightDisabled={!canSubmit}
@@ -744,7 +749,7 @@ export default function CreateEntryScreen() {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                 >
-                    {/* Restaurant search / masthead */}
+                    {/* SECTION 1: Restaurant search OR ComposerMasthead */}
                     {showSearch ? (
                         <View style={styles.searchBlock}>
                             <View style={{ position: 'relative' }}>
@@ -797,19 +802,37 @@ export default function CreateEntryScreen() {
                                 </Text>
                             ) : null}
                         </View>
-                    ) : (
-                        /* Composer masthead — restaurant name + inline stars */
-                        selectedPlace ? (
-                            <ComposerMasthead
-                                restaurantName={selectedPlace.name}
+                    ) : selectedPlace ? (
+                        <ComposerMasthead
+                            restaurantName={selectedPlace.name}
+                            meta={mastheadMeta}
+                            thumbnailUri={mastheadThumbnail}
+                            onClearPlace={handleClearPlace}
+                        />
+                    ) : null}
+
+                    {/* SECTION 2: Rating band */}
+                    {!showSearch ? (
+                        <View style={[styles.sectionDivider, { borderTopColor: palette.divider }]}>
+                            <RatingBand
                                 rating={rating}
                                 onRatingChange={setRating}
-                                onClearPlace={handleClearPlace}
                             />
-                        ) : null
-                    )}
+                        </View>
+                    ) : null}
 
-                    {/* Writing surface — the hero, ≥55% viewport */}
+                    {/* SECTION 3: Photo strip — always visible (kills "invisible photos" bug) */}
+                    {!showSearch ? (
+                        <PhotoStrip
+                            photos={photos}
+                            maxPhotos={MAX_PHOTOS}
+                            onAdd={handlePhotoPress}
+                            onRemove={handleRemovePhoto}
+                            onRetry={handleRetryPhoto}
+                        />
+                    ) : null}
+
+                    {/* SECTION 4: Writing surface */}
                     {!showSearch ? (
                         <WritingSurface
                             value={notes}
@@ -817,76 +840,87 @@ export default function CreateEntryScreen() {
                         />
                     ) : null}
 
-                    {/* Chip row — photos / dish / with… / today / tables… */}
+                    {/* SECTION 5: with/companions + date row */}
                     {!showSearch ? (
-                        <View style={[styles.chipRowContainer, { borderTopColor: 'rgba(221,192,186,0.25)' }]}>
-                            <ChipRow
-                                photoCount={photos.filter(p => p.publicUrl).length}
-                                onPhotosPress={handlePhotoPress}
-                                dishValue={dish}
-                                onDishPress={() => {/* handled in drawer */}}
-                                companionCount={selectedCompanions.length}
-                                onCompanionsPress={() => setCompanionSheetVisible(true)}
-                                visitedAt={visitedAt}
-                                onDateChange={setVisitedAt}
-                                tablesAvailable={sortedTables.length > 0 && postMode !== 'round'}
-                                selectedTableName={
-                                    // TICKET-043: show first selected table name + overflow count.
-                                    selectedTableIds.length > 0
-                                        ? selectedTableIds.length === 1
-                                            ? sortedTables.find(t => t.id === selectedTableIds[0])?.name ?? null
-                                            : `${sortedTables.find(t => t.id === selectedTableIds[0])?.name ?? ''} +${selectedTableIds.length - 1}`
-                                        : null
-                                }
-                                onTablesPress={() => setTablePickerVisible(true)}
-                            />
-                        </View>
+                        <>
+                            <View style={[styles.withRow, { borderTopColor: palette.divider }]}>
+                                <Pressable
+                                    onPress={() => setCompanionSheetVisible(true)}
+                                    style={[
+                                        styles.withChip,
+                                        { borderColor: palette.divider },
+                                    ]}
+                                    accessibilityLabel={
+                                        selectedCompanions.length > 0
+                                            ? `${selectedCompanions.length} companion${selectedCompanions.length !== 1 ? 's' : ''}`
+                                            : 'Add companions'
+                                    }
+                                >
+                                    <Ionicons
+                                        name="person-add-outline"
+                                        size={13}
+                                        color={selectedCompanions.length > 0 ? palette.primary : palette.textSecondary}
+                                    />
+                                    <Text
+                                        style={[
+                                            styles.withChipLabel,
+                                            {
+                                                color: selectedCompanions.length > 0
+                                                    ? palette.primary
+                                                    : palette.textSecondary,
+                                            },
+                                        ]}
+                                    >
+                                        {selectedCompanions.length > 0
+                                            ? `with ${selectedCompanions.length}`
+                                            : 'with…'}
+                                    </Text>
+                                </Pressable>
+                                <View style={{ flex: 1 }} />
+                                <DateChip value={visitedAt} onChange={setVisitedAt} />
+                            </View>
+                            {selectedCompanions.length > 0 ? (
+                                <View style={styles.companionsRow}>
+                                    <CompanionChipsRow
+                                        companions={selectedCompanions.map(c => ({
+                                            user_id: c.user_id,
+                                            display_name: c.display_name,
+                                        }))}
+                                        onRemove={removeCompanion}
+                                    />
+                                </View>
+                            ) : null}
+                        </>
                     ) : null}
 
-                    {/* TICKET-043: TableChipsRow — Smart-three inline chip preview.
-                        Hidden in round mode (single-Table read-only context). */}
-                    {!showSearch && postMode !== 'round' && orderedTables.length > 0 ? (
-                        <TableChipsRow
-                            orderedTables={orderedTables.map(t => ({ id: t.id, name: t.name }))}
-                            selectedIds={selectedTableIds}
-                            onToggle={(id) =>
-                                setSelectedTableIds(prev =>
-                                    prev.includes(id)
-                                        ? prev.filter(x => x !== id)
-                                        : [...prev, id]
-                                )
-                            }
-                            onOpenSheet={() => setTablePickerVisible(true)}
-                        />
-                    ) : null}
-
-                    {/* Photo collage — visible when photos exist */}
-                    {photos.length > 0 ? (
-                        <View style={{ marginTop: Spacing.md }}>
-                            <PhotoCollage
-                                photos={photos}
-                                maxPhotos={MAX_PHOTOS}
-                                onAdd={handlePhotoPress}
-                                onRemove={handleRemovePhoto}
-                                onRetry={handleRetryPhoto}
-                            />
-                        </View>
-                    ) : null}
-
-                    {/* Companion chips (when companions selected) */}
-                    {selectedCompanions.length > 0 ? (
-                        <View style={{ marginTop: Spacing.sm }}>
-                            <CompanionChipsRow
-                                companions={selectedCompanions.map(c => ({
-                                    user_id: c.user_id,
-                                    display_name: c.display_name,
+                    {/* SECTION 6: Table row-checklist
+                        Hidden in round mode (single-Table read-only context).
+                        Zero-table users see nothing (TableRowChecklist returns null). */}
+                    {!showSearch && postMode !== 'round' ? (
+                        <View style={[styles.sectionBlock, { borderTopColor: palette.divider }]}>
+                            <TableRowChecklist
+                                tables={orderedTables.map(t => ({
+                                    id: t.id,
+                                    name: t.name,
                                 }))}
-                                onRemove={removeCompanion}
+                                selectedIds={selectedTableIds}
+                                onToggle={(id) =>
+                                    setSelectedTableIds(prev =>
+                                        prev.includes(id)
+                                            ? prev.filter(x => x !== id)
+                                            : [...prev, id]
+                                    )
+                                }
+                                onOpenOverflow={
+                                    orderedTables.length > 5
+                                        ? () => setTablePickerVisible(true)
+                                        : undefined
+                                }
                             />
                         </View>
                     ) : null}
 
-                    {/* Add details drawer — breakdown ratings + dish */}
+                    {/* SECTION 7: Add details drawer (sub-scores + dish) */}
                     {!showSearch ? (
                         <AddDetailsDrawer
                             breakdown={breakdown}
@@ -896,7 +930,7 @@ export default function CreateEntryScreen() {
                         />
                     ) : null}
 
-                    {/* Round mode attendee picker (when round mode active) */}
+                    {/* SECTION 8: Round mode attendee picker */}
                     {postMode === 'round' && roundTableId ? (
                         <View style={{ marginTop: Spacing.lg }}>
                             <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
@@ -916,9 +950,15 @@ export default function CreateEntryScreen() {
                                                 key={member.member_id}
                                                 onPress={() => toggleParticipant(member.member_id)}
                                                 disabled={isCreator}
-                                                style={[styles.participantChip, { backgroundColor: isSelected ? palette.primary : palette.surfaceContainerLow }]}
+                                                style={[
+                                                    styles.participantChip,
+                                                    { backgroundColor: isSelected ? palette.primary : palette.surfaceContainerLow },
+                                                ]}
                                             >
-                                                <View style={[styles.participantAvatar, { backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : palette.surfaceContainerHigh }]}>
+                                                <View style={[
+                                                    styles.participantAvatar,
+                                                    { backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : palette.surfaceContainerHigh },
+                                                ]}>
                                                     <Text style={{ fontSize: 11, color: isSelected ? palette.textInverse : palette.text, fontFamily: 'Manrope_600SemiBold' }}>
                                                         {initials}
                                                     </Text>
@@ -934,9 +974,8 @@ export default function CreateEntryScreen() {
                         </View>
                     ) : null}
 
-                    {/* TICKET-044: in-flow merge card (Trigger B).
-                        Renders only when restaurant_id + visited_at + single Table
-                        are set AND a candidate matches. Hidden in Round mode. */}
+                    {/* SECTION 9: In-flow merge card (TICKET-044, Trigger B).
+                        Only when restaurant_id + visited_at + single Table set. */}
                     {!showSearch && postMode !== 'round' && showMergeCard && mergeCandidate ? (
                         <View style={{ marginTop: Spacing.lg }}>
                             <MergeCandidateCard
@@ -949,7 +988,7 @@ export default function CreateEntryScreen() {
                         </View>
                     ) : null}
 
-                    {/* Primary CTA */}
+                    {/* SECTION 10: Primary CTA */}
                     <Pressable
                         disabled={!canSubmit || isSubmitting}
                         onPress={handleSubmit}
@@ -981,7 +1020,7 @@ export default function CreateEntryScreen() {
                 palette={palette}
             />
 
-            {/* TICKET-043: multi-select TablePickerSheet — commits on Done/dismiss */}
+            {/* TICKET-043: multi-select TablePickerSheet — overflow/search for >5 tables */}
             <TablePickerSheet
                 visible={tablePickerVisible}
                 tables={sortedTables.map(t => ({ id: t.id, name: t.name }))}
@@ -1018,9 +1057,42 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm + 2,
     },
-    chipRowContainer: {
-        borderTopWidth: 1,
+    // Sections with a ghosted warm top-rule (no solid 1px borders)
+    sectionDivider: {
+        borderTopWidth: StyleSheet.hairlineWidth,
     },
+    sectionBlock: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: Spacing.md,
+        marginTop: Spacing.sm,
+    },
+    // with/companions + date row
+    withRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: Spacing.sm,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        marginTop: Spacing.xs,
+    },
+    withChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: Radius.full,
+        borderWidth: 1,
+    },
+    withChipLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        fontWeight: '500',
+    },
+    companionsRow: {
+        marginTop: Spacing.xs,
+        marginBottom: Spacing.xs,
+    },
+    // Round mode participant picker
     participantGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -1041,6 +1113,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    // Primary CTA
     ctaButton: {
         height: 52,
         borderRadius: Radius.full,
