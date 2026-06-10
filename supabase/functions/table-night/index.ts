@@ -47,14 +47,17 @@ serve(async (req) => {
         const fail = (message: string, status = 400, code = 'INVALID_INPUT') =>
             errorResponse(code, message, status);
 
-        // Helper: check if user is a member of a table
+        // Helper: check if user is a member of a table.
+        // maybeSingle → null on no rows; any real DB error throws to the outer
+        // catch (500) so a transient failure never reads as "not a member."
         async function validateTableMember(tableId: string) {
-            const { data } = await supabase
+            const { data, error } = await supabase
                 .from('table_members')
                 .select('member_id')
                 .eq('table_id', tableId)
                 .eq('member_id', user!.id)
-                .single();
+                .maybeSingle();
+            if (error) throw new Error(`validateTableMember failed: ${error.message}`);
             return !!data;
         }
 

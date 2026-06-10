@@ -82,12 +82,22 @@ serve(async (req) => {
         // TICKET-043: required because service-role bypasses RLS.
         // Explicit membership gate: caller must be a member of the requested table.
         // Uses member_id (NOT user_id) per TICKET-034 doctrine.
-        const { data: membership } = await supabase
+        // maybeSingle → null on no rows, error only on real DB failure;
+        // .single() without error destructuring swallowed transient DB
+        // errors as "not a member."
+        const { data: membership, error: membershipError } = await supabase
             .from('table_members')
             .select('member_id')
             .eq('table_id', tableId)
             .eq('member_id', user.id)
-            .single();
+            .maybeSingle();
+
+        if (membershipError) {
+            return new Response(
+                JSON.stringify({ error: `membership check failed: ${membershipError.message}` }),
+                { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
 
         if (!membership) {
             return new Response(
