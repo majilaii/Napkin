@@ -60,6 +60,7 @@ import { useMergeCandidate } from '@/hooks/rounds/useMergeCandidate';
 import { useCreateEntryWithMerge } from '@/hooks/rounds/useCreateEntryWithMerge';
 import { useToast } from '@/providers/ToastProvider';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
+import { buildEntryPayload, buildRoundPayload, toggleTableId } from '@/lib/composer';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -639,46 +640,28 @@ export default function CreateEntryScreen() {
                 types: ['restaurant'] as string[],
             };
 
-        const secondaryRatings = {
-            vibe_rating: breakdown.vibe > 0 ? breakdown.vibe : null,
-            flavor_rating: breakdown.flavor > 0 ? breakdown.flavor : null,
-            service_rating: breakdown.service > 0 ? breakdown.service : null,
-            value_rating: breakdown.value > 0 ? breakdown.value : null,
-        };
-
-        const ratingValue = Math.round(rating * 2) / 2;
-        const photoUrls = photos.filter(p => p.publicUrl !== null).map(p => p.publicUrl as string);
-
         // Post-save confirmation verb (brand grammar: "tried <name>" for rated logs)
         const restaurantLabel = selectedPlace?.name ?? query.trim();
 
         try {
             if (postMode === 'round') {
+                // Frozen payload shape lives in lib/composer.ts (jest-covered).
                 await startRound.mutateAsync({
                     table_id: roundTableId!,
                     restaurant: restaurantData,
-                    participant_ids: Array.from(selectedParticipantIds),
-                    rating: ratingValue,
-                    notes: notes.trim() || undefined,
-                    dish_description: dish.trim() || undefined,
-                    ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
-                    ...secondaryRatings,
+                    ...buildRoundPayload({
+                        rating, notes, dish, photos, breakdown,
+                        selectedParticipantIds: Array.from(selectedParticipantIds),
+                    }),
                 });
             } else {
-                // TICKET-043: send table_ids (multi-Table) instead of single table_id.
+                // TICKET-043: table_ids (multi-Table). Frozen shape in lib/composer.ts.
                 await createEntry.mutateAsync({
                     restaurant: restaurantData,
-                    rating: ratingValue,
-                    content: notes.trim() || undefined,
-                    dish_description: dish.trim() || undefined,
-                    table_ids: selectedTableIds,
-                    visibility: selectedTableIds.length > 0 ? 'table' : 'private',
-                    visited_at: visitedAt.toISOString(),
-                    ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
-                    ...(selectedCompanions.length > 0 ? {
-                        companion_ids: selectedCompanions.map(c => c.user_id),
-                    } : {}),
-                    ...secondaryRatings,
+                    ...buildEntryPayload({
+                        rating, notes, dish, photos, breakdown,
+                        selectedTableIds, visitedAt, selectedCompanions,
+                    }),
                 });
             }
             setPhotos([]);
@@ -896,7 +879,7 @@ export default function CreateEntryScreen() {
                     {/* SECTION 6: Table row-checklist
                         Hidden in round mode (single-Table read-only context).
                         Zero-table users see nothing (TableRowChecklist returns null). */}
-                    {!showSearch && postMode !== 'round' ? (
+                    {!showSearch && postMode !== 'round' && orderedTables.length > 0 ? (
                         <View style={[styles.sectionBlock, { borderTopColor: palette.divider }]}>
                             <TableRowChecklist
                                 tables={orderedTables.map(t => ({
@@ -905,11 +888,7 @@ export default function CreateEntryScreen() {
                                 }))}
                                 selectedIds={selectedTableIds}
                                 onToggle={(id) =>
-                                    setSelectedTableIds(prev =>
-                                        prev.includes(id)
-                                            ? prev.filter(x => x !== id)
-                                            : [...prev, id]
-                                    )
+                                    setSelectedTableIds(prev => toggleTableId(prev, id))
                                 }
                                 onOpenOverflow={
                                     orderedTables.length > 5
