@@ -42,6 +42,11 @@ interface Props {
     onVisitPress?: (visit: PageVisit) => void;
     /** Tap handler for a public review row — routes to /entry-detail?viewAs=public. */
     onPublicReviewPress?: (entry_id: string) => void;
+    /**
+     * Restaurant name threaded for reading-oriented empty state copy.
+     * When provided, zero-voices state reads "— no one's written about {name} yet."
+     */
+    restaurantName?: string | null;
 }
 
 // Calibration filter thresholds (locked for v1 per TICKET-022 AC)
@@ -169,6 +174,7 @@ export function VoicesStream({
     onToggleMatchFilter,
     onVisitPress,
     onPublicReviewPress,
+    restaurantName,
 }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
@@ -194,10 +200,13 @@ export function VoicesStream({
     const total = selfVisits.length + tablemateVisits.length + visiblePublic.length;
 
     if (!hasPrivateVoices && publicReviews.length === 0) {
+        const emptyLine = restaurantName
+            ? `— no one's written about ${restaurantName} yet.`
+            : '— no notes yet.';
         return (
             <View style={styles.empty}>
                 <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                    No visits logged yet.
+                    {emptyLine}
                 </Text>
             </View>
         );

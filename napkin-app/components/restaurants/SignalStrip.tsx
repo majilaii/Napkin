@@ -30,6 +30,12 @@ interface Props {
     google: SignalCellData;
     activeTier: SignalTier;
     onTierChange: (tier: SignalTier) => void;
+    /**
+     * When true, only cells with `hasData` are rendered (ghost/cold arrival).
+     * The four-cell strip renders when ≥2 siblings are populated; otherwise collapse.
+     * Doctrine: omitting empty siblings ≠ merging tiers.
+     */
+    collapsed?: boolean;
 }
 
 type Palette = typeof Colors.light;
@@ -41,9 +47,45 @@ export function SignalStrip({
     google,
     activeTier,
     onTierChange,
+    collapsed = false,
 }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
+
+    if (collapsed) {
+        // Collapse: only render cells that have data + a quiet "no napkin reads yet" note.
+        // Doctrine: omitting empty siblings ≠ merging tiers; four-cell strip renders when ≥2 populated.
+        const visibleCells: Array<{ key: string; data: SignalCellData; tier: SignalTier | null; inert: boolean }> = [];
+        if (you.hasData) visibleCells.push({ key: 'you', data: you, tier: 'you', inert: false });
+        if (yourTable.hasData) visibleCells.push({ key: 'table', data: yourTable, tier: 'your_table', inert: false });
+        if (napkin.hasData) visibleCells.push({ key: 'napkin', data: napkin, tier: 'napkin', inert: false });
+        if (google.hasData) visibleCells.push({ key: 'google', data: google, tier: null, inert: true });
+
+        const hasAnyNapkinData = napkin.hasData;
+
+        return (
+            <View>
+                <View style={[styles.strip, { borderBottomColor: 'transparent' }]}>
+                    {visibleCells.map((c, i) => (
+                        <SigCell
+                            key={c.key}
+                            data={c.data}
+                            active={c.tier === activeTier}
+                            onPress={c.tier ? () => onTierChange(c.tier as SignalTier) : undefined}
+                            palette={palette}
+                            inert={c.inert}
+                            isFirst={i === 0}
+                        />
+                    ))}
+                </View>
+                {!hasAnyNapkinData ? (
+                    <Text style={[styles.noNapkinNote, { color: palette.textMuted }]}>
+                        no napkin reads yet
+                    </Text>
+                ) : null}
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.strip, { borderBottomColor: 'transparent' }]}>
@@ -137,8 +179,8 @@ function SigCell({
                     {data.sub}
                 </Text>
 
-                {/* Terracotta underline on active cell */}
-                {active ? (
+                {/* Terracotta underline on active cell — never drawn under a "—" (empty) cell */}
+                {active && !isEmpty ? (
                     <View
                         style={[
                             styles.activeUnderline,
@@ -192,5 +234,13 @@ const styles = StyleSheet.create({
         right: '20%',
         height: 2,
         borderRadius: 1,
+    },
+    noNapkinNote: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 11.5,
+        paddingHorizontal: 22,
+        paddingTop: 8,
+        paddingBottom: 4,
+        opacity: 0.55,
     },
 });

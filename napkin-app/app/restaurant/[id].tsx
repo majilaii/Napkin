@@ -32,6 +32,7 @@ import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
 import { Colors, Spacing } from '@/constants/theme';
+import { pickDefaultTier, populatedTiers } from '@/lib/restaurantSignal';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
@@ -115,18 +116,6 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
         googleRating: payload.googleRating ?? undefined,
         googleRatingCount: payload.googleRatingCount ?? undefined,
     });
-}
-
-/** Determine the default active tier — richest available. */
-function defaultTier(
-    personalCount: number,
-    tableCount: number,
-    napkinCount: number,
-): SignalTier {
-    if (tableCount >= 3) return 'your_table';
-    if (napkinCount > 0) return 'napkin';
-    if (personalCount > 0) return 'you';
-    return 'napkin';
 }
 
 export default function RestaurantScreen() {
@@ -308,7 +297,7 @@ export default function RestaurantScreen() {
     const napkinCount = pageData?.napkin_aggregate?.count ?? 0;
 
     const [activeTier, setActiveTierRaw] = useState<SignalTier>(() =>
-        defaultTier(personalCount, tableCount, napkinCount)
+        pickDefaultTier({ you: personalCount > 0, table: tableCount > 0, napkin: napkinCount > 0, google: !!(restaurant?.google_rating) })
     );
 
     // Track whether the user has manually tapped a tier — if so, never override with the default.
@@ -319,9 +308,15 @@ export default function RestaurantScreen() {
     }, []);
 
     // Re-derive default tier once data loads — but only if the user hasn't tapped yet.
+    // Uses pickDefaultTier from lib/restaurantSignal (jest-covered).
     const derivedDefaultTier = useMemo(
-        () => defaultTier(personalCount, tableCount, napkinCount),
-        [personalCount, tableCount, napkinCount],
+        () => pickDefaultTier({
+            you: personalCount > 0,
+            table: tableCount > 0,
+            napkin: napkinCount > 0,
+            google: !!(restaurant?.google_rating),
+        }),
+        [personalCount, tableCount, napkinCount, restaurant?.google_rating],
     );
     const tierDefaultAppliedRef = React.useRef(false);
     React.useEffect(() => {
@@ -436,6 +431,23 @@ export default function RestaurantScreen() {
         napkinCell.hasData,
     ].filter(Boolean).length;
 
+    // Collapse the signal strip when fewer than 2 siblings are populated
+    // (typically a ghost/cold page where only Google has data).
+    // populatedTiers from lib/restaurantSignal is jest-covered.
+    const showCollapsedStrip = populatedTiers({
+        you: youCell.hasData,
+        table: yourTableCell.hasData,
+        napkin: napkinCell.hasData,
+        google: googleCell.hasData,
+    }).length < 2;
+
+    // Voices exist when any self, tablemate, or public review is loaded.
+    // Used to suppress false-invitation copy in the no-photo hero.
+    const hasVoices =
+        selfVisits.length > 0 ||
+        tablemateVisits.length > 0 ||
+        (pageData?.public_reviews ?? []).length > 0;
+
     // ── Render ────────────────────────────────────────────────────────────
     return (
         <>
@@ -460,6 +472,7 @@ export default function RestaurantScreen() {
                             onBack={() => router.back()}
                             bookmarked={bookmarked}
                             onBookmarkPress={bookmarkDisabled ? undefined : handleBookmarkPress}
+                            hasVoices={hasVoices}
                         />
                     ) : null}
 
@@ -469,7 +482,7 @@ export default function RestaurantScreen() {
                         <SavedFromTikTokPanel source={tiktokSource.source} />
                     ) : null}
 
-                    {/* Signal strip */}
+                    {/* Signal strip — collapses to populated-only cells when <2 siblings have data */}
                     {restaurant ? (
                         <SignalStrip
                             you={youCell}
@@ -478,11 +491,13 @@ export default function RestaurantScreen() {
                             google={googleCell}
                             activeTier={activeTier}
                             onTierChange={setActiveTier}
+                            collapsed={showCollapsedStrip}
                         />
                     ) : null}
 
-                    {/* Distribution histogram */}
-                    {restaurant && pageData ? (
+                    {/* Distribution histogram — hidden when no You/Table/Napkin tier has ratings.
+                        Suppresses five empty bars on ghost/unrated pages (AC 7). */}
+                    {restaurant && pageData && tiersWithData > 0 ? (
                         <SwitchableDistribution
                             activeTier={activeTier}
                             distributions={pageData.distributions}
@@ -495,38 +510,13 @@ export default function RestaurantScreen() {
                         <RestaurantTabsV3 active={activeTab} onChange={setActiveTab} />
                     ) : null}
 
-                    {/* Atlas cross-link chip */}
-                    {restaurant?.city && hasAnyTable && activeTab === 'visits' ? (
-                        <View style={styles.chipRow}>
-                            <AtlasCrossLinkChip
-                                tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
-                                restaurantId={persistedRestaurantId ?? null}
-                                city={restaurant.city}
-                                visitCount={pageData?.visit_count ?? 1}
-                                palette={palette}
-                            />
-                        </View>
-                    ) : null}
-
-                    {/* Error state */}
-                    {error ? (
+                    {/* Error state — only for persisted rows; ghosts have no history to load.
+                        Debug dump removed: a persisted failure shows one muted line only. */}
+                    {error && !isGhost ? (
                         <View style={styles.section}>
                             <Text style={[styles.mutedItalic, { color: palette.textMuted }]}>
-                                Could not load visit history.
+                                could not load visit history.
                             </Text>
-                            {__DEV__ ? (
-                                <Text
-                                    selectable
-                                    style={{
-                                        color: palette.textMuted,
-                                        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-                                        fontSize: 11,
-                                        marginTop: 8,
-                                    }}
-                                >
-                                    {(error as Error)?.message ?? String(error)}
-                                </Text>
-                            ) : null}
                         </View>
                     ) : null}
 
@@ -541,7 +531,8 @@ export default function RestaurantScreen() {
                                 />
                             ) : null}
 
-                            {/* Voices stream */}
+                            {/* Voices stream — leads the Visits tab for cold readers (AC 3).
+                                restaurantName threads for reading-oriented empty-state copy (AC 8). */}
                             {pageData ? (
                                 <VoicesStream
                                     selfVisits={selfVisits}
@@ -552,6 +543,7 @@ export default function RestaurantScreen() {
                                     onToggleMatchFilter={() => setMatchFilterOn((v) => !v)}
                                     onVisitPress={handleVisitPress}
                                     onPublicReviewPress={handlePublicReviewPress}
+                                    restaurantName={restaurant?.name ?? null}
                                 />
                             ) : isPageLoading ? (
                                 <View style={styles.sectionSpinner}>
@@ -563,6 +555,20 @@ export default function RestaurantScreen() {
                             <ProfessionalTakesBand
                                 critics={pageData?.professional_critics ?? []}
                             />
+
+                            {/* Atlas cross-link chip — after voices + professional takes (AC 3).
+                                A cold reader sees VOICES first; the chip is contextual chrome, not content. */}
+                            {restaurant?.city && hasAnyTable ? (
+                                <View style={styles.chipRow}>
+                                    <AtlasCrossLinkChip
+                                        tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
+                                        restaurantId={persistedRestaurantId ?? null}
+                                        city={restaurant.city}
+                                        visitCount={pageData?.visit_count ?? 1}
+                                        palette={palette}
+                                    />
+                                </View>
+                            ) : null}
                         </View>
                     ) : null}
 
