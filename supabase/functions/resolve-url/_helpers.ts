@@ -45,3 +45,23 @@ export function filterUnauthorizedTableIds(
     }
     return unauthorized;
 }
+
+/**
+ * ROUND-3 FIX (Codex review): map external_id → restaurant_id for VERIFIED
+ * rows only. Unverified rows must NOT be mapped: handing the client a
+ * restaurant_id makes it drop external_id, which skips the save-time verified
+ * upsert and strands the row unverified forever. Unmapped candidates flow the
+ * external_id save path, whose ON CONFLICT (external_id) upsert promotes the
+ * same row to verified with full Places metadata.
+ */
+export function mapVerifiedRestaurantIds(
+    rows: Array<{ id: string; external_id: string | null; verification?: string | null }>,
+): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const row of rows) {
+        if (row.external_id && row.verification === 'verified') {
+            map.set(row.external_id, row.id);
+        }
+    }
+    return map;
+}

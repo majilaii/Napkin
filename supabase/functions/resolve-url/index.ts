@@ -580,7 +580,7 @@ async function callPlacesSearch(
 // ── Exported decision helpers (TICKET-063 fix-pass-1, testable) ──────────────
 // Implementations live in _helpers.ts (no serve() call) so test files can
 // import them without triggering the HTTP server.
-import { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds } from './_helpers.ts';
+import { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds, mapVerifiedRestaurantIds } from './_helpers.ts';
 export { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds };
 
 // ── Places Details by place_id (FIX #5: never text-search for place_id candidates) ──
@@ -1688,13 +1688,16 @@ async function handleUrlResolve(
         .filter(Boolean) as string[];
 
     const { data: restaurantRows } = allPlaceIds.length > 0
-        ? await supabase.from('restaurants').select('id, external_id').in('external_id', allPlaceIds)
+        ? await supabase.from('restaurants').select('id, external_id, verification').in('external_id', allPlaceIds)
         : { data: [] };
 
-    const placeIdToRestaurantId = new Map<string, string>();
-    for (const row of (restaurantRows ?? [])) {
-        if (row.external_id) placeIdToRestaurantId.set(row.external_id, row.id);
-    }
+    // ROUND-3 FIX: map ONLY verified rows. Mapping an unverified (stale ghost)
+    // row here hands the client a restaurant_id, the client then nulls
+    // external_id, and the save path skips the verified upsert — the repair
+    // never happens. Unverified rows stay unmapped so the candidate flows the
+    // external_id path and save-time upsert promotes the SAME row (ON CONFLICT
+    // external_id) to verified with full metadata.
+    const placeIdToRestaurantId = mapVerifiedRestaurantIds(restaurantRows ?? []);
 
     const knownRestaurantIds = [...placeIdToRestaurantId.values()];
     const wishlistedSet = new Set<string>();
