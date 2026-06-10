@@ -27,8 +27,10 @@ export interface PopulatedFlags {
  * collapse the strip in that case rather than drawing an underline under a "—" cell.
  */
 export function pickDefaultTier(flags: PopulatedFlags): SignalTier {
-    if (flags.napkin) return 'napkin';
+    // Personal-first doctrine: a returning reader's own number leads; the
+    // napkin aggregate is the cold-reader default (when 'you' is empty).
     if (flags.you) return 'you';
+    if (flags.napkin) return 'napkin';
     if (flags.table) return 'your_table';
     return 'napkin'; // all empty — strip should collapse; underline suppressed in SigCell
 }
