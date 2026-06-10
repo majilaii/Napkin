@@ -21,12 +21,12 @@ const TABLE_AND_GOOGLE: PopulatedFlags = { you: false, table: true, napkin: fals
 // ── pickDefaultTier ──────────────────────────────────────────────────────────
 
 describe('pickDefaultTier', () => {
-    test('napkin wins when all three interactive tiers are populated', () => {
-        expect(pickDefaultTier(ALL)).toBe<SignalTier>('napkin');
+    test('you wins when all three interactive tiers are populated (personal-first)', () => {
+        expect(pickDefaultTier(ALL)).toBe<SignalTier>('you');
     });
 
-    test('napkin wins when napkin + you are populated (napkin > you)', () => {
-        expect(pickDefaultTier(YOU_AND_NAPKIN)).toBe<SignalTier>('napkin');
+    test('you wins when napkin + you are populated (you > napkin, personal-first)', () => {
+        expect(pickDefaultTier(YOU_AND_NAPKIN)).toBe<SignalTier>('you');
     });
 
     test('napkin wins when only napkin is populated', () => {

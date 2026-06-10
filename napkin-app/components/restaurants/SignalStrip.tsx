@@ -53,7 +53,7 @@ export function SignalStrip({
     const palette = Colors[scheme ?? 'light'] as Palette;
 
     if (collapsed) {
-        // Collapse: only render cells that have data + a quiet "no napkin reads yet" note.
+        // Collapse: only render cells that have data + a quiet "— no napkin reads yet" note.
         // Doctrine: omitting empty siblings ≠ merging tiers; four-cell strip renders when ≥2 populated.
         const visibleCells: Array<{ key: string; data: SignalCellData; tier: SignalTier | null; inert: boolean }> = [];
         if (you.hasData) visibleCells.push({ key: 'you', data: you, tier: 'you', inert: false });
