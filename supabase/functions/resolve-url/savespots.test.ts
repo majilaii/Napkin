@@ -210,3 +210,22 @@ Deno.test('place_id hydration: "ghost_pending" is not a real place_id', () => {
     assertEquals(isRealPlaceId('ChIJN1t_tDeuEmsRUsoyG83frY4'), true);
     assertEquals(isRealPlaceId(null), false);
 });
+
+// ── ROUND-3 FIX: verified-only restaurant_id mapping ─────────────────────────
+import { mapVerifiedRestaurantIds } from './_helpers.ts';
+
+Deno.test('mapVerifiedRestaurantIds: maps verified rows only', () => {
+    const map = mapVerifiedRestaurantIds([
+        { id: 'r1', external_id: 'place_a', verification: 'verified' },
+        { id: 'r2', external_id: 'place_b', verification: 'unverified' },
+        { id: 'r3', external_id: null, verification: 'verified' },
+    ]);
+    if (map.get('place_a') !== 'r1') throw new Error('verified row must map');
+    if (map.has('place_b')) throw new Error('unverified row must NOT map — it would skip the save-time verified upsert repair');
+    if (map.size !== 1) throw new Error(`expected 1 entry, got ${map.size}`);
+});
+
+Deno.test('mapVerifiedRestaurantIds: missing verification field treated as unmapped', () => {
+    const map = mapVerifiedRestaurantIds([{ id: 'r4', external_id: 'place_c' }]);
+    if (map.size !== 0) throw new Error('rows without verification must not map');
+});
