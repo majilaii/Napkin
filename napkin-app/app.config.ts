@@ -8,6 +8,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // via its custom Info.plist.
     name: 'dining-journal-app',
     slug: 'dining-journal-app',
+    owner: 'majilaii',
     version: '1.0.0',
     orientation: 'portrait',
     icon: './assets/images/icon.png',
@@ -91,5 +92,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     experiments: {
         typedRoutes: true,
         reactCompiler: true,
+    },
+    extra: {
+        eas: {
+            projectId: '21d56495-18b4-46c9-9a81-673649cc1dca',
+        },
     },
 });
