@@ -558,7 +558,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.xs,
     },
     ghostNote: {
-        marginTop: 4,
+        marginTop: Spacing.xs,
         textAlign: 'center',
         opacity: 0.7,
     },

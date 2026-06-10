@@ -66,6 +66,7 @@ import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
+import { useToast } from '@/providers/ToastProvider';
 import { CandidatePickerPanel, buildInitialTicked, keyFor, isResolved } from './CandidatePickerPanel';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -179,6 +180,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
 
     // TICKET-063b: table chosen via the "share to a table" secondary affordance.
     const [chosenTable, setChosenTable] = useState<{ id: string; name: string } | null>(null);
+    const toast = useToast();
     // Stable table_client_nonce per (candidateKey, tableId) — reused across retries.
     // Key format: `${keyFor(c)}:${table_id}`.
     const tableNonceMapRef = useRef<Map<string, string>>(new Map());
@@ -447,6 +449,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                 onSuccess: (result) => {
                     // Track saved candidates so retry skips them.
                     const newFailed = new Set<string>();
+                    let membershipLost = false;
                     for (const r of result.results ?? []) {
                         // Find the candidate whose nonce matches.
                         const matchedSpot = spots.find((s) => s.client_nonce === r.client_nonce);
@@ -457,7 +460,16 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                             savedCandidateIdsRef.current.add(key);
                         } else if (r.status === 'failed') {
                             newFailed.add(key);
+                            if ((r as any).code === 'NOT_A_MEMBER') membershipLost = true;
                         }
+                    }
+
+                    // Stale table (membership changed mid-flow): drop the share so
+                    // retry self-heals to wishlist-only instead of looping the same
+                    // unauthorized table share.
+                    if (membershipLost) {
+                        setChosenTable(null);
+                        toast.show('not at that table anymore · sharing removed');
                     }
 
                     if (newFailed.size > 0) {
