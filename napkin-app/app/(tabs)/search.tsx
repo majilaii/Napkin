@@ -24,6 +24,7 @@ import {
     TextInput,
     Platform,
     KeyboardAvoidingView,
+    ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -266,7 +267,7 @@ export default function SearchScreen() {
                     { paddingTop: insets.top, backgroundColor: palette.background },
                 ]}
             >
-                <Text style={[Type.titleLarge, styles.screenTitle, { color: palette.text }]}>
+                <Text style={[styles.screenTitle, { color: palette.text }]}>
                     Search
                 </Text>
                 <SearchModeTabs mode={mode} onModeChange={setMode} />
@@ -288,18 +289,30 @@ export default function SearchScreen() {
             ) : (
                 /* Places content (unchanged) */
                 !hasQuery ? (
-                    // Empty state
-                    <View style={styles.emptyContainer}>
-                        {recentQueries.length === 0 && (
-                            <Text style={[Type.body, styles.emptyHint, { color: palette.textMuted }]}>
-                                Start typing to find any restaurant
-                            </Text>
+                    // Empty state — canvas E·SEARCH
+                    <ScrollView
+                        style={styles.emptyContainer}
+                        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+                        keyboardShouldPersistTaps="handled"
+                    >
+                        {recentQueries.length > 0 && (
+                            <RecentSearchesList
+                                queries={recentQueries}
+                                onSelect={handleRecentSelect}
+                            />
                         )}
-                        <RecentSearchesList
-                            queries={recentQueries}
-                            onSelect={handleRecentSelect}
-                        />
-                    </View>
+                        {recentQueries.length === 0 && (
+                            <View style={[styles.emptySlab, { backgroundColor: palette.surfaceJournalLow, marginHorizontal: Spacing.lg }]}>
+                                <Text style={[styles.emptyKicker, { color: palette.primary }]}>Tonight</Text>
+                                <Text style={[styles.emptyHeadline, { color: palette.text }]}>
+                                    {'Find tonight\'s place.'}
+                                </Text>
+                                <Text style={[styles.emptyMurmur, { color: palette.textMuted }]}>
+                                    {'— your places will rise to the top, once you have some.'}
+                                </Text>
+                            </View>
+                        )}
+                    </ScrollView>
                 ) : isLoading && !hasResults ? (
                     // Loading state
                     <View style={styles.centeredState}>
@@ -373,18 +386,39 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.xs,
     },
     screenTitle: {
-        paddingHorizontal: Spacing.md,
+        paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.sm,
         paddingBottom: 0,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 26,
+        lineHeight: 30,
     },
     emptyContainer: {
         flex: 1,
         paddingTop: Spacing.md,
     },
-    emptyHint: {
-        textAlign: 'center',
-        paddingHorizontal: Spacing.xl,
-        marginTop: Spacing.xl,
+    emptySlab: {
+        borderRadius: 24,
+        padding: 30,
+        gap: 12,
+        alignItems: 'flex-start',
+        marginTop: Spacing.md,
+    },
+    emptyKicker: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10,
+        letterSpacing: 1.8,
+        textTransform: 'uppercase',
+    },
+    emptyHeadline: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 23,
+        lineHeight: 30,
+    },
+    emptyMurmur: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15,
+        lineHeight: 22,
     },
     centeredState: {
         flex: 1,

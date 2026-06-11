@@ -18,4 +18,8 @@ export const FRIEND_TEST = {
     hideCritics: false,
     /** Hide Looking-back anniversary tick + seed-from-solo entry points (EmptyChairInvitation, TableSwitcherSheet gather CTA). */
     hideEmergenceArc: true,
+    /** TICKET-069: Curtain all Rounds entry points for the skinny-five v1.
+     *  Gates JSX only — hooks stay compiled. Routes remain for deep-link safety.
+     *  Flip false to restore round UX. */
+    hideRounds: true,
 } as const;

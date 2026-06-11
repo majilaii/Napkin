@@ -45,7 +45,6 @@ import {
 } from '@/hooks/tables/useTableActivity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
-import { SoloShareCard } from '@/components/feed/SoloShareCard';
 import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
 import { useRouter } from 'expo-router';
 import {
@@ -69,8 +68,25 @@ import { useTableTopFour } from '@/hooks/tables/useTableTopFour';
 import { SharedSaveCard } from '@/components/feed/SharedSaveCard';
 import { ShareDigestCard } from '@/components/feed/ShareDigestCard';
 import { RestaurantFloatCard } from '@/components/feed/RestaurantFloatCard';
+// TICKET-069: canvas-faithful table entry card
+import { TableEntryCard } from '@/components/journal';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Format a date string as a relative time label for card timestamps. */
+function formatRelTime(dateStr: string): string {
+    const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+    if (diff < 3600) return `${Math.max(1, Math.floor(diff / 60))}m`;
+    if (diff < 86_400) return `${Math.floor(diff / 3600)}h`;
+    if (diff < 7 * 86_400) return `${Math.floor(diff / 86_400)}d`;
+    return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+}
+
+/** Format visited_at as "neighborhood · weekday" for tick meta line. */
+function fmtTickMeta(city: string | null | undefined, visitedAt: string): string {
+    const day = new Date(visitedAt).toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+    return [city, day].filter(Boolean).join(' · ');
+}
 
 function getDateLabel(dateStr: string): string {
     const d = new Date(dateStr);
@@ -344,7 +360,7 @@ export default function TablesScreen() {
 
             {/* Start a round pill — visible on Activity tab for social tables with ≥2 members
                 and no active Round in progress. Mutually exclusive with ActiveGatherBanner. */}
-            {showStartRoundPill && activeTable && (
+            {!FRIEND_TEST.hideRounds && showStartRoundPill && activeTable && (
                 <StartRoundPill
                     palette={palette}
                     onPress={handleStartRound}
@@ -492,39 +508,49 @@ export default function TablesScreen() {
                             onEditTopFour={FRIEND_TEST.hideTopFours ? undefined : () => handleOpenEditTopFour()}
                         />
                     ) : isEmpty ? (
-                        /* Empty table after filtering */
-                        <View
-                            style={{
-                                padding: Spacing.xl,
-                                alignItems: 'center',
-                                marginTop: Spacing.xxl,
-                            }}
-                        >
-                            <Text
-                                style={[
-                                    Type.headlineMedium,
-                                    { color: palette.text, textAlign: 'center' },
-                                ]}
+                        /* Empty table — canvas E·TABLE slab */
+                        <View style={{ paddingHorizontal: Spacing.lg, paddingTop: Spacing.md }}>
+                            <View
+                                style={{
+                                    backgroundColor: palette.surfaceJournalLow,
+                                    borderRadius: 24,
+                                    padding: 30,
+                                    gap: 12,
+                                    alignItems: 'flex-start',
+                                }}
                             >
-                                Nothing here yet
-                            </Text>
-                            <Text
-                                style={[
-                                    Type.body,
-                                    {
-                                        color: palette.textSecondary,
-                                        textAlign: 'center',
-                                        marginTop: Spacing.sm,
-                                    },
-                                ]}
-                            >
-                                Log a meal or start a Table Night to get the conversation going.
-                            </Text>
+                                <Text style={{ fontFamily: 'Manrope_700Bold', fontSize: 10, letterSpacing: 1.8, textTransform: 'uppercase', color: palette.primary }}>
+                                    The table
+                                </Text>
+                                <Text style={{ fontFamily: 'Newsreader_400Regular', fontSize: 23, lineHeight: 30, color: palette.text }}>
+                                    A private table for those you trust.
+                                </Text>
+                                <Text style={{ fontFamily: 'Newsreader_400Regular_Italic', fontSize: 15, lineHeight: 22, color: palette.textMuted }}>
+                                    {'— quiet so far. what you log lands here.'}
+                                </Text>
+                                <Pressable
+                                    onPress={() => router.push('/search')}
+                                    style={({ pressed }) => ({
+                                        borderWidth: 1.5,
+                                        borderColor: 'rgba(160,63,40,0.35)',
+                                        borderRadius: 9999,
+                                        paddingVertical: 10,
+                                        paddingHorizontal: 20,
+                                        marginTop: 4,
+                                        opacity: pressed ? 0.7 : 1,
+                                    })}
+                                >
+                                    <Text style={{ fontFamily: 'Manrope_600SemiBold', fontSize: 13, color: palette.primary }}>
+                                        Find a place
+                                    </Text>
+                                </Pressable>
+                            </View>
                         </View>
                     ) : (
                         <View style={{ paddingTop: Spacing.sm }}>
-                            {/* Active Gather banner — voting on where to eat next */}
-                            {activeRounds.length > 0 &&
+                            {/* Active Gather banner — voting on where to eat next.
+                                Hidden during friend-test (TICKET-069). */}
+                            {!FRIEND_TEST.hideRounds && activeRounds.length > 0 &&
                                 activeRounds.slice(0, 1).map((gatherItem) => {
                                     const totalMembers = members?.length ?? 0;
                                     const votedCount =
@@ -654,6 +680,8 @@ export default function TablesScreen() {
                                           <View style={styles.feedList}>
                                               {section.items.map((item) => {
                                                   if (item.type === 'table_night') {
+                                                      // TICKET-069: round cards hidden during friend-test.
+                                                      if (FRIEND_TEST.hideRounds) return null;
                                                       const tn = item as TableNightActivity;
                                                       const participantCount =
                                                           tn.participants?.length ?? 0;
@@ -812,14 +840,41 @@ export default function TablesScreen() {
                                                           />
                                                       );
                                                   }
+                                                  // SoloShareActivity — canvas EntryCard with author attribution
                                                   const solo = item as SoloShareActivity;
+                                                  const companions = (solo.companions ?? [])
+                                                      .map((c) => c.display_name)
+                                                      .filter(Boolean);
+                                                  const dishMeta = [
+                                                      solo.dish_description,
+                                                      companions.length > 0
+                                                          ? companions.length === 1
+                                                              ? `with ${companions[0]}`
+                                                              : `with ${companions[0]} & ${companions.length - 1} more`
+                                                          : null,
+                                                  ]
+                                                      .filter(Boolean)
+                                                      .join(' · ') || null;
                                                   return (
-                                                      <SoloShareCard
+                                                      <TableEntryCard
                                                           key={`solo-${item.id}`}
-                                                          item={solo}
-                                                          palette={palette}
-                                                          tableId={activeTable?.id}
-                                                          lastSeenAt={lastSeenAt ?? null}
+                                                          authorName={solo.profiles?.display_name ?? null}
+                                                          verb="tried"
+                                                          restaurantName={solo.restaurants?.name ?? 'Unknown'}
+                                                          relativeTime={formatRelTime(solo.sort_date ?? solo.created_at)}
+                                                          rating={solo.rating}
+                                                          metaLine={fmtTickMeta(solo.restaurants?.city, solo.visited_at ?? solo.created_at)}
+                                                          photoUrl={solo.photo_url}
+                                                          note={solo.content}
+                                                          dishMeta={dishMeta}
+                                                          reactionCount={solo.reaction_count}
+                                                          commentCount={solo.comment_count}
+                                                          onPress={() => {
+                                                              router.push({
+                                                                  pathname: '/entry-detail',
+                                                                  params: { id: solo.id },
+                                                              });
+                                                          }}
                                                       />
                                                   );
                                               })}
