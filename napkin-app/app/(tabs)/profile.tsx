@@ -70,7 +70,8 @@ export default function ProfileTab() {
         );
     }, [entries]);
 
-    const mealCount = sortedEntries.length;
+    // Server-side total, not the 50-capped diary page (review finding).
+    const mealCount = profileData?.stats?.total_logs ?? sortedEntries.length;
     const estMonth = useMemo(() => getEstMonth(sortedEntries), [sortedEntries]);
 
     const displayName =
