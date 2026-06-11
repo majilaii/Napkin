@@ -427,10 +427,13 @@ export default function RestaurantScreen() {
             pathname: '/log-meal',
             params: {
                 restaurant: JSON.stringify(logSheetRestaurant),
+                // The page's own route id — log-meal invalidates THIS page's
+                // cache on save (restaurant.id is undefined for ghost first-logs).
+                ...(id ? { pageId: String(id) } : {}),
                 ...(tableId ? { initialTableId: tableId } : {}),
             },
         });
-    }, [router, logSheetRestaurant, tableId]);
+    }, [router, logSheetRestaurant, tableId, id]);
 
     // ── Render ────────────────────────────────────────────────────────────
     return (

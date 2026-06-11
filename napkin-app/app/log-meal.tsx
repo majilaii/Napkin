@@ -257,9 +257,10 @@ export default function LogMealScreen() {
     const qc = useQueryClient();
 
     // ── Parse route params ─────────────────────────────────────────────
-    const { restaurant: restaurantParam, initialTableId } = useLocalSearchParams<{
+    const { restaurant: restaurantParam, initialTableId, pageId } = useLocalSearchParams<{
         restaurant: string;
         initialTableId?: string;
+        pageId?: string;
     }>();
 
     const restaurant: LogSheetRestaurant = React.useMemo(() => {
@@ -471,12 +472,14 @@ export default function LogMealScreen() {
                 ...payload,
             } as any,
             {
-                onSuccess: (result) => {
-                    // Invalidate the restaurant page cache so history refreshes on return
-                    if (restaurant.id) {
+                onSuccess: () => {
+                    // Invalidate the originating page's cache (pageId covers
+                    // ghost first-logs where restaurant.id is undefined).
+                    const invalidateId = pageId ?? restaurant.id;
+                    if (invalidateId) {
                         qc.invalidateQueries({
                             queryKey: queryKeys.restaurants.page(
-                                restaurant.id,
+                                invalidateId,
                                 initialTableId ?? undefined,
                             ),
                         });
