@@ -12,6 +12,7 @@
 import {
     buildCreateInput,
     buildShareMessage,
+    createErrorToast,
     sheetTitle,
     primaryCtaLabel,
 } from '../handoffSheetUtils';
@@ -71,5 +72,27 @@ describe('sheet copy', () => {
         expect(primaryCtaLabel('Tokyo trip')).toBe('share this list');
         expect(primaryCtaLabel(undefined)).toBe('share my napkin');
         expect(primaryCtaLabel(null)).toBe('share my napkin');
+    });
+});
+
+describe('createErrorToast (fix-pass: empty-share murmur)', () => {
+    const EMPTY_COPY = '— nothing confirmed to share yet. spots need a real match first.';
+
+    it('EMPTY_WISHLIST gets the specific journal-voice murmur', () => {
+        expect(createErrorToast('EMPTY_WISHLIST')).toBe(EMPTY_COPY);
+    });
+
+    it('EMPTY_LIST gets the same murmur', () => {
+        expect(createErrorToast('EMPTY_LIST')).toBe(EMPTY_COPY);
+    });
+
+    it('other codes fall back to the generic failure toast', () => {
+        expect(createErrorToast('LIST_NOT_FOUND')).toBe('could not create share link');
+        expect(createErrorToast('NETWORK')).toBe('could not create share link');
+    });
+
+    it('missing code falls back to the generic failure toast', () => {
+        expect(createErrorToast(undefined)).toBe('could not create share link');
+        expect(createErrorToast(null)).toBe('could not create share link');
     });
 });

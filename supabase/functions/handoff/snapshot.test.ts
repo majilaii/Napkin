@@ -22,6 +22,7 @@ import {
     buildSnapshotInput,
     buildRenderContext,
     buildResolveCandidates,
+    listShareOrder,
     type JoinedSpotRow,
 } from './snapshot.ts';
 
@@ -155,6 +156,51 @@ Deno.test('buildSnapshotInput: feeds buildSnapshot — list_name frozen, verifie
     assertEquals(snap.spots.length, 2);
     assertStrictEquals(snap.spots[0].rating, null);
     assertEquals(snap.spots[1].rating, 3.9);
+});
+
+// ── List-share spot order (TICKET-074 fix-pass, Codex medium) ─────────────────
+//
+// The DB query orders rows via listShareOrder; the pure pipeline
+// (buildSnapshotInput → buildSnapshot) MUST preserve that row order so the
+// frozen snapshot renders spots exactly as the list renders them.
+
+Deno.test('listShareOrder: ranked lists order by position ASC (mirrors lists get)', () => {
+    assertEquals(listShareOrder(true), { column: 'position', ascending: true });
+});
+
+Deno.test('listShareOrder: unranked lists order by created_at DESC (mirrors lists get)', () => {
+    assertEquals(listShareOrder(false), { column: 'created_at', ascending: false });
+});
+
+/** Rows as the DB returns them for a RANKED list (position ASC: 1024, 2048, 3072). */
+const RANKED_ORDERED_ROWS: JoinedSpotRow[] = [
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000021', restaurant: { name: 'First by rank', city: 'Tokyo', cuisine: 'Sushi', verification: 'verified' } },
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000022', restaurant: { name: 'Ghost mid-rank', city: null, cuisine: null, verification: 'unverified' } },
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000023', restaurant: { name: 'Second by rank', city: 'Tokyo', cuisine: 'Ramen', verification: 'verified' } },
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000024', restaurant: { name: 'Third by rank', city: 'Kyoto', cuisine: 'Kaiseki', verification: 'verified' } },
+];
+
+Deno.test('snapshot spot order: ranked fixture — rank order preserved end-to-end, unverified dropped without reshuffling', () => {
+    const snap = buildSnapshot('Jacky', buildSnapshotInput(RANKED_ORDERED_ROWS, new Map()), 'Tokyo trip');
+    assertEquals(
+        snap.spots.map((s) => s.name),
+        ['First by rank', 'Second by rank', 'Third by rank'],
+    );
+});
+
+/** Rows as the DB returns them for an UNRANKED list (created_at DESC: newest pin first). */
+const UNRANKED_ORDERED_ROWS: JoinedSpotRow[] = [
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000031', restaurant: { name: 'Newest pin', city: 'London', cuisine: 'Persian', verification: 'verified' } },
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000032', restaurant: { name: 'Middle pin', city: 'Paris', cuisine: 'French', verification: 'verified' } },
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000033', restaurant: { name: 'Oldest pin', city: 'New York', cuisine: 'Japanese', verification: 'verified' } },
+];
+
+Deno.test('snapshot spot order: unranked fixture — reverse-chron order preserved end-to-end', () => {
+    const snap = buildSnapshot('Jacky', buildSnapshotInput(UNRANKED_ORDERED_ROWS, new Map()), 'date spots');
+    assertEquals(
+        snap.spots.map((s) => s.name),
+        ['Newest pin', 'Middle pin', 'Oldest pin'],
+    );
 });
 
 // ── buildRenderContext ────────────────────────────────────────────────────────

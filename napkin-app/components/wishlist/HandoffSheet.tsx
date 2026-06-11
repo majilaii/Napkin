@@ -37,6 +37,7 @@ import { useToast } from '@/providers/ToastProvider';
 import {
     buildCreateInput,
     buildShareMessage,
+    createErrorToast,
     sheetTitle,
     primaryCtaLabel,
 } from './handoffSheetUtils';
@@ -73,8 +74,12 @@ export function HandoffSheet({ visible, onDismiss, pinnedCount, listId, listName
                 // Dismiss the sheet; the native Share sheet takes over
                 onDismiss();
             },
-            onError: () => {
-                showToast('could not create share link');
+            onError: (err) => {
+                // callEdgeFn errors carry the structured envelope on .cause
+                // ({ code, message, ... }) — branch on EMPTY_WISHLIST/EMPTY_LIST
+                // for the specific "nothing confirmed" murmur (fix-pass).
+                const code = (err as Error & { cause?: { code?: string } }).cause?.code;
+                showToast(createErrorToast(code));
             },
         });
     };

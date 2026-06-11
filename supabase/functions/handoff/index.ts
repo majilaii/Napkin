@@ -32,6 +32,7 @@ import {
     buildSnapshot,
     buildSnapshotInput,
     buildResolveCandidates,
+    listShareOrder,
     type JoinedSpotRow,
     type WishlistShareSnapshot,
 } from './snapshot.ts';
@@ -102,7 +103,7 @@ serve(async (req) => {
                 // Uniform 404 for "not yours" and "does not exist" — no existence oracle.
                 const { data: list, error: listErr } = await supabase
                     .from('lists')
-                    .select('id, title')
+                    .select('id, title, ranked')
                     .eq('id', listId)
                     .eq('owner_id', user.id)
                     .maybeSingle();
@@ -115,6 +116,10 @@ serve(async (req) => {
 
                 // List entries joined to restaurants — same verified-only filter as
                 // the wishlist path (ARCH-REVIEW-2 #2).
+                // Fix-pass (Codex): snapshot spots in the list's rendered order —
+                // position ASC when ranked, created_at DESC when not (mirrors the
+                // lists fn `get` action exactly; see listShareOrder).
+                const order = listShareOrder((list as any).ranked === true);
                 const { data: listRows, error: entriesErr } = await supabase
                     .from('list_entries')
                     .select(`
@@ -128,7 +133,8 @@ serve(async (req) => {
                         )
                     `)
                     .eq('list_id', listId)
-                    .eq('restaurant.verification', 'verified');
+                    .eq('restaurant.verification', 'verified')
+                    .order(order.column, { ascending: order.ascending });
 
                 if (entriesErr) throw entriesErr;
                 joinedRows = (listRows ?? []) as unknown as JoinedSpotRow[];

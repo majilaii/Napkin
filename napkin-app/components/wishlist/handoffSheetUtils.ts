@@ -37,6 +37,22 @@ export function sheetTitle(listName?: string | null): string {
     return listName || 'your napkin';
 }
 
+/**
+ * Toast copy when handoff?action=create fails (fix-pass).
+ *
+ * EMPTY_WISHLIST / EMPTY_LIST mean every pinned spot is still unverified —
+ * the snapshot freezes verified spots only, so there is nothing to share yet.
+ * Specific journal-voice murmur instead of the generic failure toast.
+ * (The affordances gate on verified counts now, but the wishlist hero stays
+ * gated on pinned count — accepted pre-existing — so this path is reachable.)
+ */
+export function createErrorToast(code?: string | null): string {
+    if (code === 'EMPTY_WISHLIST' || code === 'EMPTY_LIST') {
+        return '— nothing confirmed to share yet. spots need a real match first.';
+    }
+    return 'could not create share link';
+}
+
 /** Primary CTA label: "share this list" for lists, "share my napkin" for the wishlist. */
 export function primaryCtaLabel(listName?: string | null): string {
     return listName ? 'share this list' : 'share my napkin';

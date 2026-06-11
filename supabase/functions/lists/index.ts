@@ -278,6 +278,24 @@ serve(async (req) => {
                 .order('updated_at', { ascending: false });
             if (listsErr) throw listsErr;
 
+            // TICKET-074 fix-pass (Codex): verified entry counts for ALL lists in
+            // ONE query (no per-list N+1). Share eligibility gates on this — the
+            // handoff snapshot freezes verified spots only, so a list whose every
+            // entry is unverified must not offer share (it would 400 EMPTY_LIST).
+            const listIds = (lists ?? []).map((l: ListRow) => l.id);
+            const verifiedCounts = new Map<string, number>();
+            if (listIds.length > 0) {
+                const { data: verifiedRows, error: verifiedErr } = await supabase
+                    .from('list_entries')
+                    .select('list_id, restaurant:restaurants!inner(verification)')
+                    .in('list_id', listIds)
+                    .eq('restaurant.verification', 'verified');
+                if (verifiedErr) throw verifiedErr;
+                for (const row of (verifiedRows ?? []) as Array<{ list_id: string }>) {
+                    verifiedCounts.set(row.list_id, (verifiedCounts.get(row.list_id) ?? 0) + 1);
+                }
+            }
+
             // For each list, fetch entry_count and cover_photo_url (first entry's restaurant.photo_url)
             const enriched = await Promise.all(
                 (lists ?? []).map(async (list: ListRow) => {
@@ -303,6 +321,7 @@ serve(async (req) => {
                     return {
                         ...list,
                         entry_count: count ?? 0,
+                        verified_count: verifiedCounts.get(list.id) ?? 0,
                         cover_photo_url: coverPhotoUrl,
                     };
                 }),
@@ -351,7 +370,8 @@ serve(async (req) => {
                         cuisine,
                         google_rating,
                         price_level,
-                        external_id
+                        external_id,
+                        verification
                     )
                 `)
                 .eq('list_id', list_id)

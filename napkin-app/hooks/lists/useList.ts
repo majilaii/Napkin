@@ -18,6 +18,12 @@ export interface ListEntryRestaurant {
     google_rating: number | null;
     price_level: number | null;
     external_id: string | null;
+    /**
+     * TICKET-074 fix-pass: share eligibility counts verified entries only
+     * (the handoff snapshot is verified-only). Optional for responses from a
+     * pre-074-fix server; treat absent as not verified.
+     */
+    verification?: 'verified' | 'unverified';
 }
 
 export interface ListEntry {
