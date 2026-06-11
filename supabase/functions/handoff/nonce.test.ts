@@ -77,27 +77,32 @@ Deno.test('deriveClientNonce: distinct from deriveImportNonce for same token', a
 });
 
 // ── Golden vector (shared with jest suite in napkin-app/lib/handoffNonce.ts) ──
-// These values are derived once and locked. If they change, the Deno and
-// client implementations have diverged and pinning will break (idempotency
-// relies on both sides deriving the same client_nonce).
+// These literals are the canonical cross-runtime constants.
+// If EITHER test fails, the server and client nonce derivations have diverged
+// and per-spot idempotency is broken — update BOTH suites together.
+//
+// Derived from:
+//   HANDOFF_NAMESPACE = '5c8d4f2a-1b3e-5a7c-9d0f-2e4b6c8a0d1f'
+//   TOKEN             = 'ABCdefGHIjklMNOpqrSTUv'
+//   RID               = 'aabbccdd-1111-4111-8111-000000000001'
+//   importNonce  = UUIDv5(NAMESPACE, TOKEN)
+//   clientNonce  = UUIDv5(NAMESPACE, `${TOKEN}:${RID}`)
+const GOLDEN_IMPORT_NONCE = 'b9c66a05-6132-5288-8757-6020d0c687f1';
+const GOLDEN_CLIENT_NONCE = '4fde7b73-7ca3-549e-ba42-f964ebf54f63';
 
-Deno.test('deriveImportNonce: golden vector', async () => {
+Deno.test('deriveImportNonce: golden vector matches hardcoded cross-runtime literal', async () => {
     const result = await deriveImportNonce('ABCdefGHIjklMNOpqrSTUv');
-    // If this fails, the server and client nonce derivations have diverged.
-    // Update the client mirror AND the jest golden vector test together.
-    assertMatch(result, UUID_RE);
-    // Store the golden value for cross-runtime comparison
-    const GOLDEN_IMPORT_NONCE = result;
-    assertEquals(typeof GOLDEN_IMPORT_NONCE, 'string');
-    assertEquals(GOLDEN_IMPORT_NONCE.length, 36);
+    // Divergence here means the Deno and client implementations differ —
+    // update napkin-app/lib/__tests__/handoffNonce.test.ts simultaneously.
+    assertEquals(result, GOLDEN_IMPORT_NONCE);
 });
 
-Deno.test('deriveClientNonce: golden vector', async () => {
+Deno.test('deriveClientNonce: golden vector matches hardcoded cross-runtime literal', async () => {
     const result = await deriveClientNonce(
         'ABCdefGHIjklMNOpqrSTUv',
         'aabbccdd-1111-4111-8111-000000000001',
     );
-    assertMatch(result, UUID_RE);
-    // Log for cross-suite comparison (CI will print this in test output)
-    console.log('[golden] client_nonce:', result);
+    // Divergence here means the Deno and client implementations differ —
+    // update napkin-app/lib/__tests__/handoffNonce.test.ts simultaneously.
+    assertEquals(result, GOLDEN_CLIENT_NONCE);
 });

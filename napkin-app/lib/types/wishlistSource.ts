@@ -15,6 +15,9 @@ export type {
     WishlistSourceTikTok,
     WishlistSourceGoogleMaps,
     WishlistSourceWeb,
+    WishlistSourceScreenshot,
+    WishlistSourceVision,
+    WishlistSourceHandoff,
 } from '../../../supabase/functions/_shared/wishlistSource';
 
 export { validateWishlistSource } from '../../../supabase/functions/_shared/wishlistSource';

@@ -1319,6 +1319,41 @@ async function handleSaveSpots(
         unauthorizedTableIds = filterUnauthorizedTableIds(tableIdsToCheck, memberRows ?? []);
     }
 
+    // ── TICKET-072 Codex #2: TOCTOU re-check — re-read revoked_at immediately ──
+    // before the write loop (the first check above ran before the membership /
+    // upsert prep which can take ~100 ms; a revoke landing in that window would
+    // not be caught). This re-read closes most of that window.
+    //
+    // Accepted residual: a revoke arriving WITHIN the loop (between individual
+    // fn_save_import_spot calls) lets already-in-flight spots complete. This is
+    // acceptable per the "copies-keep-living" doctrine — a recipient pinning
+    // public restaurant names they already viewed at resolve time is near-zero harm.
+    // Do NOT thread token state into fn_save_import_spot (too heavy for the harm
+    // profile — ARCH-REVIEW-2 #2 rationale).
+    if (handoffToken) {
+        const { data: recheck, error: recheckErr } = await supabase
+            .from('wishlist_shares')
+            .select('revoked_at')
+            .eq('token', handoffToken)
+            .maybeSingle();
+        if (recheckErr) throw recheckErr;
+        if (!recheck || (recheck as any).revoked_at !== null) {
+            const revokedResults = capped.map((spot) => ({
+                candidate_id: spot.candidate_id,
+                client_nonce: spot.client_nonce,
+                status: 'failed' as const,
+                error: 'share revoked or not found',
+                code: 'SHARE_REVOKED',
+            }));
+            return jsonResponse({
+                data: {
+                    results: revokedResults,
+                    summary: { saved: 0, already_pinned: 0, failed: revokedResults.length },
+                },
+            });
+        }
+    }
+
     const results: Array<{
         candidate_id: string;
         client_nonce: string;
