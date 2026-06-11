@@ -47,9 +47,11 @@ ALTER TABLE public.wishlist_shares
 -- To verify: `SELECT * FROM pg_policies WHERE tablename = 'wishlist_shares';`
 -- must return zero rows after this migration.
 
-REVOKE INSERT, UPDATE, DELETE, SELECT
-    ON public.wishlist_shares
-    FROM anon, authenticated;
+-- REVOKE ALL (not an enumerated list): default privileges in this repo grant
+-- ALL ON TABLES to anon/authenticated, which includes TRUNCATE/REFERENCES/
+-- TRIGGER beyond the DML verbs. Only ALL (incl. PUBLIC) makes the table
+-- strictly service-role-only at the privilege level. (Codex review, T-072.)
+REVOKE ALL ON TABLE public.wishlist_shares FROM anon, authenticated, PUBLIC;
 
 ALTER TABLE public.wishlist_shares ENABLE ROW LEVEL SECURITY;
 
@@ -91,7 +93,7 @@ ALTER TABLE public.wishlist_items
                 OR (
                     source->>'type' = 'handoff'
                     AND jsonb_typeof(source->'sharer_name') = 'string'
-                    AND source->>'sharer_name' <> ''
+                    AND btrim(source->>'sharer_name') <> ''  -- non-blank, not just non-empty (renders on public page)
                     AND (source - 'type' - 'sharer_name') = '{}'::jsonb
                 )
             )
