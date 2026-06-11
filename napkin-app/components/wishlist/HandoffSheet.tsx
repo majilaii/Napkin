@@ -1,17 +1,20 @@
 /**
- * HandoffSheet — share + revoke bottom sheet for the personal wishlist (TICKET-072).
+ * HandoffSheet — share + revoke bottom sheet for the personal wishlist (TICKET-072)
+ * and, with listId/listName set, for a single list (TICKET-074).
  *
  * Anatomy:
- *   Header: "your napkin" + ×
- *   "share my napkin" → create mutation → native Share.share on success
+ *   Header: "your napkin" (or the list name) + ×
+ *   "share my napkin" / "share this list" → create mutation → native Share.share
  *   "stop sharing" → confirm alert (journal voice) → revoke_all → toast + dismiss
  *
  * Design decisions:
  * - "while sharing show nothing fancy (the sheet IS the feedback)": the native iOS
  *   Share sheet is the UI feedback for the create flow; no custom confirmation step.
  * - Revoke uses a native Alert (no custom modal) to confirm intent; matches the
- *   "quiet, no settings screen" doctrine.
+ *   "quiet, no settings screen" doctrine. revoke_all is global (wishlist + every
+ *   list link) — the only revoke primitive in v1.
  * - Both mutations are fire-and-forget (no optimistic cache, no invalidation).
+ * - Copy lives in handoffSheetUtils (pure, unit-tested real exports).
  */
 import React from 'react';
 import {
@@ -31,14 +34,24 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useCreateHandoff } from '@/hooks/wishlist/useCreateHandoff';
 import { useRevokeHandoffs } from '@/hooks/wishlist/useRevokeHandoffs';
 import { useToast } from '@/providers/ToastProvider';
+import {
+    buildCreateInput,
+    buildShareMessage,
+    sheetTitle,
+    primaryCtaLabel,
+} from './handoffSheetUtils';
 
 interface HandoffSheetProps {
     visible: boolean;
     onDismiss: () => void;
     pinnedCount: number;
+    /** TICKET-074: when set, the sheet shares THIS list instead of the wishlist. */
+    listId?: string;
+    /** Frozen into the share message + sheet copy; required alongside listId. */
+    listName?: string;
 }
 
-export function HandoffSheet({ visible, onDismiss, pinnedCount }: HandoffSheetProps) {
+export function HandoffSheet({ visible, onDismiss, pinnedCount, listId, listName }: HandoffSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
@@ -48,10 +61,14 @@ export function HandoffSheet({ visible, onDismiss, pinnedCount }: HandoffSheetPr
     const { mutate: revoke, isPending: isRevoking } = useRevokeHandoffs();
 
     const handleShare = () => {
-        create(undefined, {
+        create(buildCreateInput(listId), {
             onSuccess: (result) => {
                 Share.share({
-                    message: `my napkin — ${pinnedCount} spot${pinnedCount !== 1 ? 's' : ''}, folded for you.\n${result.share_url}`,
+                    message: buildShareMessage({
+                        listName,
+                        count: pinnedCount,
+                        shareUrl: result.share_url,
+                    }),
                 });
                 // Dismiss the sheet; the native Share sheet takes over
                 onDismiss();
@@ -105,10 +122,10 @@ export function HandoffSheet({ visible, onDismiss, pinnedCount }: HandoffSheetPr
                     },
                 ]}
             >
-                {/* Header */}
+                {/* Header — list name (brand-voice italic serif) or "your napkin" */}
                 <View style={[styles.header, { borderBottomColor: palette.dividerSoft }]}>
-                    <Text style={[styles.headerTitle, { color: palette.text }]}>
-                        your napkin
+                    <Text style={[styles.headerTitle, { color: palette.text }]} numberOfLines={1}>
+                        {sheetTitle(listName)}
                     </Text>
                     <Pressable onPress={onDismiss} hitSlop={12} accessibilityLabel="close">
                         <Ionicons name="close" size={20} color={palette.textMuted} />
@@ -129,13 +146,13 @@ export function HandoffSheet({ visible, onDismiss, pinnedCount }: HandoffSheetPr
                             styles.primaryBtn,
                             { backgroundColor: palette.primary, opacity: pressed || isBusy ? 0.8 : 1 },
                         ]}
-                        accessibilityLabel="share my napkin"
+                        accessibilityLabel={primaryCtaLabel(listName)}
                     >
                         {isCreating ? (
                             <ActivityIndicator color="#fffdf8" size="small" />
                         ) : (
                             <Text style={[styles.primaryBtnLabel, { color: '#fffdf8' }]}>
-                                share my napkin
+                                {primaryCtaLabel(listName)}
                             </Text>
                         )}
                     </Pressable>
@@ -179,6 +196,8 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 20,
         lineHeight: 24,
+        flexShrink: 1,
+        marginRight: Spacing.md,
     },
     body: {
         paddingHorizontal: 22,

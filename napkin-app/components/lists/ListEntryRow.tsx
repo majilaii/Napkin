@@ -2,6 +2,8 @@
  * ListEntryRow — a single restaurant entry inside a list detail screen.
  *
  * Shows: rank number (ranked lists), restaurant name + city/cuisine line,
+ * quiet `pin to wishlist` affordance (or `pinned` tag when already on the
+ * wishlist — TICKET-074: a spot can live in both; lists never feed Tables),
  * per-entry note (if any), drag handle (owner + ranked + not reordering).
  * Tapping navigates to the standard restaurant page.
  */
@@ -17,6 +19,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/providers/AuthProvider';
+import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import type { ListEntry } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
@@ -30,6 +34,8 @@ interface Props {
     onPress: () => void;
     onRemove: () => void;
     onNoteChange: (note: string | null) => void;
+    /** TICKET-074: add this entry's restaurant to the caller's wishlist. */
+    onPinToWishlist?: () => void;
     /** Drag handle props injected by DraggableFlatList (if present) */
     drag?: () => void;
 }
@@ -43,10 +49,16 @@ export function ListEntryRow({
     onPress,
     onRemove,
     onNoteChange,
+    onPinToWishlist,
     drag,
 }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
+    const { user } = useAuth();
+
+    // TICKET-074: viewer-scoped (any signed-in viewer can pin a list item to
+    // THEIR wishlist — the Google-Maps "recipient saves individual places" moment).
+    const wishlisted = useIsWishlisted(entry.restaurant_id, user?.id);
 
     const [editingNote, setEditingNote] = useState(false);
     const [noteText, setNoteText] = useState(entry.note ?? '');
@@ -97,6 +109,19 @@ export function ListEntryRow({
                     <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
                         {metaLine}
                     </Text>
+                ) : null}
+
+                {/* Quiet wishlist affordance (TICKET-074) */}
+                {wishlisted ? (
+                    <Text style={[styles.pinTag, { color: palette.textMuted }]}>
+                        pinned
+                    </Text>
+                ) : onPinToWishlist ? (
+                    <Pressable onPress={onPinToWishlist} hitSlop={8}>
+                        <Text style={[styles.pinAffordance, { color: palette.primary }]}>
+                            pin to wishlist
+                        </Text>
+                    </Pressable>
                 ) : null}
 
                 {/* Note area */}
@@ -190,6 +215,20 @@ const styles = StyleSheet.create({
         marginTop: 4,
         paddingVertical: 2,
         borderBottomWidth: 1,
+    },
+    pinAffordance: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11,
+        letterSpacing: 1.0,
+        textTransform: 'lowercase',
+        marginTop: 6,
+    },
+    pinTag: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        letterSpacing: 1.0,
+        textTransform: 'lowercase',
+        marginTop: 6,
     },
     actions: {
         flexDirection: 'row',

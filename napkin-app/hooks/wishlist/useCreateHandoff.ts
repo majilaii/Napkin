@@ -1,15 +1,24 @@
 /**
- * useCreateHandoff — mint a wishlist share link (TICKET-072).
+ * useCreateHandoff — mint a wishlist or per-list share link (TICKET-072 / -074).
  *
  * Calls handoff?action=create (authed, POST).
+ * Input: optional { list_id } — when present the server snapshots THAT list
+ * (caller-owned, lists.owner_id) instead of the wishlist, freezing list_name
+ * into the snapshot.
  * Returns { token, share_url } on success.
- * Empty wishlist → 400 EMPTY_WISHLIST (affordance should already be hidden).
+ * Empty wishlist/list → 400 EMPTY_WISHLIST / EMPTY_LIST (affordance should
+ * already be hidden).
  *
  * No optimistic cache: there is no manage-links UI in v1.
  * No blanket invalidation: the wishlist itself is not changed by creating a share.
  */
 import { useMutation } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
+
+export interface CreateHandoffInput {
+    /** TICKET-074: share a specific list instead of the wishlist. */
+    list_id?: string;
+}
 
 export interface CreateHandoffResult {
     token: string;
@@ -18,10 +27,10 @@ export interface CreateHandoffResult {
 
 export function useCreateHandoff() {
     return useMutation({
-        mutationFn: async (): Promise<CreateHandoffResult> => {
+        mutationFn: async (input?: CreateHandoffInput): Promise<CreateHandoffResult> => {
             return callEdgeFn<CreateHandoffResult>('handoff', {
                 action: 'create',
-                body: {},
+                body: input?.list_id ? { list_id: input.list_id } : {},
             });
         },
     });

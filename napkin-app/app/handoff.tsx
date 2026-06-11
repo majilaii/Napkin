@@ -295,7 +295,9 @@ export default function HandoffScreen() {
     }
 
     const sharerName = resolveData.sharer_name ?? 'someone';
-    const kickerText = `${sharerName.toUpperCase()}'S NAPKIN`;
+    // TICKET-074: per-list shares carry a frozen list_name → "{SHARER}'S {LIST}".
+    const shareLabel = resolveData.list_name ?? 'napkin';
+    const kickerText = `${sharerName.toUpperCase()}'S ${shareLabel.toUpperCase()}`;
     const titleText = `${candidates.length} spot${candidates.length !== 1 ? 's' : ''}`;
 
     return (

@@ -1,12 +1,15 @@
 /**
- * /wishlist — personal wishlist (TICKET-069 phase 2 canvas restyle).
+ * /wishlist — personal wishlist + lists area (TICKET-069 canvas restyle, TICKET-074).
  *
  * Canvas anatomy:
- *   Header: italic serif 26 "Wishlist" + terracotta "import" button (+ back ‹ when pushed)
+ *   Header: italic serif 26 "Wishlist" + quiet "share · import" affordances
+ *           (+ back ‹ when pushed). Share promoted from the kicker murmur (074).
  *   Imports section: PendingSaveCard rows (pending / needs_confirm captures)
  *   "PINNED · {N}" kicker + flat rows: 52px r12 initial-tile · italic serif 17 name
  *                                        muted 12 meta (city · cuisine) · pin icon
  *   E· empty slab when no pinned items
+ *   "YOUR LISTS" kicker + rows (italic serif 17 name · muted "{N} spots" · quiet
+ *   terracotta `share`) + "+ new list" murmur → /list/new (TICKET-074)
  *
  * TICKET-060 corrections: pending/needs_confirm → CorrectModal flow preserved.
  */
@@ -31,8 +34,10 @@ import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { ImportLinkSheet, PendingSaveCard, HandoffSheet } from '@/components/wishlist';
+import { buildListsSectionRows } from '@/components/wishlist/listsSectionUtils';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
+import { useMyLists } from '@/hooks/lists/useMyLists';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import type { WishlistSourceHandoff } from '@/lib/types/wishlistSource';
 
@@ -243,9 +248,22 @@ export default function WishlistScreen() {
 
     const [importSheetVisible, setImportSheetVisible] = useState(false);
     const [correctItem, setCorrectItem] = useState<PersonalWishlistItem | null>(null);
-    const [handoffSheetVisible, setHandoffSheetVisible] = useState(false);
+    // One HandoffSheet target for both modes: wishlist share (no listId) or a
+    // per-list share (listId + frozen listName) — TICKET-074.
+    const [shareTarget, setShareTarget] = useState<{
+        listId?: string;
+        listName?: string;
+        count: number;
+    } | null>(null);
 
     const { data: wishlistPages, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMyWishlist(user?.id);
+
+    // YOUR LISTS — TICKET-074 lists area. FRIEND_TEST.hideLists is deliberately
+    // bypassed at THIS call-site only — the flag still curtains the old standalone
+    // entry points (settings row, ProfileScreenBody palate section). Same pattern
+    // as TopFour on the profile tab.
+    const { data: myLists } = useMyLists(user?.id);
+    const listRows = useMemo(() => buildListsSectionRows(myLists), [myLists]);
 
     const allItems = useMemo(
         () => (wishlistPages?.pages ?? []).flatMap((p) => p.data ?? []),
@@ -314,16 +332,35 @@ export default function WishlistScreen() {
                     Wishlist
                 </Text>
 
-                <Pressable
-                    onPress={() => setImportSheetVisible(true)}
-                    hitSlop={12}
-                    style={styles.headerImport}
-                    accessibilityLabel="import from link"
-                >
-                    <Text style={[styles.importLabel, { color: palette.primary }]}>
-                        import
-                    </Text>
-                </Pressable>
+                {/* TICKET-074: share promoted from the kicker murmur to the header,
+                    beside import — "share · import", both quiet text affordances. */}
+                <View style={styles.headerActions}>
+                    {pinnedRows.length > 0 ? (
+                        <>
+                            <Pressable
+                                onPress={() => setShareTarget({ count: pinnedRows.length })}
+                                hitSlop={12}
+                                accessibilityLabel="share wishlist"
+                            >
+                                <Text style={[styles.headerActionLabel, { color: palette.primary }]}>
+                                    share
+                                </Text>
+                            </Pressable>
+                            <Text style={[styles.headerActionDot, { color: palette.textMuted }]}>
+                                ·
+                            </Text>
+                        </>
+                    ) : null}
+                    <Pressable
+                        onPress={() => setImportSheetVisible(true)}
+                        hitSlop={12}
+                        accessibilityLabel="import from link"
+                    >
+                        <Text style={[styles.headerActionLabel, { color: palette.primary }]}>
+                            import
+                        </Text>
+                    </Pressable>
+                </View>
             </View>
 
             <ScrollView
@@ -358,21 +395,10 @@ export default function WishlistScreen() {
                     </View>
                 ) : pinnedRows.length > 0 ? (
                     <View style={styles.pinnedSection}>
-                        {/* "PINNED · N" kicker + share affordance */}
-                        <View style={styles.kickerRow}>
-                            <Text style={[styles.kicker, { color: palette.textSecondary }]}>
-                                {`PINNED · ${pinnedRows.length}`}
-                            </Text>
-                            <Pressable
-                                onPress={() => setHandoffSheetVisible(true)}
-                                hitSlop={10}
-                                accessibilityLabel="share wishlist"
-                            >
-                                <Text style={[styles.shareLabel, { color: palette.primary }]}>
-                                    share
-                                </Text>
-                            </Pressable>
-                        </View>
+                        {/* "PINNED · N" kicker — share moved to the header (TICKET-074) */}
+                        <Text style={[styles.kicker, { color: palette.textSecondary }]}>
+                            {`PINNED · ${pinnedRows.length}`}
+                        </Text>
 
                         {pinnedRows.map((item) => (
                             <PinnedRow
@@ -412,6 +438,69 @@ export default function WishlistScreen() {
                         </Text>
                     </View>
                 ) : null}
+
+                {/* YOUR LISTS — TICKET-074 lists area. Curated, themed lists: stories
+                    you share. They never feed Table overlap (wishlist-only doctrine). */}
+                <View style={styles.listsSection}>
+                    <Text style={[styles.kicker, { color: palette.textSecondary }]}>
+                        YOUR LISTS
+                    </Text>
+
+                    {listRows.map((row) => (
+                        <View key={row.id} style={styles.listRow}>
+                            <Pressable
+                                onPress={() => router.push(`/list/${row.id}` as any)}
+                                style={({ pressed }) => [
+                                    styles.listRowBody,
+                                    { opacity: pressed ? 0.75 : 1 },
+                                ]}
+                                accessibilityLabel={`Open list ${row.name}`}
+                            >
+                                <Text
+                                    style={[styles.listName, { color: palette.text }]}
+                                    numberOfLines={1}
+                                >
+                                    {row.name}
+                                </Text>
+                                <Text style={[styles.listMeta, { color: palette.textMuted }]}>
+                                    {row.metaLabel}
+                                </Text>
+                            </Pressable>
+                            {row.canShare ? (
+                                <Pressable
+                                    onPress={() =>
+                                        setShareTarget({
+                                            listId: row.id,
+                                            listName: row.name,
+                                            count: row.spotCount,
+                                        })
+                                    }
+                                    hitSlop={10}
+                                    accessibilityLabel={`share ${row.name}`}
+                                >
+                                    <Text style={[styles.headerActionLabel, { color: palette.primary }]}>
+                                        share
+                                    </Text>
+                                </Pressable>
+                            ) : null}
+                        </View>
+                    ))}
+
+                    {/* + new list murmur → existing create-list flow */}
+                    <Pressable
+                        onPress={() => router.push('/list/new' as any)}
+                        hitSlop={8}
+                        style={({ pressed }) => [
+                            styles.newListRow,
+                            { opacity: pressed ? 0.65 : 1 },
+                        ]}
+                        accessibilityLabel="new list"
+                    >
+                        <Text style={[styles.newListLabel, { color: palette.textMuted }]}>
+                            + new list
+                        </Text>
+                    </Pressable>
+                </View>
             </ScrollView>
 
             <ImportLinkSheet
@@ -420,9 +509,11 @@ export default function WishlistScreen() {
             />
 
             <HandoffSheet
-                visible={handoffSheetVisible}
-                onDismiss={() => setHandoffSheetVisible(false)}
-                pinnedCount={pinnedRows.length}
+                visible={shareTarget !== null}
+                onDismiss={() => setShareTarget(null)}
+                pinnedCount={shareTarget?.count ?? 0}
+                listId={shareTarget?.listId}
+                listName={shareTarget?.listName}
             />
 
             {user ? (
@@ -459,15 +550,20 @@ const styles = StyleSheet.create({
         flex: 1,
         textAlign: 'center',
     },
-    headerImport: {
-        width: 60,
-        alignItems: 'flex-end',
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
     },
-    importLabel: {
+    headerActionLabel: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 11,
         letterSpacing: 1.0,
         textTransform: 'lowercase',
+    },
+    headerActionDot: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
     },
     // Scroll
     scrollContent: {
@@ -488,23 +584,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: 22,
         paddingTop: Spacing.sm,
     },
-    kickerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 10,
-    },
     kicker: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 9,
         letterSpacing: 1.4,
         textTransform: 'uppercase',
-    },
-    shareLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        letterSpacing: 1.0,
-        textTransform: 'lowercase',
+        marginBottom: 10,
     },
     // Pinned row
     pinnedRow: {
@@ -547,6 +632,41 @@ const styles = StyleSheet.create({
     loadMoreLabel: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 13,
+    },
+    // YOUR LISTS section (TICKET-074)
+    listsSection: {
+        paddingHorizontal: 22,
+        paddingTop: Spacing.xl,
+    },
+    listRow: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 12,
+        paddingVertical: 12,
+    },
+    listRowBody: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 8,
+    },
+    listName: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 17,
+        lineHeight: 20,
+        flexShrink: 1,
+    },
+    listMeta: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+    },
+    newListRow: {
+        paddingVertical: 12,
+    },
+    newListLabel: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15,
+        lineHeight: 20,
     },
     // Empty slab
     emptySlab: {
