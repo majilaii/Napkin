@@ -21,6 +21,8 @@ import { escapeText, escapeAttr, safeHref } from '../_shared/htmlEscape.ts';
 
 export interface RenderContext {
     sharer_name: string;
+    /** TICKET-074: frozen list title for per-list shares. null/absent → "napkin". */
+    list_name?: string | null;
     created_at: string;
     spots: Array<{
         name: string;
@@ -50,6 +52,15 @@ export function renderPage(
     // All user-supplied strings through the correct escaper
     const nameText = escapeText(ctx.sharer_name);
     const nameAttr = escapeAttr(ctx.sharer_name);
+
+    // TICKET-074 title swap: "{sharer}'s {list_name}" for per-list shares,
+    // "{sharer}'s napkin" otherwise. Same escaping rules as sharer_name —
+    // list titles are user-supplied.
+    const rawLabel = typeof ctx.list_name === 'string' && ctx.list_name.trim() !== ''
+        ? ctx.list_name
+        : 'napkin';
+    const labelText = escapeText(rawLabel);
+    const labelAttr = escapeAttr(rawLabel);
 
     // OG description: first 3 spot names — use RAW names here, then escape ONCE
     // at attribute interpolation below (via escapeAttr).  Calling escapeText first
@@ -97,11 +108,11 @@ export function renderPage(
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="referrer" content="no-referrer">
-    <title>${nameAttr}'s napkin</title>
-    <meta property="og:title" content="${nameAttr}'s napkin &middot; ${N} ${spotLabel}">
+    <title>${nameAttr}'s ${labelAttr}</title>
+    <meta property="og:title" content="${nameAttr}'s ${labelAttr} &middot; ${N} ${spotLabel}">
     <meta property="og:description" content="${escapeAttr(ogDesc)}">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="${nameAttr}'s napkin &middot; ${N} ${spotLabel}">
+    <meta name="twitter:title" content="${nameAttr}'s ${labelAttr} &middot; ${N} ${spotLabel}">
     <meta name="twitter:description" content="${escapeAttr(ogDesc)}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400;1,6..72,600&display=swap">
@@ -111,8 +122,8 @@ export function renderPage(
     </style>
 </head>
 <body>
-    <p style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#1c1c19;opacity:0.38;margin-bottom:8px;font-weight:600;">${nameText}'s napkin</p>
-    <h1 style="font-family:'Newsreader',Georgia,serif;font-style:italic;font-weight:400;font-size:30px;color:#1c1c19;margin-bottom:6px;line-height:1.15;">${nameText}'s napkin</h1>
+    <p style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#1c1c19;opacity:0.38;margin-bottom:8px;font-weight:600;">${nameText}'s ${labelText}</p>
+    <h1 style="font-family:'Newsreader',Georgia,serif;font-style:italic;font-weight:400;font-size:30px;color:#1c1c19;margin-bottom:6px;line-height:1.15;">${nameText}'s ${labelText}</h1>
     <p style="font-size:14px;color:#1c1c19;opacity:0.45;margin-bottom:28px;font-weight:400;">${N} ${spotLabel}</p>
     <div style="border-top:0.25px solid rgba(28,28,25,0.2);margin-bottom:4px;"></div>
     <ul style="padding:0;margin-bottom:36px;">

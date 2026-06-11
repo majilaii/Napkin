@@ -8,6 +8,9 @@
  *
  *   create      — read caller's verified wishlist, freeze snapshot, mint token
  *                 → { token, share_url }
+ *                 TICKET-074: optional list_id (must be caller-owned via
+ *                 lists.owner_id) snapshots THAT list's verified entries
+ *                 instead, freezing list_name into the snapshot.
  *
  *   revoke_all  — set revoked_at on all live tokens for the caller (cutoff = now())
  *                 ARCH-REVIEW-2 #12: concurrent shares created exactly at the cutoff
@@ -16,7 +19,7 @@
  *
  *   resolve     — in-app receive: lookup token, compute already_wishlisted, build
  *                 ResolveSpot[] with deterministic candidate_ids (no owner_id leaked)
- *                 → { status:'live'|'revoked', sharer_name?, spots? }
+ *                 → { status:'live'|'revoked', sharer_name?, list_name?, spots? }
  *
  * ARCH-REVIEW-2 #12: 'status' action DROPPED from v1.
  */
@@ -25,7 +28,13 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { mintShareToken } from '../_shared/handoffToken.ts';
-import { buildSnapshot, buildResolveCandidates, type WishlistShareSnapshot } from './snapshot.ts';
+import {
+    buildSnapshot,
+    buildSnapshotInput,
+    buildResolveCandidates,
+    type JoinedSpotRow,
+    type WishlistShareSnapshot,
+} from './snapshot.ts';
 import { deriveClientNonce } from './nonce.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -76,33 +85,87 @@ serve(async (req) => {
 
         // ── create ────────────────────────────────────────────────────────────
         if (action === 'create') {
-            // 1. Read caller's verified pinned wishlist items joined to restaurants
-            //    ARCH-REVIEW-2 #2: only include verified restaurants
-            const { data: wishlistRows, error: wishlistErr } = await supabase
-                .from('wishlist_items')
-                .select(`
-                    restaurant_id,
-                    restaurant:restaurants!inner (
-                        id,
-                        name,
-                        city,
-                        cuisine,
-                        verification
-                    )
-                `)
-                .eq('user_id', user.id)
-                .is('deleted_at', null)
-                .not('restaurant_id', 'is', null)
-                .eq('restaurant.verification', 'verified');
+            const { list_id: listId } = body as { list_id?: unknown };
 
-            if (wishlistErr) throw wishlistErr;
+            // 1. Read the source rows. TICKET-074: ONLY the row source branches here —
+            //    everything downstream (empty check, rating enrichment, sharer name,
+            //    snapshot build, token mint) is one shared path for both sources.
+            let joinedRows: JoinedSpotRow[];
+            let listName: string | null = null;
 
-            if (!wishlistRows || wishlistRows.length === 0) {
-                return errorResponse('EMPTY_WISHLIST', 'No verified wishlist items to share', 400);
+            if (listId !== undefined && listId !== null) {
+                if (typeof listId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(listId)) {
+                    return errorResponse('INVALID_LIST_ID', 'list_id must be a list uuid', 400);
+                }
+
+                // Ownership check: only the list owner may share it (lists.owner_id).
+                // Uniform 404 for "not yours" and "does not exist" — no existence oracle.
+                const { data: list, error: listErr } = await supabase
+                    .from('lists')
+                    .select('id, title')
+                    .eq('id', listId)
+                    .eq('owner_id', user.id)
+                    .maybeSingle();
+
+                if (listErr) throw listErr;
+                if (!list) {
+                    return errorResponse('LIST_NOT_FOUND', 'List not found', 404);
+                }
+                listName = (list as any).title as string;
+
+                // List entries joined to restaurants — same verified-only filter as
+                // the wishlist path (ARCH-REVIEW-2 #2).
+                const { data: listRows, error: entriesErr } = await supabase
+                    .from('list_entries')
+                    .select(`
+                        restaurant_id,
+                        restaurant:restaurants!inner (
+                            id,
+                            name,
+                            city,
+                            cuisine,
+                            verification
+                        )
+                    `)
+                    .eq('list_id', listId)
+                    .eq('restaurant.verification', 'verified');
+
+                if (entriesErr) throw entriesErr;
+                joinedRows = (listRows ?? []) as unknown as JoinedSpotRow[];
+
+                if (joinedRows.length === 0) {
+                    return errorResponse('EMPTY_LIST', 'No verified list spots to share', 400);
+                }
+            } else {
+                // Caller's verified pinned wishlist items joined to restaurants
+                // ARCH-REVIEW-2 #2: only include verified restaurants
+                const { data: wishlistRows, error: wishlistErr } = await supabase
+                    .from('wishlist_items')
+                    .select(`
+                        restaurant_id,
+                        restaurant:restaurants!inner (
+                            id,
+                            name,
+                            city,
+                            cuisine,
+                            verification
+                        )
+                    `)
+                    .eq('user_id', user.id)
+                    .is('deleted_at', null)
+                    .not('restaurant_id', 'is', null)
+                    .eq('restaurant.verification', 'verified');
+
+                if (wishlistErr) throw wishlistErr;
+                joinedRows = (wishlistRows ?? []) as unknown as JoinedSpotRow[];
+
+                if (joinedRows.length === 0) {
+                    return errorResponse('EMPTY_WISHLIST', 'No verified wishlist items to share', 400);
+                }
             }
 
             // 2. Fetch caller's most-recent rating per restaurant in one query
-            const restaurantIds = (wishlistRows as any[]).map((w) => w.restaurant_id as string);
+            const restaurantIds = joinedRows.map((w) => w.restaurant_id);
 
             const { data: ratingRows, error: ratingErr } = await supabase
                 .from('entries')
@@ -132,16 +195,20 @@ serve(async (req) => {
             const displayName = (profile as any)?.display_name as string ?? '';
             const sharerName = displayName.split(' ')[0]?.trim() || displayName || 'someone';
 
-            // 4. Build frozen snapshot
-            const snapshotInput = (wishlistRows as any[]).map((w) => ({
-                restaurant_id: w.restaurant_id as string,
-                name: (w.restaurant as any).name as string,
-                city: (w.restaurant as any).city as string | null ?? null,
-                cuisine: (w.restaurant as any).cuisine as string | null ?? null,
-                rating: ratingMap.get(w.restaurant_id) ?? null,
-            }));
+            // 4. Build frozen snapshot — shared enrichment (TICKET-074: do not fork
+            //    per source). listName freezes into the snapshot for list shares only.
+            const snapshotInput = buildSnapshotInput(joinedRows, ratingMap);
 
-            const snapshot = buildSnapshot(sharerName, snapshotInput);
+            if (snapshotInput.length === 0) {
+                // Defence-in-depth: verified re-check dropped everything post-SQL.
+                return errorResponse(
+                    listName !== null ? 'EMPTY_LIST' : 'EMPTY_WISHLIST',
+                    'No verified spots to share',
+                    400,
+                );
+            }
+
+            const snapshot = buildSnapshot(sharerName, snapshotInput, listName);
 
             // 5. Mint token with ≤3 retry on unique violation (ARCH-REVIEW-2 #9)
             let shareToken: string | null = null;
@@ -255,6 +322,9 @@ serve(async (req) => {
                 data: {
                     status: 'live',
                     sharer_name: snapshot.sharer_name,
+                    // TICKET-074: frozen list title for per-list shares;
+                    // null for wishlist shares and pre-074 snapshots.
+                    list_name: snapshot.list_name ?? null,
                     spots,
                 },
             });

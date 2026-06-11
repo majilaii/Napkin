@@ -133,6 +133,60 @@ Deno.test('renderPage: outbound links have rel=noopener noreferrer', () => {
     assertStringIncludes(html, 'rel="noopener noreferrer"');
 });
 
+// ── TICKET-074: list_name title swap ──────────────────────────────────────────
+
+Deno.test('renderPage: list_name swaps the page title, h1, kicker, and OG titles', () => {
+    const ctx = { ...BASE_CTX, list_name: 'Tokyo trip' };
+    const html = renderPage(ctx, VALID_TOKEN, null);
+    assertStringIncludes(html, "<title>Jacky's Tokyo trip</title>");
+    assertStringIncludes(html, "Jacky's Tokyo trip &middot; 2 spots");
+    // No "X's napkin" page-title remnant (footer brand mark "napkin" alone is fine)
+    assertEquals(html.includes("Jacky's napkin"), false);
+});
+
+Deno.test('renderPage: null list_name falls back to "{sharer}\'s napkin"', () => {
+    const ctx = { ...BASE_CTX, list_name: null };
+    const html = renderPage(ctx, VALID_TOKEN, null);
+    assertStringIncludes(html, "<title>Jacky's napkin</title>");
+});
+
+Deno.test('renderPage: absent list_name (pre-074 snapshot) falls back to napkin', () => {
+    const html = renderPage(BASE_CTX, VALID_TOKEN, null);
+    assertStringIncludes(html, "<title>Jacky's napkin</title>");
+});
+
+Deno.test('renderPage: hostile list_name escaped in body text (no script injection)', () => {
+    const ctx = { ...BASE_CTX, list_name: '<script>alert("xss")</script>' };
+    const html = renderPage(ctx, VALID_TOKEN, null);
+    assertEquals(html.includes('<script>'), false);
+    assertStringIncludes(html, '&lt;script&gt;');
+});
+
+Deno.test('renderPage: hostile list_name cannot break out of og:title attribute', () => {
+    const ctx = { ...BASE_CTX, list_name: '"onload="alert(1)' };
+    const html = renderPage(ctx, VALID_TOKEN, null);
+    // The og:title content attribute must contain the QUOTE-ESCAPED payload —
+    // a raw quote would terminate the capture group before the payload.
+    const ogTitle = html.match(/property="og:title" content="([^"]*)"/);
+    assertEquals(ogTitle !== null, true, 'og:title attribute failed to parse');
+    assertStringIncludes(ogTitle![1], '&quot;onload=&quot;alert(1)');
+    // Classic attribute-breakout shape never appears anywhere.
+    assertEquals(html.includes('" onload='), false);
+});
+
+Deno.test('renderPage: ampersand in list_name escaped once (no double-encode)', () => {
+    const ctx = { ...BASE_CTX, list_name: 'Fish & Chips crawl' };
+    const html = renderPage(ctx, VALID_TOKEN, null);
+    assertStringIncludes(html, 'Fish &amp; Chips crawl');
+    assertEquals(html.includes('&amp;amp;'), false);
+});
+
+Deno.test('renderPage: whitespace-only list_name falls back to napkin', () => {
+    const ctx = { ...BASE_CTX, list_name: '   ' };
+    const html = renderPage(ctx, VALID_TOKEN, null);
+    assertStringIncludes(html, "<title>Jacky's napkin</title>");
+});
+
 // ── Tombstone (uniform 410) ───────────────────────────────────────────────────
 
 Deno.test('renderTombstone: contains folded-away copy', () => {

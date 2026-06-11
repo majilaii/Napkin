@@ -17,7 +17,13 @@ import {
     assertEquals,
     assertStrictEquals,
 } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { buildSnapshot, buildRenderContext, buildResolveCandidates } from './snapshot.ts';
+import {
+    buildSnapshot,
+    buildSnapshotInput,
+    buildRenderContext,
+    buildResolveCandidates,
+    type JoinedSpotRow,
+} from './snapshot.ts';
 
 const FIXTURE_ROWS = [
     { restaurant_id: 'aabbccdd-0000-4000-8000-000000000001', name: 'Berenjak', city: 'London', cuisine: 'Persian', rating: 4.6 },
@@ -73,6 +79,84 @@ Deno.test('buildSnapshot: city/cuisine null-coerced', () => {
     assertStrictEquals(snap.spots[0].cuisine, null);
 });
 
+// ── buildSnapshot — list_name (TICKET-074) ────────────────────────────────────
+
+Deno.test('buildSnapshot: list_name frozen into the snapshot for list shares', () => {
+    const snap = buildSnapshot('Jacky', FIXTURE_ROWS, 'Tokyo trip');
+    assertEquals(snap.list_name, 'Tokyo trip');
+});
+
+Deno.test('buildSnapshot: list_name key OMITTED for wishlist shares (no arg)', () => {
+    const snap = buildSnapshot('Jacky', FIXTURE_ROWS) as unknown as Record<string, unknown>;
+    assertEquals('list_name' in snap, false, 'list_name must not exist on wishlist snapshots');
+});
+
+Deno.test('buildSnapshot: list_name key OMITTED when null', () => {
+    const snap = buildSnapshot('Jacky', FIXTURE_ROWS, null) as unknown as Record<string, unknown>;
+    assertEquals('list_name' in snap, false);
+});
+
+Deno.test('buildSnapshot: list_name trimmed; whitespace-only is omitted', () => {
+    const trimmed = buildSnapshot('Jacky', FIXTURE_ROWS, '  date spots  ');
+    assertEquals(trimmed.list_name, 'date spots');
+    const blank = buildSnapshot('Jacky', FIXTURE_ROWS, '   ') as unknown as Record<string, unknown>;
+    assertEquals('list_name' in blank, false);
+});
+
+Deno.test('buildSnapshot: allowed keys with list_name are exactly {sharer_name, list_name, spots}', () => {
+    const snap = buildSnapshot('Jacky', FIXTURE_ROWS, 'Tokyo trip') as unknown as Record<string, unknown>;
+    const allowedKeys = new Set(['sharer_name', 'list_name', 'spots']);
+    for (const key of Object.keys(snap)) {
+        assertEquals(allowedKeys.has(key), true, `unexpected key on list snapshot: ${key}`);
+    }
+});
+
+// ── buildSnapshotInput (TICKET-074 shared enrichment) ─────────────────────────
+
+const JOINED_ROWS: JoinedSpotRow[] = [
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000001', restaurant: { name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } },
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000002', restaurant: { name: 'Kono', city: 'New York', cuisine: 'Japanese', verification: 'verified' } },
+    { restaurant_id: 'aabbccdd-0000-4000-8000-000000000003', restaurant: { name: 'Ghosty', city: null, cuisine: null, verification: 'unverified' } },
+];
+
+Deno.test('buildSnapshotInput: drops non-verified rows (defence-in-depth)', () => {
+    const input = buildSnapshotInput(JOINED_ROWS, new Map());
+    assertEquals(input.length, 2);
+    assertEquals(input.map((r) => r.name), ['Berenjak', 'Kono']);
+});
+
+Deno.test('buildSnapshotInput: owner-rating enrichment from ratingMap; misses → null', () => {
+    const ratingMap = new Map([['aabbccdd-0000-4000-8000-000000000001', 4.6]]);
+    const input = buildSnapshotInput(JOINED_ROWS, ratingMap);
+    assertEquals(input[0].rating, 4.6);
+    assertStrictEquals(input[1].rating, null);
+});
+
+Deno.test('buildSnapshotInput: city/cuisine null-coerced when absent', () => {
+    const rows: JoinedSpotRow[] = [
+        { restaurant_id: 'aabbccdd-0000-4000-8000-000000000009', restaurant: { name: 'Bare', verification: 'verified' } },
+    ];
+    const input = buildSnapshotInput(rows, new Map());
+    assertStrictEquals(input[0].city, null);
+    assertStrictEquals(input[0].cuisine, null);
+});
+
+Deno.test('buildSnapshotInput: missing verification dropped (never trust absent fields)', () => {
+    const rows: JoinedSpotRow[] = [
+        { restaurant_id: 'aabbccdd-0000-4000-8000-000000000010', restaurant: { name: 'NoFlag' } },
+    ];
+    assertEquals(buildSnapshotInput(rows, new Map()).length, 0);
+});
+
+Deno.test('buildSnapshotInput: feeds buildSnapshot — list_name frozen, verified-only, owner-rating', () => {
+    const ratingMap = new Map([['aabbccdd-0000-4000-8000-000000000002', 3.9]]);
+    const snap = buildSnapshot('Jacky', buildSnapshotInput(JOINED_ROWS, ratingMap), 'Tokyo trip');
+    assertEquals(snap.list_name, 'Tokyo trip');
+    assertEquals(snap.spots.length, 2);
+    assertStrictEquals(snap.spots[0].rating, null);
+    assertEquals(snap.spots[1].rating, 3.9);
+});
+
 // ── buildRenderContext ────────────────────────────────────────────────────────
 
 Deno.test('buildRenderContext: strips restaurant_id from spots', () => {
@@ -86,10 +170,23 @@ Deno.test('buildRenderContext: strips restaurant_id from spots', () => {
 Deno.test('buildRenderContext: key allowlist on ctx', () => {
     const snap = buildSnapshot('Jacky', FIXTURE_ROWS);
     const ctx = buildRenderContext(snap, '2026-06-11T00:00:00Z') as unknown as Record<string, unknown>;
-    const allowed = new Set(['sharer_name', 'created_at', 'spots']);
+    // TICKET-074: list_name joined the allowlist (null for wishlist shares).
+    const allowed = new Set(['sharer_name', 'list_name', 'created_at', 'spots']);
     for (const key of Object.keys(ctx)) {
         assertEquals(allowed.has(key), true, `unexpected key on ctx: ${key}`);
     }
+});
+
+Deno.test('buildRenderContext: list_name null for wishlist + pre-074 snapshots', () => {
+    const snap = buildSnapshot('Jacky', FIXTURE_ROWS);
+    const ctx = buildRenderContext(snap, '2026-06-11T00:00:00Z');
+    assertStrictEquals(ctx.list_name, null);
+});
+
+Deno.test('buildRenderContext: list_name passes through for list shares', () => {
+    const snap = buildSnapshot('Jacky', FIXTURE_ROWS, 'Tokyo trip');
+    const ctx = buildRenderContext(snap, '2026-06-11T00:00:00Z');
+    assertEquals(ctx.list_name, 'Tokyo trip');
 });
 
 Deno.test('buildRenderContext: spot key allowlist (no uuid)', () => {

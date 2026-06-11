@@ -1,7 +1,10 @@
 /**
  * snapshot.ts — pure builders for the handoff frozen snapshot.
  *
- * buildSnapshot:          wishlist rows + ratings → frozen jsonb payload
+ * buildSnapshotInput:     joined DB rows + rating map → builder input
+ *                         (verified-only re-check + owner-rating enrichment;
+ *                         shared by the wishlist AND list_id create paths — TICKET-074)
+ * buildSnapshot:          rows (+ optional frozen list name) → frozen jsonb payload
  * buildRenderContext:     snapshot → allowlisted HTML context (strips restaurant_id)
  * buildResolveCandidates: snapshot + already-ids + nonces → resolve response spots
  *
@@ -9,8 +12,14 @@
  *
  * TICKET-072 Codex #3/#5/#6:
  *   - Snapshot is frozen at create time; later restaurant mutations do not alter it.
- *   - render context contains EXACTLY { sharer_name, created_at, spots[{name,city,cuisine,rating}] }
+ *   - render context contains EXACTLY { sharer_name, list_name, created_at,
+ *     spots[{name,city,cuisine,rating}] }
  *   - restaurant_id is stripped from the HTML render context.
+ *
+ * TICKET-074:
+ *   - Snapshot optionally carries a frozen `list_name` (per-list shares).
+ *     The key is OMITTED for wishlist shares so old snapshots and new wishlist
+ *     snapshots are byte-identical in shape.
  */
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -25,12 +34,16 @@ export interface SnapshotSpot {
 
 export interface WishlistShareSnapshot {
     sharer_name: string;
+    /** TICKET-074: frozen list title for per-list shares. Omitted for wishlist shares. */
+    list_name?: string;
     spots: SnapshotSpot[];
 }
 
 /** Allowlisted context for HTML render (Codex #6: no uuid in HTML). */
 export interface RenderContext {
     sharer_name: string;
+    /** TICKET-074: frozen list title; null → page titles fall back to "napkin". */
+    list_name: string | null;
     created_at: string;
     spots: Array<{
         name: string;
@@ -38,6 +51,17 @@ export interface RenderContext {
         cuisine: string | null;
         rating: number | null;
     }>;
+}
+
+/** Joined row shape produced by both create-path queries (wishlist_items / list_entries → restaurants!inner). */
+export interface JoinedSpotRow {
+    restaurant_id: string;
+    restaurant: {
+        name: string;
+        city?: string | null;
+        cuisine?: string | null;
+        verification?: string | null;
+    };
 }
 
 export interface ResolveSpot {
@@ -58,13 +82,48 @@ export interface ResolveSpot {
 // ── Builders ──────────────────────────────────────────────────────────────────
 
 /**
- * Build the frozen snapshot from wishlist + rating data.
+ * Map joined DB rows + the caller's rating map into buildSnapshot input.
+ *
+ * TICKET-074: this is the SHARED enrichment step for both create paths
+ * (wishlist_items and list_entries) — do not fork it per source.
+ *
+ * - Verified-only re-check (defence-in-depth: the SQL already filters
+ *   restaurant.verification='verified'; rows that slip through are dropped).
+ * - Owner-rating enrichment: ratingMap is keyed by restaurant_id and holds the
+ *   caller's most-recent rating; misses become null.
+ */
+export function buildSnapshotInput(
+    rows: JoinedSpotRow[],
+    ratingMap: Map<string, number>,
+): Array<{
+    restaurant_id: string;
+    name: string;
+    city: string | null;
+    cuisine: string | null;
+    rating: number | null;
+}> {
+    return rows
+        .filter((r) => r.restaurant?.verification === 'verified')
+        .map((r) => ({
+            restaurant_id: r.restaurant_id,
+            name: r.restaurant.name,
+            city: r.restaurant.city ?? null,
+            cuisine: r.restaurant.cuisine ?? null,
+            rating: ratingMap.get(r.restaurant_id) ?? null,
+        }));
+}
+
+/**
+ * Build the frozen snapshot from wishlist/list + rating data.
  *
  * ARCH-REVIEW-2 #2: only include verified restaurant spots.
  * The caller is responsible for filtering to verification='verified' before
- * passing rows here. This function does NOT re-check verification.
+ * passing rows here (buildSnapshotInput does this). This function does NOT
+ * re-check verification.
  *
  * sharerName: first token of display_name at share time (Codex #3/#5).
+ * listName (TICKET-074): frozen list title for per-list shares. null/empty →
+ * the key is omitted entirely (wishlist share — legacy-identical shape).
  */
 export function buildSnapshot(
     sharerName: string,
@@ -75,9 +134,12 @@ export function buildSnapshot(
         cuisine: string | null;
         rating: number | null;
     }>,
+    listName?: string | null,
 ): WishlistShareSnapshot {
+    const trimmedListName = typeof listName === 'string' ? listName.trim() : '';
     return {
         sharer_name: sharerName,
+        ...(trimmedListName !== '' ? { list_name: trimmedListName } : {}),
         spots: rows.map((r) => ({
             restaurant_id: r.restaurant_id,
             name: r.name,
@@ -91,6 +153,7 @@ export function buildSnapshot(
 /**
  * Build the allowlisted HTML render context from a snapshot row.
  * Strips restaurant_id so no UUID can reach the HTML (Codex #6).
+ * list_name passes through (null for wishlist shares and pre-074 snapshots).
  */
 export function buildRenderContext(
     snapshot: WishlistShareSnapshot,
@@ -98,6 +161,7 @@ export function buildRenderContext(
 ): RenderContext {
     return {
         sharer_name: snapshot.sharer_name,
+        list_name: snapshot.list_name ?? null,
         created_at: createdAt,
         spots: snapshot.spots.map((s) => ({
             name: s.name,

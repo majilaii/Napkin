@@ -2,19 +2,22 @@
  * ListDetailHeader — shown at the top of the list detail screen.
  *
  * Renders: title, optional description, author name/avatar row,
- * entry count + ranked/privacy badges, share button (owner + public),
- * edit button (owner only).
+ * entry count + ranked/privacy badges, quiet share · edit affordances
+ * (owner only).
+ *
+ * TICKET-074: share opens the HandoffSheet (frozen-snapshot handoff link via
+ * onShare) — replacing the old copy-napkin://-to-clipboard share, which led
+ * nowhere for non-users. Handoff shares are snapshots, so they work for
+ * private lists too (same doctrine as the private wishlist being shareable).
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import * as Clipboard from 'expo-clipboard';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useToast } from '@/providers/ToastProvider';
 import type { ListDetail, OwnerProfile } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
@@ -25,24 +28,15 @@ interface Props {
     ownerProfile: OwnerProfile;
     isOwner: boolean;
     onEdit: () => void;
+    /** TICKET-074: open the HandoffSheet for this list. Hidden when the list is empty. */
+    onShare?: () => void;
 }
 
-export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEdit }: Props) {
+export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEdit, onShare }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
-    const { show: showToast } = useToast();
     const router = useRouter();
     const { user } = useAuth();
-
-    const handleShare = async () => {
-        const url = `napkin://list/${list.id}`;
-        try {
-            await Clipboard.setStringAsync(url);
-            showToast('Link copied to clipboard');
-        } catch {
-            Alert.alert('Could not copy', 'Please try again.');
-        }
-    };
 
     return (
         <View style={styles.container}>
@@ -116,41 +110,26 @@ export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEd
                 )}
             </View>
 
-            {/* Action buttons */}
+            {/* Quiet owner affordances: share · edit (canvas idiom — TICKET-074) */}
             {isOwner && (
                 <View style={[styles.actionsRow, { marginTop: Spacing.md }]}>
-                    {list.privacy === 'public' && (
-                        <Pressable
-                            onPress={handleShare}
-                            style={({ pressed }) => [
-                                styles.actionButton,
-                                {
-                                    backgroundColor: pressed
-                                        ? palette.surfaceContainerHigh
-                                        : palette.surfaceContainerLow,
-                                },
-                            ]}
-                        >
-                            <Ionicons name="share-outline" size={16} color={palette.primary} />
-                            <Text style={[Type.titleSmall, { color: palette.primary, marginLeft: Spacing.xs }]}>
-                                Share
-                            </Text>
-                        </Pressable>
-                    )}
-                    <Pressable
-                        onPress={onEdit}
-                        style={({ pressed }) => [
-                            styles.actionButton,
-                            {
-                                backgroundColor: pressed
-                                    ? palette.surfaceContainerHigh
-                                    : palette.surfaceContainerLow,
-                            },
-                        ]}
-                    >
-                        <Ionicons name="pencil-outline" size={16} color={palette.textSecondary} />
-                        <Text style={[Type.titleSmall, { color: palette.textSecondary, marginLeft: Spacing.xs }]}>
-                            Edit
+                    {onShare ? (
+                        <>
+                            <Pressable
+                                onPress={onShare}
+                                hitSlop={10}
+                                accessibilityLabel={`share ${list.title}`}
+                            >
+                                <Text style={[styles.quietAction, { color: palette.primary }]}>
+                                    share
+                                </Text>
+                            </Pressable>
+                            <Text style={[styles.quietDot, { color: palette.textMuted }]}>·</Text>
+                        </>
+                    ) : null}
+                    <Pressable onPress={onEdit} hitSlop={10} accessibilityLabel="edit list">
+                        <Text style={[styles.quietAction, { color: palette.textMuted }]}>
+                            edit
                         </Text>
                     </Pressable>
                 </View>
@@ -192,13 +171,18 @@ const styles = StyleSheet.create({
     },
     actionsRow: {
         flexDirection: 'row',
-        gap: Spacing.sm,
-    },
-    actionButton: {
-        flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        borderRadius: Radius.md,
+        gap: 6,
+    },
+    quietAction: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11,
+        letterSpacing: 1.0,
+        textTransform: 'lowercase',
+        paddingVertical: Spacing.xs,
+    },
+    quietDot: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
     },
 });

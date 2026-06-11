@@ -2,7 +2,9 @@
  * useResolveHandoff — resolve a share token for the in-app receive screen (TICKET-072).
  *
  * Calls handoff?action=resolve with the bearer token.
- * Returns { status: 'live', sharer_name, spots } OR { status: 'revoked' }.
+ * Returns { status: 'live', sharer_name, list_name, spots } OR { status: 'revoked' }.
+ * list_name (TICKET-074): frozen list title for per-list shares; null for
+ * wishlist shares and pre-074 snapshots.
  *
  * ARCH-REVIEW-2 #1: staleTime=0 — the receive screen always re-resolves from the
  * server so a revoked token resolves to the in-app tombstone even if a stale resolve
@@ -32,6 +34,8 @@ export interface ResolveHandoffSpot {
 export interface HandoffResolveData {
     status: 'live' | 'revoked';
     sharer_name?: string;
+    /** TICKET-074: frozen list title for per-list shares; null/absent otherwise. */
+    list_name?: string | null;
     spots?: ResolveHandoffSpot[];
 }
 

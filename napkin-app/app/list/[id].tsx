@@ -29,8 +29,10 @@ import { useRemoveFromList } from '@/hooks/lists/useRemoveFromList';
 import { useAddToList } from '@/hooks/lists/useAddToList';
 import { useUpdateListEntryNote } from '@/hooks/lists/useUpdateListEntryNote';
 import { useReorderListEntry } from '@/hooks/lists/useReorderListEntry';
+import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useToast } from '@/providers/ToastProvider';
 import { ListDetailHeader, ListEntryRow } from '@/components/lists';
+import { HandoffSheet } from '@/components/wishlist';
 import type { ListEntry } from '@/hooks/lists/useList';
 
 export default function ListDetailScreen() {
@@ -47,9 +49,12 @@ export default function ListDetailScreen() {
     const addToList = useAddToList(user?.id);
     const updateNote = useUpdateListEntryNote();
     const reorderEntry = useReorderListEntry(id ?? '');
+    const wishlistAdd = useWishlistAdd(user?.id);
     const toast = useToast();
 
     const [dragDisabled, setDragDisabled] = useState(false);
+    // TICKET-074: per-list handoff share sheet
+    const [shareVisible, setShareVisible] = useState(false);
 
     const list = result?.data?.list ?? null;
     const rawEntries = result?.data?.entries ?? [];
@@ -86,6 +91,18 @@ export default function ListDetailScreen() {
             });
         },
         [updateNote],
+    );
+
+    // TICKET-074: pin a list item to the caller's wishlist (existing add path;
+    // idempotent server-side). Lists never feed Tables — only this pin does.
+    const handlePinToWishlist = useCallback(
+        (entry: ListEntry) => {
+            wishlistAdd.mutate(
+                { restaurant_id: entry.restaurant_id },
+                { onSuccess: () => toast.show('pinned to wishlist') },
+            );
+        },
+        [wishlistAdd, toast],
     );
 
     const handleDragEnd = useCallback(
@@ -127,10 +144,11 @@ export default function ListDetailScreen() {
                 }
                 onRemove={() => handleRemove(entry)}
                 onNoteChange={(note) => handleNoteChange(entry, note)}
+                onPinToWishlist={() => handlePinToWishlist(entry)}
                 drag={drag}
             />
         ),
-        [list, isOwner, dragDisabled, reorderEntry.isPending, router, handleRemove, handleNoteChange],
+        [list, isOwner, dragDisabled, reorderEntry.isPending, router, handleRemove, handleNoteChange, handlePinToWishlist],
     );
 
     return (
@@ -183,6 +201,7 @@ export default function ListDetailScreen() {
                                                 params: { id: list.id },
                                             })
                                         }
+                                        onShare={entries.length > 0 ? () => setShareVisible(true) : undefined}
                                     />
                                 }
                                 renderItem={({ item, getIndex, drag }: RenderItemParams<ListEntry>) =>
@@ -210,6 +229,7 @@ export default function ListDetailScreen() {
                                                 params: { id: list.id },
                                             })
                                         }
+                                        onShare={entries.length > 0 ? () => setShareVisible(true) : undefined}
                                     />
                                 }
                                 renderItem={({ item, index }) => renderEntry(item, index)}
@@ -220,6 +240,15 @@ export default function ListDetailScreen() {
                                 ItemSeparatorComponent={() => <View style={{ height: Spacing.xs }} />}
                             />
                         )}
+
+                        {/* TICKET-074: per-list handoff share (frozen snapshot) */}
+                        <HandoffSheet
+                            visible={shareVisible}
+                            onDismiss={() => setShareVisible(false)}
+                            pinnedCount={entries.length}
+                            listId={list.id}
+                            listName={list.title}
+                        />
                     </>
                 )}
             </View>
