@@ -278,6 +278,11 @@ function RootLayoutNav() {
             name="import"
             options={{ headerShown: false, presentation: 'card' }}
           />
+          {/* TICKET-072: wishlist handoff receive screen */}
+          <Stack.Screen
+            name="handoff"
+            options={{ headerShown: false, presentation: 'card' }}
+          />
         </Stack>
         <BottomNavBar />
       </View>

@@ -209,5 +209,10 @@ export const queryKeys = {
         isAdmin: (userId: string) => ['admin', 'isAdmin', userId] as const,
     },
 
+    // Handoff — wishlist share link resolve (TICKET-072)
+    handoff: {
+        resolve: (token: string) => ['handoff', 'resolve', token] as const,
+    },
+
 } as const;
 

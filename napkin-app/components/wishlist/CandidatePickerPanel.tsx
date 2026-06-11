@@ -88,6 +88,33 @@ export interface CandidatePickerPanelProps {
     onClearTable?: () => void;
     /** TICKET-069: dismiss button (×) for the panel header. */
     onDismiss?: () => void;
+    // ── TICKET-072: handoff receive props (all optional, default to import behavior) ──
+    /**
+     * Override the kicker text. When set, replaces the `sourceTag` display.
+     * Receive screen passes `{SHARER_NAME}'S NAPKIN` (uppercase).
+     */
+    kickerOverride?: string;
+    /**
+     * Override the panel title (italic serif 23).
+     * Receive screen passes `{N} spots`.
+     */
+    titleOverride?: string;
+    /**
+     * When true, hides the terracotta "fix" affordance on each row.
+     * Receive screen sets this — "fix" is meaningless on a frozen snapshot.
+     */
+    hideCorrect?: boolean;
+    /**
+     * When true, hides the single-ticked note input field.
+     * Receive screen sets this — notes are privacy-gated on handoffs.
+     */
+    hideNote?: boolean;
+    /**
+     * Custom murmur per row — appended after city · cuisine.
+     * Return null/empty string to show no custom murmur.
+     * Receive screen passes: `(c) => c.sharer_rating != null ? \`their ${c.sharer_rating}\` : null`
+     */
+    rowMurmur?: (candidate: ResolvedCandidate) => string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -117,6 +144,11 @@ export function CandidatePickerPanel({
     chosenTable,
     onClearTable,
     onDismiss,
+    kickerOverride,
+    titleOverride,
+    hideCorrect,
+    hideNote,
+    rowMurmur,
 }: CandidatePickerPanelProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = paletteProp ?? (Colors[scheme] as Palette);
@@ -146,10 +178,13 @@ export function CandidatePickerPanel({
     // CTA label — canvas says "PIN" uppercase pill
     const ctaLabel = 'PIN';
 
-    // Panel title — italic serif 23
-    const panelTitle = candidates.length === 1
+    // Panel title — italic serif 23. Override takes precedence for handoff receives.
+    const panelTitle = titleOverride ?? (candidates.length === 1
         ? 'one spot found'
-        : `${candidates.length} spots in this video`;
+        : `${candidates.length} spots in this video`);
+
+    // Kicker text — override takes precedence for handoff receives.
+    const kickerText = kickerOverride ?? sourceTag;
 
     const handleSave = useCallback(() => {
         if (tickedCount === 0) return;
@@ -161,9 +196,9 @@ export function CandidatePickerPanel({
             {/* Kicker + title + close row */}
             <View style={styles.header}>
                 <View style={styles.headerText}>
-                    {sourceTag ? (
+                    {kickerText ? (
                         <Text style={[styles.kicker, { color: palette.textSecondary }]}>
-                            {sourceTag.toUpperCase()}
+                            {kickerText.toUpperCase()}
                         </Text>
                     ) : null}
                     <Text style={[styles.title, { color: palette.text }]}>
@@ -202,6 +237,8 @@ export function CandidatePickerPanel({
                             onCorrect={() => onCorrectRow(c)}
                             onOpenRestaurant={onOpenRestaurant}
                             palette={palette}
+                            hideCorrect={hideCorrect}
+                            extraMurmur={rowMurmur ? rowMurmur(c) : null}
                         />
                     );
                 })}
@@ -216,8 +253,8 @@ export function CandidatePickerPanel({
                     : `${tickedCount} spots selected`}
             </Text>
 
-            {/* Single-ticked note field */}
-            {isSingleTicked && (
+            {/* Single-ticked note field — hidden when hideNote is true (e.g. handoff receive) */}
+            {isSingleTicked && !hideNote && (
                 <View style={styles.noteWrapper}>
                     <Text
                         style={[Type.caption, { color: palette.textMuted, marginBottom: Spacing.xs }]}
@@ -321,6 +358,13 @@ interface CandidateRowProps {
     onCorrect: () => void;
     onOpenRestaurant?: (restaurantId: string) => void;
     palette: Palette;
+    /** TICKET-072: when true, suppresses the terracotta "fix" affordance. */
+    hideCorrect?: boolean;
+    /**
+     * TICKET-072: extra murmur appended after city · cuisine.
+     * e.g. "their 4.5" for handoff receive rows.
+     */
+    extraMurmur?: string | null;
 }
 
 function CandidateRow({
@@ -331,18 +375,24 @@ function CandidateRow({
     onCorrect,
     onOpenRestaurant,
     palette,
+    hideCorrect,
+    extraMurmur,
 }: CandidateRowProps) {
     const r = candidate.restaurant;
     const isLow = candidate.confidence === 'low';
     const isAlreadySaved = candidate.already_wishlisted;
 
-    // City/cuisine murmur
+    // City/cuisine murmur — append extraMurmur (e.g. sharer rating) when present
     let cityPart = r.city ?? '';
     if (candidate.city_inferred && cityPart) {
         cityPart = `${cityPart} · guessed`;
     }
-    const murmur = [cityPart, r.cuisine, isLow && !isAlreadySaved ? 'uncertain' : null]
-        .filter(Boolean).join(' · ');
+    const murmur = [
+        cityPart,
+        r.cuisine,
+        isLow && !isAlreadySaved ? 'uncertain' : null,
+        extraMurmur || null,
+    ].filter(Boolean).join(' · ');
 
     return (
         <Pressable
@@ -374,8 +424,8 @@ function CandidateRow({
                                 {murmur}
                             </Text>
                         ) : null}
-                        {/* Terracotta "fix" replaces "not this?" */}
-                        {!isAlreadySaved && (
+                        {/* Terracotta "fix" replaces "not this?" — hidden for handoff rows */}
+                        {!isAlreadySaved && !hideCorrect && (
                             <Pressable
                                 onPress={onCorrect}
                                 hitSlop={8}

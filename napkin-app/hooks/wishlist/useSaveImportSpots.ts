@@ -62,6 +62,12 @@ export interface SaveImportSpotsInput {
     note?: string;
     /** Source provenance (TikTok/Maps/web) for wishlist rows. */
     source?: Record<string, string>;
+    /**
+     * TICKET-072: when present, the server re-checks revocation immediately before
+     * writing and constructs the source authoritatively from the share row (ARCH-2 #1/#4).
+     * A revoked token → all spots return SHARE_REVOKED.
+     */
+    handoff_token?: string;
     // NOTE: top-level table_id removed (TICKET-063 fix-pass-1 item 12).
     // The mutationFn never sent it to the edge function — it was a dead field
     // that keyed off an unimplemented CTA and created a latent feed-cache landmine.
@@ -115,6 +121,8 @@ export function useSaveImportSpots(userId: string | null | undefined) {
                     spots,
                     note: input.note,
                     source: input.source,
+                    // TICKET-072: pass through when present; server gates revoke + constructs source
+                    ...(input.handoff_token ? { handoff_token: input.handoff_token } : {}),
                 },
             });
         },

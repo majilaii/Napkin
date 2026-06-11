@@ -33,7 +33,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
-import * as pendingImport from '@/lib/pendingImport';
+import * as postAuthResume from '@/lib/postAuthResume';
 
 // Supabase auth auto-refresh when foregrounded. Registered once at module load.
 AppState.addEventListener('change', (state) => {
@@ -58,10 +58,10 @@ export default function AuthScreen() {
     // TICKET-055: show "sign in to save links" copy when arriving from a share.
     const [hasPendingImport, setHasPendingImport] = useState(false);
 
-    // Peek for a stashed share URL on mount to decide whether to show the
-    // wishlist-resume copy. Does not consume the stash — that happens after sign-in.
+    // Peek for any stashed resume (import or handoff) on mount to decide whether
+    // to show the wishlist-resume copy. Does not consume — that happens after sign-in.
     useEffect(() => {
-        pendingImport.peek().then((s) => setHasPendingImport(!!s)).catch(() => {});
+        postAuthResume.peek().then((r) => setHasPendingImport(!!r)).catch(() => {});
     }, []);
 
     const submit = async () => {
@@ -72,26 +72,34 @@ export default function AuthScreen() {
         setLoading(true);
         try {
             if (mode === 'sign-in') {
-                // TICKET-055: consume BEFORE signIn so the /import replace happens
-                // synchronously after sign-in resolves, beating RootLayoutNav's
-                // session-flip /feed redirect. If signIn fails, we re-stash.
-                const stashed = await pendingImport.consume();
+                // TICKET-055/TICKET-072: consume BEFORE signIn so the resume route replace
+                // happens synchronously after sign-in resolves, beating RootLayoutNav's
+                // session-flip /feed redirect. If signIn fails, we re-stash the winner.
+                // ARCH-REVIEW-2 #11: consumeWinner peeks both pendingImport + pendingHandoff;
+                // the most-recent stashedAt wins; the loser is preserved in its store.
+                const winner = await postAuthResume.consumeWinner();
                 const { error } = await supabase.auth.signInWithPassword({ email, password });
                 if (error) {
-                    // Fix 9: re-stash WITH the same import_nonce so the next sign-in attempt
-                    // resumes with the same job-level idempotency key.
-                    if (stashed) await pendingImport.stash(stashed.url, stashed.import_nonce);
+                    // Re-stash the winner so the next sign-in attempt can resume.
+                    // The loser is still in its store (untouched by consumeWinner).
+                    if (winner) await postAuthResume.restashWinner(winner);
                     Alert.alert("Couldn't sign in", error.message);
-                } else if (stashed) {
-                    // Fix 9: thread import_nonce through the redirect so ImportLinkSheet
-                    // initializes its importNonceRef from the pre-auth nonce.
+                } else if (winner?.kind === 'import') {
+                    // TICKET-055/063: thread import_nonce through the redirect.
                     router.replace({
                         pathname: '/import',
-                        params: { url: stashed.url, nonce: stashed.import_nonce },
+                        params: { url: winner.stash.url, nonce: winner.stash.import_nonce },
                     } as any);
                     return; // RootLayoutNav redirect now harmless — segments[0] === 'import'
+                } else if (winner?.kind === 'handoff') {
+                    // TICKET-072: re-resolve the token in the receive screen.
+                    router.replace({
+                        pathname: '/handoff',
+                        params: { t: winner.token },
+                    } as any);
+                    return; // RootLayoutNav redirect now harmless — segments[0] === 'handoff'
                 }
-                // No pending import — RootLayoutNav handles the /feed redirect.
+                // No pending stash — RootLayoutNav handles the /feed redirect.
             } else {
                 const { data, error } = await supabase.auth.signUp({ email, password });
                 if (error) {

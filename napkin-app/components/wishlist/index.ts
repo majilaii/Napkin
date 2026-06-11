@@ -13,3 +13,5 @@ export { DestinationPicker, type DestinationPickerProps, type DestinationSelecti
 // TICKET-063: multi-candidate import
 export { RowToggle, type RowToggleProps } from './RowToggle';
 export { CandidatePickerPanel } from './CandidatePickerPanel';
+// TICKET-072: wishlist handoff share/revoke sheet
+export { HandoffSheet } from './HandoffSheet';
