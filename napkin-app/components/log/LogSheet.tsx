@@ -7,16 +7,32 @@
  *   grabber → kicker "LOG A MEAL" + italic 23 restaurant name + quiet "close"
  *   YOUR APPRAISAL: ★×5 34px with half-star hit zones + live italic 26 numeral
  *   WHEN row: "today · thu 11 jun" + terracotta "edit" → DateChip-style picker
- *   72px add-a-photo tile → PhotoStrip when photos present
- *   THE NOTE: italic serif TextInput, placeholder "— what will you remember?", underline only
+ *   THE NOTE: italic serif TextInput, min-height 160, grows with content,
+ *             placeholder "— what will you remember?", underline only
+ *   PhotoMosaic: Apple Journal adaptive photo grid (1→hero, 2→cols, 3→hero+stack,
+ *                4→2×2, 5-6→2×2 with +N overflow tile); add-photo affordance inline
  *   + the dish / + who was there: quiet expanders
  *   SHARE TO table checklist (✓ circles) + caption — hidden for zero-table users
- *   folded "add details" (chevron + Vibe/Flavor/Service/Value sub-rating rows + murmur)
+ *   folded "add details" (chevron + Vibe/Flavor/Service/Value sub-rating rows)
  *   footer SAVE pill (gated on rating > 0)
+ *
+ * Keyboard: Pressable backdrop (flex-end) → KeyboardAvoidingView (behavior=padding
+ * on iOS) → pinned header → ScrollView (keyboardShouldPersistTaps) → pinned
+ * footer. Mirrors the ImportLinkSheet pattern — proven in this codebase.
  *
  * Submit: buildEntryPayload from lib/composer.ts + useCreateEntry hook.
  *   Contract frozen — payload tests in lib/composer.test.ts must stay green.
+ *   photo_urls order = mosaic order (slot insertion order).
  * Toast: "tried {name}" via useToast on success.
+ *
+ * TICKET-070 Phase B changes:
+ *   - MAX_PHOTOS raised to 6
+ *   - Multi-photo picker (allowsMultipleSelection, selectionLimit = remaining,
+ *     orderedSelection) — no allowsEditing / aspect (kills forced square crop)
+ *   - PhotoMosaic replaces PhotoStrip (adaptive mosaic + inline add affordance)
+ *   - PhotoViewer: tap any tile → full-screen paged modal viewer
+ *   - Note dominance: note moved before photos, minHeight 160
+ *   - Keyboard: flex-end backdrop + KAV behavior=padding (no absolute positioning)
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
@@ -27,7 +43,6 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    TouchableWithoutFeedback,
     ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
@@ -47,8 +62,9 @@ import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
 import { buildEntryPayload, toggleTableId } from '@/lib/composer';
 import type { ComposerBreakdown } from '@/lib/composer';
 import { DateChip } from '@/components/create-entry/DateChip';
-import { PhotoStrip } from '@/components/create-entry/PhotoStrip';
 import { CompanionPickerSheet } from '@/components/logging/CompanionPickerSheet';
+import { PhotoMosaic } from './PhotoMosaic';
+import { PhotoViewer } from './PhotoViewer';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -69,10 +85,11 @@ interface PhotoSlot {
     publicUrl: string | null;
     uploading: boolean;
     error: string | null;
+    /** Gen counter — bumped on remove to cancel any in-flight upload. */
     uploadGen: number;
 }
 
-const MAX_PHOTOS = 4;
+const MAX_PHOTOS = 6;
 const EMPTY_BREAKDOWN: ComposerBreakdown = { vibe: 0, flavor: 0, service: 0, value: 0 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -300,6 +317,10 @@ export function LogSheet({
     const [breakdown, setBreakdown] = useState<ComposerBreakdown>(EMPTY_BREAKDOWN);
     const [showDetails, setShowDetails] = useState(false);
 
+    // ── Photo viewer state ──────────────────────────────────────────────
+    const [viewerVisible, setViewerVisible] = useState(false);
+    const [viewerIndex, setViewerIndex] = useState(0);
+
     // ── Upload generation counter (prevents stale uploads from setting state) ─
     const uploadGenRefs = useRef(new Map<string, number>());
 
@@ -334,6 +355,8 @@ export function LogSheet({
             setPhotos([]);
             setBreakdown(EMPTY_BREAKDOWN);
             setShowDetails(false);
+            setViewerVisible(false);
+            setViewerIndex(0);
         }
     }, [visible, initialTableId]);
 
@@ -389,21 +412,35 @@ export function LogSheet({
         });
     }, [startUploadForSlot]);
 
+    /**
+     * Multi-photo picker:
+     *   - allowsMultipleSelection: true (up to `remaining` slots)
+     *   - orderedSelection: true (preserves pick order)
+     *   - NO allowsEditing / aspect — photos keep native aspect ratio;
+     *     display cropping is layout-only (cover-fit inside mosaic tiles)
+     */
     const handleAddPhoto = useCallback(async () => {
         if (!user?.id) return;
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted) {
-            Alert.alert('Permission needed', 'Allow photo access to add a photo.');
+            Alert.alert('Permission needed', 'Allow photo access to add photos.');
             return;
         }
+        const remaining = MAX_PHOTOS - photos.length;
+        if (remaining <= 0) return;
+
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
+            allowsMultipleSelection: true,
+            selectionLimit: remaining,
+            orderedSelection: true,
             quality: 1,
         });
-        if (result.canceled || !result.assets?.[0]) return;
-        addPhotoSlot(result.assets[0].uri);
-    }, [user?.id, addPhotoSlot]);
+        if (result.canceled || !result.assets?.length) return;
+        for (const asset of result.assets) {
+            addPhotoSlot(asset.uri);
+        }
+    }, [user?.id, photos.length, addPhotoSlot]);
 
     /** Remove a slot; bumps gen to cancel any in-flight upload and cleans up
      *  any already-uploaded blob. */
@@ -424,6 +461,20 @@ export function LogSheet({
         const slot = photos.find((s) => s.id === slotId);
         if (slot) startUploadForSlot(slotId, slot.localUri);
     }, [photos, startUploadForSlot]);
+
+    // ── Photo viewer ───────────────────────────────────────────────────
+    const handleTapPhoto = useCallback((index: number) => {
+        setViewerIndex(index);
+        setViewerVisible(true);
+    }, []);
+
+    const handleViewerRemove = useCallback((slotId: string) => {
+        handleRemovePhoto(slotId);
+        // Close viewer if this was the last photo
+        if (photos.length <= 1) {
+            setViewerVisible(false);
+        }
+    }, [handleRemovePhoto, photos.length]);
 
     // ── Companion toggle ───────────────────────────────────────────────
     const companionIds = new Set(companions.map((c) => c.user_id));
@@ -522,355 +573,360 @@ export function LogSheet({
 
     // ── Render ─────────────────────────────────────────────────────────
     return (
-        <Modal
-            visible={visible}
-            transparent
-            animationType="slide"
-            onRequestClose={onClose}
-        >
-            <TouchableWithoutFeedback onPress={onClose}>
-                <View style={styles.backdrop} />
-            </TouchableWithoutFeedback>
-
-            <KeyboardAvoidingView
-                style={styles.kavContainer}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        <>
+            <Modal
+                visible={visible}
+                transparent
+                animationType="slide"
+                onRequestClose={onClose}
             >
-                <View
-                    style={[
-                        styles.sheet,
-                        { backgroundColor: palette.surfaceNote, paddingBottom: insets.bottom + 8 },
-                        Shadow.ambient,
-                    ]}
-                    onStartShouldSetResponder={() => true}
+                {/*
+                 * Keyboard pattern (mirrors ImportLinkSheet):
+                 *   Pressable backdrop flex-end → KAV behavior=padding → pinned header
+                 *   → ScrollView → pinned footer.
+                 * The sheet rides above the keyboard naturally. Header never scrolls
+                 * off-screen; long notes scroll within the sheet.
+                 */}
+                <Pressable
+                    style={styles.backdrop}
+                    onPress={onClose}
                 >
-                    {/* Grabber */}
-                    <View style={styles.grabberRow}>
-                        <View style={styles.grabber} />
-                    </View>
-
-                    {/* Header: kicker + restaurant name + close */}
-                    <View style={styles.headerRow}>
-                        <View style={styles.headerLeft}>
-                            <Text style={[styles.kicker, { color: palette.textMuted }]}>
-                                LOG A MEAL
-                            </Text>
-                            <Text
-                                style={[styles.restaurantName, { color: palette.text }]}
-                                numberOfLines={1}
-                            >
-                                {restaurant.name}
-                            </Text>
-                        </View>
-                        <Pressable onPress={onClose} hitSlop={12} accessibilityLabel="close">
-                            <Text style={[styles.closeBtn, { color: palette.textMuted }]}>
-                                close
-                            </Text>
-                        </Pressable>
-                    </View>
-
-                    {/* Scrollable body */}
-                    <ScrollView
-                        style={styles.scroll}
-                        contentContainerStyle={[
-                            styles.scrollContent,
-                            { paddingBottom: Spacing.lg },
-                        ]}
-                        keyboardShouldPersistTaps="handled"
-                        showsVerticalScrollIndicator={false}
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     >
-                        {/* YOUR APPRAISAL */}
-                        <View style={styles.section}>
-                            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
-                                YOUR APPRAISAL
-                            </Text>
-                            <View style={styles.ratingRow}>
-                                <HalfStarRating value={rating} onChange={setRating} />
-                                <Text
-                                    style={[
-                                        styles.ratingNumeral,
-                                        { color: rating > 0 ? '#825516' : palette.textMuted },
-                                    ]}
-                                >
-                                    {ratingDisplay(rating)}
-                                </Text>
+                        <View
+                            style={[
+                                styles.sheet,
+                                { backgroundColor: palette.surfaceNote, paddingBottom: insets.bottom + 8 },
+                                Shadow.ambient,
+                            ]}
+                            onStartShouldSetResponder={() => true}
+                        >
+                            {/* Grabber */}
+                            <View style={styles.grabberRow}>
+                                <View style={styles.grabber} />
                             </View>
-                        </View>
 
-                        {/* WHEN */}
-                        <View style={styles.section}>
-                            <View style={styles.whenRow}>
-                                <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
-                                    WHEN
-                                </Text>
-                                <DateChip value={visitedAt} onChange={setVisitedAt} />
-                            </View>
-                            <Text style={[styles.whenDate, { color: palette.text }]}>
-                                {formatWhenLabel(visitedAt)}
-                            </Text>
-                        </View>
-
-                        {/* Photo slot */}
-                        {photos.length === 0 ? (
-                            <Pressable
-                                style={[styles.photoTile, { backgroundColor: palette.surfaceJournalHi }]}
-                                onPress={handleAddPhoto}
-                                accessibilityLabel="add a photo"
-                                accessibilityRole="button"
-                            >
-                                <Ionicons name="add-outline" size={16} color={palette.textMuted} />
-                                <Text style={[styles.photoTileLabel, { color: palette.textMuted }]}>
-                                    add a photo
-                                </Text>
-                            </Pressable>
-                        ) : (
-                            <PhotoStrip
-                                photos={photos}
-                                maxPhotos={MAX_PHOTOS}
-                                onAdd={handleAddPhoto}
-                                onRemove={handleRemovePhoto}
-                                onRetry={handleRetryPhoto}
-                            />
-                        )}
-
-                        {/* THE NOTE */}
-                        <View style={styles.section}>
-                            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
-                                THE NOTE
-                            </Text>
-                            <TextInput
-                                value={notes}
-                                onChangeText={setNotes}
-                                placeholder="— what will you remember?"
-                                placeholderTextColor={palette.textMuted}
-                                multiline
-                                style={[
-                                    styles.noteInput,
-                                    {
-                                        color: palette.text,
-                                        borderBottomColor: palette.ruleInkSoft,
-                                    },
-                                ]}
-                            />
-                        </View>
-
-                        {/* Expanders: + the dish / + who was there */}
-                        <View style={styles.expanderRow}>
-                            <Pressable
-                                onPress={() => setShowDish((v) => !v)}
-                                hitSlop={8}
-                                accessibilityLabel="add the dish"
-                            >
-                                <Text style={[styles.expander, { color: palette.textMuted }]}>
-                                    {showDish ? '— the dish' : '+ the dish'}
-                                </Text>
-                            </Pressable>
-                            <Pressable
-                                onPress={() => setCompanionPickerVisible(true)}
-                                hitSlop={8}
-                                accessibilityLabel="add who was there"
-                            >
-                                <Text style={[styles.expander, { color: palette.textMuted }]}>
-                                    {companions.length > 0 ? '— who was there' : '+ who was there'}
-                                </Text>
-                            </Pressable>
-                        </View>
-
-                        {showDish && (
-                            <TextInput
-                                value={dish}
-                                onChangeText={setDish}
-                                placeholder="the dish"
-                                placeholderTextColor={palette.textMuted}
-                                style={[
-                                    styles.dishInput,
-                                    {
-                                        color: palette.text,
-                                        borderBottomColor: palette.ruleInkSoft,
-                                    },
-                                ]}
-                            />
-                        )}
-
-                        {companions.length > 0 && (
-                            <Pressable
-                                onPress={() => setCompanionPickerVisible(true)}
-                                hitSlop={8}
-                                accessibilityLabel="edit companions"
-                            >
-                                <Text style={[styles.companionsWithLine, { color: palette.textMuted }]}>
-                                    {`with ${companions.map((c) => c.display_name).join(', ')}`}
-                                </Text>
-                            </Pressable>
-                        )}
-
-                        {/* SHARE TO — hidden when no tables */}
-                        {hasAnyTable && (
-                            <View style={styles.section}>
-                                <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
-                                    SHARE TO
-                                </Text>
-                                {tableList.map((t) => {
-                                    const checked = selectedTableIds.includes(t.id);
-                                    return (
-                                        <Pressable
-                                            key={t.id}
-                                            onPress={() =>
-                                                setSelectedTableIds((prev) =>
-                                                    toggleTableId(prev, t.id),
-                                                )
-                                            }
-                                            style={styles.tableRow}
-                                            accessibilityRole="checkbox"
-                                            accessibilityState={{ checked }}
-                                            accessibilityLabel={t.name}
-                                        >
-                                            <Text
-                                                style={[
-                                                    styles.tableName,
-                                                    { color: palette.text },
-                                                ]}
-                                                numberOfLines={1}
-                                            >
-                                                {t.name}
-                                            </Text>
-                                            <View
-                                                style={[
-                                                    styles.checkCircle,
-                                                    {
-                                                        backgroundColor: checked
-                                                            ? palette.primary
-                                                            : 'transparent',
-                                                        borderColor: checked
-                                                            ? palette.primary
-                                                            : 'rgba(160,63,40,0.35)',
-                                                    },
-                                                ]}
-                                            >
-                                                <Text
-                                                    style={[
-                                                        styles.checkMark,
-                                                        {
-                                                            color: checked
-                                                                ? '#fffdf8'
-                                                                : 'rgba(160,63,40,0.35)',
-                                                        },
-                                                    ]}
-                                                >
-                                                    ✓
-                                                </Text>
-                                            </View>
-                                        </Pressable>
-                                    );
-                                })}
-                                <Text style={[styles.shareCaption, { color: palette.textMuted }]}>
-                                    unchecked = journal only. visibility is derived, never chosen.
-                                </Text>
-                            </View>
-                        )}
-
-                        {/* Add details drawer */}
-                        <View style={styles.section}>
-                            <Pressable
-                                onPress={() => setShowDetails((v) => !v)}
-                                style={styles.detailsToggle}
-                                accessibilityLabel="add details"
-                                hitSlop={8}
-                            >
-                                <Text style={[styles.detailsToggleLabel, { color: palette.primary }]}>
-                                    {showDetails ? '▾ add details' : '▸ add details'}
-                                </Text>
-                            </Pressable>
-                            {showDetails && (
-                                <View style={styles.detailsContent}>
-                                    <SubRatingRow
-                                        label="Vibe"
-                                        value={breakdown.vibe}
-                                        onChange={(v) =>
-                                            setBreakdown((prev) => ({ ...prev, vibe: v }))
-                                        }
-                                        palette={palette}
-                                    />
-                                    <SubRatingRow
-                                        label="Flavor"
-                                        value={breakdown.flavor}
-                                        onChange={(v) =>
-                                            setBreakdown((prev) => ({ ...prev, flavor: v }))
-                                        }
-                                        palette={palette}
-                                    />
-                                    <SubRatingRow
-                                        label="Service"
-                                        value={breakdown.service}
-                                        onChange={(v) =>
-                                            setBreakdown((prev) => ({ ...prev, service: v }))
-                                        }
-                                        palette={palette}
-                                    />
-                                    <SubRatingRow
-                                        label="Value"
-                                        value={breakdown.value}
-                                        onChange={(v) =>
-                                            setBreakdown((prev) => ({ ...prev, value: v }))
-                                        }
-                                        palette={palette}
-                                    />
+                            {/* Header: kicker + restaurant name + close */}
+                            <View style={styles.headerRow}>
+                                <View style={styles.headerLeft}>
+                                    <Text style={[styles.kicker, { color: palette.textMuted }]}>
+                                        LOG A MEAL
+                                    </Text>
                                     <Text
-                                        style={[
-                                            styles.detailsMurmur,
-                                            { color: palette.textMuted },
-                                        ]}
+                                        style={[styles.restaurantName, { color: palette.text }]}
+                                        numberOfLines={1}
                                     >
-                                        — only if the meal asks. never shown on rows.
+                                        {restaurant.name}
                                     </Text>
                                 </View>
-                            )}
-                        </View>
-                    </ScrollView>
+                                <Pressable onPress={onClose} hitSlop={12} accessibilityLabel="close">
+                                    <Text style={[styles.closeBtn, { color: palette.textMuted }]}>
+                                        close
+                                    </Text>
+                                </Pressable>
+                            </View>
 
-                    {/* Footer SAVE pill */}
-                    <View
-                        style={[
-                            styles.footer,
-                            { borderTopColor: palette.ruleInkSoft },
-                        ]}
-                    >
-                        <Pressable
-                            onPress={handleSave}
-                            disabled={!canSubmit}
-                            accessibilityLabel="Save"
-                            accessibilityRole="button"
-                            style={({ pressed }) => [
-                                styles.saveBtn,
-                                {
-                                    backgroundColor: canSubmit
-                                        ? palette.primary
-                                        : palette.surfaceContainerHigh,
-                                    opacity:
-                                        pressed ? 0.85 : createEntry.isPending ? 0.65 : 1,
-                                },
-                            ]}
-                        >
-                            {createEntry.isPending ? (
-                                <ActivityIndicator color="#fffdf8" size="small" />
-                            ) : (
-                                <Text
-                                    style={[
-                                        styles.saveBtnLabel,
+                            {/* Scrollable body */}
+                            <ScrollView
+                                style={styles.scroll}
+                                contentContainerStyle={[
+                                    styles.scrollContent,
+                                    { paddingBottom: Spacing.lg },
+                                ]}
+                                keyboardShouldPersistTaps="handled"
+                                showsVerticalScrollIndicator={false}
+                            >
+                                {/* YOUR APPRAISAL */}
+                                <View style={styles.section}>
+                                    <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                                        YOUR APPRAISAL
+                                    </Text>
+                                    <View style={styles.ratingRow}>
+                                        <HalfStarRating value={rating} onChange={setRating} />
+                                        <Text
+                                            style={[
+                                                styles.ratingNumeral,
+                                                { color: rating > 0 ? '#825516' : palette.textMuted },
+                                            ]}
+                                        >
+                                            {ratingDisplay(rating)}
+                                        </Text>
+                                    </View>
+                                </View>
+
+                                {/* WHEN */}
+                                <View style={styles.section}>
+                                    <View style={styles.whenRow}>
+                                        <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                                            WHEN
+                                        </Text>
+                                        <DateChip value={visitedAt} onChange={setVisitedAt} />
+                                    </View>
+                                    <Text style={[styles.whenDate, { color: palette.text }]}>
+                                        {formatWhenLabel(visitedAt)}
+                                    </Text>
+                                </View>
+
+                                {/* THE NOTE — visual center of the sheet */}
+                                <View style={styles.section}>
+                                    <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                                        THE NOTE
+                                    </Text>
+                                    <TextInput
+                                        value={notes}
+                                        onChangeText={setNotes}
+                                        placeholder="— what will you remember?"
+                                        placeholderTextColor={palette.textMuted}
+                                        multiline
+                                        style={[
+                                            styles.noteInput,
+                                            {
+                                                color: palette.text,
+                                                borderBottomColor: palette.ruleInkSoft,
+                                            },
+                                        ]}
+                                    />
+                                </View>
+
+                                {/* PhotoMosaic — Apple Journal adaptive grid */}
+                                <PhotoMosaic
+                                    photos={photos}
+                                    maxPhotos={MAX_PHOTOS}
+                                    onAdd={handleAddPhoto}
+                                    onRemove={handleRemovePhoto}
+                                    onRetry={handleRetryPhoto}
+                                    onTapPhoto={handleTapPhoto}
+                                />
+
+                                {/* Expanders: + the dish / + who was there */}
+                                <View style={styles.expanderRow}>
+                                    <Pressable
+                                        onPress={() => setShowDish((v) => !v)}
+                                        hitSlop={8}
+                                        accessibilityLabel="add the dish"
+                                    >
+                                        <Text style={[styles.expander, { color: palette.textMuted }]}>
+                                            {showDish ? '— the dish' : '+ the dish'}
+                                        </Text>
+                                    </Pressable>
+                                    <Pressable
+                                        onPress={() => setCompanionPickerVisible(true)}
+                                        hitSlop={8}
+                                        accessibilityLabel="add who was there"
+                                    >
+                                        <Text style={[styles.expander, { color: palette.textMuted }]}>
+                                            {companions.length > 0 ? '— who was there' : '+ who was there'}
+                                        </Text>
+                                    </Pressable>
+                                </View>
+
+                                {showDish && (
+                                    <TextInput
+                                        value={dish}
+                                        onChangeText={setDish}
+                                        placeholder="the dish"
+                                        placeholderTextColor={palette.textMuted}
+                                        style={[
+                                            styles.dishInput,
+                                            {
+                                                color: palette.text,
+                                                borderBottomColor: palette.ruleInkSoft,
+                                            },
+                                        ]}
+                                    />
+                                )}
+
+                                {companions.length > 0 && (
+                                    <Pressable
+                                        onPress={() => setCompanionPickerVisible(true)}
+                                        hitSlop={8}
+                                        accessibilityLabel="edit companions"
+                                    >
+                                        <Text style={[styles.companionsWithLine, { color: palette.textMuted }]}>
+                                            {`with ${companions.map((c) => c.display_name).join(', ')}`}
+                                        </Text>
+                                    </Pressable>
+                                )}
+
+                                {/* SHARE TO — hidden when no tables */}
+                                {hasAnyTable && (
+                                    <View style={styles.section}>
+                                        <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                                            SHARE TO
+                                        </Text>
+                                        {tableList.map((t) => {
+                                            const checked = selectedTableIds.includes(t.id);
+                                            return (
+                                                <Pressable
+                                                    key={t.id}
+                                                    onPress={() =>
+                                                        setSelectedTableIds((prev) =>
+                                                            toggleTableId(prev, t.id),
+                                                        )
+                                                    }
+                                                    style={styles.tableRow}
+                                                    accessibilityRole="checkbox"
+                                                    accessibilityState={{ checked }}
+                                                    accessibilityLabel={t.name}
+                                                >
+                                                    <Text
+                                                        style={[
+                                                            styles.tableName,
+                                                            { color: palette.text },
+                                                        ]}
+                                                        numberOfLines={1}
+                                                    >
+                                                        {t.name}
+                                                    </Text>
+                                                    <View
+                                                        style={[
+                                                            styles.checkCircle,
+                                                            {
+                                                                backgroundColor: checked
+                                                                    ? palette.primary
+                                                                    : 'transparent',
+                                                                borderColor: checked
+                                                                    ? palette.primary
+                                                                    : 'rgba(160,63,40,0.35)',
+                                                            },
+                                                        ]}
+                                                    >
+                                                        <Text
+                                                            style={[
+                                                                styles.checkMark,
+                                                                {
+                                                                    color: checked
+                                                                        ? '#fffdf8'
+                                                                        : 'rgba(160,63,40,0.35)',
+                                                                },
+                                                            ]}
+                                                        >
+                                                            ✓
+                                                        </Text>
+                                                    </View>
+                                                </Pressable>
+                                            );
+                                        })}
+                                        <Text style={[styles.shareCaption, { color: palette.textMuted }]}>
+                                            unchecked = journal only. visibility is derived, never chosen.
+                                        </Text>
+                                    </View>
+                                )}
+
+                                {/* Add details drawer */}
+                                <View style={styles.section}>
+                                    <Pressable
+                                        onPress={() => setShowDetails((v) => !v)}
+                                        style={styles.detailsToggle}
+                                        accessibilityLabel="add details"
+                                        hitSlop={8}
+                                    >
+                                        <Text style={[styles.detailsToggleLabel, { color: palette.primary }]}>
+                                            {showDetails ? '▾ add details' : '▸ add details'}
+                                        </Text>
+                                    </Pressable>
+                                    {showDetails && (
+                                        <View style={styles.detailsContent}>
+                                            <SubRatingRow
+                                                label="Vibe"
+                                                value={breakdown.vibe}
+                                                onChange={(v) =>
+                                                    setBreakdown((prev) => ({ ...prev, vibe: v }))
+                                                }
+                                                palette={palette}
+                                            />
+                                            <SubRatingRow
+                                                label="Flavor"
+                                                value={breakdown.flavor}
+                                                onChange={(v) =>
+                                                    setBreakdown((prev) => ({ ...prev, flavor: v }))
+                                                }
+                                                palette={palette}
+                                            />
+                                            <SubRatingRow
+                                                label="Service"
+                                                value={breakdown.service}
+                                                onChange={(v) =>
+                                                    setBreakdown((prev) => ({ ...prev, service: v }))
+                                                }
+                                                palette={palette}
+                                            />
+                                            <SubRatingRow
+                                                label="Value"
+                                                value={breakdown.value}
+                                                onChange={(v) =>
+                                                    setBreakdown((prev) => ({ ...prev, value: v }))
+                                                }
+                                                palette={palette}
+                                            />
+                                            <Text
+                                                style={[
+                                                    styles.detailsMurmur,
+                                                    { color: palette.textMuted },
+                                                ]}
+                                            >
+                                                — only if the meal asks. never shown on rows.
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
+                            </ScrollView>
+
+                            {/* Footer SAVE pill — pinned outside ScrollView */}
+                            <View
+                                style={[
+                                    styles.footer,
+                                    { borderTopColor: palette.ruleInkSoft },
+                                ]}
+                            >
+                                <Pressable
+                                    onPress={handleSave}
+                                    disabled={!canSubmit}
+                                    accessibilityLabel="Save"
+                                    accessibilityRole="button"
+                                    style={({ pressed }) => [
+                                        styles.saveBtn,
                                         {
-                                            color: canSubmit
-                                                ? '#fffdf8'
-                                                : palette.textMuted,
+                                            backgroundColor: canSubmit
+                                                ? palette.primary
+                                                : palette.surfaceContainerHigh,
+                                            opacity:
+                                                pressed ? 0.85 : createEntry.isPending ? 0.65 : 1,
                                         },
                                     ]}
                                 >
-                                    SAVE
-                                </Text>
-                            )}
-                        </Pressable>
-                    </View>
-                </View>
-            </KeyboardAvoidingView>
+                                    {createEntry.isPending ? (
+                                        <ActivityIndicator color="#fffdf8" size="small" />
+                                    ) : (
+                                        <Text
+                                            style={[
+                                                styles.saveBtnLabel,
+                                                {
+                                                    color: canSubmit
+                                                        ? '#fffdf8'
+                                                        : palette.textMuted,
+                                                },
+                                            ]}
+                                        >
+                                            SAVE
+                                        </Text>
+                                    )}
+                                </Pressable>
+                            </View>
+                        </View>
+                    </KeyboardAvoidingView>
+                </Pressable>
+            </Modal>
+
+            {/* Photo viewer — full-screen modal, rendered outside sheet */}
+            <PhotoViewer
+                visible={viewerVisible}
+                photos={photos}
+                initialIndex={viewerIndex}
+                onClose={() => setViewerVisible(false)}
+                onRemove={handleViewerRemove}
+            />
 
             {/* Companion picker — rendered outside sheet to avoid z-index conflict */}
             {user && (
@@ -883,7 +939,7 @@ export function LogSheet({
                     palette={palette}
                 />
             )}
-        </Modal>
+        </>
     );
 }
 
@@ -892,18 +948,13 @@ export function LogSheet({
 const styles = StyleSheet.create({
     backdrop: {
         flex: 1,
+        justifyContent: 'flex-end',
         backgroundColor: 'rgba(28,28,25,0.35)',
-    },
-    kavContainer: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
     },
     sheet: {
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
-        maxHeight: '90%',
+        maxHeight: '92%',
         overflow: 'hidden',
     },
     grabberRow: {
@@ -980,18 +1031,6 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_400Regular',
         fontSize: 14,
     },
-    photoTile: {
-        height: 72,
-        borderRadius: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-    },
-    photoTileLabel: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-    },
     noteInput: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 16,
@@ -1000,7 +1039,7 @@ const styles = StyleSheet.create({
         paddingBottom: 6,
         paddingTop: 6,
         textAlignVertical: 'top',
-        minHeight: 60,
+        minHeight: 160,
         backgroundColor: 'transparent',
     },
     expanderRow: {
