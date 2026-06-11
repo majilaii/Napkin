@@ -8,19 +8,25 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 
 /**
  * TICKET-069: Skinny-five tab layout.
+ * TICKET-070: IA update — Profile replaces Journal in the nav.
+ *   - profile: activated (href: null removed)
+ *   - journal: demoted to hidden (deep-link safe; no longer a tab button)
+ *   - wishlist: still a Stack route (BottomNavBar points to /wishlist)
  *
  * The built-in tab bar is HIDDEN (`display: 'none'`) — navigation is handled
  * entirely by the custom BottomNavBar in `app/_layout.tsx`.
  * This file only registers route names so Expo Router knows which files
  * belong to the (tabs) group.
  *
- * Registered routes:
+ * Active routes (appear in BottomNavBar):
  *   - tables   (Table tab)
  *   - search   (Search tab)
- *   - journal  (Journal tab — was href:null, now an active route)
- *   - feed     (hidden, legacy — kept for deep-link safety)
- *   - log      (hidden, legacy — kept for deep-link safety; + FAB removed)
- *   - profile  (hidden, legacy — profile reachable via gear on Journal header)
+ *   - profile  (Profile tab — TICKET-070)
+ *
+ * Hidden routes (preserved for deep-link safety):
+ *   - journal  (demoted from tab; /journal still reachable via deep link)
+ *   - feed     (legacy)
+ *   - log      (legacy)
  */
 export default function TabsLayout() {
     const scheme = useColorScheme() ?? 'light';
@@ -39,7 +45,7 @@ export default function TabsLayout() {
                 tabBarLabelStyle: [Type.labelSmall, { marginTop: 2 }],
             }}
         >
-            {/* === Active skinny-five routes === */}
+            {/* === Active nav routes === */}
             <Tabs.Screen
                 name="tables"
                 options={{
@@ -59,26 +65,27 @@ export default function TabsLayout() {
                 }}
             />
             <Tabs.Screen
-                name="journal"
+                name="profile"
                 options={{
-                    title: 'Journal',
+                    title: 'Profile',
                     tabBarIcon: ({ color, size }) => (
-                        <Ionicons name="book-outline" size={size} color={color} />
+                        <Ionicons name="person-circle-outline" size={size} color={color} />
                     ),
                 }}
             />
 
-            {/* === Legacy / hidden routes — preserved for deep-link safety === */}
+            {/* === Hidden routes — preserved for deep-link safety === */}
+            {/* journal: demoted from tab in TICKET-070; /journal still reachable */}
+            <Tabs.Screen
+                name="journal"
+                options={{ href: null }}
+            />
             <Tabs.Screen
                 name="feed"
                 options={{ href: null }}
             />
             <Tabs.Screen
                 name="log"
-                options={{ href: null }}
-            />
-            <Tabs.Screen
-                name="profile"
                 options={{ href: null }}
             />
         </Tabs>

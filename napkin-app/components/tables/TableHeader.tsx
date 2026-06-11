@@ -67,16 +67,15 @@ export function TableHeader({
 
     return (
         <View style={styles.container}>
-            {/* Left column: kicker + name + sub */}
+            {/* Left column: kicker + name + sub
+                TICKET-070: chevron always visible \u2014 the switcher sheet is the
+                home of "gather a new table" (the only table-creation path).
+                Single-table users see it to reach that CTA. */}
             <Pressable
-                onPress={() => hasMultipleTables && onSwitcherPress()}
+                onPress={onSwitcherPress}
                 style={styles.nameBlock}
                 accessibilityRole="button"
-                accessibilityLabel={
-                    hasMultipleTables
-                        ? `Switch table, currently ${tableName}`
-                        : tableName
-                }
+                accessibilityLabel={`Switch table, currently ${tableName}`}
             >
                 <Text style={[styles.kicker, { color: palette.textMuted }]}>
                     {kicker}
@@ -88,11 +87,9 @@ export function TableHeader({
                     >
                         {tableName}
                     </Text>
-                    {hasMultipleTables && (
-                        <Text style={[styles.chevron, { color: palette.textMuted }]}>
-                            {'\u25BE'}
-                        </Text>
-                    )}
+                    <Text style={[styles.chevron, { color: palette.textMuted }]}>
+                        {'\u25BE'}
+                    </Text>
                 </View>
                 {subLabel ? (
                     <Text style={[styles.subLabel, { color: palette.textMuted }]}>
