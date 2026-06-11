@@ -1120,8 +1120,13 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('entry function error:', error);
+        // Serialize real error info — String(PostgrestError) is "[object Object]",
+        // which made the 2026-06-11 RPC-ambiguity outage undiagnosable from the client.
+        const detail = (error as any)?.message
+            ?? (typeof error === 'object' ? JSON.stringify(error) : String(error));
+        const code = (error as any)?.code;
         return new Response(
-            JSON.stringify({ error: 'Internal Server Error', details: String(error) }),
+            JSON.stringify({ error: 'Internal Server Error', details: detail, ...(code ? { code } : {}) }),
             { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
     }
