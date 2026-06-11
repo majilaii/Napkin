@@ -17,7 +17,7 @@
  * Deferred until a user-level personal-top-4 edit flow is built.
  * Tracker: link to follow-up ticket.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
     View,
     Text,
@@ -76,7 +76,8 @@ export default function ProfileTab() {
     const displayName =
         profileData?.profile?.display_name ?? user?.email?.split('@')[0] ?? 'You';
     const avatarUrl = profileData?.profile?.avatar_url ?? null;
-    const topFourPicks = profileData?.top_four ?? [];
+    // Memoized so the array reference is stable (avoids ListHeader re-mount on every render).
+    const topFourPicks = useMemo(() => profileData?.top_four ?? [], [profileData]);
 
     const handleEntry = useCallback(
         (id: string) => {
@@ -141,7 +142,6 @@ export default function ProfileTab() {
                 </View>
             </View>
         ),
-        // eslint-disable-next-line react-hooks/exhaustive-deps
         [
             insets.top,
             palette,
