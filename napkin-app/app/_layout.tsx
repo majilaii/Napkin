@@ -190,6 +190,10 @@ function RootLayoutNav() {
             options={{ presentation: 'modal', headerShown: false }}
           />
           <Stack.Screen
+            name="log-meal"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
             name="table-night"
             options={{ presentation: 'modal', headerShown: false }}
           />
