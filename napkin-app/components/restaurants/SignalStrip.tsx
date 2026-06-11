@@ -36,6 +36,11 @@ interface Props {
      * Doctrine: omitting empty siblings ≠ merging tiers.
      */
     collapsed?: boolean;
+    /**
+     * TICKET-069: "letterpress" variant — surface-journal-low pill, amber numbers,
+     * no sub-label, no active underline. Matches the take-B canvas signal strip.
+     */
+    letterpress?: boolean;
 }
 
 type Palette = typeof Colors.light;
@@ -48,9 +53,77 @@ export function SignalStrip({
     activeTier,
     onTierChange,
     collapsed = false,
+    letterpress = false,
 }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
+
+    // Letterpress variant (TICKET-069 take-B canvas): pill container, amber numbers, no sub-label.
+    // Collapse logic is preserved — only cells with data are shown when collapsed.
+    if (letterpress) {
+        const cells: Array<{ key: string; data: SignalCellData; tier: SignalTier | null; isYou: boolean }> = [
+            { key: 'you', data: you, tier: 'you', isYou: true },
+            { key: 'table', data: yourTable, tier: 'your_table', isYou: false },
+            { key: 'napkin', data: napkin, tier: 'napkin', isYou: false },
+            { key: 'google', data: google, tier: null, isYou: false },
+        ];
+        const visibleCells = collapsed
+            ? cells.filter((c) => c.data.hasData)
+            : cells;
+
+        return (
+            <View
+                style={[
+                    lpStyles.strip,
+                    { backgroundColor: palette.surfaceJournalLow },
+                ]}
+            >
+                {visibleCells.map((c, i) => {
+                    const isEmpty = !c.data.hasData;
+                    const isActive = c.tier === activeTier;
+                    const ruleColor = 'rgba(138, 114, 108, 0.2)';
+                    return (
+                        <Pressable
+                            key={c.key}
+                            onPress={c.tier && !isEmpty ? () => onTierChange(c.tier as SignalTier) : undefined}
+                            disabled={!c.tier || isEmpty}
+                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                            style={[
+                                lpStyles.cell,
+                                i > 0 && { borderLeftWidth: 1, borderLeftColor: ruleColor },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    lpStyles.cellLabel,
+                                    {
+                                        color: c.isYou && isActive
+                                            ? palette.primary
+                                            : c.isYou
+                                            ? palette.primary
+                                            : palette.textMuted,
+                                    },
+                                ]}
+                            >
+                                {c.data.label.toUpperCase()}
+                            </Text>
+                            <Text
+                                style={[
+                                    lpStyles.cellNum,
+                                    {
+                                        color: isEmpty ? palette.textMuted : '#825516',
+                                        opacity: isEmpty ? 0.35 : 1,
+                                    },
+                                ]}
+                            >
+                                {c.data.value != null ? c.data.value.toFixed(1) : '—'}
+                            </Text>
+                        </Pressable>
+                    );
+                })}
+            </View>
+        );
+    }
 
     if (collapsed) {
         // Collapse: only render cells that have data + a quiet "— no napkin reads yet" note.
@@ -192,6 +265,33 @@ function SigCell({
         </View>
     );
 }
+
+// Letterpress variant styles (TICKET-069)
+const lpStyles = StyleSheet.create({
+    strip: {
+        flexDirection: 'row',
+        borderRadius: 16,
+        marginHorizontal: 24,
+    },
+    cell: {
+        flex: 1,
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 4,
+        paddingVertical: 14,
+    },
+    cellLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+    },
+    cellNum: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
+        lineHeight: 24,
+    },
+});
 
 const styles = StyleSheet.create({
     strip: {

@@ -665,9 +665,12 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         return { type: 'web', url };
     }
 
+    // Canvas kicker: "FROM TIKTOK · @{handle}" — panel uppercases the string.
+    // Handle not yet in data model; use source-type label only.
     function sourceTagLabel(): string | null {
         if (!resolvedData) return null;
-        if (resolvedData.source_type === 'tiktok') return 'saved from tiktok';
+        if (resolvedData.source_type === 'tiktok') return 'from tiktok';
+        if (resolvedData.source_type === 'instagram') return 'from instagram';
         if (resolvedData.source_type === 'google_maps') return 'from google maps';
         return 'from the web';
     }
@@ -753,6 +756,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 chosenTable={chosenTable}
                                 onShareToTable={() => setSheetState('share-destination')}
                                 onClearTable={() => setChosenTable(null)}
+                                onDismiss={handleDismiss}
                             />
                         )}
 

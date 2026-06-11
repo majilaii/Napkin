@@ -31,6 +31,7 @@ import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as Location from 'expo-location';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
+import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
@@ -126,6 +127,7 @@ export default function SearchScreen() {
     }, [prefillQ]);
 
     // Search mode — Places (default) or People. State is local to the tab.
+    // People mode is curtained in friend-test (FRIEND_TEST.hidePeopleSearch).
     const [mode, setMode] = useState<SearchMode>('places');
 
     // Immediate display value (responsive to keystrokes)
@@ -270,7 +272,9 @@ export default function SearchScreen() {
                 <Text style={[styles.screenTitle, { color: palette.text }]}>
                     Search
                 </Text>
-                <SearchModeTabs mode={mode} onModeChange={setMode} />
+                {!FRIEND_TEST.hidePeopleSearch && (
+                    <SearchModeTabs mode={mode} onModeChange={setMode} />
+                )}
                 <SearchInput
                     ref={inputRef}
                     value={immediateQuery}
@@ -280,8 +284,9 @@ export default function SearchScreen() {
                 />
             </View>
 
-            {/* People tab — unmounted when Places is active so no stale render */}
-            {mode === 'people' ? (
+            {/* People tab — unmounted when Places is active so no stale render.
+                 Entire people path gated behind FRIEND_TEST.hidePeopleSearch. */}
+            {!FRIEND_TEST.hidePeopleSearch && mode === 'people' ? (
                 <PeopleSearchPane
                     query={immediateQuery}
                     debouncedQuery={debouncedQuery}

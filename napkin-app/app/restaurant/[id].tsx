@@ -1,5 +1,5 @@
 /**
- * Restaurant detail page — V3 "Signal strip + content tabs".
+ * Restaurant detail page — take B "letterpress" (TICKET-069 phase 2).
  *
  * Supports three arrival modes:
  *   1. Persisted restaurant — id is a Napkin UUID
@@ -8,21 +8,30 @@
  *
  * Route: /restaurant/[id]?tableId=...&placeId=...&placePayload=...
  *
- * Layout (top → bottom):
- *   1. Hero (photo, name, address, back, bookmark)
- *   2. Signal strip (You / Your table / Napkin / Google)
- *   3. Distribution histogram (tier-switchable)
- *   4. Tabs: Visits / Photos / Info
- *   5. Tab content
+ * Canvas layout (take B letterpress):
+ *   ‹ search breadcrumb
+ *   Letterpress masthead: 56×1px hairline · italic 34 name · meta · hairline
+ *   Signal strip (letterpress variant: surface-journal-low pill, amber nums)
+ *   CTA row: LOG THIS MEAL terracotta pill + PIN outline pill
+ *   Framed photo card 180px r16 (omitted when no photo)
+ *   FROM YOUR TABLE — em-dash quotes + avatar · name · rating · month
+ *   YOUR HISTORY — tick rows (rating · note/occasion · date)
+ *   [below canvas, gated/quiet]:
+ *     Distribution histogram
+ *     Voices / public reviews stream
+ *     Professional takes band
+ *     Atlas cross-link chip
  *
- * Signal strip + tabs persist on all three tabs.
+ * All data hooks and TICKET-065 behaviors (collapse, lens) are preserved.
+ * LogSheet replaces LogVisitSheet + FastLogSheet.
  */
 import React, { useState, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
     ActivityIndicator,
     Alert,
-    Platform,
+    Image,
+    Pressable,
     ScrollView,
     StyleSheet,
     Text,
@@ -30,8 +39,10 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Radius } from '@/constants/theme';
 import { pickDefaultTier, populatedTiers } from '@/lib/restaurantSignal';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -54,24 +65,16 @@ import {
     useLazyBackfillRestaurant,
 } from '@/hooks/search/useLookupByPlaceId';
 import {
-    RestaurantHero,
-    RestaurantTabsV3,
-    type RestaurantTabV3,
-    FloatingLogButton,
-    LogVisitSheet,
     SignalStrip,
     type SignalTier,
     type SignalCellData,
     SwitchableDistribution,
     VoicesStream,
-    YourLastKicker,
-    PhotosTab,
-    InfoTab,
     ProfessionalTakesBand,
     SavedFromTikTokPanel,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
-import { FastLogSheet } from '@/components/logging';
+import { LogSheet } from '@/components/log';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
 type Palette = typeof Colors.light;
@@ -91,8 +94,6 @@ function placePayloadToWishlistPayload(place: any): RestaurantPayload {
         latitude: place.latitude ?? undefined,
         longitude: place.longitude ?? undefined,
         photoReference: place.photoReference ?? undefined,
-        // TICKET-057: carry photoAttributionHtml so wishlist adds round-trip
-        // attribution into the server upsert (writes places_photo_attribution_html).
         photoAttributionHtml: place.photoAttributionHtml ?? undefined,
         googleRating: place.googleRating ?? undefined,
         googleRatingCount: place.googleRatingCount ?? undefined,
@@ -111,18 +112,56 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
         cuisine: payload.cuisine ?? undefined,
         priceLevel: payload.priceLevel ?? undefined,
         photoReference: payload.photoReference ?? undefined,
-        // TICKET-057: pass attribution so ghost renders show warm-paper overlay
-        // and attribution rule immediately (before lazy server upsert resolves).
         photoAttributionHtml: payload.photoAttributionHtml ?? null,
         googleRating: payload.googleRating ?? undefined,
         googleRatingCount: payload.googleRatingCount ?? undefined,
     });
 }
 
+/** Format a visit date for YOUR HISTORY rows: "sat 6 jun" / "14 dec" etc. */
+function formatVisitDate(dateStr: string): string {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
+    if (diffDays < 7) {
+        const dow = d.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+        const day = d.getDate();
+        const mon = d.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+        return `${dow} ${day} ${mon}`;
+    }
+    const day = d.getDate();
+    const mon = d.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+    return `${day} ${mon}`;
+}
+
+/** Format a voice date as short month: "may" / "dec" */
+function formatVoiceMonth(dateStr: string): string {
+    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+}
+
+/** Build a meta string from restaurant data: "Soho · Levantine · $$" */
+function priceTierLabel(level: number | null): string {
+    if (level == null) return '';
+    return '$'.repeat(Math.max(1, Math.min(4, level)));
+}
+
+function buildMeta(r: RestaurantPageRestaurant | null): string {
+    if (!r) return '';
+    const parts: string[] = [];
+    if (r.city) parts.push(r.city);
+    if (r.cuisine) parts.push(r.cuisine);
+    const price = priceTierLabel(r.price_level);
+    if (price) parts.push(price);
+    return parts.join(' · ');
+}
+
+// ── Screen ─────────────────────────────────────────────────────────────────────
+
 export default function RestaurantScreen() {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
     const router = useRouter();
+    const insets = useSafeAreaInsets();
     const { user } = useAuth();
 
     const { id, tableId, placeId, placePayload } = useLocalSearchParams<{
@@ -153,20 +192,11 @@ export default function RestaurantScreen() {
 
     useMyWishlist(user?.id);
 
-    // ── Wishlist TikTok source for this restaurant ────────────────────────
-    // Read from the already-loaded useMyWishlist cache — no new endpoint.
-    // persistedRestaurantId is computed later in this file; we derive it early
-    // here so the selector can run on every render without conditional hook calls.
-    // TICKET-054: panel renders only when the *viewer* has this place wishlisted
-    // with source.type === 'tiktok'; never surfaces another user's source.
     const earlyPersistedId =
         pageData?.restaurant?.id ?? (isGhost ? undefined : restaurantId ?? undefined);
     const tiktokSource = useMyTikTokSourceForRestaurant(earlyPersistedId, user?.id);
 
     // ── Ghost synthesis ───────────────────────────────────────────────────
-    // Empty-payload guard: if we arrived as a ghost (placeId set) but the
-    // caller didn't pass a placePayload (deep-link / lost nav state), fetch
-    // the place by ID so we still render a hero instead of an empty page.
     const needsPlaceLookup = isGhost && !parsedPlacePayload && !!placeId;
     const placeLookup = useLookupByPlaceId(placeId ?? null, {
         enabled: needsPlaceLookup,
@@ -190,25 +220,11 @@ export default function RestaurantScreen() {
     const restaurant: RestaurantPageRestaurant | null =
         pageData?.restaurant ?? ghostRestaurant ?? null;
 
-    // ── Lazy backfill: heal stale persisted rows ──────────────────────────
-    // Some rows pre-date the Places metadata extraction (city / photo_url)
-    // or were inserted by manual seeds. When we land on such a row AND it
-    // has an external_id we can resolve, fire one Place Details fetch to
-    // re-upsert the missing fields. The server-side upsert is non-destructive
-    // so this can never wipe good data. Runs at most once per externalId.
+    // ── Lazy backfill ─────────────────────────────────────────────────────
     const persistedRow = pageData?.restaurant ?? null;
-    // TICKET-057 §5: gate photo_url staleness on photo_source !== 'none'.
-    // 'none' is the sentinel stamped when _storeHeroPhoto found no usable
-    // attribution — re-triggering Place Details on every page visit would
-    // burn quota with no chance of a different result. Only re-trigger when
-    // photo_url is absent AND we haven't tried (or haven't confirmed failure).
     const isStale = !!persistedRow
         && (!persistedRow.city
             || (!persistedRow.photo_url && persistedRow.photo_source !== 'none'));
-    // TICKET-057 AC 11: when a user/Table photo replaces a Places hero, the
-    // restaurant query key is invalidated by handleFastLogSubmitted (above).
-    // photo_source flips to 'user'/'table' on the server; the overlay and
-    // attribution rule disappear on the next render with no extra plumbing.
     useLazyBackfillRestaurant({
         enabled: isStale,
         externalId: persistedRow?.external_id ?? null,
@@ -216,62 +232,16 @@ export default function RestaurantScreen() {
         tableId: tableId ?? null,
     });
 
-    // ── Log visit sheet state ─────────────────────────────────────────────
+    // ── Log sheet state ───────────────────────────────────────────────────
     const [showLogSheet, setShowLogSheet] = useState(false);
-    const [showFastLogSheet, setShowFastLogSheet] = useState(false);
-    const [pendingFastLog, setPendingFastLog] = useState(false);
 
     const qc = useQueryClient();
 
-    const handleFastLogSubmitted = useCallback((_entryId: string) => {
+    const handleLogSubmitted = useCallback((_entryId: string) => {
         if (restaurantId) {
             qc.invalidateQueries({ queryKey: queryKeys.restaurants.page(restaurantId, tableId ?? undefined) });
         }
     }, [qc, restaurantId, tableId]);
-
-    const createEntryParams = useMemo(() => {
-        const r = pageData?.restaurant ?? ghostRestaurant;
-        if (r) {
-            return {
-                placePayload: JSON.stringify({
-                    id: r.external_id ?? '',
-                    name: r.name,
-                    formattedAddress: r.address,
-                    city: r.city,
-                    country: r.country,
-                    cuisine: r.cuisine,
-                    priceLevel: r.price_level,
-                    googleRating: r.google_rating,
-                    googleRatingCount: r.google_rating_count,
-                }),
-            };
-        }
-        if (!isGhost && restaurantId) return { restaurantId };
-        if (placePayload) return { placePayload };
-        return {};
-    }, [pageData?.restaurant, ghostRestaurant, isGhost, restaurantId, placePayload]);
-
-    const handleQuickLog = () => {
-        if (Platform.OS === 'ios') {
-            setPendingFastLog(true);
-            setShowLogSheet(false);
-        } else {
-            setShowLogSheet(false);
-            setShowFastLogSheet(true);
-        }
-    };
-
-    const handleLogSheetDismiss = () => {
-        if (pendingFastLog) {
-            setPendingFastLog(false);
-            setShowFastLogSheet(true);
-        }
-    };
-
-    const handleWriteReview = () => {
-        setShowLogSheet(false);
-        router.push({ pathname: '/create-entry', params: { ...createEntryParams, mode: 'solo' } });
-    };
 
     // ── Visit navigation ──────────────────────────────────────────────────
     const handleVisitPress = useCallback((visit: PageVisit) => {
@@ -286,12 +256,6 @@ export default function RestaurantScreen() {
         router.push({ pathname: '/entry-detail', params: { entryId, viewAs: 'public' } });
     }, [router]);
 
-    // ── Tab state ──────────────────────────────────────────────────────────
-    const [activeTab, setActiveTab] = useState<RestaurantTabV3>('visits');
-
-    // ── "matches mine" filter for public reviews (TICKET-022 Surface C) ────
-    const [matchFilterOn, setMatchFilterOn] = useState(false);
-
     // ── Signal strip + histogram state ────────────────────────────────────
     const personalCount = pageData?.personal?.visit_count ?? 0;
     const tableCount = pageData?.table_chip?.visit_count ?? 0;
@@ -301,15 +265,12 @@ export default function RestaurantScreen() {
         pickDefaultTier({ you: personalCount > 0, table: tableCount > 0, napkin: napkinCount > 0, google: !!(restaurant?.google_rating) })
     );
 
-    // Track whether the user has manually tapped a tier — if so, never override with the default.
     const tierUserSelectedRef = React.useRef(false);
     const setActiveTier = React.useCallback((tier: SignalTier) => {
         tierUserSelectedRef.current = true;
         setActiveTierRaw(tier);
     }, []);
 
-    // Re-derive default tier once data loads — but only if the user hasn't tapped yet.
-    // Uses pickDefaultTier from lib/restaurantSignal (jest-covered).
     const derivedDefaultTier = useMemo(
         () => pickDefaultTier({
             you: personalCount > 0,
@@ -343,7 +304,7 @@ export default function RestaurantScreen() {
         const memberStr = chip.member_count != null
             ? `${chip.member_count} of you`
             : `${chip.visit_count} visit${chip.visit_count !== 1 ? 's' : ''}`;
-        return { label: 'Your table', value: chip.average, sub: memberStr, hasData: true };
+        return { label: 'Table', value: chip.average, sub: memberStr, hasData: true };
     }, [pageData?.table_chip]);
 
     const napkinCell = useMemo((): SignalCellData => {
@@ -396,13 +357,6 @@ export default function RestaurantScreen() {
             if (!rid) return;
             wishlistRemove.mutate(rid, { onError: () => Alert.alert("Couldn't remove", 'Try again') });
         } else {
-            // Always pass the full `restaurant` payload when we have one — even
-            // when the row is already persisted. The server-side upsert is now
-            // non-destructive (sparse fields are dropped, populated ones win),
-            // so this opportunistically backfills `city` / `country` / Places
-            // metadata onto rows that pre-date the addressComponents extraction.
-            // Falls back to a bare restaurant_id only if we somehow have no
-            // restaurant detail to send.
             const payload = ghostWishlistPayload ?? (restaurant?.external_id
                 ? placePayloadToWishlistPayload({
                     id: restaurant.external_id,
@@ -423,18 +377,13 @@ export default function RestaurantScreen() {
         }
     }, [bookmarkDisabled, bookmarked, persistedRestaurantId, wishlistAdd, wishlistRemove, ghostWishlistPayload, restaurant]);
 
-    const loggedBefore = personalCount > 0;
-
-    // ── Derived: only show tap hint when ≥2 tiers have data ──────────────
+    // ── Signal strip collapse ─────────────────────────────────────────────
     const tiersWithData = [
         youCell.hasData,
         yourTableCell.hasData,
         napkinCell.hasData,
     ].filter(Boolean).length;
 
-    // Collapse the signal strip when fewer than 2 siblings are populated
-    // (typically a ghost/cold page where only Google has data).
-    // populatedTiers from lib/restaurantSignal is jest-covered.
     const showCollapsedStrip = populatedTiers({
         you: youCell.hasData,
         table: yourTableCell.hasData,
@@ -442,48 +391,97 @@ export default function RestaurantScreen() {
         google: googleCell.hasData,
     }).length < 2;
 
-    // Voices exist when any self, tablemate, or public review is loaded.
-    // Used to suppress false-invitation copy in the no-photo hero.
     const hasVoices =
         selfVisits.length > 0 ||
         tablemateVisits.length > 0 ||
         (pageData?.public_reviews ?? []).length > 0;
 
+    // ── Match-mine filter ──────────────────────────────────────────────────
+    const [matchFilterOn, setMatchFilterOn] = useState(false);
+
+    // ── Log sheet restaurant prop ─────────────────────────────────────────
+    const logSheetRestaurant = useMemo(() => {
+        const r = pageData?.restaurant ?? ghostRestaurant;
+        if (r) {
+            return {
+                id: r.id ?? undefined,
+                external_id: r.external_id ?? undefined,
+                name: r.name,
+                city: r.city,
+                cuisine: r.cuisine,
+                price_level: priceTierLabel(r.price_level) || null,
+                placePayload: parsedPlacePayload ?? (() => {
+                    if (!r) return undefined;
+                    return {
+                        id: r.external_id ?? '',
+                        name: r.name,
+                        formattedAddress: r.address,
+                        city: r.city,
+                        country: r.country,
+                        cuisine: r.cuisine,
+                        priceLevel: r.price_level,
+                        googleRating: r.google_rating,
+                        googleRatingCount: r.google_rating_count,
+                    };
+                })(),
+            };
+        }
+        return { name: 'Restaurant' };
+    }, [pageData?.restaurant, ghostRestaurant, parsedPlacePayload]);
+
     // ── Render ────────────────────────────────────────────────────────────
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
-            <StatusBar style="light" />
+            <StatusBar style="dark" />
             <View style={[styles.container, { backgroundColor: palette.background }]}>
                 <ScrollView
-                    contentContainerStyle={{ paddingBottom: 120 }}
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        { paddingTop: insets.top + 4 },
+                    ]}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Loading — shown only when we have nothing yet */}
+                    {/* Loading spinner — only when nothing to show yet */}
                     {(isPageLoading || (needsPlaceLookup && placeLookup.isLoading)) && !restaurant ? (
                         <View style={styles.loadingCenter}>
                             <ActivityIndicator color={palette.primary} />
                         </View>
                     ) : null}
 
-                    {/* Hero */}
+                    {/* ‹ search breadcrumb */}
                     {restaurant ? (
-                        <RestaurantHero
-                            restaurant={restaurant}
-                            onBack={() => router.back()}
-                            bookmarked={bookmarked}
-                            onBookmarkPress={bookmarkDisabled ? undefined : handleBookmarkPress}
-                            hasVoices={hasVoices}
-                        />
+                        <Pressable
+                            onPress={() => router.back()}
+                            style={styles.breadcrumb}
+                            hitSlop={12}
+                            accessibilityLabel="back to search"
+                            accessibilityRole="button"
+                        >
+                            <Ionicons name="chevron-back" size={16} color={palette.textSecondary} />
+                            <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>
+                                search
+                            </Text>
+                        </Pressable>
                     ) : null}
 
-                    {/* TikTok source panel — personal-first context, before sibling numbers */}
-                    {/* TICKET-054: only renders when viewer has this place wishlisted with source.type === 'tiktok' */}
-                    {restaurant && tiktokSource ? (
-                        <SavedFromTikTokPanel source={tiktokSource.source} />
+                    {/* Letterpress masthead */}
+                    {restaurant ? (
+                        <View style={styles.masthead}>
+                            <View style={[styles.hairline, { backgroundColor: 'rgba(160,63,40,0.25)' }]} />
+                            <Text style={[styles.mastheadName, { color: palette.text }]} numberOfLines={2}>
+                                {restaurant.name}
+                            </Text>
+                            {buildMeta(restaurant) ? (
+                                <Text style={[styles.mastheadMeta, { color: palette.textMuted }]}>
+                                    {buildMeta(restaurant)}
+                                </Text>
+                            ) : null}
+                            <View style={[styles.hairline, { backgroundColor: 'rgba(160,63,40,0.25)' }]} />
+                        </View>
                     ) : null}
 
-                    {/* Signal strip — collapses to populated-only cells when <2 siblings have data */}
+                    {/* Signal strip — letterpress variant with TICKET-065 collapse logic */}
                     {restaurant ? (
                         <SignalStrip
                             you={youCell}
@@ -493,166 +491,224 @@ export default function RestaurantScreen() {
                             activeTier={activeTier}
                             onTierChange={setActiveTier}
                             collapsed={showCollapsedStrip}
+                            letterpress
                         />
                     ) : null}
 
-                    {/* Distribution histogram — hidden when no You/Table/Napkin tier has ratings.
-                        Suppresses five empty bars on ghost/unrated pages (AC 7). */}
-                    {restaurant && pageData && tiersWithData > 0 ? (
-                        <SwitchableDistribution
-                            activeTier={activeTier}
-                            distributions={pageData.distributions}
-                            showTapHint={tiersWithData >= 2}
-                        />
-                    ) : null}
-
-                    {/* Tabs: Visits / Photos / Info */}
+                    {/* CTA row: LOG THIS MEAL + PIN */}
                     {restaurant ? (
-                        <RestaurantTabsV3 active={activeTab} onChange={setActiveTab} />
+                        <View style={styles.ctaRow}>
+                            <Pressable
+                                onPress={() => setShowLogSheet(true)}
+                                style={({ pressed }) => [
+                                    styles.logBtn,
+                                    { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 },
+                                ]}
+                                accessibilityLabel="Log this meal"
+                                accessibilityRole="button"
+                            >
+                                <Text style={styles.logBtnLabel}>LOG THIS MEAL</Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={bookmarkDisabled ? undefined : handleBookmarkPress}
+                                style={({ pressed }) => [
+                                    styles.pinBtn,
+                                    {
+                                        borderColor: 'rgba(160,63,40,0.35)',
+                                        opacity: pressed ? 0.75 : 1,
+                                    },
+                                ]}
+                                accessibilityLabel={bookmarked ? 'Unpin restaurant' : 'Pin restaurant'}
+                                accessibilityRole="button"
+                            >
+                                <Ionicons
+                                    name={bookmarked ? 'location' : 'location-outline'}
+                                    size={14}
+                                    color={palette.primary}
+                                />
+                                <Text style={[styles.pinBtnLabel, { color: palette.primary }]}>
+                                    {bookmarked ? 'PINNED' : 'PIN'}
+                                </Text>
+                            </Pressable>
+                        </View>
                     ) : null}
 
-                    {/* Error state — only for persisted rows; ghosts have no history to load.
-                        Debug dump removed: a persisted failure shows one muted line only. */}
+                    {/* Framed photo card — omit when no photo */}
+                    {restaurant?.photo_url ? (
+                        <Image
+                            source={{ uri: restaurant.photo_url }}
+                            style={styles.photoCard}
+                            accessibilityIgnoresInvertColors
+                            resizeMode="cover"
+                        />
+                    ) : null}
+
+                    {/* TikTok source panel — personal-first, before sibling voices */}
+                    {restaurant && tiktokSource ? (
+                        <SavedFromTikTokPanel source={tiktokSource.source} />
+                    ) : null}
+
+                    {/* FROM YOUR TABLE */}
+                    {restaurant ? (
+                        <View style={styles.section}>
+                            <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
+                                FROM YOUR TABLE
+                            </Text>
+                            {tablemateVisits.filter(v => v.note).slice(0, 3).length > 0 ? (
+                                tablemateVisits.filter(v => v.note).slice(0, 3).map((v) => (
+                                    <View key={v.id} style={styles.voiceRow}>
+                                        <Text
+                                            style={[styles.voiceQuote, { color: palette.text }]}
+                                            numberOfLines={3}
+                                        >
+                                            {`— ${v.note}`}
+                                        </Text>
+                                        <View style={styles.voiceMeta}>
+                                            {v.avatar_url ? (
+                                                <Image
+                                                    source={{ uri: v.avatar_url }}
+                                                    style={styles.voiceAvatar}
+                                                />
+                                            ) : (
+                                                <View
+                                                    style={[
+                                                        styles.voiceAvatar,
+                                                        { backgroundColor: palette.surfaceContainerHigh },
+                                                    ]}
+                                                />
+                                            )}
+                                            <Text
+                                                style={[styles.voiceMetaLabel, { color: palette.textMuted }]}
+                                            >
+                                                {[
+                                                    v.user_display_names[0],
+                                                    v.rating != null ? v.rating.toFixed(1) : null,
+                                                    formatVoiceMonth(v.date),
+                                                ].filter(Boolean).join(' · ')}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                ))
+                            ) : (
+                                <Text style={[styles.murmur, { color: palette.textMuted }]}>
+                                    — nothing from your table yet.
+                                </Text>
+                            )}
+                        </View>
+                    ) : null}
+
+                    {/* YOUR HISTORY */}
+                    {restaurant ? (
+                        <View style={styles.section}>
+                            <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
+                                YOUR HISTORY
+                            </Text>
+                            {selfVisits.length > 0 ? (
+                                selfVisits.slice(0, 5).map((v) => (
+                                    <Pressable
+                                        key={v.id}
+                                        onPress={() => handleVisitPress(v)}
+                                        style={styles.historyRow}
+                                    >
+                                        {v.rating != null ? (
+                                            <Text style={[styles.historyRating, { color: '#d97706' }]}>
+                                                {v.rating % 1 === 0 ? `${v.rating}.0` : `${v.rating}`}
+                                            </Text>
+                                        ) : null}
+                                        <Text style={[styles.historyDot, { color: palette.textMuted }]}>·</Text>
+                                        <Text
+                                            style={[styles.historyNote, { color: palette.textMuted }]}
+                                            numberOfLines={1}
+                                        >
+                                            {v.note ??
+                                                (v.user_display_names.length > 1
+                                                    ? `with ${v.user_display_names.slice(1).join(' & ')}`
+                                                    : 'visited')}
+                                        </Text>
+                                        <View style={styles.historyDatePush} />
+                                        <Text style={[styles.historyDate, { color: palette.textMuted }]}>
+                                            {formatVisitDate(v.date)}
+                                        </Text>
+                                    </Pressable>
+                                ))
+                            ) : (
+                                <Text style={[styles.murmur, { color: palette.textMuted }]}>
+                                    {"— you haven’t been. or you haven’t said."}
+                                </Text>
+                            )}
+                        </View>
+                    ) : null}
+
+                    {/* ── BELOW CANVAS — gated/quiet ────────────────────────────────── */}
+
+                    {/* Distribution histogram */}
+                    {restaurant && pageData && tiersWithData > 0 ? (
+                        <View style={styles.belowSection}>
+                            <SwitchableDistribution
+                                activeTier={activeTier}
+                                distributions={pageData.distributions}
+                                showTapHint={tiersWithData >= 2}
+                            />
+                        </View>
+                    ) : null}
+
+                    {/* Voices stream — public reviews + tablemate visits */}
+                    {restaurant && pageData && hasVoices ? (
+                        <View style={styles.belowSection}>
+                            <VoicesStream
+                                selfVisits={[]}
+                                tablemateVisits={tablemateVisits}
+                                publicReviews={pageData.public_reviews ?? []}
+                                viewerUserId={user?.id ?? null}
+                                matchFilterOn={matchFilterOn}
+                                onToggleMatchFilter={() => setMatchFilterOn((v) => !v)}
+                                onVisitPress={handleVisitPress}
+                                onPublicReviewPress={handlePublicReviewPress}
+                                restaurantName={restaurant?.name ?? null}
+                            />
+                        </View>
+                    ) : null}
+
+                    {/* Professional takes */}
+                    {!FRIEND_TEST.hideCritics && (
+                        <View style={styles.belowSection}>
+                            <ProfessionalTakesBand
+                                critics={pageData?.professional_critics ?? []}
+                            />
+                        </View>
+                    )}
+
+                    {/* Atlas cross-link chip */}
+                    {!FRIEND_TEST.hideAtlas && restaurant?.city && hasAnyTable ? (
+                        <View style={styles.chipRow}>
+                            <AtlasCrossLinkChip
+                                tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
+                                restaurantId={persistedRestaurantId ?? null}
+                                city={restaurant.city}
+                                visitCount={pageData?.visit_count ?? 1}
+                                palette={palette}
+                            />
+                        </View>
+                    ) : null}
+
+                    {/* Error state */}
                     {error && !isGhost ? (
                         <View style={styles.section}>
-                            <Text style={[styles.mutedItalic, { color: palette.textMuted }]}>
+                            <Text style={[styles.murmur, { color: palette.textMuted }]}>
                                 could not load visit history.
                             </Text>
                         </View>
                     ) : null}
-
-                    {/* ── Visits tab ── */}
-                    {restaurant && activeTab === 'visits' ? (
-                        <View>
-                            {/* Last-visit kicker */}
-                            {loggedBefore && pageData?.personal?.last_visit ? (
-                                <YourLastKicker
-                                    date={pageData.personal.last_visit.date}
-                                    rating={pageData.personal.last_visit.rating}
-                                />
-                            ) : null}
-
-                            {/* Voices stream — leads the Visits tab for cold readers (AC 3).
-                                restaurantName threads for reading-oriented empty-state copy (AC 8). */}
-                            {pageData ? (
-                                <VoicesStream
-                                    selfVisits={selfVisits}
-                                    tablemateVisits={tablemateVisits}
-                                    publicReviews={pageData.public_reviews ?? []}
-                                    viewerUserId={user?.id ?? null}
-                                    matchFilterOn={matchFilterOn}
-                                    onToggleMatchFilter={() => setMatchFilterOn((v) => !v)}
-                                    onVisitPress={handleVisitPress}
-                                    onPublicReviewPress={handlePublicReviewPress}
-                                    restaurantName={restaurant?.name ?? null}
-                                />
-                            ) : isPageLoading ? (
-                                <View style={styles.sectionSpinner}>
-                                    <ActivityIndicator size="small" color={palette.textMuted} />
-                                </View>
-                            ) : null}
-
-                            {/* Professional takes band — TICKET-026.
-                                Hidden during friend-test. */}
-                            {!FRIEND_TEST.hideCritics && (
-                                <ProfessionalTakesBand
-                                    critics={pageData?.professional_critics ?? []}
-                                />
-                            )}
-
-                            {/* Atlas cross-link chip — after voices + professional takes (AC 3).
-                                A cold reader sees VOICES first; the chip is contextual chrome, not content.
-                                Hidden during friend-test. */}
-                            {!FRIEND_TEST.hideAtlas && restaurant?.city && hasAnyTable ? (
-                                <View style={styles.chipRow}>
-                                    <AtlasCrossLinkChip
-                                        tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
-                                        restaurantId={persistedRestaurantId ?? null}
-                                        city={restaurant.city}
-                                        visitCount={pageData?.visit_count ?? 1}
-                                        palette={palette}
-                                    />
-                                </View>
-                            ) : null}
-                        </View>
-                    ) : null}
-
-                    {/* ── Photos tab ── */}
-                    {restaurant && activeTab === 'photos' ? (
-                        <PhotosTab
-                            fromYourTable={pageData?.photos?.from_your_table ?? []}
-                            fromOthers={pageData?.photos?.from_others ?? []}
-                            hasTable={hasAnyTable}
-                        />
-                    ) : null}
-
-                    {/* ── Info tab ── */}
-                    {restaurant && activeTab === 'info' ? (
-                        pageData ? (
-                            <InfoTab
-                                restaurant={restaurant}
-                                placeDetails={pageData.place_details}
-                                tablesCountWithLogs={pageData.tables_count_with_logs}
-                                firstLoggedAtByYourTable={pageData.first_logged_at_by_your_table}
-                            />
-                        ) : (
-                            <InfoTab
-                                restaurant={restaurant}
-                                placeDetails={{ hours_today: null, open_now: null, hours_week: null, website: null, phone: null, menu_url: null, lat: null, lng: null }}
-                                tablesCountWithLogs={0}
-                                firstLoggedAtByYourTable={null}
-                            />
-                        )
-                    ) : null}
                 </ScrollView>
 
-                {/* Floating log pill */}
+                {/* Log sheet — replaces LogVisitSheet + FastLogSheet */}
                 {restaurant ? (
-                    <FloatingLogButton
-                        loggedBefore={loggedBefore}
-                        onPress={() => setShowLogSheet(true)}
-                    />
-                ) : null}
-
-                {/* Log visit sheet */}
-                {restaurant ? (
-                    <LogVisitSheet
+                    <LogSheet
                         visible={showLogSheet}
+                        restaurant={logSheetRestaurant}
                         onClose={() => setShowLogSheet(false)}
-                        onDismiss={handleLogSheetDismiss}
-                        onQuickLog={handleQuickLog}
-                        onWriteReview={handleWriteReview}
-                        restaurantName={restaurant.name}
-                    />
-                ) : null}
-
-                {/* Fast log sheet */}
-                {restaurant ? (
-                    <FastLogSheet
-                        visible={showFastLogSheet}
-                        onClose={() => setShowFastLogSheet(false)}
-                        restaurant={{
-                            id: pageData?.restaurant?.id ?? undefined,
-                            external_id: restaurant.external_id ?? undefined,
-                            name: restaurant.name,
-                            placePayload: parsedPlacePayload ?? (() => {
-                                const r = pageData?.restaurant ?? ghostRestaurant;
-                                if (!r) return undefined;
-                                return {
-                                    id: r.external_id ?? '',
-                                    name: r.name,
-                                    formattedAddress: r.address,
-                                    city: r.city,
-                                    country: r.country,
-                                    cuisine: r.cuisine,
-                                    priceLevel: r.price_level,
-                                    googleRating: r.google_rating,
-                                    googleRatingCount: r.google_rating_count,
-                                };
-                            })(),
-                        }}
+                        onSubmitted={handleLogSubmitted}
                         initialTableId={tableId}
-                        onSubmitted={handleFastLogSubmitted}
                     />
                 ) : null}
             </View>
@@ -664,21 +720,156 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
+    scrollContent: {
+        paddingBottom: 120,
+        gap: 18,
+    },
     loadingCenter: {
         paddingVertical: Spacing.xxl,
         alignItems: 'center',
     },
-    sectionSpinner: {
-        paddingVertical: Spacing.lg,
+    // Breadcrumb
+    breadcrumb: {
+        flexDirection: 'row',
         alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 24,
+        paddingVertical: 8,
     },
-    section: {
-        paddingHorizontal: 22,
-        paddingTop: Spacing.xl,
+    breadcrumbLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
     },
-    mutedItalic: {
+    // Masthead
+    masthead: {
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 24,
+        paddingTop: 8,
+        paddingBottom: 4,
+    },
+    hairline: {
+        width: 56,
+        height: 1,
+    },
+    mastheadName: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
+        fontSize: 34,
+        lineHeight: 38,
+        textAlign: 'center',
+    },
+    mastheadMeta: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        textAlign: 'center',
+    },
+    // CTA row
+    ctaRow: {
+        flexDirection: 'row',
+        gap: 10,
+        paddingHorizontal: 24,
+        alignItems: 'stretch',
+    },
+    logBtn: {
+        flex: 1,
+        borderRadius: Radius.full,
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    logBtnLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11,
+        letterSpacing: 1.6,
+        textTransform: 'uppercase',
+        color: '#fffdf8',
+    },
+    pinBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderWidth: 1.5,
+        borderRadius: Radius.full,
+        paddingHorizontal: 18,
+    },
+    pinBtnLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+    },
+    // Photo card
+    photoCard: {
+        marginHorizontal: 24,
+        height: 180,
+        borderRadius: 16,
+    },
+    // FROM YOUR TABLE + YOUR HISTORY
+    section: {
+        paddingHorizontal: 24,
+        gap: 8,
+    },
+    sectionKicker: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 1.4,
+        textTransform: 'uppercase',
+    },
+    voiceRow: {
+        gap: 6,
+    },
+    voiceQuote: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 16,
+        lineHeight: 24,
+    },
+    voiceMeta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    voiceAvatar: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+    },
+    voiceMetaLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+    },
+    historyRow: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 8,
+        paddingVertical: 8,
+    },
+    historyRating: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 17,
+    },
+    historyDot: {
+        fontSize: 12,
+    },
+    historyNote: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        flex: 1,
+    },
+    historyDatePush: {
+        flex: 1,
+    },
+    historyDate: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+    },
+    murmur: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15,
+        lineHeight: 22,
+    },
+    // Below-canvas sections
+    belowSection: {
+        marginTop: 4,
     },
     chipRow: {
         paddingHorizontal: 22,

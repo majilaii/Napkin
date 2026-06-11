@@ -1,23 +1,21 @@
 /**
  * CandidatePickerPanel — multi-candidate list panel for import (TICKET-063).
  *
- * Renders "{N} spots in this video" (or "one spot found" for N=1) with tappable rows.
- * Each row: 48px photo thumb · italic Newsreader name · taupe "city · cuisine" metadata.
- * Tap-to-toggle selection reuses the RowToggle terracotta-tint + ✓ idiom.
+ * TICKET-069 phase 2: restyled to canvas "import spot-picker" anatomy.
  *
- * Default selection by confidence (ARCH-REVIEW-2 #9):
- *   N=1: always pre-ticked regardless of confidence.
- *   N>1: high/exact → pre-ticked; low → un-ticked.
+ * Canvas anatomy:
+ *   kicker "FROM TIKTOK · @{handle}"
+ *   italic serif 23 title + quiet close × (onDismiss)
+ *   flat rows: 48px r12 initial-tile · italic serif 16 name · italic serif 13 murmur + terracotta "fix"
+ *              26px ✓ circle toggle · un-ticked at opacity 0.45
+ *   footer murmur italic serif 13
+ *   PIN pill (full width, terracotta)
  *
- * Primary CTA: "pin {N} spots" (or "pin {Name}" for one selected spot).
- * Note field: shown only when exactly one spot is ticked (T-053 parity).
- * Per-row "not this?": opens the existing inline Places-search seam.
+ * All TICKET-063 logic (ticked/unticked, controlled props, partial-failure, save handler,
+ * share-to-table, note field, already_wishlisted) is preserved unchanged.
  *
- * Low confidence styling: muted taupe meta, no chip, no icon, un-ticked.
- * Inferred city: quiet "guessed from the caption" suffix on the city line.
- *
- * Design: Heirloom Journal — warm paper, Newsreader italic names, Manrope body.
- * Accents: terracotta (CTA + ticked) + olive (confirmed chip). No red. No emoji in chrome.
+ * Rows with candidate.confidence === 'low' are un-ticked by default and shown at
+ * reduced opacity. The "fix" affordance replaces the former "not this?" label.
  */
 import React, { useCallback, useMemo } from 'react';
 import {
@@ -27,12 +25,11 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Image,
     ActivityIndicator,
 } from 'react-native';
-import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
+import { Ionicons } from '@expo/vector-icons';
+import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import type { ResolvedCandidate } from '@/hooks/wishlist/useResolveUrl';
 import { keyFor, buildInitialTicked, isResolved } from './candidatePickerUtils';
 
@@ -52,7 +49,7 @@ export interface CandidatePickerPanelProps {
     ) => void;
     isSaving: boolean;
     sourceTag: string | null;
-    /** Called when the user taps "not this?" on a specific row. */
+    /** Called when the user taps "fix" on a specific row (replaces "not this?"). */
     onCorrectRow: (candidate: ResolvedCandidate) => void;
     /** Called when the user taps "open restaurant" on an already_pinned row. */
     onOpenRestaurant?: (restaurantId: string) => void;
@@ -80,7 +77,6 @@ export interface CandidatePickerPanelProps {
     /**
      * When set, shows a quiet "share to a table" secondary affordance below the
      * primary CTA. Visible only when ≥1 ticked spot is Places-resolved.
-     * Opens the DestinationPicker in singleTableOnly mode.
      */
     onShareToTable?: () => void;
     /**
@@ -90,12 +86,16 @@ export interface CandidatePickerPanelProps {
     chosenTable?: { id: string; name: string } | null;
     /** Clears the chosen table when the user taps ×. */
     onClearTable?: () => void;
+    /** TICKET-069: dismiss button (×) for the panel header. */
+    onDismiss?: () => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function photoUrl(photoReference: string | null | undefined): string | null {
-    return placesPhotoProxyUrl(photoReference, { width: 200 }) ?? null;
+/** Get the initial letter for the 48px initial-tile. */
+function initialChar(name: string | null | undefined): string {
+    if (!name) return '?';
+    return name.trim()[0]?.toUpperCase() ?? '?';
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -116,6 +116,7 @@ export function CandidatePickerPanel({
     onShareToTable,
     chosenTable,
     onClearTable,
+    onDismiss,
 }: CandidatePickerPanelProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = paletteProp ?? (Colors[scheme] as Palette);
@@ -133,30 +134,19 @@ export function CandidatePickerPanel({
     const isSingleTicked = tickedCount === 1;
 
     // ── TICKET-063b: share-to-table eligibility ───────────────────────────────
-    // "share to a table" appears only when ≥1 ticked spot has a confirmed Places
-    // identity (restaurant_id OR external_id).  Ghosts save wishlist-only.
     const hasResolvedTicked = useMemo(
         () => tickedCandidates.some((c) => isResolved(c)),
         [tickedCandidates],
     );
-    // True when a table is chosen AND some ticked spots are still ghosts — shows
-    // "confirm it first · pinned to your wishlist only" quietly.
     const hasGhostTicked = useMemo(
         () => !!chosenTable && tickedCandidates.some((c) => !isResolved(c)),
         [tickedCandidates, chosenTable],
     );
 
-    // CTA label
-    const ctaLabel = useMemo(() => {
-        if (tickedCount === 0) return 'pin';
-        if (isSingleTicked) {
-            const name = tickedCandidates[0].restaurant.name;
-            return name ? `pin ${name}` : 'pin it';
-        }
-        return `pin ${tickedCount} spots`;
-    }, [tickedCount, isSingleTicked, tickedCandidates]);
+    // CTA label — canvas says "PIN" uppercase pill
+    const ctaLabel = 'PIN';
 
-    // Panel title
+    // Panel title — italic serif 23
     const panelTitle = candidates.length === 1
         ? 'one spot found'
         : `${candidates.length} spots in this video`;
@@ -168,16 +158,29 @@ export function CandidatePickerPanel({
 
     return (
         <View>
-            {/* Panel title */}
-            <Text style={[styles.panelTitle, { color: palette.text }]}>
-                {panelTitle}
-            </Text>
-
-            {sourceTag ? (
-                <Text style={[Type.caption, styles.sourceTag, { color: palette.textMuted }]}>
-                    {sourceTag}
-                </Text>
-            ) : null}
+            {/* Kicker + title + close row */}
+            <View style={styles.header}>
+                <View style={styles.headerText}>
+                    {sourceTag ? (
+                        <Text style={[styles.kicker, { color: palette.textSecondary }]}>
+                            {sourceTag.toUpperCase()}
+                        </Text>
+                    ) : null}
+                    <Text style={[styles.title, { color: palette.text }]}>
+                        {panelTitle}
+                    </Text>
+                </View>
+                {onDismiss ? (
+                    <Pressable
+                        onPress={onDismiss}
+                        hitSlop={12}
+                        accessibilityLabel="close"
+                        style={styles.closeBtn}
+                    >
+                        <Ionicons name="close" size={20} color={palette.textMuted} />
+                    </Pressable>
+                ) : null}
+            </View>
 
             {/* Candidate list */}
             <ScrollView
@@ -204,7 +207,16 @@ export function CandidatePickerPanel({
                 })}
             </ScrollView>
 
-            {/* Single-ticked note field — real TextInput (fix-pass-1 item 10) */}
+            {/* Footer murmur */}
+            <Text style={[styles.footerMurmur, { color: palette.textMuted }]}>
+                {tickedCount === 0
+                    ? 'tap a spot to select it'
+                    : tickedCount === 1
+                    ? `1 spot selected`
+                    : `${tickedCount} spots selected`}
+            </Text>
+
+            {/* Single-ticked note field */}
             {isSingleTicked && (
                 <View style={styles.noteWrapper}>
                     <Text
@@ -215,7 +227,7 @@ export function CandidatePickerPanel({
                     <View
                         style={[
                             styles.noteInputContainer,
-                            { borderColor: palette.ruleInkSoft, backgroundColor: palette.card },
+                            { borderColor: palette.ruleInkSoft },
                         ]}
                     >
                         <TextInput
@@ -231,13 +243,13 @@ export function CandidatePickerPanel({
                 </View>
             )}
 
-            {/* Primary CTA */}
+            {/* PIN pill */}
             <Pressable
                 onPress={handleSave}
                 disabled={isSaving || tickedCount === 0}
-                accessibilityLabel={ctaLabel}
+                accessibilityLabel={tickedCount === 0 ? 'pin' : `pin ${tickedCount} spot${tickedCount > 1 ? 's' : ''}`}
                 style={({ pressed }) => [
-                    styles.primaryButton,
+                    styles.pinBtn,
                     {
                         backgroundColor: tickedCount > 0 ? palette.primary : palette.surfaceContainerHigh,
                         opacity: pressed || isSaving ? 0.75 : 1,
@@ -245,21 +257,15 @@ export function CandidatePickerPanel({
                 ]}
             >
                 {isSaving ? (
-                    <ActivityIndicator color={palette.textInverse} size="small" />
+                    <ActivityIndicator color="#fffdf8" size="small" />
                 ) : (
-                    <Text
-                        style={[
-                            Type.label,
-                            { color: tickedCount > 0 ? palette.textInverse : palette.textMuted },
-                        ]}
-                    >
+                    <Text style={[styles.pinBtnLabel, { color: tickedCount > 0 ? '#fffdf8' : palette.textMuted }]}>
                         {ctaLabel}
                     </Text>
                 )}
             </Pressable>
 
             {/* ── TICKET-063b: share-to-table secondary affordance ─────────────── */}
-            {/* Visible only when ≥1 ticked spot is Places-resolved. */}
             {onShareToTable && hasResolvedTicked && (
                 <View style={styles.shareTableBlock}>
                     <View style={styles.shareTableRow}>
@@ -294,7 +300,6 @@ export function CandidatePickerPanel({
                             </Pressable>
                         )}
                     </View>
-                    {/* Ghost note: ticked spots that are unresolved save wishlist-only */}
                     {hasGhostTicked && (
                         <Text style={[Type.caption, styles.ghostNote, { color: palette.textMuted }]}>
                             {'confirm it first · pinned to your wishlist only'}
@@ -311,7 +316,6 @@ export function CandidatePickerPanel({
 interface CandidateRowProps {
     candidate: ResolvedCandidate;
     checked: boolean;
-    /** True when this spot failed on the last save attempt. */
     hasFailed: boolean;
     onToggle: () => void;
     onCorrect: () => void;
@@ -329,16 +333,16 @@ function CandidateRow({
     palette,
 }: CandidateRowProps) {
     const r = candidate.restaurant;
-    const thumbUrl = r.photoReference ? photoUrl(r.photoReference) : null;
     const isLow = candidate.confidence === 'low';
     const isAlreadySaved = candidate.already_wishlisted;
 
-    // City/cuisine meta line
+    // City/cuisine murmur
     let cityPart = r.city ?? '';
     if (candidate.city_inferred && cityPart) {
         cityPart = `${cityPart} · guessed`;
     }
-    const cityLine = [cityPart, r.cuisine].filter(Boolean).join(' · ');
+    const murmur = [cityPart, r.cuisine, isLow && !isAlreadySaved ? 'uncertain' : null]
+        .filter(Boolean).join(' · ');
 
     return (
         <Pressable
@@ -346,91 +350,52 @@ function CandidateRow({
             accessibilityState={{ checked: isAlreadySaved ? true : checked }}
             accessibilityLabel={`${checked ? 'Remove' : 'Add'} ${r.name ?? 'restaurant'}`}
             onPress={isAlreadySaved ? undefined : onToggle}
-            style={({ pressed }) => [
+            style={[
                 styles.row,
-                {
-                    backgroundColor: (checked || isAlreadySaved)
-                        ? palette.primaryMuted
-                        : palette.surfaceJournalLow,
-                    opacity: pressed ? 0.85 : 1,
-                    borderWidth: (checked || isAlreadySaved) ? 1.5 : 0,
-                    borderColor: (checked || isAlreadySaved) ? palette.terracottaBorder : 'transparent',
-                },
+                { opacity: (checked || isAlreadySaved) ? 1 : 0.45 },
             ]}
         >
-            {/* 48px photo thumb */}
-            {thumbUrl ? (
-                <Image
-                    source={{ uri: thumbUrl }}
-                    style={styles.thumb}
-                    accessibilityIgnoresInvertColors
-                />
-            ) : (
-                <View style={[styles.thumb, { backgroundColor: palette.surfaceContainerHigh }]} />
-            )}
+            {/* 48px r12 initial-tile */}
+            <View style={[styles.tile, { backgroundColor: palette.surfaceContainerHigh }]}>
+                <Text style={[styles.tileInitial, { color: palette.textSecondary }]}>
+                    {initialChar(r.name)}
+                </Text>
+            </View>
 
             {/* Text block */}
             <View style={styles.textBlock}>
-                <View style={styles.nameRow}>
-                    <Text
-                        style={[
-                            styles.restaurantName,
-                            {
-                                color: isLow ? palette.textMuted : palette.text,
-                            },
-                        ]}
-                        numberOfLines={1}
-                    >
-                        {r.name ?? 'Unknown restaurant'}
-                    </Text>
-                    {/* Confirmed chip for exact matches */}
-                    {candidate.confidence === 'exact' && (
-                        <View style={[styles.confirmedChip, { backgroundColor: palette.oliveCream }]}>
-                            <Text style={[Type.labelSmall, { color: palette.secondary }]}>confirmed</Text>
-                        </View>
-                    )}
-                    {/* Checkmark for ticked non-exact rows */}
-                    {checked && candidate.confidence !== 'exact' && (
-                        <Text style={[Type.bodySmall, { color: palette.primary, marginLeft: Spacing.xs }]}>
-                            {'✓'}
-                        </Text>
-                    )}
-                </View>
-
-                {/* City · cuisine metadata */}
-                {cityLine ? (
-                    <Text
-                        style={[
-                            Type.bodySmall,
-                            { color: palette.textMuted },
-                            styles.meta,
-                        ]}
-                        numberOfLines={1}
-                    >
-                        {cityLine}
-                    </Text>
+                <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
+                    {r.name ?? 'Unknown restaurant'}
+                </Text>
+                {(murmur || hasFailed) ? (
+                    <View style={styles.murmurRow}>
+                        {murmur ? (
+                            <Text style={[styles.murmurText, { color: palette.textMuted }]} numberOfLines={1}>
+                                {murmur}
+                            </Text>
+                        ) : null}
+                        {/* Terracotta "fix" replaces "not this?" */}
+                        {!isAlreadySaved && (
+                            <Pressable
+                                onPress={onCorrect}
+                                hitSlop={8}
+                                accessibilityLabel="fix restaurant match"
+                            >
+                                <Text style={[styles.fixLabel, { color: palette.primary }]}>
+                                    fix
+                                </Text>
+                            </Pressable>
+                        )}
+                        {hasFailed && !murmur ? (
+                            <Text style={[styles.murmurText, { color: palette.textMuted }]}>
+                                {"couldn't pin · tap to retry"}
+                            </Text>
+                        ) : null}
+                    </View>
                 ) : null}
-
-                {/* Low confidence quiet treatment */}
-                {isLow && !isAlreadySaved && !hasFailed && (
-                    <Text style={[Type.caption, { color: palette.textMuted }, styles.lowConfMeta]}>
-                        not certain · tap to check
-                    </Text>
-                )}
-
-                {/* Partial-failure: "couldn't pin · tap to retry" (fix-pass-1 item 8) */}
-                {hasFailed && (
-                    <Text style={[Type.caption, { color: palette.textMuted }, styles.lowConfMeta]}>
-                        {"couldn't pin · tap to retry"}
-                    </Text>
-                )}
-
-                {/* Already wishlisted + "open restaurant" affordance (fix-pass-1 item 11) */}
                 {isAlreadySaved && (
                     <View style={styles.alreadySavedRow}>
-                        <Text style={[Type.caption, { color: palette.primary }]}>
-                            pinned
-                        </Text>
+                        <Text style={[Type.caption, { color: palette.primary }]}>pinned</Text>
                         {candidate.restaurant_id && onOpenRestaurant && (
                             <Pressable
                                 onPress={() => onOpenRestaurant(candidate.restaurant_id!)}
@@ -446,16 +411,21 @@ function CandidateRow({
                 )}
             </View>
 
-            {/* Per-row "not this?" */}
+            {/* 26px ✓ circle toggle */}
             {!isAlreadySaved && (
-                <Pressable
-                    onPress={onCorrect}
-                    hitSlop={8}
-                    accessibilityLabel="not this restaurant?"
-                    style={styles.correctButton}
+                <View
+                    style={[
+                        styles.toggle,
+                        {
+                            borderColor: checked ? palette.primary : 'rgba(138,114,108,0.3)',
+                            backgroundColor: checked ? palette.primary : 'transparent',
+                        },
+                    ]}
                 >
-                    <Text style={[Type.caption, { color: palette.textMuted }]}>not this?</Text>
-                </Pressable>
+                    {checked && (
+                        <Text style={styles.toggleCheck}>✓</Text>
+                    )}
+                </View>
             )}
         </Pressable>
     );
@@ -464,65 +434,109 @@ function CandidateRow({
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-    panelTitle: {
-        ...Type.headlineItalic,
-        marginBottom: Spacing.sm,
-    } as any,
-    sourceTag: {
-        marginBottom: Spacing.sm,
+    // Header
+    header: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: Spacing.sm,
+        marginBottom: 12,
     },
+    headerText: {
+        flex: 1,
+        gap: 4,
+    },
+    kicker: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 1.4,
+    },
+    title: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 23,
+        lineHeight: 28,
+    },
+    closeBtn: {
+        paddingTop: 4,
+    },
+    // Row list
     listScroll: {
         maxHeight: 320,
     },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: Spacing.md,
-        borderRadius: Radius.md,
-        marginBottom: Spacing.sm,
-        minHeight: 64,
-        ...Shadow.clip,
+        gap: 12,
+        paddingVertical: 10,
     },
-    thumb: {
+    tile: {
         width: 48,
         height: 48,
-        borderRadius: Radius.sm,
-        marginRight: Spacing.md,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
         flexShrink: 0,
+    },
+    tileInitial: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
+        lineHeight: 26,
     },
     textBlock: {
         flex: 1,
+        gap: 2,
     },
-    nameRow: {
+    name: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 16,
+        lineHeight: 20,
+    },
+    murmurRow: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 6,
         flexWrap: 'nowrap',
-        gap: Spacing.xs,
     },
-    restaurantName: {
-        ...Type.headlineItalic,
-        fontSize: 16,
+    murmurText: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        lineHeight: 17,
         flex: 1,
-    } as any,
-    confirmedChip: {
-        paddingHorizontal: Spacing.xs,
-        paddingVertical: 2,
-        borderRadius: Radius.sm,
-        flexShrink: 0,
     },
-    meta: {
-        marginTop: 2,
-    },
-    lowConfMeta: {
-        marginTop: 2,
+    fixLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        letterSpacing: 0.3,
     },
     alreadySavedRow: {
         flexDirection: 'row',
         alignItems: 'center',
         marginTop: 2,
     },
+    // Toggle circle
+    toggle: {
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
+    toggleCheck: {
+        fontSize: 13,
+        color: '#fffdf8',
+        lineHeight: 16,
+    },
+    // Footer murmur
+    footerMurmur: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        lineHeight: 18,
+        textAlign: 'center',
+        paddingVertical: 8,
+    },
+    // Note field
     noteWrapper: {
-        marginTop: Spacing.sm,
         marginBottom: Spacing.xs,
     },
     noteInputContainer: {
@@ -531,20 +545,22 @@ const styles = StyleSheet.create({
         padding: Spacing.sm,
         minHeight: 52,
     },
-    primaryButton: {
-        paddingVertical: Spacing.md,
+    // PIN pill
+    pinBtn: {
+        paddingVertical: 14,
         borderRadius: Radius.full,
         alignItems: 'center',
         justifyContent: 'center',
         minHeight: 48,
         marginTop: Spacing.sm,
     },
-    correctButton: {
-        paddingLeft: Spacing.xs,
-        paddingVertical: Spacing.xs,
-        alignSelf: 'flex-start',
-        flexShrink: 0,
+    pinBtnLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11,
+        letterSpacing: 1.6,
+        textTransform: 'uppercase',
     },
+    // Share-to-table
     shareTableBlock: {
         marginTop: Spacing.sm,
         alignItems: 'center',
