@@ -73,7 +73,6 @@ import {
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
-import type { LogSheetRestaurant } from '@/components/log';
 
 type Palette = typeof Colors.light;
 
