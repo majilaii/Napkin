@@ -34,17 +34,16 @@ import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 SplashScreen.preventAutoHideAsync();
 
 /**
- * BottomNavBar — TICKET-069 skinny-five redesign.
+ * BottomNavBar — TICKET-070 Phase A IA update.
  *
- * 4 tabs: Table · Search · Journal · Wishlist
+ * 4 tabs: Table · Search · Wishlist · Profile
  * Icons: 21px outline, labels 8px/600 uppercase ls1.2
- * No + FAB, no Profile tab — Profile reachable via gear on Journal header.
+ * Journal exits the nav (route stays alive for deep links).
+ * Profile tab added with person-circle-outline icon.
  *
- * Wishlist routing choice: point the tab at the existing Stack route
- * `app/wishlist.tsx` (`/wishlist`). inTabs extended to include
- * `segments[0] === 'wishlist'` so the bar remains visible there.
- * This is the minimal-churn option — no new (tabs)/wishlist.tsx file
- * and no routing conflict.
+ * Wishlist routing: points to the existing Stack route `app/wishlist.tsx`
+ * (`/wishlist`). inTabs includes `segments[0] === 'wishlist'` so the bar
+ * remains visible there.
  */
 function BottomNavBar() {
   const segments = useSegments();
@@ -105,17 +104,6 @@ function BottomNavBar() {
         <Text style={labelStyle('search')}>Search</Text>
       </Pressable>
 
-      {/* Journal */}
-      <Pressable
-        onPress={() => router.replace('/journal')}
-        style={navStyles.tab}
-        accessibilityLabel="Journal"
-        accessibilityRole="tab"
-      >
-        <Ionicons name="book-outline" size={21} color={tabColor('journal')} />
-        <Text style={labelStyle('journal')}>Journal</Text>
-      </Pressable>
-
       {/* Wishlist — points to existing Stack route */}
       <Pressable
         onPress={() => router.replace('/wishlist')}
@@ -125,6 +113,17 @@ function BottomNavBar() {
       >
         <Ionicons name="location-outline" size={21} color={tabColor('wishlist')} />
         <Text style={labelStyle('wishlist')}>Wishlist</Text>
+      </Pressable>
+
+      {/* Profile */}
+      <Pressable
+        onPress={() => router.replace('/profile')}
+        style={navStyles.tab}
+        accessibilityLabel="Profile"
+        accessibilityRole="tab"
+      >
+        <Ionicons name="person-circle-outline" size={21} color={tabColor('profile')} />
+        <Text style={labelStyle('profile')}>Profile</Text>
       </Pressable>
     </View>
   );

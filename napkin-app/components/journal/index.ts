@@ -3,3 +3,6 @@ export type { TickRowProps } from './TickRow';
 export { EntryCard } from './EntryCard';
 export type { EntryCardProps } from './EntryCard';
 export { TableEntryCard } from './TableEntryCard';
+export { JournalList } from './JournalList';
+export type { JournalListProps } from './JournalList';
+export { formatWeekday, getSectionLabel, getEstMonth, buildFlatList } from './JournalList';
