@@ -22,4 +22,8 @@ export const FRIEND_TEST = {
      *  Gates JSX only — hooks stay compiled. Routes remain for deep-link safety.
      *  Flip false to restore round UX. */
     hideRounds: true,
+    /** TICKET-069 phase 2: Hide the People search mode tab.
+     *  Doctrine: search = restaurant-only; invite flows have their own picker.
+     *  Flip false to restore people search. */
+    hidePeopleSearch: true,
 } as const;

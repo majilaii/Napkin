@@ -42,7 +42,7 @@ export function FeedTerminus(_: Props = {}) {
             </Text>
 
             <Pressable
-                onPress={() => router.push('/create-entry')}
+                onPress={() => router.push('/(tabs)/search')}
                 style={({ pressed }) => ({
                     marginTop: 26,
                     paddingHorizontal: 20,

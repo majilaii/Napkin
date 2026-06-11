@@ -49,7 +49,7 @@ export function FeedEmpty({ palette }: Props) {
                 </Text>
                 <View style={styles.ctaRow}>
                     <Pressable
-                        onPress={() => router.push('/create-entry')}
+                        onPress={() => router.push('/(tabs)/search')}
                         style={({ pressed }) => [
                             styles.ctaFilled,
                             {
