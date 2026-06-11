@@ -82,6 +82,24 @@ export interface ResolveSpot {
 // ── Builders ──────────────────────────────────────────────────────────────────
 
 /**
+ * Order params for the list-share row query (TICKET-074 fix-pass).
+ *
+ * Mirrors EXACTLY what the lists fn `get` action renders:
+ *   ranked   → position  ASC  (the curated rank order)
+ *   unranked → created_at DESC (most-recently-added first)
+ *
+ * The snapshot freezes spots in this order; resolve/share-page render the
+ * spots array as-is, so this is the order the recipient sees.
+ */
+export function listShareOrder(
+    ranked: boolean,
+): { column: 'position' | 'created_at'; ascending: boolean } {
+    return ranked
+        ? { column: 'position', ascending: true }
+        : { column: 'created_at', ascending: false };
+}
+
+/**
  * Map joined DB rows + the caller's rating map into buildSnapshot input.
  *
  * TICKET-074: this is the SHARED enrichment step for both create paths

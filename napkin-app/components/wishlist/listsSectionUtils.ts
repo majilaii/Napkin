@@ -13,13 +13,19 @@ export interface ListsSectionRow {
     id: string;
     /** List title — rendered italic serif 17 (brand voice). */
     name: string;
-    /** Muted meta: "{N} spots" (singular-aware). */
+    /** Muted meta: "{N} spots" (singular-aware, total entries). */
     metaLabel: string;
-    /** Spot count carried to the HandoffSheet murmur. */
+    /**
+     * Spot count carried to the HandoffSheet murmur — VERIFIED entries only,
+     * matching what the frozen snapshot will actually contain (fix-pass).
+     */
     spotCount: number;
     /**
-     * Share eligibility: empty lists have nothing to freeze — the server would
-     * 400 EMPTY_LIST, so the quiet `share` affordance is hidden instead.
+     * Share eligibility: the handoff snapshot freezes verified spots only, so
+     * a list with zero verified entries has nothing to share — the server
+     * would 400 EMPTY_LIST. Gate on verified_count, not entry_count (fix-pass:
+     * an all-unverified list previously showed share and could only mint an
+     * error).
      */
     canShare: boolean;
 }
@@ -28,11 +34,14 @@ export interface ListsSectionRow {
 export function buildListsSectionRows(
     lists: readonly MyList[] | null | undefined,
 ): ListsSectionRow[] {
-    return (lists ?? []).map((l) => ({
-        id: l.id,
-        name: l.title,
-        metaLabel: `${l.entry_count} spot${l.entry_count !== 1 ? 's' : ''}`,
-        spotCount: l.entry_count,
-        canShare: l.entry_count > 0,
-    }));
+    return (lists ?? []).map((l) => {
+        const verifiedCount = l.verified_count ?? 0;
+        return {
+            id: l.id,
+            name: l.title,
+            metaLabel: `${l.entry_count} spot${l.entry_count !== 1 ? 's' : ''}`,
+            spotCount: verifiedCount,
+            canShare: verifiedCount > 0,
+        };
+    });
 }

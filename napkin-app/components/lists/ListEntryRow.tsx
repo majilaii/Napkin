@@ -19,8 +19,6 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAuth } from '@/providers/AuthProvider';
-import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import type { ListEntry } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
@@ -31,6 +29,12 @@ interface Props {
     isOwner: boolean;
     isRanked: boolean;
     isDragDisabled?: boolean;
+    /**
+     * TICKET-074 fix-pass: viewer-scoped "already on MY wishlist" flag, derived
+     * ONCE by the screen from the cached personal wishlist (derivePinnedIds) —
+     * replaces a per-row useIsWishlisted edge call (O(rows) request burst).
+     */
+    isPinned?: boolean;
     onPress: () => void;
     onRemove: () => void;
     onNoteChange: (note: string | null) => void;
@@ -46,6 +50,7 @@ export function ListEntryRow({
     isOwner,
     isRanked,
     isDragDisabled,
+    isPinned,
     onPress,
     onRemove,
     onNoteChange,
@@ -54,11 +59,6 @@ export function ListEntryRow({
 }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
-    const { user } = useAuth();
-
-    // TICKET-074: viewer-scoped (any signed-in viewer can pin a list item to
-    // THEIR wishlist — the Google-Maps "recipient saves individual places" moment).
-    const wishlisted = useIsWishlisted(entry.restaurant_id, user?.id);
 
     const [editingNote, setEditingNote] = useState(false);
     const [noteText, setNoteText] = useState(entry.note ?? '');
@@ -112,7 +112,7 @@ export function ListEntryRow({
                 ) : null}
 
                 {/* Quiet wishlist affordance (TICKET-074) */}
-                {wishlisted ? (
+                {isPinned ? (
                     <Text style={[styles.pinTag, { color: palette.textMuted }]}>
                         pinned
                     </Text>

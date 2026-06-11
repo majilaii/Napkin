@@ -14,6 +14,12 @@ export interface MyList {
     ranked: boolean;
     privacy: 'public' | 'private';
     entry_count: number;
+    /**
+     * Count of entries whose restaurant is verified — what a handoff share
+     * would actually freeze (TICKET-074 fix-pass). Optional because responses
+     * from a pre-074-fix server omit it; treat absent as 0.
+     */
+    verified_count?: number;
     cover_photo_url: string | null;
     created_at: string;
     updated_at: string;

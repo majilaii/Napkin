@@ -30,8 +30,10 @@ import { useAddToList } from '@/hooks/lists/useAddToList';
 import { useUpdateListEntryNote } from '@/hooks/lists/useUpdateListEntryNote';
 import { useReorderListEntry } from '@/hooks/lists/useReorderListEntry';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
+import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { useToast } from '@/providers/ToastProvider';
 import { ListDetailHeader, ListEntryRow } from '@/components/lists';
+import { derivePinnedIds } from '@/components/lists/pinnedLookupUtils';
 import { HandoffSheet } from '@/components/wishlist';
 import type { ListEntry } from '@/hooks/lists/useList';
 
@@ -55,6 +57,10 @@ export default function ListDetailScreen() {
     const [dragDisabled, setDragDisabled] = useState(false);
     // TICKET-074: per-list handoff share sheet
     const [shareVisible, setShareVisible] = useState(false);
+    // Fix-pass: restaurant ids pinned from THIS screen, flipped optimistically
+    // on tap (reverted on error) so the row reads `pinned` immediately —
+    // mirrors the old useIsWishlisted onMutate behavior without per-row calls.
+    const [locallyPinned, setLocallyPinned] = useState<Set<string>>(() => new Set());
 
     const list = result?.data?.list ?? null;
     const rawEntries = result?.data?.entries ?? [];
@@ -62,6 +68,25 @@ export default function ListDetailScreen() {
     const ownerProfile = result?.data?.owner_profile ?? null;
     const isNotFound = result?.isNotFound ?? false;
     const isOwner = !!user && !!list && list.owner_id === user.id;
+
+    // Fix-pass (Claude nit): ONE pinned lookup for the whole list, derived from
+    // the personal wishlist query (already cached for the wishlist tab) instead
+    // of a per-row wishlist?action=check edge call. Loaded pages only — see
+    // pinnedLookupUtils for the accepted pagination caveat.
+    const { data: myWishlistPages } = useMyWishlist(user?.id);
+    const pinnedIds = React.useMemo(() => {
+        const ids = derivePinnedIds(myWishlistPages?.pages);
+        for (const id of locallyPinned) ids.add(id);
+        return ids;
+    }, [myWishlistPages, locallyPinned]);
+
+    // Fix-pass (Codex): the share gate counts VERIFIED entries — the handoff
+    // snapshot freezes verified spots only, so an all-unverified list must not
+    // offer share (it could only mint EMPTY_LIST).
+    const verifiedCount = React.useMemo(
+        () => entries.filter((e) => e.restaurant?.verification === 'verified').length,
+        [entries],
+    );
 
     const handleRemove = useCallback(
         (entry: ListEntry) => {
@@ -95,11 +120,22 @@ export default function ListDetailScreen() {
 
     // TICKET-074: pin a list item to the caller's wishlist (existing add path;
     // idempotent server-side). Lists never feed Tables — only this pin does.
+    // Fix-pass: optimistic local flip (add on tap, revert on error) keeps the
+    // row's instant `pinned` feedback now that the lookup is batch-derived.
     const handlePinToWishlist = useCallback(
         (entry: ListEntry) => {
+            setLocallyPinned((prev) => new Set(prev).add(entry.restaurant_id));
             wishlistAdd.mutate(
                 { restaurant_id: entry.restaurant_id },
-                { onSuccess: () => toast.show('pinned to wishlist') },
+                {
+                    onSuccess: () => toast.show('pinned to wishlist'),
+                    onError: () =>
+                        setLocallyPinned((prev) => {
+                            const next = new Set(prev);
+                            next.delete(entry.restaurant_id);
+                            return next;
+                        }),
+                },
             );
         },
         [wishlistAdd, toast],
@@ -136,6 +172,7 @@ export default function ListDetailScreen() {
                 isOwner={isOwner}
                 isRanked={list?.ranked ?? false}
                 isDragDisabled={dragDisabled || reorderEntry.isPending}
+                isPinned={pinnedIds.has(entry.restaurant_id)}
                 onPress={() =>
                     router.push({
                         pathname: '/restaurant/[id]',
@@ -148,7 +185,7 @@ export default function ListDetailScreen() {
                 drag={drag}
             />
         ),
-        [list, isOwner, dragDisabled, reorderEntry.isPending, router, handleRemove, handleNoteChange, handlePinToWishlist],
+        [list, isOwner, dragDisabled, reorderEntry.isPending, pinnedIds, router, handleRemove, handleNoteChange, handlePinToWishlist],
     );
 
     return (
@@ -201,7 +238,7 @@ export default function ListDetailScreen() {
                                                 params: { id: list.id },
                                             })
                                         }
-                                        onShare={entries.length > 0 ? () => setShareVisible(true) : undefined}
+                                        onShare={verifiedCount > 0 ? () => setShareVisible(true) : undefined}
                                     />
                                 }
                                 renderItem={({ item, getIndex, drag }: RenderItemParams<ListEntry>) =>
@@ -229,7 +266,7 @@ export default function ListDetailScreen() {
                                                 params: { id: list.id },
                                             })
                                         }
-                                        onShare={entries.length > 0 ? () => setShareVisible(true) : undefined}
+                                        onShare={verifiedCount > 0 ? () => setShareVisible(true) : undefined}
                                     />
                                 }
                                 renderItem={({ item, index }) => renderEntry(item, index)}
@@ -241,11 +278,13 @@ export default function ListDetailScreen() {
                             />
                         )}
 
-                        {/* TICKET-074: per-list handoff share (frozen snapshot) */}
+                        {/* TICKET-074: per-list handoff share (frozen snapshot).
+                            Fix-pass: murmur count = verified entries, matching
+                            what the snapshot will actually freeze. */}
                         <HandoffSheet
                             visible={shareVisible}
                             onDismiss={() => setShareVisible(false)}
-                            pinnedCount={entries.length}
+                            pinnedCount={verifiedCount}
                             listId={list.id}
                             listName={list.title}
                         />
