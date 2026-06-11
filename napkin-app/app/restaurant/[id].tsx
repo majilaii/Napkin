@@ -412,6 +412,10 @@ export default function RestaurantScreen() {
                 price_level: priceTierLabel(r.price_level) || null,
                 placePayload: parsedPlacePayload ?? (() => {
                     if (!r) return undefined;
+                    // Synthesised from DB row when no placePayload route param is present
+                    // (direct navigation rather than search nav). DB rows do not store
+                    // photoReference / photoAttributionHtml — TICKET-057 mirror already ran
+                    // at first-log time, so photo_source != 'none' for these rows.
                     return {
                         id: r.external_id ?? '',
                         name: r.name,
@@ -422,6 +426,8 @@ export default function RestaurantScreen() {
                         priceLevel: r.price_level,
                         googleRating: r.google_rating,
                         googleRatingCount: r.google_rating_count,
+                        // photoReference / photoAttributionHtml intentionally absent:
+                        // DB schema does not persist them; no re-mirror will fire.
                     };
                 })(),
             };
