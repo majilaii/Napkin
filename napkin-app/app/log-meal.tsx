@@ -52,6 +52,7 @@ import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useToast } from '@/providers/ToastProvider';
 import { queryKeys } from '@/lib/queryKeys';
 import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
+import { collectOrphanedBlobUrls } from '@/lib/photoCleanup';
 import { buildEntryPayload, toggleTableId } from '@/lib/composer';
 import type { ComposerBreakdown } from '@/lib/composer';
 import { DateChip } from '@/components/create-entry/DateChip';
@@ -304,11 +305,18 @@ export default function LogMealScreen() {
     const photosRef = useRef(photos);
     useEffect(() => { photosRef.current = photos; }, [photos]);
 
-    // ── Unmount cleanup — orphaned blobs ──────────────────────────────
+    // Set true once a save succeeds — gates the unmount cleanup so the
+    // just-saved photos (now owned by the entry) are NOT deleted.
+    const savedRef = useRef(false);
+
+    // ── Unmount cleanup — orphaned blobs only ─────────────────────────
+    // On a successful save every blob is referenced by the new entry, so
+    // collectOrphanedBlobUrls returns [] and nothing is deleted. Only an
+    // abandoned logger (closed without saving) cleans up its uploads.
     useEffect(() => {
         return () => {
-            for (const slot of photosRef.current) {
-                if (slot.publicUrl) removeUploadedPhoto(slot.publicUrl).catch(() => {});
+            for (const url of collectOrphanedBlobUrls(photosRef.current, savedRef.current)) {
+                removeUploadedPhoto(url).catch(() => {});
             }
         };
     }, []);
@@ -473,6 +481,9 @@ export default function LogMealScreen() {
             } as any,
             {
                 onSuccess: () => {
+                    // Mark saved BEFORE navigating: the unmount cleanup must
+                    // not delete photos now owned by the entry (TICKET-071 bug).
+                    savedRef.current = true;
                     // Invalidate the originating page's cache (pageId covers
                     // ghost first-logs where restaurant.id is undefined).
                     const invalidateId = pageId ?? restaurant.id;
