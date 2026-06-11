@@ -872,7 +872,7 @@ export default function TablesScreen() {
                                                           onPress={() => {
                                                               router.push({
                                                                   pathname: '/entry-detail',
-                                                                  params: { id: solo.id },
+                                                                  params: { entryId: solo.id },
                                                               });
                                                           }}
                                                       />

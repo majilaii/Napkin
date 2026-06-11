@@ -90,11 +90,11 @@ export default function ImportScreen() {
 
     const handleDismiss = () => {
         setSheetVisible(false);
-        router.replace('/(tabs)/feed' as any);
+        router.replace('/wishlist' as any);
     };
 
     const handleErrorTap = () => {
-        router.replace('/(tabs)/feed' as any);
+        router.replace('/wishlist' as any);
     };
 
     return (

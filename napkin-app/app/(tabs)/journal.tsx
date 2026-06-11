@@ -26,7 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Shadow } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useMySoloEntries } from '@/hooks/entries';
@@ -115,7 +115,7 @@ export default function JournalScreen() {
 
     const handleEntry = useCallback(
         (id: string) => {
-            router.push({ pathname: '/entry-detail', params: { id } });
+            router.push({ pathname: '/entry-detail', params: { entryId: id } });
         },
         [router],
     );

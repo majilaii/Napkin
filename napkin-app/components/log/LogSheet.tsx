@@ -18,7 +18,7 @@
  *   Contract frozen — payload tests in lib/composer.test.ts must stay green.
  * Toast: "tried {name}" via useToast on success.
  */
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
     Modal,
     View,
@@ -43,7 +43,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useToast } from '@/providers/ToastProvider';
-import { compressAndUpload } from '@/lib/imageUpload';
+import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
 import { buildEntryPayload, toggleTableId } from '@/lib/composer';
 import type { ComposerBreakdown } from '@/lib/composer';
 import { DateChip } from '@/components/create-entry/DateChip';
@@ -69,6 +69,7 @@ interface PhotoSlot {
     publicUrl: string | null;
     uploading: boolean;
     error: string | null;
+    uploadGen: number;
 }
 
 const MAX_PHOTOS = 4;
@@ -290,7 +291,7 @@ export function LogSheet({
     const [notes, setNotes] = useState('');
     const [dish, setDish] = useState('');
     const [showDish, setShowDish] = useState(false);
-    const [showCompanions, setShowCompanions] = useState(false);
+    const [companionPickerVisible, setCompanionPickerVisible] = useState(false);
     const [companions, setCompanions] = useState<UserSearchResult[]>([]);
     const [selectedTableIds, setSelectedTableIds] = useState<string[]>(() =>
         initialTableId ? [initialTableId] : [],
@@ -299,15 +300,35 @@ export function LogSheet({
     const [breakdown, setBreakdown] = useState<ComposerBreakdown>(EMPTY_BREAKDOWN);
     const [showDetails, setShowDetails] = useState(false);
 
+    // ── Upload generation counter (prevents stale uploads from setting state) ─
+    const uploadGenRefs = useRef(new Map<string, number>());
+
+    // ── Stable ref to photos for cleanup effects ──────────────────────────────
+    const photosRef = useRef(photos);
+    useEffect(() => { photosRef.current = photos; }, [photos]);
+
+    // ── Unmount cleanup — orphaned blobs ──────────────────────────────────────
+    useEffect(() => {
+        return () => {
+            for (const slot of photosRef.current) {
+                if (slot.publicUrl) removeUploadedPhoto(slot.publicUrl).catch(() => {});
+            }
+        };
+    }, []);
+
     // ── Reset on close ─────────────────────────────────────────────────
     useEffect(() => {
         if (!visible) {
+            // Clean up any uploaded blobs before resetting state
+            for (const slot of photosRef.current) {
+                if (slot.publicUrl) removeUploadedPhoto(slot.publicUrl).catch(() => {});
+            }
             setRating(0);
             setVisitedAt(new Date());
             setNotes('');
             setDish('');
             setShowDish(false);
-            setShowCompanions(false);
+            setCompanionPickerVisible(false);
             setCompanions([]);
             setSelectedTableIds(initialTableId ? [initialTableId] : []);
             setPhotos([]);
@@ -317,6 +338,57 @@ export function LogSheet({
     }, [visible, initialTableId]);
 
     // ── Photo machinery ────────────────────────────────────────────────
+
+    /** Internal: upload one slot, cancelling if its gen counter was bumped. */
+    const startUploadForSlot = useCallback(async (slotId: string, uri: string) => {
+        if (!user?.id) return;
+        const gen = (uploadGenRefs.current.get(slotId) ?? 0) + 1;
+        uploadGenRefs.current.set(slotId, gen);
+
+        setPhotos((prev) =>
+            prev.map((s) => s.id === slotId ? { ...s, uploading: true, error: null } : s),
+        );
+
+        try {
+            const url = await compressAndUpload(uri, user.id);
+            if (uploadGenRefs.current.get(slotId) !== gen) {
+                // Remove was called while upload was in-flight; discard the blob.
+                removeUploadedPhoto(url).catch(() => {});
+                return;
+            }
+            setPhotos((prev) =>
+                prev.map((s) =>
+                    s.id === slotId ? { ...s, publicUrl: url, uploading: false, uploadGen: gen } : s,
+                ),
+            );
+        } catch {
+            if (uploadGenRefs.current.get(slotId) !== gen) return;
+            setPhotos((prev) =>
+                prev.map((s) =>
+                    s.id === slotId ? { ...s, uploading: false, error: 'Upload failed. Tap to retry.' } : s,
+                ),
+            );
+        }
+    }, [user?.id]);
+
+    /** Add a slot and kick off the upload. */
+    const addPhotoSlot = useCallback((uri: string) => {
+        setPhotos((prev) => {
+            if (prev.length >= MAX_PHOTOS) return prev;
+            const slotId = `photo-${Date.now()}-${Math.random()}`;
+            const newSlot: PhotoSlot = {
+                id: slotId,
+                localUri: uri,
+                publicUrl: null,
+                uploading: true,
+                error: null,
+                uploadGen: 0,
+            };
+            setTimeout(() => startUploadForSlot(slotId, uri), 0);
+            return [...prev, newSlot];
+        });
+    }, [startUploadForSlot]);
+
     const handleAddPhoto = useCallback(async () => {
         if (!user?.id) return;
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -327,55 +399,31 @@ export function LogSheet({
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,
-            quality: 0.9,
+            quality: 1,
         });
         if (result.canceled || !result.assets?.[0]) return;
-        const asset = result.assets[0];
-        const slotId = `slot-${Date.now()}`;
-        const slot: PhotoSlot = {
-            id: slotId,
-            localUri: asset.uri,
-            publicUrl: null,
-            uploading: true,
-            error: null,
-        };
-        setPhotos((prev) => [...prev, slot]);
-        try {
-            const publicUrl = await compressAndUpload(asset.uri, user.id);
-            setPhotos((prev) =>
-                prev.map((s) => s.id === slotId ? { ...s, publicUrl, uploading: false } : s),
-            );
-        } catch {
-            setPhotos((prev) =>
-                prev.map((s) =>
-                    s.id === slotId ? { ...s, uploading: false, error: 'Upload failed' } : s,
-                ),
-            );
-        }
-    }, [user?.id]);
+        addPhotoSlot(result.assets[0].uri);
+    }, [user?.id, addPhotoSlot]);
 
-    const handleRemovePhoto = useCallback((id: string) => {
-        setPhotos((prev) => prev.filter((s) => s.id !== id));
+    /** Remove a slot; bumps gen to cancel any in-flight upload and cleans up
+     *  any already-uploaded blob. */
+    const handleRemovePhoto = useCallback((slotId: string) => {
+        const currentGen = uploadGenRefs.current.get(slotId) ?? 0;
+        uploadGenRefs.current.set(slotId, currentGen + 1);
+
+        setPhotos((prev) => {
+            const slot = prev.find((s) => s.id === slotId);
+            if (slot?.publicUrl) {
+                removeUploadedPhoto(slot.publicUrl).catch(() => {});
+            }
+            return prev.filter((s) => s.id !== slotId);
+        });
     }, []);
 
-    const handleRetryPhoto = useCallback(async (id: string) => {
-        if (!user?.id) return;
-        const slot = photos.find((s) => s.id === id);
-        if (!slot) return;
-        setPhotos((prev) =>
-            prev.map((s) => s.id === id ? { ...s, uploading: true, error: null } : s),
-        );
-        try {
-            const publicUrl = await compressAndUpload(slot.localUri, user.id);
-            setPhotos((prev) =>
-                prev.map((s) => s.id === id ? { ...s, publicUrl, uploading: false } : s),
-            );
-        } catch {
-            setPhotos((prev) =>
-                prev.map((s) => s.id === id ? { ...s, uploading: false, error: 'Upload failed' } : s),
-            );
-        }
-    }, [user?.id, photos]);
+    const handleRetryPhoto = useCallback((slotId: string) => {
+        const slot = photos.find((s) => s.id === slotId);
+        if (slot) startUploadForSlot(slotId, slot.localUri);
+    }, [photos, startUploadForSlot]);
 
     // ── Companion toggle ───────────────────────────────────────────────
     const companionIds = new Set(companions.map((c) => c.user_id));
@@ -389,7 +437,7 @@ export function LogSheet({
     }, []);
 
     // ── Submit ─────────────────────────────────────────────────────────
-    const canSubmit = rating > 0 && !createEntry.isPending;
+    const canSubmit = rating > 0 && !createEntry.isPending && !photos.some((p) => p.uploading);
 
     const handleSave = useCallback(async () => {
         if (!canSubmit || !user?.id) return;
@@ -418,6 +466,8 @@ export function LogSheet({
                 latitude: pp.latitude ?? undefined,
                 longitude: pp.longitude ?? undefined,
                 photoReference: pp.photoReference ?? undefined,
+                // TICKET-057: always pair photoReference with attribution; missing → 'none' sentinel
+                photoAttributionHtml: pp.photoAttributionHtml ?? undefined,
             };
         } else if (restaurant.external_id) {
             restaurantData = {
@@ -443,8 +493,12 @@ export function LogSheet({
                     onClose();
                     onSubmitted?.(entryId);
                 },
-                onError: () => {
-                    // Toast already shown by useCreateEntry for table_not_authorized
+                onError: (err) => {
+                    // useCreateEntry toasts table_not_authorized; surface everything else.
+                    const code = (err as any)?.cause?.code ?? (err as any)?.code;
+                    if (code !== 'table_not_authorized') {
+                        Alert.alert('Error', (err as any)?.message ?? 'Could not save entry');
+                    }
                 },
             },
         );
@@ -612,12 +666,12 @@ export function LogSheet({
                                 </Text>
                             </Pressable>
                             <Pressable
-                                onPress={() => setShowCompanions((v) => !v)}
+                                onPress={() => setCompanionPickerVisible(true)}
                                 hitSlop={8}
                                 accessibilityLabel="add who was there"
                             >
                                 <Text style={[styles.expander, { color: palette.textMuted }]}>
-                                    {showCompanions ? '— who was there' : '+ who was there'}
+                                    {companions.length > 0 ? '— who was there' : '+ who was there'}
                                 </Text>
                             </Pressable>
                         </View>
@@ -638,23 +692,16 @@ export function LogSheet({
                             />
                         )}
 
-                        {showCompanions && (
-                            <View style={styles.companionsPreview}>
-                                <Pressable
-                                    onPress={() => setShowCompanions(true)}
-                                    style={[
-                                        styles.companionsChip,
-                                        { borderColor: palette.ruleInkSoft },
-                                    ]}
-                                    accessibilityLabel="who was there?"
-                                >
-                                    <Text style={[styles.companionsChipLabel, { color: palette.textMuted }]}>
-                                        {companions.length === 0
-                                            ? 'tap to add people'
-                                            : companions.map((c) => c.display_name).join(', ')}
-                                    </Text>
-                                </Pressable>
-                            </View>
+                        {companions.length > 0 && (
+                            <Pressable
+                                onPress={() => setCompanionPickerVisible(true)}
+                                hitSlop={8}
+                                accessibilityLabel="edit companions"
+                            >
+                                <Text style={[styles.companionsWithLine, { color: palette.textMuted }]}>
+                                    {`with ${companions.map((c) => c.display_name).join(', ')}`}
+                                </Text>
+                            </Pressable>
                         )}
 
                         {/* SHARE TO — hidden when no tables */}
@@ -828,8 +875,8 @@ export function LogSheet({
             {/* Companion picker — rendered outside sheet to avoid z-index conflict */}
             {user && (
                 <CompanionPickerSheet
-                    visible={showCompanions && /* only show the full picker on tap */ false}
-                    onClose={() => setShowCompanions(false)}
+                    visible={companionPickerVisible}
+                    onClose={() => setCompanionPickerVisible(false)}
                     selectedIds={companionIds}
                     onToggle={handleToggleCompanion}
                     currentUserId={user.id}
@@ -972,18 +1019,11 @@ const styles = StyleSheet.create({
         paddingTop: 6,
         backgroundColor: 'transparent',
     },
-    companionsPreview: {
-        marginTop: 4,
-    },
-    companionsChip: {
-        borderWidth: 1,
-        borderRadius: Radius.full,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-    },
-    companionsChipLabel: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
+    companionsWithLine: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        lineHeight: 20,
+        marginTop: 2,
     },
     tableRow: {
         flexDirection: 'row',
