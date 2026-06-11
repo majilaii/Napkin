@@ -126,7 +126,8 @@ function MosaicTile({ slot, width, height, onPress, onRemove, onRetry, overflowL
 
 const tileStyles = StyleSheet.create({
     scrim: {
-        backgroundColor: 'rgba(0,0,0,0.45)',
+        // Ink-based, never pure black (brand rule).
+        backgroundColor: 'rgba(28,28,25,0.45)',
     },
     centered: {
         alignItems: 'center',
@@ -342,6 +343,25 @@ export function PhotoMosaic({ photos, maxPhotos, onAdd, onRemove, onRetry, onTap
                     <Ionicons name="add" size={16} color={palette.textMuted} />
                 </Pressable>
             )}
+
+            {/* ── Aggregate upload-state murmur ──
+                Tiles hidden under the +N overflow scrim carry no visible
+                spinner/error; this line keeps every slot's state honest. */}
+            {photos.some(p => p.uploading) && (
+                <Text style={[styles.stateMurmur, { color: palette.textMuted }]}>
+                    — uploading…
+                </Text>
+            )}
+            {!photos.some(p => p.uploading) && photos.some(p => p.error) && (
+                <Pressable
+                    onPress={() => photos.filter(p => p.error).forEach(p => onRetry(p.id))}
+                    accessibilityLabel="A photo failed to upload. Tap to retry."
+                >
+                    <Text style={[styles.stateMurmur, { color: palette.primary }]}>
+                        — a photo failed to upload · tap to retry
+                    </Text>
+                </Pressable>
+            )}
         </View>
     );
 }
@@ -373,5 +393,11 @@ const styles = StyleSheet.create({
         borderStyle: Platform.OS === 'ios' ? 'dashed' : 'solid',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    stateMurmur: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        lineHeight: 18,
+        marginTop: 8,
     },
 });

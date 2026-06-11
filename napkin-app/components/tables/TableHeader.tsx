@@ -27,7 +27,6 @@ export interface TableHeaderProps {
     roundCount?: number;
     /** Member names to show as avatar stack (first 3 render, rest counted) */
     memberNames: string[];
-    hasMultipleTables: boolean;
     onSwitcherPress: () => void;
     palette: Palette;
     /** When provided, a subtle settings gear icon appears right of the avatar stack (TICKET-029). */
@@ -43,7 +42,6 @@ export function TableHeader({
     memberCount,
     roundCount,
     memberNames,
-    hasMultipleTables,
     onSwitcherPress,
     palette,
     onSettingsPress,

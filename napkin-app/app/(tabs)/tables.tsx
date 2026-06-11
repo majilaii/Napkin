@@ -144,7 +144,6 @@ export default function TablesScreen() {
         if (idx !== -1) setSelectedIndex(idx);
     }, [selectedTableId, tables]);
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
-    const hasMultipleTables = (tables?.length ?? 0) > 1;
     const [showTablePicker, setShowTablePicker] = useState(false);
     const [invitationDismissed, setInvitationDismissed] = useState(false);
 
@@ -342,7 +341,6 @@ export default function TablesScreen() {
                 memberCount={members?.length ?? 0}
                 roundCount={totalRoundCount}
                 memberNames={memberNames}
-                hasMultipleTables={hasMultipleTables}
                 onSwitcherPress={() => setShowTablePicker(true)}
                 palette={palette}
                 onSettingsPress={!(activeTable as any).is_personal ? handleSettingsPress : undefined}
