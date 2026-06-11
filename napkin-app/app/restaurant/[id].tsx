@@ -26,7 +26,6 @@
  * LogSheet replaces LogVisitSheet + FastLogSheet.
  */
 import React, { useState, useMemo, useCallback } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import {
     ActivityIndicator,
     Alert,
@@ -48,7 +47,6 @@ import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
-import { queryKeys } from '@/lib/queryKeys';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
@@ -74,8 +72,8 @@ import {
     SavedFromTikTokPanel,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
-import { LogSheet } from '@/components/log';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
+import type { LogSheetRestaurant } from '@/components/log';
 
 type Palette = typeof Colors.light;
 
@@ -231,17 +229,6 @@ export default function RestaurantScreen() {
         restaurantId: persistedRow?.id ?? null,
         tableId: tableId ?? null,
     });
-
-    // ── Log sheet state ───────────────────────────────────────────────────
-    const [showLogSheet, setShowLogSheet] = useState(false);
-
-    const qc = useQueryClient();
-
-    const handleLogSubmitted = useCallback((_entryId: string) => {
-        if (restaurantId) {
-            qc.invalidateQueries({ queryKey: queryKeys.restaurants.page(restaurantId, tableId ?? undefined) });
-        }
-    }, [qc, restaurantId, tableId]);
 
     // ── Visit navigation ──────────────────────────────────────────────────
     const handleVisitPress = useCallback((visit: PageVisit) => {
@@ -435,6 +422,17 @@ export default function RestaurantScreen() {
         return { name: 'Restaurant' };
     }, [pageData?.restaurant, ghostRestaurant, parsedPlacePayload]);
 
+    // ── Log meal navigation — push to full-screen modal route ─────────────
+    const handleLogPress = useCallback(() => {
+        router.push({
+            pathname: '/log-meal',
+            params: {
+                restaurant: JSON.stringify(logSheetRestaurant),
+                ...(tableId ? { initialTableId: tableId } : {}),
+            },
+        });
+    }, [router, logSheetRestaurant, tableId]);
+
     // ── Render ────────────────────────────────────────────────────────────
     return (
         <>
@@ -505,7 +503,7 @@ export default function RestaurantScreen() {
                     {restaurant ? (
                         <View style={styles.ctaRow}>
                             <Pressable
-                                onPress={() => setShowLogSheet(true)}
+                                onPress={handleLogPress}
                                 style={({ pressed }) => [
                                     styles.logBtn,
                                     { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 },
@@ -707,16 +705,6 @@ export default function RestaurantScreen() {
                     ) : null}
                 </ScrollView>
 
-                {/* Log sheet — replaces LogVisitSheet + FastLogSheet */}
-                {restaurant ? (
-                    <LogSheet
-                        visible={showLogSheet}
-                        restaurant={logSheetRestaurant}
-                        onClose={() => setShowLogSheet(false)}
-                        onSubmitted={handleLogSubmitted}
-                        initialTableId={tableId}
-                    />
-                ) : null}
             </View>
         </>
     );
