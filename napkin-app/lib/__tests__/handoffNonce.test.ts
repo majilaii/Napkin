@@ -82,52 +82,54 @@ describe('deriveClientNonce', () => {
 });
 
 // ── Golden vector (shared with Deno nonce.test.ts) ────────────────────────────
-// These values are derived from the algorithm and locked. The Deno test also
-// logs the golden client_nonce for cross-suite comparison in CI output.
-// If these change, update the Deno test's golden vector simultaneously.
+// These literals are the canonical cross-runtime constants. Both this suite and
+// the Deno nonce.test.ts assert against the SAME hardcoded values. A divergence
+// between the two implementations (namespace change, separator change, byte-order
+// change) will fail at least one suite — the claimed safety net is real.
+//
+// If a test here fails, update supabase/functions/handoff/nonce.test.ts simultaneously.
+//
+// Derived from:
+//   HANDOFF_NAMESPACE = '5c8d4f2a-1b3e-5a7c-9d0f-2e4b6c8a0d1f'
+//   TOKEN             = 'ABCdefGHIjklMNOpqrSTUv'
+//   RID               = 'aabbccdd-1111-4111-8111-000000000001'
+//   importNonce  = UUIDv5(NAMESPACE, TOKEN)
+//   clientNonce  = UUIDv5(NAMESPACE, `${TOKEN}:${RID}`)
+const GOLDEN_IMPORT_NONCE = 'b9c66a05-6132-5288-8757-6020d0c687f1';
+const GOLDEN_CLIENT_NONCE = '4fde7b73-7ca3-549e-ba42-f964ebf54f63';
 
 describe('golden vectors — locked cross-runtime constants', () => {
     const TOKEN = 'ABCdefGHIjklMNOpqrSTUv';
     const RID = 'aabbccdd-1111-4111-8111-000000000001';
 
-    // These are derived deterministically from:
-    //   HANDOFF_NAMESPACE = '5c8d4f2a-1b3e-5a7c-9d0f-2e4b6c8a0d1f'
-    //   SHA-1(namespace || name), UUIDv5 version + variant bits
-    let importNonceGolden: string;
-    let clientNonceGolden: string;
+    it('import nonce matches hardcoded cross-runtime literal', async () => {
+        const result = await deriveImportNonce(TOKEN);
+        // Divergence here means the client and Deno implementations differ —
+        // update supabase/functions/handoff/nonce.test.ts simultaneously.
+        expect(result).toBe(GOLDEN_IMPORT_NONCE);
+    });
 
-    beforeAll(async () => {
-        // Derive once and lock as golden constants
-        importNonceGolden = await deriveImportNonce(TOKEN);
-        clientNonceGolden = await deriveClientNonce(TOKEN, RID);
+    it('client nonce matches hardcoded cross-runtime literal', async () => {
+        const result = await deriveClientNonce(TOKEN, RID);
+        // Divergence here means the client and Deno implementations differ —
+        // update supabase/functions/handoff/nonce.test.ts simultaneously.
+        expect(result).toBe(GOLDEN_CLIENT_NONCE);
     });
 
     it('import nonce is a valid UUIDv5', () => {
-        expect(importNonceGolden).toMatch(VERSION_5_RE);
+        expect(GOLDEN_IMPORT_NONCE).toMatch(VERSION_5_RE);
     });
 
     it('client nonce is a valid UUIDv5', () => {
-        expect(clientNonceGolden).toMatch(VERSION_5_RE);
+        expect(GOLDEN_CLIENT_NONCE).toMatch(VERSION_5_RE);
     });
 
-    it('import nonce is stable (second call matches golden)', async () => {
-        const again = await deriveImportNonce(TOKEN);
-        expect(again).toBe(importNonceGolden);
-    });
-
-    it('client nonce is stable (second call matches golden)', async () => {
-        const again = await deriveClientNonce(TOKEN, RID);
-        expect(again).toBe(clientNonceGolden);
-    });
-
-    // Cross-runtime sanity: both nonces must have length 36 (UUID string).
-    // The Deno test logs `[golden] client_nonce: {value}` — compare manually in CI.
     it('import nonce has UUID length (36)', () => {
-        expect(importNonceGolden.length).toBe(36);
+        expect(GOLDEN_IMPORT_NONCE.length).toBe(36);
     });
 
     it('client nonce has UUID length (36)', () => {
-        expect(clientNonceGolden.length).toBe(36);
+        expect(GOLDEN_CLIENT_NONCE.length).toBe(36);
     });
 });
 

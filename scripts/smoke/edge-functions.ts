@@ -152,7 +152,7 @@ const CHECKS: Check[] = [
         name: 'share-page?t=<bogus> unauthenticated → 410 tombstone (TICKET-072)',
         method: 'GET',
         fn: 'share-page',
-        query: 't=ZZZbogusZZZbogusZZZbX',   // 22 chars, valid base64url format, unknown token
+        query: 't=ZZZbogusZZZbogusZZZbXA',   // 22 chars, valid base64url format, unknown token → DB-miss → 410
         expectedStatus: 410,
         noAuth: true,
         rawShape: (body, contentType) => {

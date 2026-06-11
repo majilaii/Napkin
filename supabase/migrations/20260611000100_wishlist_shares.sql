@@ -27,22 +27,39 @@ ALTER TABLE public.wishlist_shares
         AND jsonb_typeof(snapshot->'spots') = 'array'
     );
 
--- RLS: owner-only select/insert/update; NO public policies
--- The public read path is exclusively the share-page edge function (service role).
+-- ── Security: lock wishlist_shares to service-role writes only ───────────────
+--
+-- Codex #1 (HIGH — security): this repo grants ALL on public tables to
+-- `authenticated` by default. Without an explicit REVOKE, an authenticated
+-- client could INSERT/UPDATE rows directly (forging tokens, flipping revoked_at,
+-- smuggling arbitrary snapshot payloads) — bypassing the verified-only create
+-- and revoke_all paths in the `handoff` edge function.
+--
+-- Fix: strip ALL direct-client DML and read access.  The only callers that need
+-- to touch wishlist_shares are the two edge functions (`handoff` and `share-page`),
+-- both of which run under the service-role key and BYPASS RLS entirely.
+--
+-- RLS is still ENABLED (deny-by-default) so that if a future migration accidentally
+-- re-grants a privilege the absence of matching policies means zero rows are
+-- accessible — no silent escalation.
+--
+-- Regression invariant: absence of policies IS the security assertion.
+-- To verify: `SELECT * FROM pg_policies WHERE tablename = 'wishlist_shares';`
+-- must return zero rows after this migration.
+
+REVOKE INSERT, UPDATE, DELETE, SELECT
+    ON public.wishlist_shares
+    FROM anon, authenticated;
+
 ALTER TABLE public.wishlist_shares ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY ws_owner_select ON public.wishlist_shares
-    FOR SELECT USING (auth.uid() = owner_id);
-
-CREATE POLICY ws_owner_insert ON public.wishlist_shares
-    FOR INSERT WITH CHECK (auth.uid() = owner_id);
-
-CREATE POLICY ws_owner_update ON public.wishlist_shares
-    FOR UPDATE USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
-
--- No DELETE policy: revocation = UPDATE revoked_at. Shares are immutable after creation
--- (snapshot is frozen). Owner can only soft-revoke, not hard-delete, so the tombstone
--- page always renders correctly even after revocation.
+-- No DML or SELECT policies.  Service role bypasses RLS; authenticated clients
+-- have no granted privilege, so deny-by-default applies even if an RLS policy
+-- were somehow added later without a corresponding GRANT.
+--
+-- No DELETE policy either: revocation = UPDATE revoked_at (soft-revoke only).
+-- Shares are immutable after creation (snapshot is frozen). The tombstone page
+-- always renders correctly even after revocation.
 
 -- ── (b) Extend wishlist_items_source_shape CHECK for 'handoff' ────────────────
 --
@@ -66,8 +83,17 @@ ALTER TABLE public.wishlist_items
                 (source->>'type' IN ('tiktok', 'google_maps', 'web') AND source ? 'url')
                 -- vision/screenshot: url optional (TICKET-060)
                 OR source->>'type' IN ('screenshot', 'vision')
-                -- handoff: requires sharer_name string (TICKET-072 ARCH-REVIEW-2 #4)
-                OR (source->>'type' = 'handoff' AND source ? 'sharer_name')
+                -- handoff: sharer_name must be a non-empty string; ONLY 'type' and
+                -- 'sharer_name' keys are allowed — reject extra keys (owner_id/token
+                -- smuggling).  Defence-in-depth: save_spots already server-constructs
+                -- the handoff source, but this CHECK guards any direct-write path.
+                -- (source - 'type' - 'sharer_name') = '{}' means no extra keys remain.
+                OR (
+                    source->>'type' = 'handoff'
+                    AND jsonb_typeof(source->'sharer_name') = 'string'
+                    AND source->>'sharer_name' <> ''
+                    AND (source - 'type' - 'sharer_name') = '{}'::jsonb
+                )
             )
         )
     );

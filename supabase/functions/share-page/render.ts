@@ -51,10 +51,13 @@ export function renderPage(
     const nameText = escapeText(ctx.sharer_name);
     const nameAttr = escapeAttr(ctx.sharer_name);
 
-    // OG description: first 3 spot names (Codex #6: no uuids; spots only have name/city/cuisine)
+    // OG description: first 3 spot names — use RAW names here, then escape ONCE
+    // at attribute interpolation below (via escapeAttr).  Calling escapeText first
+    // then escapeAttr would double-encode: "Bar & Grill" → "Bar &amp; Grill" →
+    // "Bar &amp;amp; Grill", causing unfurls to show "Bar &amp; Grill".
     const ogDesc = ctx.spots
         .slice(0, 3)
-        .map((s) => escapeText(s.name))
+        .map((s) => s.name)
         .join(', ');
 
     // CTA scheme link: GENERATED (never interpolated from user input); token validated base64url
