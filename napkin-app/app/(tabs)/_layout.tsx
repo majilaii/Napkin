@@ -1,25 +1,30 @@
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import React from 'react';
 
 import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 /**
- * Five-tab nav: Tables | Search | (+) Log | [journal hidden] | Profile
+ * TICKET-069: Skinny-five tab layout.
  *
- * The centre "Log" tab is a terracotta circle that opens the create-entry
- * modal instead of navigating to a tab screen.
+ * The built-in tab bar is HIDDEN (`display: 'none'`) — navigation is handled
+ * entirely by the custom BottomNavBar in `app/_layout.tsx`.
+ * This file only registers route names so Expo Router knows which files
+ * belong to the (tabs) group.
  *
- * "friends" tab is removed (TICKET-020).
- * "settings" tab is removed; settings is now reached via gear icon on Profile.
- * "profile" tab is added in the fifth position.
+ * Registered routes:
+ *   - tables   (Table tab)
+ *   - search   (Search tab)
+ *   - journal  (Journal tab — was href:null, now an active route)
+ *   - feed     (hidden, legacy — kept for deep-link safety)
+ *   - log      (hidden, legacy — kept for deep-link safety; + FAB removed)
+ *   - profile  (hidden, legacy — profile reachable via gear on Journal header)
  */
 export default function TabsLayout() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const router = useRouter();
 
     return (
         <Tabs
@@ -34,26 +39,11 @@ export default function TabsLayout() {
                 tabBarLabelStyle: [Type.labelSmall, { marginTop: 2 }],
             }}
         >
-            {/* Hidden — legacy placeholder, superseded by feed.tsx */}
-            <Tabs.Screen
-                name="journal"
-                options={{ href: null }}
-            />
-
-            <Tabs.Screen
-                name="feed"
-                options={{
-                    title: 'Feed',
-                    tabBarIcon: ({ color, size }) => (
-                        <Ionicons name="home-outline" size={size} color={color} />
-                    ),
-                }}
-            />
-
+            {/* === Active skinny-five routes === */}
             <Tabs.Screen
                 name="tables"
                 options={{
-                    title: 'Tables',
+                    title: 'Table',
                     tabBarIcon: ({ color, size }) => (
                         <Ionicons name="restaurant-outline" size={size} color={color} />
                     ),
@@ -69,40 +59,27 @@ export default function TabsLayout() {
                 }}
             />
             <Tabs.Screen
-                name="log"
+                name="journal"
                 options={{
-                    title: '',
-                    tabBarIcon: () => (
-                        <View
-                            style={{
-                                width: 44,
-                                height: 44,
-                                borderRadius: 22,
-                                backgroundColor: palette.primary,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                marginBottom: 8,
-                            }}
-                        >
-                            <Ionicons name="add" size={26} color={palette.textInverse} />
-                        </View>
-                    ),
-                    tabBarButton: ({ ref: _ref, ...props }) => (
-                        <Pressable
-                            {...props}
-                            onPress={() => router.push('/create-entry')}
-                        />
+                    title: 'Journal',
+                    tabBarIcon: ({ color, size }) => (
+                        <Ionicons name="book-outline" size={size} color={color} />
                     ),
                 }}
             />
+
+            {/* === Legacy / hidden routes — preserved for deep-link safety === */}
+            <Tabs.Screen
+                name="feed"
+                options={{ href: null }}
+            />
+            <Tabs.Screen
+                name="log"
+                options={{ href: null }}
+            />
             <Tabs.Screen
                 name="profile"
-                options={{
-                    title: 'Profile',
-                    tabBarIcon: ({ color, size }) => (
-                        <Ionicons name="person-circle-outline" size={size} color={color} />
-                    ),
-                }}
+                options={{ href: null }}
             />
         </Tabs>
     );

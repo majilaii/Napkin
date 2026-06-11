@@ -21,7 +21,7 @@ import {
 } from '@expo-google-fonts/manrope';
 import * as SplashScreen from 'expo-splash-screen';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { ActivityIndicator, View, Pressable, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,111 +30,103 @@ import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
 import { Colors, Type } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
-import { PressableScale } from '@/components/ui/napkin';
-import { useUnreadCount } from '@/hooks/notifications';
-import { PlusActionMenu } from '@/components/nav';
-import { ImportLinkSheet } from '@/components/wishlist';
 
 SplashScreen.preventAutoHideAsync();
 
+/**
+ * BottomNavBar — TICKET-069 skinny-five redesign.
+ *
+ * 4 tabs: Table · Search · Journal · Wishlist
+ * Icons: 21px outline, labels 8px/600 uppercase ls1.2
+ * No + FAB, no Profile tab — Profile reachable via gear on Journal header.
+ *
+ * Wishlist routing choice: point the tab at the existing Stack route
+ * `app/wishlist.tsx` (`/wishlist`). inTabs extended to include
+ * `segments[0] === 'wishlist'` so the bar remains visible there.
+ * This is the minimal-churn option — no new (tabs)/wishlist.tsx file
+ * and no routing conflict.
+ */
 function BottomNavBar() {
   const segments = useSegments();
   const router = useRouter();
   const scheme = useScheme() ?? 'light';
   const palette = Colors[scheme];
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
-  const unreadCount = useUnreadCount(user?.id);
-  const hasUnread = unreadCount > 0;
 
-  // + button action menu
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [importSheetVisible, setImportSheetVisible] = useState(false);
-
-  // Only show on tab screens
-  const inTabs = segments[0] === '(tabs)';
+  // Show on (tabs) screens AND on the wishlist Stack screen
+  const inTabs = segments[0] === '(tabs)' || segments[0] === 'wishlist';
   if (!inTabs) return null;
 
-  // Which tab is active?
-  const activeTab = segments[1] ?? 'feed';
+  // Active tab detection
+  const seg1 = segments[1] as string | undefined;
+  // When on the wishlist Stack route, segments[0] = 'wishlist', segments[1] = undefined
+  const activeTab =
+    segments[0] === 'wishlist'
+      ? 'wishlist'
+      : seg1 ?? 'tables';
+
+  const tabColor = (name: string) =>
+    activeTab === name ? palette.tabIconSelected : palette.tabIconDefault;
+
+  const labelStyle = (name: string) => [
+    navStyles.label,
+    { color: tabColor(name) },
+  ];
 
   return (
-    <>
-      <View style={[navStyles.bar, { backgroundColor: palette.surfaceContainerLow, paddingBottom: insets.bottom > 0 ? insets.bottom : 12 }]}>
-        {/* Feed tab */}
-        <Pressable
-          onPress={() => router.replace('/feed')}
-          style={navStyles.tab}
-        >
-          <Ionicons name="home-outline" size={24} color={activeTab === 'feed' ? palette.tabIconSelected : palette.tabIconDefault} />
-          <Text style={[Type.labelSmall, { color: activeTab === 'feed' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Feed</Text>
-        </Pressable>
+    <View
+      style={[
+        navStyles.bar,
+        {
+          backgroundColor: 'rgba(255,253,248,0.85)',
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 12,
+        },
+      ]}
+    >
+      {/* Table */}
+      <Pressable
+        onPress={() => router.replace('/tables')}
+        style={navStyles.tab}
+        accessibilityLabel="Table"
+        accessibilityRole="tab"
+      >
+        <Ionicons name="restaurant-outline" size={21} color={tabColor('tables')} />
+        <Text style={labelStyle('tables')}>Table</Text>
+      </Pressable>
 
-        {/* Tables tab */}
-        <Pressable
-          onPress={() => router.replace('/tables')}
-          style={navStyles.tab}
-        >
-          <Ionicons name="restaurant-outline" size={24} color={activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault} />
-          <Text style={[Type.labelSmall, { color: activeTab === 'tables' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Tables</Text>
-        </Pressable>
+      {/* Search */}
+      <Pressable
+        onPress={() => router.replace('/search')}
+        style={navStyles.tab}
+        accessibilityLabel="Search"
+        accessibilityRole="tab"
+      >
+        <Ionicons name="search-outline" size={21} color={tabColor('search')} />
+        <Text style={labelStyle('search')}>Search</Text>
+      </Pressable>
 
-        {/* Center + button — opens PlusActionMenu (TICKET-053 step 11) */}
-        <PressableScale
-          onPress={() => setMenuVisible(true)}
-          style={navStyles.addButton}
-          haptic="medium"
-          scaleTo={0.92}
-        >
-          <View style={[navStyles.addCircle, { backgroundColor: palette.primary }]}>
-            <Ionicons name="add" size={28} color="#fff" />
-          </View>
-        </PressableScale>
+      {/* Journal */}
+      <Pressable
+        onPress={() => router.replace('/journal')}
+        style={navStyles.tab}
+        accessibilityLabel="Journal"
+        accessibilityRole="tab"
+      >
+        <Ionicons name="book-outline" size={21} color={tabColor('journal')} />
+        <Text style={labelStyle('journal')}>Journal</Text>
+      </Pressable>
 
-        {/* Search tab */}
-        <Pressable
-          onPress={() => router.replace('/search')}
-          style={navStyles.tab}
-        >
-          <Ionicons name="search-outline" size={24} color={activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault} />
-          <Text style={[Type.labelSmall, { color: activeTab === 'search' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Search</Text>
-        </Pressable>
-
-        {/* Profile tab — bell entry; small terracotta dot when unread (no count). */}
-        <Pressable
-          onPress={() => router.replace('/profile')}
-          style={navStyles.tab}
-        >
-          <View>
-            <Ionicons name="person-circle-outline" size={24} color={activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault} />
-            {hasUnread ? (
-              <View style={[navStyles.unreadDot, { backgroundColor: palette.primary, borderColor: palette.surfaceContainerLow }]} />
-            ) : null}
-          </View>
-          <Text style={[Type.labelSmall, { color: activeTab === 'profile' ? palette.tabIconSelected : palette.tabIconDefault, marginTop: 2 }]}>Profile</Text>
-        </Pressable>
-      </View>
-
-      {/* PlusActionMenu — shown above the nav bar */}
-      <PlusActionMenu
-        visible={menuVisible}
-        onDismiss={() => setMenuVisible(false)}
-        onLogVisit={() => {
-          setMenuVisible(false);
-          router.push('/create-entry');
-        }}
-        onAddFromLink={() => {
-          setMenuVisible(false);
-          setImportSheetVisible(true);
-        }}
-      />
-
-      {/* ImportLinkSheet — entry point B */}
-      <ImportLinkSheet
-        visible={importSheetVisible}
-        onDismiss={() => setImportSheetVisible(false)}
-      />
-    </>
+      {/* Wishlist — points to existing Stack route */}
+      <Pressable
+        onPress={() => router.replace('/wishlist')}
+        style={navStyles.tab}
+        accessibilityLabel="Wishlist"
+        accessibilityRole="tab"
+      >
+        <Ionicons name="location-outline" size={21} color={tabColor('wishlist')} />
+        <Text style={labelStyle('wishlist')}>Wishlist</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -149,39 +141,25 @@ const navStyles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 10,
     borderTopWidth: 0,
+    // canvas: box-shadow: 0 -8px 30px rgba(0,0,0,0.04)
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.04,
+    shadowRadius: 30,
+    elevation: 4,
   },
   tab: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 6,
-    paddingHorizontal: 20,
     flex: 1,
+    gap: 4,
   },
-  addButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: -22,
-  },
-  addCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#1c1c19',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.14,
-    shadowRadius: 20,
-    elevation: 4,
-  },
-  unreadDot: {
-    position: 'absolute',
-    top: -2,
-    right: -3,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    borderWidth: 1.5,
+  label: {
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 8,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
   },
 });
 
@@ -198,7 +176,7 @@ function RootLayoutNav() {
     if (!session && !inAuthGroup) {
       router.replace('/auth');
     } else if (session && inAuthGroup) {
-      router.replace('/feed');
+      router.replace('/tables');
     }
   }, [session, isLoading, segments, router]);
 
