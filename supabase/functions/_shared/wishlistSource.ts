@@ -8,7 +8,7 @@
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type WishlistSourceType = 'tiktok' | 'google_maps' | 'web' | 'screenshot' | 'vision';
+export type WishlistSourceType = 'tiktok' | 'google_maps' | 'web' | 'screenshot' | 'vision' | 'handoff';
 
 export interface WishlistSourceTikTok {
     type: 'tiktok';
@@ -45,12 +45,23 @@ export interface WishlistSourceVision {
     caption?: string;
 }
 
+/**
+ * TICKET-072: pinned via a wishlist handoff (share link).
+ * sharer_name is frozen at share time; url is not applicable.
+ * DB CHECK: source ? 'sharer_name' must be true.
+ */
+export interface WishlistSourceHandoff {
+    type: 'handoff';
+    sharer_name: string;
+}
+
 export type WishlistSource =
     | WishlistSourceTikTok
     | WishlistSourceGoogleMaps
     | WishlistSourceWeb
     | WishlistSourceScreenshot
-    | WishlistSourceVision;
+    | WishlistSourceVision
+    | WishlistSourceHandoff;
 
 // ── Validator ─────────────────────────────────────────────────────────────────
 
@@ -169,6 +180,19 @@ export function validateWishlistSource(
         }
         const source: WishlistSourceWeb = { type: 'web', url: raw['url'] as string };
         if (typeof raw['title'] === 'string') source.title = raw['title'];
+        return { ok: true, source };
+    }
+
+    if (type === 'handoff') {
+        const whitelist = new Set(['type', 'sharer_name']);
+        const extraKeys = Object.keys(raw).filter((k) => !whitelist.has(k));
+        if (extraKeys.length > 0) {
+            return { ok: false, reason: 'extra_keys', extra_keys: extraKeys };
+        }
+        if (typeof raw['sharer_name'] !== 'string' || raw['sharer_name'].trim() === '') {
+            return { ok: false, reason: 'missing_sharer_name' };
+        }
+        const source: WishlistSourceHandoff = { type: 'handoff', sharer_name: raw['sharer_name'] as string };
         return { ok: true, source };
     }
 

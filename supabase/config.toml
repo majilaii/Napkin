@@ -1,0 +1,7 @@
+# Supabase project configuration.
+# Minimal: only edge function overrides needed for TICKET-072.
+# Other project settings are controlled by the linked Supabase project.
+
+[functions.share-page]
+# Public URL renderer — no JWT required (iMessage/WhatsApp unfurl bots, browsers)
+verify_jwt = false

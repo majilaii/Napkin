@@ -1259,6 +1259,45 @@ async function handleSaveSpots(
     // Cap at 6 per spec
     const capped = spots.slice(0, 6);
 
+    // ── TICKET-072 ARCH-REVIEW-2 #1/#4: handoff_token gate ───────────────────
+    // When handoff_token is present, re-check revocation immediately before writing
+    // (never rely on cached resolve data). Server constructs source authoritatively
+    // from the share row — client-sent source is ignored.
+    const handoffToken = typeof body['handoff_token'] === 'string' ? body['handoff_token'] : null;
+    let effectiveSource: unknown = source;
+
+    if (handoffToken) {
+        const { data: shareRow, error: shareErr } = await supabase
+            .from('wishlist_shares')
+            .select('snapshot, revoked_at')
+            .eq('token', handoffToken)
+            .maybeSingle();
+
+        if (shareErr) throw shareErr;
+
+        if (!shareRow || (shareRow as any).revoked_at !== null) {
+            // Revoked or unknown → all spots fail with SHARE_REVOKED (ARCH-2 #1)
+            const revokedResults = capped.map((spot) => ({
+                candidate_id: spot.candidate_id,
+                client_nonce: spot.client_nonce,
+                status: 'failed' as const,
+                error: 'share revoked or not found',
+                code: 'SHARE_REVOKED',
+            }));
+            return jsonResponse({
+                data: {
+                    results: revokedResults,
+                    summary: { saved: 0, already_pinned: 0, failed: revokedResults.length },
+                },
+            });
+        }
+
+        // ARCH-2 #4: server-authoritative provenance — ignore any client-sent source
+        const snapshot = (shareRow as any).snapshot as { sharer_name?: string } | null;
+        const sharerName = snapshot?.sharer_name ?? 'someone';
+        effectiveSource = { type: 'handoff', sharer_name: sharerName };
+    }
+
     // ── FIX #3 (P1): validate table memberships BEFORE calling the RPC ──────
     // member_id doctrine (TICKET-034): the column is member_id, NOT user_id.
     // Unauthorized table_ids are short-circuited here and never reach the RPC.
@@ -1353,7 +1392,8 @@ async function handleSaveSpots(
                 p_restaurant_name: spot.restaurant_name ?? null,
                 p_restaurant_city: spot.restaurant_city ?? null,
                 // FIX #1: pass source as the object value, not JSON.stringify(source)
-                p_source: source ?? null,
+                // TICKET-072: use effectiveSource (handoff_token overrides client-sent source)
+                p_source: effectiveSource ?? null,
                 p_note: note,
                 p_table_id: spot.table_id ?? null,
                 p_table_client_nonce: spot.table_client_nonce ?? null,

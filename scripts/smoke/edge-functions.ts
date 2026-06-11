@@ -36,8 +36,14 @@ type Check = {
     query?: string;
     /** JSON body for POST. */
     body?: unknown;
-    /** Optional shape sniff — return null on pass, or a string describing the failure. */
+    /** Expected HTTP status. Defaults to 200. */
+    expectedStatus?: number;
+    /** Skip Authorization + apikey headers (for public endpoints). */
+    noAuth?: boolean;
+    /** Optional shape sniff on parsed JSON (only for JSON responses). */
     shape?: (json: unknown) => string | null;
+    /** Optional shape sniff on raw text + Content-Type (for non-JSON responses). */
+    rawShape?: (body: string, contentType: string) => string | null;
 };
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
@@ -137,6 +143,31 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-072: share-page public endpoint smoke — bogus token → HTTP 410 + text/html.
+    // This check is UNAUTHENTICATED (no Authorization header) because the function
+    // is deployed with verify_jwt=false. The smoke asserts:
+    //   1. Supabase does NOT 401 the unauthenticated request (verify_jwt=false working)
+    //   2. Bogus token renders the tombstone (410, text/html, no PII, no raw error)
+    {
+        name: 'share-page?t=<bogus> unauthenticated → 410 tombstone (TICKET-072)',
+        method: 'GET',
+        fn: 'share-page',
+        query: 't=ZZZbogusZZZbogusZZZbX',   // 22 chars, valid base64url format, unknown token
+        expectedStatus: 410,
+        noAuth: true,
+        rawShape: (body, contentType) => {
+            if (!contentType.includes('text/html')) {
+                return `expected text/html, got: ${contentType}`;
+            }
+            if (body.includes('Internal Server Error') || body.includes('stack') || body.includes('Error:')) {
+                return 'tombstone must not expose raw error or stack trace';
+            }
+            if (!body.includes('folded away')) {
+                return 'tombstone body should include journal-voice copy ("folded away")';
+            }
+            return null;
+        },
+    },
 ];
 
 // ── Runner ─────────────────────────────────────────────────────────────────
@@ -147,13 +178,17 @@ const failures: string[] = [];
 
 for (const check of CHECKS) {
     const url = `${SUPABASE_URL}/functions/v1/${check.fn}${check.query ? '?' + check.query : ''}`;
+
+    // Build headers: omit auth for noAuth checks (e.g. public share-page endpoint)
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (!check.noAuth) {
+        headers['Authorization'] = `Bearer ${JWT}`;
+        headers['apikey'] = ANON_KEY!;
+    }
+
     const init: RequestInit = {
         method: check.method,
-        headers: {
-            Authorization: `Bearer ${JWT}`,
-            apikey: ANON_KEY!,
-            'Content-Type': 'application/json',
-        },
+        headers,
         body: check.body ? JSON.stringify(check.body) : undefined,
     };
 
@@ -170,11 +205,28 @@ for (const check of CHECKS) {
         continue;
     }
 
-    if (res.status !== 200) {
+    const expectedStatus = check.expectedStatus ?? 200;
+    if (res.status !== expectedStatus) {
         failed++;
-        const msg = `✗ ${check.name}\n   HTTP ${res.status}\n   ${bodyText.slice(0, 500)}`;
+        const msg = `✗ ${check.name}\n   HTTP ${res.status} (expected ${expectedStatus})\n   ${bodyText.slice(0, 500)}`;
         console.error(msg);
         failures.push(msg);
+        continue;
+    }
+
+    // rawShape: inspect raw body text + Content-Type (for non-JSON responses like HTML)
+    if (check.rawShape) {
+        const contentType = res.headers.get('content-type') ?? '';
+        const shapeErr = check.rawShape(bodyText, contentType);
+        if (shapeErr) {
+            failed++;
+            const msg = `✗ ${check.name}\n   rawShape: ${shapeErr}\n   body: ${bodyText.slice(0, 300)}`;
+            console.error(msg);
+            failures.push(msg);
+            continue;
+        }
+        passed++;
+        console.log(`✓ ${check.name}`);
         continue;
     }
 
