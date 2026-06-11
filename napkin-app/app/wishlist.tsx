@@ -30,10 +30,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { ImportLinkSheet, PendingSaveCard } from '@/components/wishlist';
+import { ImportLinkSheet, PendingSaveCard, HandoffSheet } from '@/components/wishlist';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { callEdgeFn } from '@/lib/edgeInvoke';
+import type { WishlistSourceHandoff } from '@/lib/types/wishlistSource';
 
 // ── Inline Places search for correction ────────────────────────────────────────
 
@@ -194,7 +195,11 @@ interface PinnedRowProps {
 function PinnedRow({ item, palette, onPress }: PinnedRowProps) {
     const r = item.restaurant!;
     const initial = r.name.trim()[0]?.toUpperCase() ?? '?';
-    const meta = [r.city, r.cuisine].filter(Boolean).join(' · ');
+    // TICKET-072 ARCH-2 #8: append provenance murmur for handoff-sourced spots
+    const provenance = item.source?.type === 'handoff'
+        ? `via ${(item.source as WishlistSourceHandoff).sharer_name}'s napkin`
+        : null;
+    const meta = [r.city, r.cuisine, provenance].filter(Boolean).join(' · ');
 
     return (
         <Pressable
@@ -238,6 +243,7 @@ export default function WishlistScreen() {
 
     const [importSheetVisible, setImportSheetVisible] = useState(false);
     const [correctItem, setCorrectItem] = useState<PersonalWishlistItem | null>(null);
+    const [handoffSheetVisible, setHandoffSheetVisible] = useState(false);
 
     const { data: wishlistPages, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMyWishlist(user?.id);
 
@@ -346,10 +352,21 @@ export default function WishlistScreen() {
                     </View>
                 ) : pinnedRows.length > 0 ? (
                     <View style={styles.pinnedSection}>
-                        {/* "PINNED · N" kicker */}
-                        <Text style={[styles.kicker, { color: palette.textSecondary }]}>
-                            {`PINNED · ${pinnedRows.length}`}
-                        </Text>
+                        {/* "PINNED · N" kicker + share affordance */}
+                        <View style={styles.kickerRow}>
+                            <Text style={[styles.kicker, { color: palette.textSecondary }]}>
+                                {`PINNED · ${pinnedRows.length}`}
+                            </Text>
+                            <Pressable
+                                onPress={() => setHandoffSheetVisible(true)}
+                                hitSlop={10}
+                                accessibilityLabel="share wishlist"
+                            >
+                                <Text style={[styles.shareLabel, { color: palette.primary }]}>
+                                    share
+                                </Text>
+                            </Pressable>
+                        </View>
 
                         {pinnedRows.map((item) => (
                             <PinnedRow
@@ -394,6 +411,12 @@ export default function WishlistScreen() {
             <ImportLinkSheet
                 visible={importSheetVisible}
                 onDismiss={() => setImportSheetVisible(false)}
+            />
+
+            <HandoffSheet
+                visible={handoffSheetVisible}
+                onDismiss={() => setHandoffSheetVisible(false)}
+                pinnedCount={pinnedRows.length}
             />
 
             {user ? (
@@ -459,12 +482,23 @@ const styles = StyleSheet.create({
         paddingHorizontal: 22,
         paddingTop: Spacing.sm,
     },
+    kickerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+    },
     kicker: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 9,
         letterSpacing: 1.4,
         textTransform: 'uppercase',
-        marginBottom: 10,
+    },
+    shareLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11,
+        letterSpacing: 1.0,
+        textTransform: 'lowercase',
     },
     // Pinned row
     pinnedRow: {
