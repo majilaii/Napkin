@@ -294,15 +294,21 @@ export default function WishlistScreen() {
                     },
                 ]}
             >
-                {/* Back button — shown when pushed onto stack */}
-                <Pressable
-                    onPress={() => router.back()}
-                    hitSlop={12}
-                    style={styles.headerBack}
-                    accessibilityLabel="back"
-                >
-                    <Ionicons name="chevron-back" size={20} color={palette.textMuted} />
-                </Pressable>
+                {/* Back button — only when actually pushed onto a stack.
+                    Wishlist is a TAB root (TICKET-070); from the tab there is
+                    nothing to pop, so no chevron. */}
+                {router.canGoBack() ? (
+                    <Pressable
+                        onPress={() => router.back()}
+                        hitSlop={12}
+                        style={styles.headerBack}
+                        accessibilityLabel="back"
+                    >
+                        <Ionicons name="chevron-back" size={20} color={palette.textMuted} />
+                    </Pressable>
+                ) : (
+                    <View style={styles.headerBack} />
+                )}
 
                 <Text style={[styles.headerTitle, { color: palette.text }]}>
                     Wishlist
