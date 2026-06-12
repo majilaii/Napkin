@@ -49,37 +49,41 @@ export function SavedFromTikTokPanel({ source }: SavedFromTikTokPanelProps) {
     };
 
     const hasUrl = !!source.url;
+    // Only show the tall 9:16 thumbnail frame when there's an actual image.
+    // Without it, the empty frame rendered as a giant blank box on the
+    // restaurant page — collapse to a compact one-line attribution instead.
+    const showThumbnail = !thumbnailFailed && !!source.thumbnail_url;
 
     const inner = (
         <View style={styles.inner}>
-            {/* Thumbnail — 9:16 portrait */}
-            <View
-                style={[
-                    styles.thumbnailContainer,
-                    {
-                        backgroundColor: palette.surfaceContainerHigh,
-                        ...Shadow.subtle,
-                    },
-                ]}
-            >
-                {!thumbnailFailed && source.thumbnail_url ? (
+            {/* Thumbnail — 9:16 portrait, only when an image actually exists */}
+            {showThumbnail ? (
+                <View
+                    style={[
+                        styles.thumbnailContainer,
+                        {
+                            backgroundColor: palette.surfaceContainerHigh,
+                            ...Shadow.subtle,
+                        },
+                    ]}
+                >
                     <ExpoImage
                         source={{ uri: source.thumbnail_url }}
                         style={StyleSheet.absoluteFill}
                         contentFit="cover"
                         onError={() => setThumbnailFailed(true)}
                     />
-                ) : null}
-                {/* Warm-paper inset hairline overlay — Heirloom rule: no hard 1px border */}
-                <View
-                    style={[
-                        StyleSheet.absoluteFill,
-                        styles.borderOverlay,
-                        { backgroundColor: palette.surfaceJournalLow },
-                    ]}
-                    pointerEvents="none"
-                />
-            </View>
+                    {/* Warm-paper inset hairline overlay — Heirloom: no hard 1px border */}
+                    <View
+                        style={[
+                            StyleSheet.absoluteFill,
+                            styles.borderOverlay,
+                            { backgroundColor: palette.surfaceJournalLow },
+                        ]}
+                        pointerEvents="none"
+                    />
+                </View>
+            ) : null}
 
             {/* Attribution column */}
             <View style={styles.attribution}>
