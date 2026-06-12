@@ -1277,6 +1277,12 @@ interface SaveSpotPlacePayload {
     googleRatingCount?: number | null;
     priceLevel?: number | null;
     cuisine?: string | null;
+    // TICKET-081: optional restaurant-page metadata forwarded from the client.
+    phone?: string | null;
+    website?: string | null;
+    googleMapsUri?: string | null;
+    google_maps_uri?: string | null;
+    hours?: { weekdayDescriptions: string[]; openNow?: boolean } | null;
 }
 
 interface SaveSpotInput {
@@ -1473,6 +1479,11 @@ async function handleSaveSpots(
                     googleRatingCount: p?.googleRatingCount ?? undefined,
                     priceLevel: p?.priceLevel ?? undefined,
                     cuisine: p?.cuisine ?? undefined,
+                    // TICKET-081: forward metadata too when present (additive).
+                    phone: p?.phone ?? undefined,
+                    website: p?.website ?? undefined,
+                    googleMapsUri: p?.googleMapsUri ?? p?.google_maps_uri ?? undefined,
+                    hours: p?.hours ?? undefined,
                     verification: 'verified',
                 });
             } catch {

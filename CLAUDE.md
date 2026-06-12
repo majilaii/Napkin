@@ -343,8 +343,10 @@ Explicitly out of scope until a ticket says otherwise:
 - Table Wrapped annual stats
 - Privacy settings matrix (friends/table/both visibility)
 - Push notifications (deferred)
-- Map pins / directions
-- Menu / hours / phone UI on restaurant pages
+- Map pins / embedded maps on restaurant pages (a `directions` deep-link out to Google Maps is allowed — see TICKET-081)
+- A real menu surface — Google Places exposes no menu data. The restaurant page surfaces `website` only (never a "menu" affordance that implies a real menu). Menu remains out until a real source is found.
+
+> Restaurant metadata (phone · directions · website · hours from Google Places) was greenlit 2026-06-12 (TICKET-081), reversing the former "Menu / hours / phone UI on restaurant pages" prohibition. Menu stays out (no Places source).
 
 ## Key Files to Read Before Starting
 

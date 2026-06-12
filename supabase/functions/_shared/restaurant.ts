@@ -34,6 +34,14 @@ export interface RestaurantInput {
     googleRatingCount?: number;
     priceLevel?: number;
     cuisine?: string;
+    // TICKET-081: restaurant-page metadata. Each is sparse-write — only set the
+    // column when defined/non-null so a follow-up sparse upsert (e.g. an entry
+    // create carrying only external_id + name) can't wipe values an earlier
+    // Places lookup populated. Mirrors the city/country discipline below.
+    phone?: string;
+    website?: string;
+    googleMapsUri?: string;    // → google_maps_uri column
+    hours?: { weekdayDescriptions: string[]; openNow?: boolean } | null;
     // TICKET-060 H4/R3: ghost quarantine.
     // 'verified' (default) = canonical Places-matched or confirmed restaurant.
     // 'unverified' = model-created ghost, owned per-save by createdBy.
@@ -88,6 +96,19 @@ export async function upsertRestaurant(
     if (country) upsertRow.country = country;
     if (input.latitude !== undefined && input.latitude !== null) upsertRow.lat = input.latitude;
     if (input.longitude !== undefined && input.longitude !== null) upsertRow.lng = input.longitude;
+    // TICKET-081: metadata columns — same sparse-write discipline as city/country
+    // above. A sparse upsert that omits these leaves the existing values intact.
+    const phone = input.phone?.trim();
+    const website = input.website?.trim();
+    const googleMapsUri = input.googleMapsUri?.trim();
+    if (phone) upsertRow.phone = phone;
+    if (website) upsertRow.website = website;
+    if (googleMapsUri) upsertRow.google_maps_uri = googleMapsUri;
+    // hours: only write a non-empty weekdayDescriptions payload. null / empty
+    // descriptions are dropped so they can't overwrite previously-fetched hours.
+    if (input.hours && Array.isArray(input.hours.weekdayDescriptions) && input.hours.weekdayDescriptions.length > 0) {
+        upsertRow.hours = input.hours;
+    }
     // TICKET-060 H4/R3: preserve verification + created_by for ghost management.
     if (input.verification !== undefined) upsertRow.verification = input.verification;
     if (input.createdBy !== undefined) upsertRow.created_by = input.createdBy;

@@ -26,3 +26,5 @@ export { ProfessionalTakesBand } from './ProfessionalTakesBand';
 export { CriticRow } from './CriticRow';
 // TICKET-054: TikTok source panel
 export { SavedFromTikTokPanel } from './SavedFromTikTokPanel';
+// TICKET-081: restaurant metadata action row + hours
+export { MetaActions } from './MetaActions';
