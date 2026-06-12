@@ -107,6 +107,19 @@ export interface LiveSpotsClient {
     from: (table: string) => any;
 }
 
+/**
+ * Result of the write-boundary handoff authorization (TICKET-077 fix-pass).
+ *
+ * `revoked: true` ⇒ the share is revoked, unknown, or points at a deleted/unowned
+ * list NOW — every requested spot must fail (SHARE_REVOKED). `revoked: false`
+ * carries the AUTHORITATIVE live set (`liveRestaurantIds`) and the owner's CURRENT
+ * `sharerName`, both read as late as possible (after the revoke re-check), so the
+ * per-spot pin decision can never authorize off a stale set.
+ */
+export type HandoffWriteAuthorization =
+    | { revoked: true }
+    | { revoked: false; liveRestaurantIds: Set<string>; sharerName: string };
+
 // ── Builders ──────────────────────────────────────────────────────────────────
 
 /**
@@ -262,6 +275,65 @@ export async function loadLiveSpots(
     const spots = buildSnapshotInput(joinedRows, ratingMap);
 
     return { sharer_name: sharerName, list_name: listName, spots };
+}
+
+/**
+ * loadHandoffWriteAuthorization — the SINGLE authoritative authorization read for
+ * a handoff pin, performed as late as possible (at the write boundary).
+ *
+ * TICKET-077 fix-pass (TOCTOU): the pin path must NOT authorize off a live set
+ * loaded early — between an early load and the write loop, the owner can remove a
+ * spot, delete the list, or have a restaurant de-verified, leaving a stale set
+ * that wrongly passes `isSpotPinnable`. This helper collapses revocation AND
+ * current-membership/verification into one read taken immediately before the
+ * write loop:
+ *
+ *   1. revoke re-check — re-read `revoked_at` for the token (the share row may
+ *      have been revoked since any earlier existence check).
+ *   2. live load — `loadLiveSpots(ownerId, listId)` for the CURRENT verified spot
+ *      set + the owner's CURRENT sharer_name.
+ *
+ * Returns `{ revoked: true }` when the share is revoked/unknown OR the live load
+ * returns null (list/owner gone) — the caller fails every spot SHARE_REVOKED.
+ * An EMPTY live set is NOT revoked: it returns `{ revoked: false, liveRestaurantIds:∅ }`
+ * so every requested spot fails NOT_IN_SHARE (no longer present), which matches the
+ * "share still exists but has nothing pinnable right now" case.
+ *
+ * The supabase param is typed loosely (the read uses `.from(...).select(...).eq(...).maybeSingle()`
+ * plus the loadLiveSpots chain) so the handler's service-role client and the test
+ * fake both satisfy it.
+ */
+export async function loadHandoffWriteAuthorization(
+    supabase: LiveSpotsClient,
+    handoffToken: string,
+): Promise<HandoffWriteAuthorization> {
+    // 1. Revoke re-check at the write boundary (the share may have been revoked
+    //    since any earlier existence check — close that window here).
+    const { data: shareRow, error: shareErr } = await (supabase as any)
+        .from('wishlist_shares')
+        .select('owner_id, list_id, revoked_at')
+        .eq('token', handoffToken)
+        .maybeSingle();
+
+    if (shareErr) throw shareErr;
+    if (!shareRow || (shareRow as any).revoked_at !== null) {
+        return { revoked: true };
+    }
+
+    // 2. The ONE authoritative live read — CURRENT verified spot set + sharer_name.
+    //    null ⇒ the list/owner is gone ⇒ treat as revoked (points at nothing).
+    const ownerId = (shareRow as any).owner_id as string;
+    const listId = ((shareRow as any).list_id as string | null) ?? null;
+    const live = await loadLiveSpots(supabase, ownerId, listId);
+    if (!live) {
+        return { revoked: true };
+    }
+
+    return {
+        revoked: false,
+        liveRestaurantIds: new Set(live.spots.map((s) => s.restaurant_id)),
+        sharerName: live.sharer_name,
+    };
 }
 
 /**

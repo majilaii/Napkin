@@ -58,7 +58,7 @@ import { upsertRestaurant } from '../_shared/restaurant.ts';
 // TICKET-077: the handoff pin path re-reads the share LIVE (single source of truth,
 // shared with handoff/share-page) so it pins against the CURRENT spot set, never a
 // stale client-sent list.
-import { loadLiveSpots } from '../handoff/snapshot.ts';
+import { loadHandoffWriteAuthorization } from '../handoff/snapshot.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1311,18 +1311,25 @@ async function handleSaveSpots(
     const capped = spots.slice(0, 6);
 
     // ── TICKET-072 ARCH-REVIEW-2 #1/#4 + TICKET-077: handoff_token gate ──────
-    // When handoff_token is present, re-check revocation immediately before writing
-    // (never rely on cached resolve data). Server constructs source authoritatively
-    // from the LIVE share read — client-sent source is ignored.
+    // When handoff_token is present, the server authorizes the pin against the
+    // owner's LIVE state (never cached resolve data) and constructs `source`
+    // authoritatively — client-sent source is ignored.
     //
-    // TICKET-077: shares are live. We re-read the owner's CURRENT verified spot set
-    // server-side and pin ONLY restaurant_ids that are in it. A client may send a
-    // restaurant_id that the owner has since removed (or that belongs to a different
-    // share) — those are rejected, NOT trusted. sharer_name is the owner's LIVE name.
+    // TICKET-077: shares are live. We pin ONLY restaurant_ids in the owner's CURRENT
+    // verified spot set; a restaurant_id the owner has since removed (or one from a
+    // different share) is rejected, NOT trusted. sharer_name is the owner's LIVE name.
+    //
+    // TICKET-077 fix-pass (TOCTOU): the authoritative live read happens at the WRITE
+    // BOUNDARY below (loadHandoffWriteAuthorization) — there is intentionally NO early
+    // live load here, so nothing stale can leak into isSpotPinnable.
     const handoffToken = typeof body['handoff_token'] === 'string' ? body['handoff_token'] : null;
     let effectiveSource: unknown = source;
     // null ⇒ no handoff gate (normal import). A Set ⇒ handoff: the restaurant_ids
-    // in the CURRENT live spot set; only these may be pinned.
+    // in the CURRENT live spot set; only these may be pinned. Both are assigned
+    // ONLY at the write boundary below (TICKET-077 fix-pass — TOCTOU): there must
+    // be exactly ONE authorization-relevant live read, and it must be as late as
+    // possible so an owner removing a spot / deleting the list / de-verifying a
+    // restaurant after the request begins cannot leave a stale set that pins.
     let liveRestaurantIds: Set<string> | null = null;
 
     const buildRevokedResponse = () => {
@@ -1340,37 +1347,6 @@ async function handleSaveSpots(
             },
         });
     };
-
-    if (handoffToken) {
-        const { data: shareRow, error: shareErr } = await supabase
-            .from('wishlist_shares')
-            .select('owner_id, list_id, revoked_at')
-            .eq('token', handoffToken)
-            .maybeSingle();
-
-        if (shareErr) throw shareErr;
-
-        if (!shareRow || (shareRow as any).revoked_at !== null) {
-            // Revoked or unknown → all spots fail with SHARE_REVOKED (ARCH-2 #1)
-            return buildRevokedResponse();
-        }
-
-        // TICKET-077: live read — the CURRENT verified spot set + the owner's live
-        // sharer_name. A deleted/unowned list → null → treat as revoked (the share
-        // points at nothing shareable anymore).
-        const ownerId = (shareRow as any).owner_id as string;
-        const listId = ((shareRow as any).list_id as string | null) ?? null;
-        const live = await loadLiveSpots(supabase, ownerId, listId);
-        if (!live) {
-            return buildRevokedResponse();
-        }
-
-        liveRestaurantIds = new Set(live.spots.map((s) => s.restaurant_id));
-
-        // ARCH-2 #4: server-authoritative provenance — ignore any client-sent source.
-        // sharer_name is the owner's CURRENT display name (TICKET-077).
-        effectiveSource = { type: 'handoff', sharer_name: live.sharer_name };
-    }
 
     // ── FIX #3 (P1): validate table memberships BEFORE calling the RPC ──────
     // member_id doctrine (TICKET-034): the column is member_id, NOT user_id.
@@ -1393,10 +1369,19 @@ async function handleSaveSpots(
         unauthorizedTableIds = filterUnauthorizedTableIds(tableIdsToCheck, memberRows ?? []);
     }
 
-    // ── TICKET-072 Codex #2: TOCTOU re-check — re-read revoked_at immediately ──
-    // before the write loop (the first check above ran before the membership /
-    // upsert prep which can take ~100 ms; a revoke landing in that window would
-    // not be caught). This re-read closes most of that window.
+    // ── TICKET-077 fix-pass (TOCTOU): ONE authoritative authorization read, at the
+    // write boundary ──────────────────────────────────────────────────────────
+    // This is the SOLE live read used to authorize a handoff pin. It runs here —
+    // immediately before the per-spot write loop, AFTER the (potentially ~100 ms)
+    // membership / upsert prep above — so it observes the owner's CURRENT state.
+    // loadHandoffWriteAuthorization re-checks revocation AND re-loads the live spot
+    // set in one place: if the owner removed a spot, deleted/unowned the list, or a
+    // restaurant became unverified since the request began, the fresh set reflects
+    // it and isSpotPinnable rejects those spots (NOT_IN_SHARE). There is no early
+    // live load to drift from — see liveRestaurantIds declaration above.
+    //
+    // sharer_name (server-authoritative provenance, ARCH-2 #4) also comes from THIS
+    // fresh read — the owner's CURRENT display name.
     //
     // Accepted residual: a revoke arriving WITHIN the loop (between individual
     // fn_save_import_spot calls) lets already-in-flight spots complete. This is
@@ -1405,15 +1390,13 @@ async function handleSaveSpots(
     // Do NOT thread token state into fn_save_import_spot (too heavy for the harm
     // profile — ARCH-REVIEW-2 #2 rationale).
     if (handoffToken) {
-        const { data: recheck, error: recheckErr } = await supabase
-            .from('wishlist_shares')
-            .select('revoked_at')
-            .eq('token', handoffToken)
-            .maybeSingle();
-        if (recheckErr) throw recheckErr;
-        if (!recheck || (recheck as any).revoked_at !== null) {
+        const auth = await loadHandoffWriteAuthorization(supabase, handoffToken);
+        if (auth.revoked === true) {
+            // Revoked, unknown, or list/owner gone NOW → all spots fail SHARE_REVOKED.
             return buildRevokedResponse();
         }
+        liveRestaurantIds = auth.liveRestaurantIds;
+        effectiveSource = { type: 'handoff', sharer_name: auth.sharerName };
     }
 
     const results: Array<{
