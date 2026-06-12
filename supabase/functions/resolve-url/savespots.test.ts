@@ -24,6 +24,7 @@ import {
     isSpotPinnable,
 } from './_helpers.ts';
 import { deriveClientNonce } from '../handoff/nonce.ts';
+import { loadHandoffWriteAuthorization, type LiveSpotsClient } from '../handoff/snapshot.ts';
 
 // ── 1. Source passthrough — object not stringified ────────────────────────────
 //
@@ -294,4 +295,181 @@ Deno.test('client_nonce determinism: different token → different nonce (no cro
     const a = await deriveClientNonce('ABCdefGHIjklMNOpqrSTUv', rid);
     const b = await deriveClientNonce('ZZZdefGHIjklMNOpqrSTUv', rid);
     assertNotEquals(a, b, 'same restaurant under different shares must not collide');
+});
+
+// ── TICKET-077 fix-pass (TOCTOU): write-boundary authorization uses the FRESH read
+//
+// The regression Codex flagged: handleSaveSpots used to freeze the live set early,
+// then only re-check revoked_at before writing. If the owner removed a spot (or it
+// de-verified) AFTER the early load, the stale set still contained it and the pin
+// wrongly succeeded. The fix routes ALL authorization through
+// loadHandoffWriteAuthorization at the write boundary — ONE live read, as late as
+// possible — and the per-spot decision is the real isSpotPinnable against THAT set.
+//
+// These tests exercise the real loadHandoffWriteAuthorization + real isSpotPinnable
+// against a fake client that changes its answer between reads (the race), and assert
+// the WRITE-boundary decision uses the SECOND read → NOT_IN_SHARE for the removed spot.
+
+const SHARE_OWNER = 'owner00-0000-4000-8000-0000000000ff';
+const SHARE_TOKEN = 'TokenABCdefGHIjklMNOp';
+
+/**
+ * Fake supabase client whose per-table query result is chosen by call index, so a
+ * table can return one set on the first read and a different set on the second —
+ * simulating the owner mutating their wishlist between the resolve view and the
+ * write-boundary read. Mirrors the real PostgREST chain (select/eq/is/not/order +
+ * maybeSingle for single-row reads; thenable for multi-row reads), same shape as
+ * handoff/liveSpots.test.ts's fake.
+ */
+function sequencedClient(tableSequences: Record<string, any[][]>): LiveSpotsClient {
+    const callCounts: Record<string, number> = {};
+
+    const makeBuilder = (table: string) => {
+        const seq = tableSequences[table] ?? [];
+        const idx = callCounts[table] ?? 0;
+        callCounts[table] = idx + 1;
+        // Once the sequence is exhausted, keep returning its LAST entry (a stable
+        // post-mutation steady state) rather than undefined.
+        const rows = seq.length === 0 ? [] : (seq[idx] ?? seq[seq.length - 1]);
+
+        const builder: any = {
+            select: () => builder,
+            eq: () => builder,
+            is: () => builder,
+            not: () => builder,
+            in: () => builder,
+            order: () => builder,
+            maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
+            then: (resolve: (v: { data: any[]; error: null }) => void) =>
+                resolve({ data: rows, error: null }),
+        };
+        return builder;
+    };
+
+    return { from: (table: string) => makeBuilder(table) };
+}
+
+Deno.test('TOCTOU regression: spot removed before the write-boundary read → NOT_IN_SHARE (not pinned)', async () => {
+    // The recipient resolved a wishlist share that contained restaurant R. The owner
+    // then removed R (or it de-verified). The write-boundary read must see R gone.
+    //
+    // wishlist_items returns R on the FIRST read (resolve view), then EMPTY on the
+    // SECOND read (the write-boundary read, after the owner removed R). The share row
+    // stays present + un-revoked the whole time — this is specifically the
+    // membership-not-revocation race the old code missed.
+    const client = sequencedClient({
+        wishlist_shares: [
+            // Every share-row read: still present, never revoked.
+            [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
+        ],
+        wishlist_items: [
+            // 1st loadLiveSpots read (resolve view): R is present + verified.
+            [{ restaurant_id: 'R', restaurant: { id: 'R', name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } }],
+            // 2nd loadLiveSpots read (write boundary): R has been removed.
+            [],
+        ],
+        entries: [[], []],
+        profiles: [[{ display_name: 'Jacky Ng' }], [{ display_name: 'Jacky Ng' }]],
+    });
+
+    // --- Resolve-time view: the set the OLD code would have frozen and authorized off.
+    const resolveView = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+    if (resolveView.revoked === true) throw new Error('precondition: resolve-view share must be live');
+    // Sanity: at resolve time R *was* legitimately in the share.
+    assertEquals(isSpotPinnable('R', resolveView.liveRestaurantIds), true,
+        'precondition: R is pinnable at resolve time (this is what made the stale-set bug fire)');
+
+    // --- Write boundary: the authoritative late read. R is gone now.
+    const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+    if (writeAuth.revoked === true) throw new Error('share must NOT be revoked — only the spot was removed');
+
+    // The fresh set must NOT contain R, and the REAL per-spot decision (isSpotPinnable,
+    // exactly as handleSaveSpots calls it) must reject R → the handler emits NOT_IN_SHARE.
+    assertEquals(writeAuth.liveRestaurantIds.has('R'), false,
+        'write-boundary set must reflect the removal — not the stale resolve-time set');
+    assertEquals(isSpotPinnable('R', writeAuth.liveRestaurantIds), false,
+        'authorizing off the FRESH write-boundary read must reject the removed spot (NOT_IN_SHARE)');
+
+    // And the bug would have looked like this: authorizing off the STALE resolve set
+    // wrongly passes. This asserts the two reads genuinely diverge (the race is real).
+    assertNotEquals(
+        isSpotPinnable('R', resolveView.liveRestaurantIds),
+        isSpotPinnable('R', writeAuth.liveRestaurantIds),
+        'the stale set and the fresh set must disagree on R — the consolidation is what closes this gap',
+    );
+});
+
+Deno.test('TOCTOU regression: revoke landing before the write-boundary read → SHARE_REVOKED', async () => {
+    // Same race, revocation flavor: the share row was live at resolve time, then
+    // revoked before the write boundary. The write-boundary read must report revoked.
+    const client = sequencedClient({
+        wishlist_shares: [
+            // 1st share-row read (resolve view): live.
+            [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
+            // 2nd share-row read (write boundary): revoked.
+            [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: '2026-06-12T00:00:00Z' }],
+        ],
+        wishlist_items: [
+            [{ restaurant_id: 'R', restaurant: { id: 'R', name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } }],
+            [{ restaurant_id: 'R', restaurant: { id: 'R', name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } }],
+        ],
+        entries: [[], []],
+        profiles: [[{ display_name: 'Jacky' }], [{ display_name: 'Jacky' }]],
+    });
+
+    const resolveView = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+    if (resolveView.revoked === true) throw new Error('precondition: resolve-view share must be live');
+
+    const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+    assertEquals(writeAuth.revoked, true,
+        'a revoke landing before the write-boundary read must fail all spots SHARE_REVOKED');
+});
+
+Deno.test('write-boundary auth: deleted/unowned list NOW → revoked (points at nothing)', async () => {
+    // A per-list share whose list was deleted (or ownership changed) between resolve
+    // and write: loadLiveSpots returns null for the missing list → revoked, never a crash.
+    const LIST_ID = 'list000-0000-4000-8000-0000000000aa';
+    const client = sequencedClient({
+        wishlist_shares: [
+            [{ owner_id: SHARE_OWNER, list_id: LIST_ID, revoked_at: null }],
+        ],
+        lists: [
+            // Write-boundary list read: gone (deleted or no longer owned) → maybeSingle null.
+            [],
+        ],
+        list_entries: [[]],
+        entries: [[]],
+        profiles: [[{ display_name: 'Jacky' }]],
+    });
+
+    const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+    assertEquals(writeAuth.revoked, true,
+        'a list deleted/unowned at the write boundary must fail all spots (SHARE_REVOKED)');
+});
+
+Deno.test('write-boundary auth: live share with present spots → carries the FRESH set + sharer_name', async () => {
+    // Happy path: the write-boundary read returns the current verified set and the
+    // owner's CURRENT display name (provenance comes from THIS read, not an early one).
+    const client = sequencedClient({
+        wishlist_shares: [
+            [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
+        ],
+        wishlist_items: [
+            [
+                { restaurant_id: 'R1', restaurant: { id: 'R1', name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } },
+                { restaurant_id: 'R2', restaurant: { id: 'R2', name: 'Kono', city: 'NY', cuisine: 'Japanese', verification: 'verified' } },
+            ],
+        ],
+        entries: [[]],
+        profiles: [[{ display_name: 'Jacky Ng' }]],
+    });
+
+    const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+    if (writeAuth.revoked === true) throw new Error('share must be live');
+    assertEquals(writeAuth.liveRestaurantIds.has('R1'), true);
+    assertEquals(writeAuth.liveRestaurantIds.has('R2'), true);
+    assertEquals(writeAuth.sharerName, 'Jacky', 'sharer_name comes from the write-boundary read');
+    // The real per-spot gate passes both present spots and rejects an unknown one.
+    assertEquals(isSpotPinnable('R1', writeAuth.liveRestaurantIds), true);
+    assertEquals(isSpotPinnable('R-not-shared', writeAuth.liveRestaurantIds), false);
 });
