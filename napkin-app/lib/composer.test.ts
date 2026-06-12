@@ -148,6 +148,34 @@ describe('buildEntryPayload', () => {
         const payload = buildEntryPayload(makeState({ visitedAt: BASE_DATE }));
         expect(payload.visited_at).toBe(BASE_DATE.toISOString());
     });
+
+    // ── TICKET-075: like flag ──────────────────────────────────────────────
+    it('liked defaults to false when not provided', () => {
+        const payload = buildEntryPayload(makeState({ liked: undefined }));
+        expect(payload.liked).toBe(false);
+    });
+
+    it('liked is true when hearted (independent of rating)', () => {
+        const payload = buildEntryPayload(makeState({ liked: true, rating: 2 }));
+        expect(payload.liked).toBe(true);
+        expect(payload.rating).toBe(2);
+    });
+
+    it('liked is false when explicitly not hearted', () => {
+        const payload = buildEntryPayload(makeState({ liked: false }));
+        expect(payload.liked).toBe(false);
+    });
+
+    // ── TICKET-075: dish removed from the logger ───────────────────────────
+    it('dish_description omitted when dish is undefined (logger no longer sends it)', () => {
+        const payload = buildEntryPayload(makeState({ dish: undefined }));
+        expect(payload.dish_description).toBeUndefined();
+    });
+
+    it('dish_description still forwarded when a dish string is provided', () => {
+        const payload = buildEntryPayload(makeState({ dish: '  spicy rigatoni  ' }));
+        expect(payload.dish_description).toBe('spicy rigatoni');
+    });
 });
 
 // ── buildRoundPayload (round-mode shape) ──────────────────────────────────

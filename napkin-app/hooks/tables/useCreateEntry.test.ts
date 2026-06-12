@@ -30,7 +30,13 @@ jest.mock('@/providers/AuthProvider', () => ({
     })),
     AuthProvider: ({ children }: any) => children,
 }));
-jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
+jest.mock('@/lib/edgeInvoke', () => ({
+    callEdgeFn: jest.fn(),
+    // TICKET-075: useCreateEntry now imports SessionExpiredError for the 401 path.
+    SessionExpiredError: class SessionExpiredError extends Error {
+        code = 'session_expired';
+    },
+}));
 jest.mock('@/lib/supabase', () => require('@/__mocks__/supabase'));
 
 import { act, waitFor } from '@testing-library/react-native';

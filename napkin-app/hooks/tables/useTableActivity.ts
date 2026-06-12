@@ -22,6 +22,8 @@ export interface SoloShareActivity {
     rating: number | null;
     content: string | null;
     dish_description: string | null;
+    /** TICKET-075: author's Letterboxd-style like. Read-only on feed/journal rows. */
+    liked?: boolean;
     visited_at: string;
     created_at: string;
     sort_date: string;

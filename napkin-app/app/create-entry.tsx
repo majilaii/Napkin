@@ -29,6 +29,9 @@ import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import DateTimePicker, {
+    type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -51,7 +54,6 @@ import {
     WritingSurface,
     AddDetailsDrawer,
     TablePickerSheet,
-    DateChip,
     RatingBand,
     PhotoStrip,
     TableRowChecklist,
@@ -90,6 +92,22 @@ interface PlaceResult {
     photoAttributionHtml: string | null;
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Lowercase "today · sat 7 jun" / "sat 7 jun" date label for the WHEN row. */
+function formatWhenLabel(date: Date): string {
+    const now = new Date();
+    const isToday =
+        date.getFullYear() === now.getFullYear() &&
+        date.getMonth() === now.getMonth() &&
+        date.getDate() === now.getDate();
+    const dow = date.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+    const d = date.getDate();
+    const mon = date.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+    const datePart = `${dow} ${d} ${mon}`;
+    return isToday ? `today · ${datePart}` : datePart;
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────
 
 export default function CreateEntryScreen() {
@@ -97,7 +115,7 @@ export default function CreateEntryScreen() {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const { user } = useAuth();
+    const { user, signOut } = useAuth();
 
     const {
         tableId: tableIdParam,
@@ -181,6 +199,13 @@ export default function CreateEntryScreen() {
     const createEntryWithMerge = useCreateEntryWithMerge();
     const toast = useToast();
 
+    // TICKET-075: route a refreshed-and-still-401 session expiry to re-auth.
+    const handleSessionExpired = useCallback(async () => {
+        toast.show('your session expired — sign in again');
+        try { await signOut(); } catch { /* noop */ }
+        router.replace('/auth');
+    }, [toast, signOut, router]);
+
     // ── Prefill from route params ─────────────────────────────────────────────
     const prefillPlace = React.useMemo<PlaceResult | null>(() => {
         if (placePayloadParam) {
@@ -263,6 +288,8 @@ export default function CreateEntryScreen() {
 
     // Impression form state
     const [rating, setRating] = useState(Number(ratingParam) || 0);
+    // TICKET-075: Letterboxd-style like — independent of the rating value.
+    const [liked, setLiked] = useState(false);
     const [notes, setNotes] = useState('');
 
     // Breakdown ratings (inside drawer)
@@ -282,6 +309,21 @@ export default function CreateEntryScreen() {
         }
         return new Date();
     });
+    // TICKET-075: native month-calendar visibility (replaces the DateChip date list).
+    const [showCalendar, setShowCalendar] = useState(false);
+    const handleCalendarChange = useCallback(
+        (event: DateTimePickerEvent, selected?: Date) => {
+            if (Platform.OS === 'android') setShowCalendar(false);
+            if (event.type === 'dismissed' || !selected) return;
+            setVisitedAt((prev) => {
+                const next = new Date(selected);
+                next.setHours(prev.getHours(), prev.getMinutes(), prev.getSeconds(), prev.getMilliseconds());
+                const now = new Date();
+                return next.getTime() > now.getTime() ? now : next;
+            });
+        },
+        [],
+    );
 
     // ── TICKET-044: merge-candidate detection (Trigger B) ────────────────────
     const mergeTableId = selectedTableIds.length === 1 ? selectedTableIds[0] : null;
@@ -604,12 +646,17 @@ export default function CreateEntryScreen() {
             setPhotos([]);
             router.back();
         } catch (e: any) {
+            const code = (e as any)?.cause?.code ?? (e as any)?.code;
+            if (code === 'session_expired') {
+                handleSessionExpired();
+                return;
+            }
             Alert.alert('Error', e?.message ?? 'Could not save entry');
         }
     }, [
         canSubmit, mergeCandidate, mergeTableId, mergeRestaurantId, user?.id,
         selectedPlace, rating, photos, notes, dish, visitedAt,
-        createEntryWithMerge, toast, router,
+        createEntryWithMerge, toast, router, handleSessionExpired,
     ]);
 
     const handleSeparate = useCallback(() => {
@@ -665,7 +712,7 @@ export default function CreateEntryScreen() {
                     restaurant: restaurantData,
                     ...buildEntryPayload({
                         rating, notes, dish, photos, breakdown,
-                        selectedTableIds, visitedAt, selectedCompanions,
+                        selectedTableIds, visitedAt, selectedCompanions, liked,
                     }),
                 });
             }
@@ -677,16 +724,21 @@ export default function CreateEntryScreen() {
             }
             router.back();
         } catch (e: any) {
+            const code = (e as any)?.cause?.code ?? (e as any)?.code;
+            if (code === 'session_expired') {
+                handleSessionExpired();
+                return;
+            }
             // table_not_authorized errors are handled by onTableNotAuthorized callback.
-            if ((e as any)?.code !== 'table_not_authorized') {
+            if (code !== 'table_not_authorized') {
                 Alert.alert('Error', e.message ?? 'Could not save entry');
             }
         }
     }, [
-        canSubmit, rating, notes, dish, selectedPlace, query,
+        canSubmit, rating, notes, dish, liked, selectedPlace, query,
         selectedTableIds, roundTableId, postMode, selectedParticipantIds,
         breakdown, visitedAt, photos, selectedCompanions,
-        createEntry, startRound, toast, router,
+        createEntry, startRound, toast, router, handleSessionExpired,
     ]);
 
     // ── Submit label ──────────────────────────────────────────────────────
@@ -800,13 +852,27 @@ export default function CreateEntryScreen() {
                         />
                     ) : null}
 
-                    {/* SECTION 2: Rating band */}
+                    {/* SECTION 2: Rating band + inline like heart (TICKET-075) */}
                     {!showSearch ? (
-                        <View style={[styles.sectionDivider, { borderTopColor: palette.divider }]}>
+                        <View style={[styles.sectionDivider, styles.ratingRow, { borderTopColor: palette.divider }]}>
                             <RatingBand
                                 rating={rating}
                                 onRatingChange={setRating}
                             />
+                            <Pressable
+                                onPress={() => setLiked((v) => !v)}
+                                hitSlop={10}
+                                style={styles.likeToggle}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: liked }}
+                                accessibilityLabel={liked ? 'liked' : 'like'}
+                            >
+                                <Ionicons
+                                    name={liked ? 'heart' : 'heart-outline'}
+                                    size={26}
+                                    color={liked ? palette.primary : palette.textMuted}
+                                />
+                            </Pressable>
                         </View>
                     ) : null}
 
@@ -866,8 +932,32 @@ export default function CreateEntryScreen() {
                                     </Text>
                                 </Pressable>
                                 <View style={{ flex: 1 }} />
-                                <DateChip value={visitedAt} onChange={setVisitedAt} />
+                                {/* TICKET-075: tap opens a real month calendar (no future dates) */}
+                                <Pressable
+                                    onPress={() => setShowCalendar((v) => !v)}
+                                    style={[styles.withChip, { borderColor: palette.divider }]}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`when: ${formatWhenLabel(visitedAt)}. tap to change.`}
+                                >
+                                    <Ionicons name="calendar-outline" size={13} color={palette.textSecondary} />
+                                    <Text style={[styles.withChipLabel, { color: palette.textSecondary }]}>
+                                        {formatWhenLabel(visitedAt)}
+                                    </Text>
+                                </Pressable>
                             </View>
+                            {showCalendar ? (
+                                <View style={styles.calendarWrap}>
+                                    <DateTimePicker
+                                        value={visitedAt}
+                                        mode="date"
+                                        display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                                        maximumDate={new Date()}
+                                        onChange={handleCalendarChange}
+                                        accentColor={palette.primary}
+                                        themeVariant={scheme}
+                                    />
+                                </View>
+                            ) : null}
                             {selectedCompanions.length > 0 ? (
                                 <View style={styles.companionsRow}>
                                     <CompanionChipsRow
@@ -1046,6 +1136,16 @@ const styles = StyleSheet.create({
     sectionDivider: {
         borderTopWidth: StyleSheet.hairlineWidth,
     },
+    // TICKET-075: rating band + like heart on one row
+    ratingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    likeToggle: {
+        padding: 2,
+        marginLeft: Spacing.sm,
+    },
     sectionBlock: {
         borderTopWidth: StyleSheet.hairlineWidth,
         paddingTop: Spacing.md,
@@ -1076,6 +1176,11 @@ const styles = StyleSheet.create({
     companionsRow: {
         marginTop: Spacing.xs,
         marginBottom: Spacing.xs,
+    },
+    // TICKET-075: inline month calendar drop-down
+    calendarWrap: {
+        marginTop: Spacing.xs,
+        ...(Platform.OS === 'android' ? {} : { marginLeft: -8 }),
     },
     // Round mode participant picker
     participantGrid: {

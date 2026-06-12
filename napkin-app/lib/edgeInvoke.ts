@@ -36,6 +36,49 @@ function throwInvokeError(unwrapped: UnwrappedError): never {
 }
 
 /**
+ * TICKET-075: typed error raised when the device session can't be refreshed.
+ * The app routes this to sign-out → /auth instead of showing a raw "non-2xx" toast.
+ * Detectable via `(err as SessionExpiredError).code === 'session_expired'`.
+ */
+export class SessionExpiredError extends Error {
+    code = 'session_expired' as const;
+    constructor(message = 'Your session expired — please sign in again.') {
+        super(message);
+        this.name = 'SessionExpiredError';
+    }
+}
+
+/**
+ * TICKET-075: decide whether a thrown edge error is an auth failure worth a
+ * refresh+retry. Recognizes the 401 status plus the common invalid-JWT codes
+ * across all three transports (GET fetch, POST fetch, POST invoke).
+ *
+ * Exported for unit testing the refresh-retry decision in isolation.
+ */
+export function isAuthFailure(err: unknown): boolean {
+    const cause = (err as { cause?: UnwrappedError })?.cause;
+    if (cause?.status === 401) return true;
+    const code = (cause?.code ?? '').toLowerCase();
+    if (code === 'http_401' || code === '401') return true;
+    if (code.includes('jwt') || code.includes('unauthorized')) return true;
+    const message = (cause?.message ?? (err as Error)?.message ?? '').toLowerCase();
+    return message.includes('invalid jwt') || message.includes('jwt expired');
+}
+
+/**
+ * TICKET-075: attempt a single session refresh. Returns true when a new session
+ * is obtained, false otherwise (caller surfaces SessionExpiredError on false).
+ */
+async function tryRefreshSession(): Promise<boolean> {
+    try {
+        const { data, error } = await supabase.auth.refreshSession();
+        return !error && !!data.session;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Shared edge-function invoke helper (TICKET-039 P2-7).
  *
  * One way to call edge functions:
@@ -55,7 +98,33 @@ function throwInvokeError(unwrapped: UnwrappedError): never {
  *     method: 'GET', action: 'diary', params: { user_id, limit: 30 }
  *   });
  */
+/**
+ * Public entry point. Runs the call once; on a 401 / invalid-JWT failure it
+ * refreshes the session ONE time and retries. If the refresh fails, it throws a
+ * typed SessionExpiredError the app routes to sign-out → /auth. Happy path is
+ * untouched — the retry shell only activates on an auth failure. [TICKET-075]
+ */
 export async function callEdgeFn<T = unknown>(
+    name: string,
+    opts: CallEdgeFnOptions = {},
+): Promise<T> {
+    try {
+        return await callEdgeFnOnce<T>(name, opts);
+    } catch (err) {
+        if (!isAuthFailure(err)) throw err;
+        const refreshed = await tryRefreshSession();
+        if (!refreshed) throw new SessionExpiredError();
+        // Retry once with the fresh session. A second auth failure is terminal.
+        try {
+            return await callEdgeFnOnce<T>(name, opts);
+        } catch (retryErr) {
+            if (isAuthFailure(retryErr)) throw new SessionExpiredError();
+            throw retryErr;
+        }
+    }
+}
+
+async function callEdgeFnOnce<T = unknown>(
     name: string,
     opts: CallEdgeFnOptions = {},
 ): Promise<T> {

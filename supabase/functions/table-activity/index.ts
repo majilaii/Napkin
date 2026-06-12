@@ -165,6 +165,7 @@ serve(async (req) => {
                     rating,
                     content,
                     dish_description,
+                    liked,
                     visited_at,
                     created_at,
                     table_night_id,

@@ -88,6 +88,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
             },
         ],
         'expo-web-browser',
+        // TICKET-075: native month-calendar date picker for the logger WHEN row.
+        '@react-native-community/datetimepicker',
         // @bacons/apple-targets auto-discovers targets/ dirs containing
         // expo-target.config.js. No inline config needed.
         '@bacons/apple-targets',

@@ -861,6 +861,7 @@ export default function TablesScreen() {
                                                           restaurantName={solo.restaurants?.name ?? 'Unknown'}
                                                           relativeTime={formatRelTime(solo.sort_date ?? solo.created_at)}
                                                           rating={solo.rating}
+                                                          liked={solo.liked}
                                                           metaLine={fmtTickMeta(solo.restaurants?.city, solo.visited_at ?? solo.created_at)}
                                                           photoUrl={solo.photo_url}
                                                           note={solo.content}
