@@ -33,6 +33,8 @@ interface TableEntryCardProps {
     /** Relative time string — "2h", "1d" */
     relativeTime?: string;
     rating?: number | null;
+    /** TICKET-075: small filled terracotta heart by the rating when true (read-only). */
+    liked?: boolean;
     /** City + weekday meta — "Lincoln Center · fri" */
     metaLine?: string;
     photoUrl?: string | null;
@@ -54,6 +56,7 @@ export function TableEntryCard({
     restaurantName,
     relativeTime,
     rating,
+    liked,
     metaLine,
     photoUrl,
     note,
@@ -95,7 +98,7 @@ export function TableEntryCard({
             </View>
 
             {/* Tick meta row */}
-            {(rating != null || metaLine) && (
+            {(rating != null || metaLine || liked) && (
                 <View style={styles.tickRow}>
                     {rating != null && (
                         <>
@@ -105,6 +108,15 @@ export function TableEntryCard({
                             <Text style={[styles.dot, { color: palette.textMuted }]}>·</Text>
                         </>
                     )}
+                    {liked ? (
+                        <Ionicons
+                            name="heart"
+                            size={13}
+                            color={palette.primary}
+                            style={styles.likedHeart}
+                            accessibilityLabel="liked"
+                        />
+                    ) : null}
                     {metaLine ? (
                         <Text style={[styles.tickMeta, { color: palette.textMuted }]} numberOfLines={1}>
                             {metaLine}
@@ -240,6 +252,10 @@ const styles = StyleSheet.create({
     dot: {
         fontSize: 12,
         lineHeight: 18,
+    },
+    likedHeart: {
+        alignSelf: 'center',
+        marginRight: 6,
     },
     tickMeta: {
         fontFamily: 'Manrope_500Medium',

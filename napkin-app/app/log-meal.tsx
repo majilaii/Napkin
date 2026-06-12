@@ -31,7 +31,6 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
     View,
     Text,
-    TextInput,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -43,6 +42,10 @@ import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker, {
+    type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -55,7 +58,6 @@ import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
 import { collectOrphanedBlobUrls } from '@/lib/photoCleanup';
 import { buildEntryPayload, toggleTableId } from '@/lib/composer';
 import type { ComposerBreakdown } from '@/lib/composer';
-import { DateChip } from '@/components/create-entry/DateChip';
 import { CompanionPickerSheet } from '@/components/logging/CompanionPickerSheet';
 import { PhotoMosaic } from '@/components/log/PhotoMosaic';
 import { PhotoViewer } from '@/components/log/PhotoViewer';
@@ -253,9 +255,17 @@ export default function LogMealScreen() {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const { user } = useAuth();
+    const { user, signOut } = useAuth();
     const toast = useToast();
     const qc = useQueryClient();
+
+    // TICKET-075: route a refreshed-and-still-401 session expiry to re-auth
+    // instead of a raw "non-2xx" alert.
+    const handleSessionExpired = useCallback(async () => {
+        toast.show('your session expired — sign in again');
+        try { await signOut(); } catch { /* noop */ }
+        router.replace('/auth');
+    }, [toast, signOut, router]);
 
     // ── Parse route params ─────────────────────────────────────────────
     const { restaurant: restaurantParam, initialTableId, pageId } = useLocalSearchParams<{
@@ -280,11 +290,13 @@ export default function LogMealScreen() {
 
     // ── Form state ──────────────────────────────────────────────────────
     const [rating, setRating] = useState(0);
+    // TICKET-075: Letterboxd-style like — independent of the rating value.
+    const [liked, setLiked] = useState(false);
     const [visitedAt, setVisitedAt] = useState(new Date());
+    // TICKET-075: native month-calendar visibility (WHEN row).
+    const [showCalendar, setShowCalendar] = useState(false);
     const [notes, setNotes] = useState('');
     const [noteEditorVisible, setNoteEditorVisible] = useState(false);
-    const [dish, setDish] = useState('');
-    const [showDish, setShowDish] = useState(false);
     const [companionPickerVisible, setCompanionPickerVisible] = useState(false);
     const [companions, setCompanions] = useState<UserSearchResult[]>([]);
     const [selectedTableIds, setSelectedTableIds] = useState<string[]>(() =>
@@ -293,6 +305,24 @@ export default function LogMealScreen() {
     const [photos, setPhotos] = useState<PhotoSlot[]>([]);
     const [breakdown, setBreakdown] = useState<ComposerBreakdown>(EMPTY_BREAKDOWN);
     const [showDetails, setShowDetails] = useState(false);
+
+    // TICKET-075: calendar day selection — preserves the time component, blocks future.
+    const handleCalendarChange = useCallback(
+        (event: DateTimePickerEvent, selected?: Date) => {
+            // Android fires 'dismissed' on cancel; iOS inline stays open until tapped away.
+            if (Platform.OS === 'android') setShowCalendar(false);
+            if (event.type === 'dismissed' || !selected) return;
+            setVisitedAt((prev) => {
+                const next = new Date(selected);
+                next.setHours(prev.getHours(), prev.getMinutes(), prev.getSeconds(), prev.getMilliseconds());
+                // Guard: never allow a future instant (inline picker maxes the day,
+                // but the carried time could still push slightly past now).
+                const now = new Date();
+                return next.getTime() > now.getTime() ? now : next;
+            });
+        },
+        [],
+    );
 
     // ── Photo viewer state ──────────────────────────────────────────────
     const [viewerVisible, setViewerVisible] = useState(false);
@@ -442,11 +472,12 @@ export default function LogMealScreen() {
         const payload = buildEntryPayload({
             rating,
             notes,
-            dish,
+            // TICKET-075: dish removed from the logger — not sent.
             selectedTableIds,
             visitedAt,
             photos: photoSlots,
             breakdown,
+            liked,
             selectedCompanions: companions.map((c) => ({ user_id: c.user_id })),
         });
 
@@ -500,6 +531,10 @@ export default function LogMealScreen() {
                 },
                 onError: (err) => {
                     const code = (err as any)?.cause?.code ?? (err as any)?.code;
+                    if (code === 'session_expired') {
+                        handleSessionExpired();
+                        return;
+                    }
                     if (code !== 'table_not_authorized') {
                         Alert.alert('Error', (err as any)?.message ?? 'Could not save entry');
                     }
@@ -511,7 +546,7 @@ export default function LogMealScreen() {
         user?.id,
         rating,
         notes,
-        dish,
+        liked,
         selectedTableIds,
         visitedAt,
         photos,
@@ -519,10 +554,12 @@ export default function LogMealScreen() {
         companions,
         restaurant,
         initialTableId,
+        pageId,
         createEntry,
         toast,
         router,
         qc,
+        handleSessionExpired,
     ]);
 
     // ── Render ─────────────────────────────────────────────────────────
@@ -569,7 +606,7 @@ export default function LogMealScreen() {
                     showsVerticalScrollIndicator={false}
                     automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
                 >
-                    {/* YOUR APPRAISAL */}
+                    {/* 1 ── YOUR APPRAISAL — rating + inline like heart ── */}
                     <View style={styles.section}>
                         <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
                             YOUR APPRAISAL
@@ -584,23 +621,112 @@ export default function LogMealScreen() {
                             >
                                 {ratingDisplay(rating)}
                             </Text>
+                            {/* TICKET-075: like toggle — independent of the rating value. */}
+                            <Pressable
+                                onPress={() => setLiked((v) => !v)}
+                                hitSlop={10}
+                                style={styles.likeToggle}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: liked }}
+                                accessibilityLabel={liked ? 'liked' : 'like'}
+                            >
+                                <Ionicons
+                                    name={liked ? 'heart' : 'heart-outline'}
+                                    size={26}
+                                    color={liked ? palette.primary : palette.textMuted}
+                                />
+                            </Pressable>
                         </View>
                     </View>
 
-                    {/* WHEN */}
+                    {/* 2 ── rate the details — sub-ratings, directly under the main rating ── */}
+                    <View style={styles.section}>
+                        <Pressable
+                            onPress={() => setShowDetails((v) => !v)}
+                            style={styles.detailsToggle}
+                            accessibilityLabel="rate the details"
+                            hitSlop={8}
+                        >
+                            <Text style={[styles.detailsToggleLabel, { color: palette.primary }]}>
+                                {showDetails ? '▾ rate the details' : '▸ rate the details'}
+                            </Text>
+                        </Pressable>
+                        {showDetails && (
+                            <View style={styles.detailsContent}>
+                                <SubRatingRow
+                                    label="Vibe"
+                                    value={breakdown.vibe}
+                                    onChange={(v) =>
+                                        setBreakdown((prev) => ({ ...prev, vibe: v }))
+                                    }
+                                    palette={palette}
+                                />
+                                <SubRatingRow
+                                    label="Flavor"
+                                    value={breakdown.flavor}
+                                    onChange={(v) =>
+                                        setBreakdown((prev) => ({ ...prev, flavor: v }))
+                                    }
+                                    palette={palette}
+                                />
+                                <SubRatingRow
+                                    label="Service"
+                                    value={breakdown.service}
+                                    onChange={(v) =>
+                                        setBreakdown((prev) => ({ ...prev, service: v }))
+                                    }
+                                    palette={palette}
+                                />
+                                <SubRatingRow
+                                    label="Value"
+                                    value={breakdown.value}
+                                    onChange={(v) =>
+                                        setBreakdown((prev) => ({ ...prev, value: v }))
+                                    }
+                                    palette={palette}
+                                />
+                                <Text
+                                    style={[styles.detailsMurmur, { color: palette.textMuted }]}
+                                >
+                                    — only if the meal asks. never shown on rows.
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+
+                    {/* 3 ── WHEN — month calendar (no future dates) ── */}
                     <View style={styles.section}>
                         <View style={styles.whenRow}>
                             <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
                                 WHEN
                             </Text>
-                            <DateChip value={visitedAt} onChange={setVisitedAt} />
                         </View>
-                        <Text style={[styles.whenDate, { color: palette.text }]}>
-                            {formatWhenLabel(visitedAt)}
-                        </Text>
+                        <Pressable
+                            onPress={() => setShowCalendar((v) => !v)}
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            accessibilityLabel={`when: ${formatWhenLabel(visitedAt)}. tap to change.`}
+                        >
+                            <Text style={[styles.whenDate, { color: palette.text }]}>
+                                {formatWhenLabel(visitedAt)}
+                            </Text>
+                        </Pressable>
+                        {showCalendar && (
+                            <View style={styles.calendarWrap}>
+                                <DateTimePicker
+                                    value={visitedAt}
+                                    mode="date"
+                                    display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                                    maximumDate={new Date()}
+                                    onChange={handleCalendarChange}
+                                    accentColor={palette.primary}
+                                    themeVariant={scheme}
+                                />
+                            </View>
+                        )}
                     </View>
 
-                    {/* THE NOTE — tappable preview block → NoteEditorModal */}
+                    {/* 4 ── THE NOTE — tappable preview block → NoteEditorModal ── */}
                     <View style={styles.section}>
                         <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
                             THE NOTE
@@ -629,7 +755,7 @@ export default function LogMealScreen() {
                         </Pressable>
                     </View>
 
-                    {/* PhotoMosaic */}
+                    {/* 5 ── photo mosaic ── */}
                     <PhotoMosaic
                         photos={photos}
                         maxPhotos={MAX_PHOTOS}
@@ -639,17 +765,8 @@ export default function LogMealScreen() {
                         onTapPhoto={handleTapPhoto}
                     />
 
-                    {/* Expanders: + the dish / + who was there */}
+                    {/* 6 ── + who was there — companions (kept) ── */}
                     <View style={styles.expanderRow}>
-                        <Pressable
-                            onPress={() => setShowDish((v) => !v)}
-                            hitSlop={8}
-                            accessibilityLabel="add the dish"
-                        >
-                            <Text style={[styles.expander, { color: palette.textMuted }]}>
-                                {showDish ? '— the dish' : '+ the dish'}
-                            </Text>
-                        </Pressable>
                         <Pressable
                             onPress={() => setCompanionPickerVisible(true)}
                             hitSlop={8}
@@ -660,22 +777,6 @@ export default function LogMealScreen() {
                             </Text>
                         </Pressable>
                     </View>
-
-                    {showDish && (
-                        <TextInput
-                            value={dish}
-                            onChangeText={setDish}
-                            placeholder="the dish"
-                            placeholderTextColor={palette.textMuted}
-                            style={[
-                                styles.dishInput,
-                                {
-                                    color: palette.text,
-                                    borderBottomColor: palette.ruleInkSoft,
-                                },
-                            ]}
-                        />
-                    )}
 
                     {companions.length > 0 && (
                         <Pressable
@@ -689,7 +790,7 @@ export default function LogMealScreen() {
                         </Pressable>
                     )}
 
-                    {/* SHARE TO — hidden when no tables */}
+                    {/* 7 ── SHARE TO — hidden when no tables ── */}
                     {hasAnyTable && (
                         <View style={styles.section}>
                             <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
@@ -750,61 +851,6 @@ export default function LogMealScreen() {
                             </Text>
                         </View>
                     )}
-
-                    {/* Add details drawer */}
-                    <View style={styles.section}>
-                        <Pressable
-                            onPress={() => setShowDetails((v) => !v)}
-                            style={styles.detailsToggle}
-                            accessibilityLabel="add details"
-                            hitSlop={8}
-                        >
-                            <Text style={[styles.detailsToggleLabel, { color: palette.primary }]}>
-                                {showDetails ? '▾ add details' : '▸ add details'}
-                            </Text>
-                        </Pressable>
-                        {showDetails && (
-                            <View style={styles.detailsContent}>
-                                <SubRatingRow
-                                    label="Vibe"
-                                    value={breakdown.vibe}
-                                    onChange={(v) =>
-                                        setBreakdown((prev) => ({ ...prev, vibe: v }))
-                                    }
-                                    palette={palette}
-                                />
-                                <SubRatingRow
-                                    label="Flavor"
-                                    value={breakdown.flavor}
-                                    onChange={(v) =>
-                                        setBreakdown((prev) => ({ ...prev, flavor: v }))
-                                    }
-                                    palette={palette}
-                                />
-                                <SubRatingRow
-                                    label="Service"
-                                    value={breakdown.service}
-                                    onChange={(v) =>
-                                        setBreakdown((prev) => ({ ...prev, service: v }))
-                                    }
-                                    palette={palette}
-                                />
-                                <SubRatingRow
-                                    label="Value"
-                                    value={breakdown.value}
-                                    onChange={(v) =>
-                                        setBreakdown((prev) => ({ ...prev, value: v }))
-                                    }
-                                    palette={palette}
-                                />
-                                <Text
-                                    style={[styles.detailsMurmur, { color: palette.textMuted }]}
-                                >
-                                    — only if the meal asks. never shown on rows.
-                                </Text>
-                            </View>
-                        )}
-                    </View>
 
                     {/* Bottom padding for scroll area */}
                     <View style={{ height: Spacing.lg }} />
@@ -950,6 +996,10 @@ const styles = StyleSheet.create({
         fontSize: 26,
         lineHeight: 30,
     },
+    likeToggle: {
+        marginLeft: 'auto',
+        padding: 2,
+    },
     whenRow: {
         flexDirection: 'row',
         alignItems: 'baseline',
@@ -958,6 +1008,10 @@ const styles = StyleSheet.create({
     whenDate: {
         fontFamily: 'Manrope_400Regular',
         fontSize: 14,
+    },
+    calendarWrap: {
+        marginTop: 4,
+        ...(Platform.OS === 'android' ? {} : { marginLeft: -8 }),
     },
     // Note preview block
     notePreview: {
@@ -985,14 +1039,6 @@ const styles = StyleSheet.create({
     expander: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
-    },
-    dishInput: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 15,
-        borderBottomWidth: 1,
-        paddingBottom: 6,
-        paddingTop: 6,
-        backgroundColor: 'transparent',
     },
     companionsLine: {
         fontFamily: 'Newsreader_400Regular_Italic',

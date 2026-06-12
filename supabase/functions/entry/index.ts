@@ -622,6 +622,9 @@ serve(async (req) => {
                 service_rating,
                 value_rating,
 
+                // TICKET-075: Letterboxd-style like (optional boolean; distinct from rating)
+                liked,
+
                 // User-uploaded photo(s) (optional, public URLs from Supabase Storage)
                 photo_url,
                 photo_urls,
@@ -830,6 +833,9 @@ serve(async (req) => {
                 ...(flavor_rating != null ? { flavor_rating } : {}),
                 ...(service_rating != null ? { service_rating } : {}),
                 ...(value_rating != null ? { value_rating } : {}),
+                // TICKET-075: always include `liked` (RPC COALESCEs to false anyway,
+                // but sending it explicitly keeps the wire shape stable).
+                liked: liked === true,
                 ...(heroPhotoUrl ? { photo_url: heroPhotoUrl } : {}),
                 ...(client_nonce ? { client_nonce } : {}),
             };

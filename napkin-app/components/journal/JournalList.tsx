@@ -186,6 +186,7 @@ export function JournalList({
                     <EntryCard
                         rating={entry.rating}
                         restaurantName={restaurantName}
+                        liked={entry.liked}
                         weekday={weekday}
                         photoUrl={entry.photo_url}
                         note={entry.content}

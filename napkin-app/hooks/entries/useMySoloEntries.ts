@@ -25,6 +25,7 @@ interface SoloEntryRpcRow {
     visited_at: string | null;
     created_at: string;
     photo_url: string | null;
+    liked: boolean | null;
 }
 
 async function fetchMySoloEntries(userId: string): Promise<SoloShareActivity[]> {
@@ -68,6 +69,7 @@ async function fetchMySoloEntries(userId: string): Promise<SoloShareActivity[]> 
         rating: r.rating,
         content: r.content,
         dish_description: r.dish_description,
+        liked: r.liked ?? false,
         visited_at: r.visited_at ?? r.created_at,
         created_at: r.created_at,
         sort_date: r.visited_at ?? r.created_at,

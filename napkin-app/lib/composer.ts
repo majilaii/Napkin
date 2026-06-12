@@ -27,12 +27,18 @@ export interface ComposerCompanion {
 export interface SoloEntryState {
     rating: number;
     notes: string;
-    dish: string;
+    /**
+     * TICKET-075: dish removed from the logger UI. Kept optional here so older
+     * callers / tests don't break; the live loggers no longer set it.
+     */
+    dish?: string;
     selectedTableIds: string[];
     visitedAt: Date;
     photos: ComposerPhotoSlot[];
     breakdown: ComposerBreakdown;
     selectedCompanions?: ComposerCompanion[];
+    /** TICKET-075: Letterboxd-style like — distinct from the rating. */
+    liked?: boolean;
 }
 
 export interface SoloEntryPayload {
@@ -48,6 +54,8 @@ export interface SoloEntryPayload {
     flavor_rating: number | null;
     service_rating: number | null;
     value_rating: number | null;
+    /** TICKET-075: like flag, always present (false when not hearted). */
+    liked: boolean;
 }
 
 /** State slice fed to buildRoundPayload (round/group entries). */
@@ -109,11 +117,12 @@ export function buildEntryPayload(state: SoloEntryState): SoloEntryPayload {
         table_ids: state.selectedTableIds,
         visibility: state.selectedTableIds.length > 0 ? 'table' : 'private',
         visited_at: state.visitedAt.toISOString(),
+        liked: state.liked ?? false,
         ...secondaryFromBreakdown(state.breakdown),
     };
 
     if (state.notes.trim()) payload.content = state.notes.trim();
-    if (state.dish.trim()) payload.dish_description = state.dish.trim();
+    if (state.dish?.trim()) payload.dish_description = state.dish.trim();
     if (photoUrls.length > 0) payload.photo_urls = photoUrls;
     if (state.selectedCompanions && state.selectedCompanions.length > 0) {
         payload.companion_ids = state.selectedCompanions.map(c => c.user_id);

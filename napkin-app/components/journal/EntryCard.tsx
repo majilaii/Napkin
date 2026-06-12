@@ -20,12 +20,15 @@ import {
     Pressable,
     StyleSheet,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export interface EntryCardProps {
     rating: number | null;
     restaurantName: string;
+    /** TICKET-075: show a small filled terracotta heart by the rating when true. */
+    liked?: boolean;
     /** Right-edge of tick header — "sat", "tue", "sat 6 jun" etc. */
     weekday?: string;
     /** Full-width photo above the note. Canvas: 148px tall, r12. */
@@ -40,6 +43,7 @@ export interface EntryCardProps {
 export function EntryCard({
     rating,
     restaurantName,
+    liked,
     weekday,
     photoUrl,
     note,
@@ -73,6 +77,15 @@ export function EntryCard({
                         <Text style={[styles.headerDot, { color: palette.textMuted }]}>·</Text>
                     </>
                 )}
+                {liked ? (
+                    <Ionicons
+                        name="heart"
+                        size={13}
+                        color={palette.primary}
+                        style={styles.likedHeart}
+                        accessibilityLabel="liked"
+                    />
+                ) : null}
                 <Text
                     style={[styles.restaurantName, { color: palette.text }]}
                     numberOfLines={1}
@@ -157,6 +170,10 @@ const styles = StyleSheet.create({
     headerDot: {
         fontSize: 12,
         lineHeight: 18,
+    },
+    likedHeart: {
+        alignSelf: 'center',
+        marginRight: 6,
     },
     restaurantName: {
         fontFamily: 'Newsreader_400Regular_Italic',

@@ -78,6 +78,8 @@ interface EntryDetail {
     rating: number | null;
     content: string | null;
     dish_description: string | null;
+    /** TICKET-075: author's Letterboxd-style like (read-only here). */
+    liked: boolean;
     visited_at: string;
     created_at: string;
     allow_public_replies: boolean;
@@ -134,6 +136,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 rating,
                 content,
                 dish_description,
+                liked,
                 visited_at,
                 created_at,
                 table_night_id,
@@ -168,6 +171,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 rating,
                 content,
                 dish_description,
+                liked,
                 visited_at,
                 created_at,
                 table_night_id,
@@ -1133,7 +1137,26 @@ export default function EntryDetailScreen() {
                                     style={styles.ratingStack}
                                 >
                                     <GiantRatingNumeral value={entry.rating} scale="detail" />
+                                    {/* TICKET-075: read-only like, sits under the numeral */}
+                                    {entry.liked ? (
+                                        <Ionicons
+                                            name="heart"
+                                            size={16}
+                                            color={palette.primary}
+                                            style={{ marginTop: 2 }}
+                                            accessibilityLabel="liked"
+                                        />
+                                    ) : null}
                                 </Pressable>
+                            ) : entry.liked ? (
+                                // No rating but hearted — still surface the like.
+                                <Ionicons
+                                    name="heart"
+                                    size={18}
+                                    color={palette.primary}
+                                    style={styles.ratingStack}
+                                    accessibilityLabel="liked"
+                                />
                             ) : null}
                         </View>
 
