@@ -35,6 +35,7 @@ import { SessionExpiredError } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useToast } from '@/providers/ToastProvider';
 import { localDateStr } from '@/lib/dateHelpers';
+import { safeRandomUUID } from '@/lib/uuid';
 import {
     prependToInfinitePages,
     swapByNonce,
@@ -339,14 +340,14 @@ export function useCreateEntry(
         mutationFn: (input: CreateEntryInput) => {
             // Generate the nonce here so the same value flows through both the
             // server call (server stores it for dedupe) and the optimistic row.
-            const client_nonce = input.client_nonce ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+            const client_nonce = input.client_nonce ?? safeRandomUUID();
             return createEntry({ ...input, client_nonce });
         },
 
         onMutate: async (input): Promise<MutationContext | undefined> => {
             if (!userId) return undefined;
 
-            const nonce = input.client_nonce ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+            const nonce = input.client_nonce ?? safeRandomUUID();
             // Stash the nonce on input so mutationFn uses the same value.
             input.client_nonce = nonce;
 

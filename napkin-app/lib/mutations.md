@@ -141,7 +141,11 @@ Use `client_nonce` when a mutation **creates** an entity and the entity has no n
 
 **Nonce generation:**
 ```ts
-const nonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+import { safeRandomUUID } from '@/lib/uuid';
+// safeRandomUUID always returns a format-valid RFC-4122 v4 uuid — the old
+// `${Date.now()}-${Math.random()}` fallback produced a malformed value that
+// broke the `::uuid` cast on RN runtimes without crypto.randomUUID (TICKET-078).
+const nonce = safeRandomUUID();
 input.client_nonce = nonce;
 ```
 

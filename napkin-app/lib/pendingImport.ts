@@ -17,6 +17,7 @@
  * Expired stashes are deleted on read — no background timer.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeRandomUUID } from './uuid';
 
 const KEY = 'napkin.pendingImportUrl';
 const TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -35,7 +36,7 @@ export interface Stash {
 
 /** Write a URL + import_nonce to the stash with the current timestamp. */
 export async function stash(url: string, import_nonce?: string): Promise<void> {
-    const nonce = import_nonce ?? generateNonce();
+    const nonce = import_nonce ?? safeRandomUUID();
     const payload: Stash = { url, import_nonce: nonce, stashedAt: Date.now() };
     await AsyncStorage.setItem(KEY, JSON.stringify(payload));
 }
@@ -57,7 +58,7 @@ export async function peek(): Promise<Stash | null> {
             return null;
         }
         // Back-compat: old entries don't have import_nonce; synthesize one so callers always see the field.
-        const import_nonce = parsed.import_nonce ?? generateNonce();
+        const import_nonce = parsed.import_nonce ?? safeRandomUUID();
         return { url: parsed.url, import_nonce, stashedAt: parsed.stashedAt };
     } catch {
         return null;
@@ -79,21 +80,4 @@ export async function consume(): Promise<Stash | null> {
 /** Remove the stash unconditionally (e.g. on auth cancel). */
 export async function clear(): Promise<void> {
     await AsyncStorage.removeItem(KEY);
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Generate a UUID v4-compatible random nonce.
- * Uses crypto.getRandomValues where available; falls back to Math.random.
- */
-function generateNonce(): string {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-        return crypto.randomUUID();
-    }
-    // Polyfill for environments without crypto.randomUUID
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-        const r = Math.random() * 16 | 0;
-        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-    });
 }

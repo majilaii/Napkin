@@ -65,6 +65,7 @@ import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
+import { safeRandomUUID } from '@/lib/uuid';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
 import { useToast } from '@/providers/ToastProvider';
 import { CandidatePickerPanel, buildInitialTicked, keyFor, isResolved } from './CandidatePickerPanel';
@@ -131,16 +132,6 @@ function truncateHost(url: string): string {
     }
 }
 
-function generateNonce(): string {
-    if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) {
-        return (crypto as any).randomUUID();
-    }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-        const r = Math.random() * 16 | 0;
-        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-    });
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportNonce }: ImportLinkSheetProps) {
@@ -163,7 +154,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
 
     // TICKET-063: stable job-level import_nonce per URL/share.
     // Fix 9: seeded from initialImportNonce prop (carries through signed-out → auth → resume).
-    const importNonceRef = useRef<string>(initialImportNonce ?? generateNonce());
+    const importNonceRef = useRef<string>(initialImportNonce ?? safeRandomUUID());
 
     // Fix 7: stable per-spot client nonces keyed by candidate key.
     // Minted once per import; reused across retry taps for idempotency.
@@ -230,7 +221,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             // Fix 9: use initialImportNonce from prop if provided (preserves job-level
             // idempotency through the signed-out → auth → resume flow).
             // Fall back to a fresh nonce when launching a new share directly.
-            importNonceRef.current = initialImportNonce ?? generateNonce();
+            importNonceRef.current = initialImportNonce ?? safeRandomUUID();
             spotNonceMapRef.current.clear();
             savedCandidateIdsRef.current.clear();
             tableNonceMapRef.current.clear();
@@ -314,7 +305,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         const url = inputValue.trim();
         setLastUrl(url);
         // Fresh nonce per new URL resolve — also clear per-spot nonce map.
-        importNonceRef.current = generateNonce();
+        importNonceRef.current = safeRandomUUID();
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
         tableNonceMapRef.current.clear();
@@ -374,9 +365,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
 
         // Fix 7: get or mint a stable nonce per candidate (reused across retries).
         const getOrMintNonce = (c: ResolvedCandidate): string => {
-            const key = c.candidate_id ?? c.restaurant.external_id ?? generateNonce();
+            const key = c.candidate_id ?? c.restaurant.external_id ?? safeRandomUUID();
             if (!spotNonceMapRef.current.has(key)) {
-                spotNonceMapRef.current.set(key, generateNonce());
+                spotNonceMapRef.current.set(key, safeRandomUUID());
             }
             return spotNonceMapRef.current.get(key)!;
         };
@@ -386,7 +377,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         const getOrMintTableNonce = (c: ResolvedCandidate, tableId: string): string => {
             const mapKey = `${keyFor(c)}:${tableId}`;
             if (!tableNonceMapRef.current.has(mapKey)) {
-                tableNonceMapRef.current.set(mapKey, generateNonce());
+                tableNonceMapRef.current.set(mapKey, safeRandomUUID());
             }
             return tableNonceMapRef.current.get(mapKey)!;
         };

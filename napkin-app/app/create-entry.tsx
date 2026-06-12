@@ -29,9 +29,7 @@ import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import DateTimePicker, {
-    type DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
+import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -49,6 +47,7 @@ import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
 import { collectOrphanedBlobUrls } from '@/lib/photoCleanup';
 import { CompanionChipsRow, CompanionPickerSheet } from '@/components/logging';
+import { CalendarModal } from '@/components/log/CalendarModal';
 import {
     ComposerMasthead,
     WritingSurface,
@@ -63,6 +62,7 @@ import { useMergeCandidate } from '@/hooks/rounds/useMergeCandidate';
 import { useCreateEntryWithMerge } from '@/hooks/rounds/useCreateEntryWithMerge';
 import { useToast } from '@/providers/ToastProvider';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
+import { safeRandomUUID } from '@/lib/uuid';
 import { buildEntryPayload, buildRoundPayload, toggleTableId } from '@/lib/composer';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 
@@ -309,11 +309,13 @@ export default function CreateEntryScreen() {
         }
         return new Date();
     });
-    // TICKET-075: native month-calendar visibility (replaces the DateChip date list).
-    const [showCalendar, setShowCalendar] = useState(false);
+    // TICKET-078: calendar lives in a bottom-sheet Modal overlay (no layout shift).
+    const [calendarVisible, setCalendarVisible] = useState(false);
     const handleCalendarChange = useCallback(
         (event: DateTimePickerEvent, selected?: Date) => {
-            if (Platform.OS === 'android') setShowCalendar(false);
+            // Android's 'calendar' display is itself a system dialog — close the
+            // wrapping modal on any Android result. iOS inline stays open until done.
+            if (Platform.OS === 'android') setCalendarVisible(false);
             if (event.type === 'dismissed' || !selected) return;
             setVisitedAt((prev) => {
                 const next = new Date(selected);
@@ -344,8 +346,7 @@ export default function CreateEntryScreen() {
     const mergeNonceRef = useRef<string | null>(null);
     useEffect(() => {
         if (mergeCandidate?.entry_id) {
-            mergeNonceRef.current =
-                globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+            mergeNonceRef.current = safeRandomUUID();
         }
     }, [mergeCandidate?.entry_id]);
 
@@ -622,9 +623,7 @@ export default function CreateEntryScreen() {
 
         const ratingValue = Math.round(rating * 2) / 2;
         const photoUrls = photos.filter(p => p.publicUrl !== null).map(p => p.publicUrl as string);
-        const nonce =
-            mergeNonceRef.current ??
-            (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+        const nonce = mergeNonceRef.current ?? safeRandomUUID();
 
         try {
             const result = await createEntryWithMerge.mutateAsync({
@@ -940,9 +939,9 @@ export default function CreateEntryScreen() {
                                     </Text>
                                 </Pressable>
                                 <View style={{ flex: 1 }} />
-                                {/* TICKET-075: tap opens a real month calendar (no future dates) */}
+                                {/* TICKET-078: tap opens the calendar in a modal overlay (no layout shift) */}
                                 <Pressable
-                                    onPress={() => setShowCalendar((v) => !v)}
+                                    onPress={() => setCalendarVisible(true)}
                                     style={[styles.withChip, { borderColor: palette.divider }]}
                                     accessibilityRole="button"
                                     accessibilityLabel={`when: ${formatWhenLabel(visitedAt)}. tap to change.`}
@@ -953,19 +952,6 @@ export default function CreateEntryScreen() {
                                     </Text>
                                 </Pressable>
                             </View>
-                            {showCalendar ? (
-                                <View style={styles.calendarWrap}>
-                                    <DateTimePicker
-                                        value={visitedAt}
-                                        mode="date"
-                                        display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
-                                        maximumDate={new Date()}
-                                        onChange={handleCalendarChange}
-                                        accentColor={palette.primary}
-                                        themeVariant={scheme}
-                                    />
-                                </View>
-                            ) : null}
                             {selectedCompanions.length > 0 ? (
                                 <View style={styles.companionsRow}>
                                     <CompanionChipsRow
@@ -1117,6 +1103,14 @@ export default function CreateEntryScreen() {
                 loadError={null}
                 onRetryLoad={() => refetchTables()}
             />
+
+            {/* Calendar — bottom-sheet overlay (floats over the body, no shift) */}
+            <CalendarModal
+                visible={calendarVisible}
+                value={visitedAt}
+                onChange={handleCalendarChange}
+                onClose={() => setCalendarVisible(false)}
+            />
         </>
     );
 }
@@ -1184,11 +1178,6 @@ const styles = StyleSheet.create({
     companionsRow: {
         marginTop: Spacing.xs,
         marginBottom: Spacing.xs,
-    },
-    // TICKET-075: inline month calendar drop-down
-    calendarWrap: {
-        marginTop: Spacing.xs,
-        ...(Platform.OS === 'android' ? {} : { marginLeft: -8 }),
     },
     // Round mode participant picker
     participantGrid: {
