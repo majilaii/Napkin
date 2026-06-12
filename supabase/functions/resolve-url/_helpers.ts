@@ -47,6 +47,27 @@ export function filterUnauthorizedTableIds(
 }
 
 /**
+ * TICKET-077: is this spot pinnable for a LIVE handoff?
+ *
+ * A handoff pin may only target a restaurant_id that is in the share's CURRENT
+ * live spot set (read server-side via loadLiveSpots). The client cannot smuggle a
+ * restaurant_id the owner has since removed, or one belonging to a different
+ * share. Live spots always carry a verified restaurant_id, so a null/unknown id
+ * is non-live → not pinnable → NOT_IN_SHARE.
+ *
+ * `liveRestaurantIds === null` means there is NO handoff gate (a normal import);
+ * every spot is pinnable. This helper is only consulted on the handoff path.
+ */
+export function isSpotPinnable(
+    restaurantId: string | null | undefined,
+    liveRestaurantIds: Set<string> | null,
+): boolean {
+    if (liveRestaurantIds === null) return true; // no handoff gate
+    if (!restaurantId) return false;             // live spots always carry a real id
+    return liveRestaurantIds.has(restaurantId);
+}
+
+/**
  * ROUND-3 FIX (Codex review): map external_id → restaurant_id for VERIFIED
  * rows only. Unverified rows must NOT be mapped: handing the client a
  * restaurant_id makes it drop external_id, which skips the save-time verified

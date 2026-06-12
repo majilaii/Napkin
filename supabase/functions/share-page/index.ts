@@ -1,18 +1,22 @@
 /**
- * share-page edge function — TICKET-072
+ * share-page edge function — TICKET-072, live shares TICKET-077.
  *
  * PUBLIC (verify_jwt = false in config.toml).
  * Returns text/html — no CORS headers needed (not an API, not XHR target).
  * No Authorization header required; accessed by browsers, WhatsApp, iMessage bots.
  *
  * GET ?t={token}
- *   Live token   → 200 warm-paper letterpress page (OG meta, scheme-link CTA)
- *   Any bad token → 410 tombstone (invalid / malformed / unknown / revoked all identical)
+ *   Live token   → 200 warm-paper letterpress page (OG meta, scheme-link CTA),
+ *                  rendered from the owner's CURRENT verified spots (TICKET-077:
+ *                  read LIVE via loadLiveSpots, not a frozen snapshot).
+ *   Any bad token → 410 tombstone (invalid / malformed / unknown / revoked / the
+ *                  list-or-owner is gone — all identical, no detail differentiation)
  *
- * Security invariants (TICKET-072 Codex #4/#6/#7/#8/#10/#11):
+ * Security invariants (TICKET-072 Codex #4/#6/#7/#8/#10/#11 — PRESERVED under live read):
  *   - Every interpolated string passes escapeText or escapeAttr (never raw concatenation)
- *   - render context is EXACTLY { sharer_name, created_at, spots[{name,city,cuisine,rating}] }
- *     (restaurant_id is stripped — no uuid can reach the HTML)
+ *   - render context is EXACTLY { sharer_name, list_name, created_at,
+ *     spots[{name,city,cuisine,rating}] } (restaurant_id stripped — no uuid in HTML)
+ *   - Verified-only: loadLiveSpots filters restaurants.verification='verified'
  *   - Cache-Control: no-store (revocation takes effect immediately on next fetch)
  *   - Referrer-Policy: no-referrer + <meta name="referrer" content="no-referrer"> in page
  *   - Outbound links: rel="noopener noreferrer"
@@ -22,7 +26,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { renderPage, renderTombstone } from './render.ts';
-import { buildRenderContext, type WishlistShareSnapshot } from '../handoff/snapshot.ts';
+import { buildRenderContext, buildSnapshot, loadLiveSpots } from '../handoff/snapshot.ts';
 
 // ── Token validation (Codex #8: malformed = same 410 as unknown/revoked) ──────
 
@@ -78,9 +82,10 @@ serve(async (req) => {
         // Service-role client — exact-token lookup (clients never query by token — Codex #9)
         const supabase = createClient(supabaseUrl, serviceKey);
 
+        // TICKET-077: read the live-read keys (owner_id, list_id), not a snapshot.
         const { data: share, error: shareErr } = await supabase
             .from('wishlist_shares')
-            .select('snapshot, revoked_at, created_at')
+            .select('owner_id, list_id, revoked_at, created_at')
             .eq('token', tokenParam)
             .maybeSingle();
 
@@ -89,11 +94,21 @@ serve(async (req) => {
             return tombstone();
         }
 
-        const snapshot = (share as any).snapshot as WishlistShareSnapshot;
+        const ownerId = (share as any).owner_id as string;
+        const listId = ((share as any).list_id as string | null) ?? null;
         const createdAt = (share as any).created_at as string;
 
-        // Build allowlisted render context (strips restaurant_id — Codex #6)
-        const ctx = buildRenderContext(snapshot, createdAt);
+        // TICKET-077: read the owner's CURRENT verified spots + ratings.
+        // A deleted/unowned list → null → uniform tombstone (no leak).
+        const live = await loadLiveSpots(supabase, ownerId, listId);
+        if (!live) {
+            return tombstone();
+        }
+
+        // Assemble the canonical payload via buildSnapshot (fed LIVE rows), then
+        // build the allowlisted render context (strips restaurant_id — Codex #6).
+        const payload = buildSnapshot(live.sharer_name, live.spots, live.list_name);
+        const ctx = buildRenderContext(payload, createdAt);
 
         // Read install URL from env (validated as https-only by safeHref in render.ts)
         const testflightUrl = Deno.env.get('TESTFLIGHT_PUBLIC_URL') ?? null;

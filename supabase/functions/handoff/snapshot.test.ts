@@ -1,16 +1,24 @@
 /**
- * snapshot.test.ts — TICKET-072
+ * snapshot.test.ts — TICKET-072, carried forward under live shares (TICKET-077).
  *
- * Tests for buildSnapshot, buildRenderContext, buildResolveCandidates.
+ * Tests for the pure builders buildSnapshotInput / buildSnapshot /
+ * buildRenderContext / buildResolveCandidates. These remain the assembly layer
+ * for a share's display payload — TICKET-077 only changed WHERE the rows come
+ * from (loadLiveSpots reads them LIVE at view time instead of freezing them at
+ * create time). The builder contracts are identical, so these assertions hold
+ * unchanged. ("snapshot"/"frozen" in some names below is historical; the shape
+ * and ordering they assert are exactly what the live payload carries.)
  *
  * Key invariants:
  *   - buildSnapshot emits ONLY { sharer_name, spots[{restaurant_id,name,city,cuisine,rating}] }
- *     No email, last_name, table, other-user data
+ *     (+ optional list_name). No email, last_name, table, other-user data
  *   - buildRenderContext strips restaurant_id (Codex #6: no uuid in HTML)
- *   - render context key allowlist exactly { sharer_name, created_at, spots }
+ *   - render context key allowlist exactly { sharer_name, list_name, created_at, spots }
  *   - spots in render context have exactly { name, city, cuisine, rating } (no restaurant_id)
  *   - rating is null when sharer hasn't rated (not 0, not undefined)
  *   - buildResolveCandidates marks already_wishlisted correctly
+ *   - buildSnapshotInput verified-only filter + owner-rating enrichment + order
+ *     preservation are the security-critical pieces loadLiveSpots delegates to
  */
 
 import {

@@ -1,24 +1,31 @@
 /**
- * handoff edge function — TICKET-072
+ * handoff edge function — TICKET-072, live shares TICKET-077.
  *
  * Authed; canonical table-management pattern (service role + manual getUser).
  * Returns { data } | { error } envelope with corsHeaders.
  *
+ * TICKET-077: shares are LIVE. A token references (owner_id, list_id?) and is
+ * resolved at view time off the owner's CURRENT verified spots + ratings — no
+ * frozen snapshot. The display payload is built by loadLiveSpots (the single
+ * source of truth, shared with share-page and the pin path).
+ *
  * Actions (POST body: { action, ...fields }):
  *
- *   create      — read caller's verified wishlist, freeze snapshot, mint token
+ *   create      — mint a token for the caller's wishlist (no snapshot built).
  *                 → { token, share_url }
- *                 TICKET-074: optional list_id (must be caller-owned via
- *                 lists.owner_id) snapshots THAT list's verified entries
- *                 instead, freezing list_name into the snapshot.
+ *                 list_id (optional, must be caller-owned via lists.owner_id)
+ *                 mints a per-list share instead. Validation only: a non-empty,
+ *                 verified-spot live read is required at create time so the
+ *                 affordance stays honest (empty → 400), but NOTHING is frozen.
  *
  *   revoke_all  — set revoked_at on all live tokens for the caller (cutoff = now())
  *                 ARCH-REVIEW-2 #12: concurrent shares created exactly at the cutoff
  *                 are accepted and documented.
  *                 → { revoked_count }
  *
- *   resolve     — in-app receive: lookup token, compute already_wishlisted, build
- *                 ResolveSpot[] with deterministic candidate_ids (no owner_id leaked)
+ *   resolve     — in-app receive: lookup token → loadLiveSpots(owner, list) →
+ *                 compute already_wishlisted (per CALLER), build ResolveSpot[]
+ *                 with deterministic candidate_ids (no owner_id leaked).
  *                 → { status:'live'|'revoked', sharer_name?, list_name?, spots? }
  *
  * ARCH-REVIEW-2 #12: 'status' action DROPPED from v1.
@@ -29,12 +36,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { mintShareToken } from '../_shared/handoffToken.ts';
 import {
+    loadLiveSpots,
     buildSnapshot,
-    buildSnapshotInput,
     buildResolveCandidates,
-    listShareOrder,
-    type JoinedSpotRow,
-    type WishlistShareSnapshot,
 } from './snapshot.ts';
 import { deriveClientNonce } from './nonce.ts';
 
@@ -86,155 +90,57 @@ serve(async (req) => {
 
         // ── create ────────────────────────────────────────────────────────────
         if (action === 'create') {
-            const { list_id: listId } = body as { list_id?: unknown };
+            const { list_id: listIdInput } = body as { list_id?: unknown };
 
-            // 1. Read the source rows. TICKET-074: ONLY the row source branches here —
-            //    everything downstream (empty check, rating enrichment, sharer name,
-            //    snapshot build, token mint) is one shared path for both sources.
-            let joinedRows: JoinedSpotRow[];
-            let listName: string | null = null;
-
-            if (listId !== undefined && listId !== null) {
-                if (typeof listId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(listId)) {
+            // TICKET-077: NOTHING is frozen. We only (a) validate list ownership
+            // and (b) run the live read once to keep the affordance honest — an
+            // empty/all-unverified source → 400 rather than a dead link. The token
+            // stores only (owner_id, list_id); every view re-reads live.
+            let listId: string | null = null;
+            if (listIdInput !== undefined && listIdInput !== null) {
+                if (typeof listIdInput !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(listIdInput)) {
                     return errorResponse('INVALID_LIST_ID', 'list_id must be a list uuid', 400);
                 }
-
-                // Ownership check: only the list owner may share it (lists.owner_id).
-                // Uniform 404 for "not yours" and "does not exist" — no existence oracle.
-                const { data: list, error: listErr } = await supabase
-                    .from('lists')
-                    .select('id, title, ranked')
-                    .eq('id', listId)
-                    .eq('owner_id', user.id)
-                    .maybeSingle();
-
-                if (listErr) throw listErr;
-                if (!list) {
-                    return errorResponse('LIST_NOT_FOUND', 'List not found', 404);
-                }
-                listName = (list as any).title as string;
-
-                // List entries joined to restaurants — same verified-only filter as
-                // the wishlist path (ARCH-REVIEW-2 #2).
-                // Fix-pass (Codex): snapshot spots in the list's rendered order —
-                // position ASC when ranked, created_at DESC when not (mirrors the
-                // lists fn `get` action exactly; see listShareOrder).
-                const order = listShareOrder((list as any).ranked === true);
-                const { data: listRows, error: entriesErr } = await supabase
-                    .from('list_entries')
-                    .select(`
-                        restaurant_id,
-                        restaurant:restaurants!inner (
-                            id,
-                            name,
-                            city,
-                            cuisine,
-                            verification
-                        )
-                    `)
-                    .eq('list_id', listId)
-                    .eq('restaurant.verification', 'verified')
-                    .order(order.column, { ascending: order.ascending });
-
-                if (entriesErr) throw entriesErr;
-                joinedRows = (listRows ?? []) as unknown as JoinedSpotRow[];
-
-                if (joinedRows.length === 0) {
-                    return errorResponse('EMPTY_LIST', 'No verified list spots to share', 400);
-                }
-            } else {
-                // Caller's verified pinned wishlist items joined to restaurants
-                // ARCH-REVIEW-2 #2: only include verified restaurants
-                const { data: wishlistRows, error: wishlistErr } = await supabase
-                    .from('wishlist_items')
-                    .select(`
-                        restaurant_id,
-                        restaurant:restaurants!inner (
-                            id,
-                            name,
-                            city,
-                            cuisine,
-                            verification
-                        )
-                    `)
-                    .eq('user_id', user.id)
-                    .is('deleted_at', null)
-                    .not('restaurant_id', 'is', null)
-                    .eq('restaurant.verification', 'verified');
-
-                if (wishlistErr) throw wishlistErr;
-                joinedRows = (wishlistRows ?? []) as unknown as JoinedSpotRow[];
-
-                if (joinedRows.length === 0) {
-                    return errorResponse('EMPTY_WISHLIST', 'No verified wishlist items to share', 400);
-                }
+                listId = listIdInput;
             }
 
-            // 2. Fetch caller's most-recent rating per restaurant in one query
-            const restaurantIds = joinedRows.map((w) => w.restaurant_id);
+            // Live read (also validates list ownership: null → not yours / missing).
+            const live = await loadLiveSpots(supabase, user.id, listId);
 
-            const { data: ratingRows, error: ratingErr } = await supabase
-                .from('entries')
-                .select('restaurant_id, rating, created_at')
-                .eq('user_id', user.id)
-                .in('restaurant_id', restaurantIds)
-                .not('rating', 'is', null)
-                .order('created_at', { ascending: false });
-
-            if (ratingErr) throw ratingErr;
-
-            // First result per restaurant_id = most recent (due to ORDER BY created_at DESC)
-            const ratingMap = new Map<string, number>();
-            for (const row of (ratingRows ?? []) as any[]) {
-                if (!ratingMap.has(row.restaurant_id)) {
-                    ratingMap.set(row.restaurant_id, row.rating as number);
-                }
+            if (listId !== null && live === null) {
+                // List not found or not owned by the caller. Uniform 404 — no
+                // existence oracle ("not yours" and "missing" are identical).
+                return errorResponse('LIST_NOT_FOUND', 'List not found', 404);
             }
 
-            // 3. Caller display_name → sharer_name (first token)
-            const { data: profile } = await supabase
-                .from('profiles')
-                .select('display_name')
-                .eq('user_id', user.id)
-                .maybeSingle();
-
-            const displayName = (profile as any)?.display_name as string ?? '';
-            const sharerName = displayName.split(' ')[0]?.trim() || displayName || 'someone';
-
-            // 4. Build frozen snapshot — shared enrichment (TICKET-074: do not fork
-            //    per source). listName freezes into the snapshot for list shares only.
-            const snapshotInput = buildSnapshotInput(joinedRows, ratingMap);
-
-            if (snapshotInput.length === 0) {
-                // Defence-in-depth: verified re-check dropped everything post-SQL.
+            if (!live || live.spots.length === 0) {
+                // Honest affordance: nothing verified to share *right now*.
                 return errorResponse(
-                    listName !== null ? 'EMPTY_LIST' : 'EMPTY_WISHLIST',
+                    listId !== null ? 'EMPTY_LIST' : 'EMPTY_WISHLIST',
                     'No verified spots to share',
                     400,
                 );
             }
 
-            const snapshot = buildSnapshot(sharerName, snapshotInput, listName);
-
-            // 5. Mint token with ≤3 retry on unique violation (ARCH-REVIEW-2 #9)
+            // Mint token with ≤3 retry on unique violation (ARCH-REVIEW-2 #9).
+            // snapshot is left NULL — vestigial column, never read (TICKET-077).
             let shareToken: string | null = null;
-            let insertId: string | null = null;
 
             for (let attempt = 0; attempt < 3; attempt++) {
                 const candidate = mintShareToken();
-                const { data: inserted, error: insertErr } = await supabase
+                const { error: insertErr } = await supabase
                     .from('wishlist_shares')
                     .insert({
                         owner_id: user.id,
+                        list_id: listId,
                         token: candidate,
-                        snapshot,
+                        snapshot: null,
                     })
                     .select('id')
                     .single();
 
                 if (!insertErr) {
                     shareToken = candidate;
-                    insertId = (inserted as any).id;
                     break;
                 }
 
@@ -249,7 +155,7 @@ serve(async (req) => {
                 return errorResponse('TOKEN_GENERATION_FAILED', 'Could not mint a unique token', 500);
             }
 
-            // 6. Share URL = share-page edge function with token as query param
+            // Share URL = share-page edge function with token as query param
             const shareUrl = `${supabaseUrl}/functions/v1/share-page?t=${shareToken}`;
 
             return jsonResponse({ data: { token: shareToken, share_url: shareUrl } }, 201);
@@ -283,10 +189,11 @@ serve(async (req) => {
                 return jsonResponse({ data: { status: 'revoked' } });
             }
 
-            // Exact-token service-role lookup (no client ever queries by token — Codex #9)
+            // Exact-token service-role lookup (no client ever queries by token — Codex #9).
+            // TICKET-077: read (owner_id, list_id) — the live read keys, not a snapshot.
             const { data: share, error: shareErr } = await supabase
                 .from('wishlist_shares')
-                .select('snapshot, revoked_at')
+                .select('owner_id, list_id, revoked_at')
                 .eq('token', resolveToken)
                 .maybeSingle();
 
@@ -297,40 +204,54 @@ serve(async (req) => {
                 return jsonResponse({ data: { status: 'revoked' } });
             }
 
-            const snapshot = (share as any).snapshot as WishlistShareSnapshot;
+            const ownerId = (share as any).owner_id as string;
+            const listId = ((share as any).list_id as string | null) ?? null;
+
+            // TICKET-077: read the owner's CURRENT verified spots + ratings.
+            // A deleted/unowned list → null → tombstone (uniform, no leak).
+            const live = await loadLiveSpots(supabase, ownerId, listId);
+            if (!live) {
+                return jsonResponse({ data: { status: 'revoked' } });
+            }
 
             // Server-compute already_wishlisted for the receiver (not the sharer)
-            const restaurantIds = snapshot.spots.map((s) => s.restaurant_id);
+            const restaurantIds = live.spots.map((s) => s.restaurant_id);
 
-            const { data: existingItems } = await supabase
-                .from('wishlist_items')
-                .select('restaurant_id')
-                .eq('user_id', user.id)
-                .in('restaurant_id', restaurantIds)
-                .is('deleted_at', null);
+            const alreadyIds = new Set<string>();
+            if (restaurantIds.length > 0) {
+                const { data: existingItems } = await supabase
+                    .from('wishlist_items')
+                    .select('restaurant_id')
+                    .eq('user_id', user.id)
+                    .in('restaurant_id', restaurantIds)
+                    .is('deleted_at', null);
+                for (const r of (existingItems ?? []) as any[]) {
+                    alreadyIds.add(r.restaurant_id as string);
+                }
+            }
 
-            const alreadyIds = new Set(
-                (existingItems ?? []).map((r: any) => r.restaurant_id as string),
-            );
-
-            // Derive deterministic candidate_ids (Codex #10)
+            // Derive deterministic candidate_ids (Codex #10). Nonce derives from
+            // (token, restaurant_id) — stable for a given restaurant across views.
             const candidateIds = new Map<string, string>();
             await Promise.all(
-                snapshot.spots.map(async (spot) => {
+                live.spots.map(async (spot) => {
                     const nonce = await deriveClientNonce(resolveToken, spot.restaurant_id);
                     candidateIds.set(spot.restaurant_id, nonce);
                 }),
             );
 
-            const spots = buildResolveCandidates(snapshot, alreadyIds, candidateIds);
+            // Assemble the canonical payload shape via buildSnapshot (now fed LIVE
+            // rows instead of frozen ones) so resolve/share-page share one shape
+            // builder — then derive the receive candidates from it.
+            const payload = buildSnapshot(live.sharer_name, live.spots, live.list_name);
+            const spots = buildResolveCandidates(payload, alreadyIds, candidateIds);
 
             return jsonResponse({
                 data: {
                     status: 'live',
-                    sharer_name: snapshot.sharer_name,
-                    // TICKET-074: frozen list title for per-list shares;
-                    // null for wishlist shares and pre-074 snapshots.
-                    list_name: snapshot.list_name ?? null,
+                    sharer_name: live.sharer_name,
+                    // TICKET-077: live list title for per-list shares; null for wishlist.
+                    list_name: live.list_name,
                     spots,
                 },
             });
