@@ -4,6 +4,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { errorResponse, mapPgError } from '../_shared/errors.ts';
 import { emitFriendLogged } from '../_shared/notify.ts';
+import { coerceClientNonce } from '../_shared/uuid.ts';
 
 /**
  * Entry Edge Function
@@ -399,6 +400,10 @@ serve(async (req) => {
                     photo_url: mPhotoUrl,
                 } = body;
 
+                // Coerce a possibly-malformed client nonce (RN runtimes lacking
+                // crypto.randomUUID send `Date.now()-Math.random()` → not a uuid).
+                const safeMergeNonce = await coerceClientNonce(mergeClientNonce);
+
                 if (!entry_a_id || !mergeTableId || !mergeRestaurantId || !mergeVisitedAt) {
                     return new Response(
                         JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'entry_a_id, table_id, restaurant_id, visited_at are required' } }),
@@ -438,7 +443,7 @@ serve(async (req) => {
                     ...(mServiceRating != null ? { service_rating: mServiceRating } : {}),
                     ...(mValueRating != null ? { value_rating: mValueRating } : {}),
                     ...(mPhotoUrl ? { photo_url: mPhotoUrl } : {}),
-                    ...(mergeClientNonce ? { client_nonce: mergeClientNonce } : {}),
+                    ...(safeMergeNonce ? { client_nonce: safeMergeNonce } : {}),
                 };
 
                 let mergeOutcome: 'merged' | 'conflict_fell_back' | 'solo' = 'merged';
@@ -455,7 +460,7 @@ serve(async (req) => {
                             p_visited_at:    mergeVisitedAtValue,
                             p_entry_a_id:    entry_a_id,
                             p_b_payload:     bPayload,
-                            p_client_nonce:  mergeClientNonce ?? null,
+                            p_client_nonce:  safeMergeNonce ?? null,
                         }
                     );
 
@@ -647,6 +652,12 @@ serve(async (req) => {
                 client_nonce,
             } = body;
 
+            // Coerce a possibly-malformed client nonce to a valid uuid. RN
+            // runtimes lacking crypto.randomUUID sent `Date.now()-Math.random()`
+            // → not a uuid → 22P02 on the entries.client_nonce cast → every log
+            // 500'd. Deterministic so a retried stash still dedups.
+            const safeClientNonce = await coerceClientNonce(client_nonce);
+
             // ── TICKET-043: normalize effective table_ids list ──────────────────
             // Normalize: prefer table_ids[], fall back to [table_id] if legacy.
             // Trim, dedupe preserving order, reject if > 10.
@@ -837,7 +848,7 @@ serve(async (req) => {
                 // but sending it explicitly keeps the wire shape stable).
                 liked: liked === true,
                 ...(heroPhotoUrl ? { photo_url: heroPhotoUrl } : {}),
-                ...(client_nonce ? { client_nonce } : {}),
+                ...(safeClientNonce ? { client_nonce: safeClientNonce } : {}),
             };
 
             let entryId: string;
