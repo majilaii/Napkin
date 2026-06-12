@@ -49,6 +49,12 @@ export interface CandidatePickerPanelProps {
     ) => void;
     isSaving: boolean;
     sourceTag: string | null;
+    /**
+     * TICKET-079: source noun for the multi-candidate title ("{N} spots in this {noun}").
+     * tiktok→"video", google_maps→"map", web→"page", etc. Defaults to "link" when
+     * absent. Ignored when `titleOverride` is set (handoff receive).
+     */
+    noun?: string;
     /** Called when the user taps "fix" on a specific row (replaces "not this?"). */
     onCorrectRow: (candidate: ResolvedCandidate) => void;
     /** Called when the user taps "open restaurant" on an already_pinned row. */
@@ -132,6 +138,7 @@ export function CandidatePickerPanel({
     onSave,
     isSaving,
     sourceTag,
+    noun,
     onCorrectRow,
     onOpenRestaurant,
     failedCandidateKeys,
@@ -179,9 +186,11 @@ export function CandidatePickerPanel({
     const ctaLabel = 'PIN';
 
     // Panel title — italic serif 23. Override takes precedence for handoff receives.
+    // TICKET-079: single candidate → the restaurant name (never "spots in this video");
+    // multi → "{N} spots in this {noun}" where noun reads by source (video/map/page/…).
     const panelTitle = titleOverride ?? (candidates.length === 1
-        ? 'one spot found'
-        : `${candidates.length} spots in this video`);
+        ? (candidates[0]?.restaurant.name ?? 'one spot found')
+        : `${candidates.length} spots in this ${noun ?? 'link'}`);
 
     // Kicker text — override takes precedence for handoff receives.
     const kickerText = kickerOverride ?? sourceTag;

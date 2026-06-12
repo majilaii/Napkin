@@ -112,7 +112,10 @@ class Deadline {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'screenshot' | 'vision';
+// TICKET-079: reddit/substack are recognized as their own source_type so the client
+// can label them ("from reddit" / "from substack") and pick the right copy noun.
+// They still flow the SAME unfurl→extraction path as 'web' (see isWebExtractionSource).
+// SourceType + detection helpers live in _helpers.ts (testable without serve()).
 type Confidence = 'exact' | 'high' | 'low';
 
 /** Shape identical to places-search output */
@@ -184,29 +187,20 @@ function isInstagramUrl(url: URL): boolean {
     return host === 'instagram.com' || host === 'www.instagram.com';
 }
 
-/** Detect source type from URL host pattern */
+/**
+ * Detect source type from a URL.
+ *
+ * Host-pattern detection (incl. TICKET-079 reddit/substack) lives in the pure,
+ * testable detectSourceTypeFromHost helper. This wrapper layers on the one
+ * path-dependent case the host helper can't see: www.google.com/maps/… (a maps
+ * link whose host is the bare google.com).
+ */
 function detectSourceType(url: URL): SourceType {
     const host = url.hostname.toLowerCase();
-    if (
-        host === 'tiktok.com' ||
-        host === 'www.tiktok.com' ||
-        host === 'vm.tiktok.com' ||
-        host === 'm.tiktok.com'
-    ) {
-        return 'tiktok';
-    }
-    if (
-        host === 'maps.app.goo.gl' ||
-        host === 'maps.google.com' ||
-        host === 'www.google.com' && url.pathname.startsWith('/maps') ||
-        host === 'goo.gl'
-    ) {
+    if (host === 'www.google.com' && url.pathname.startsWith('/maps')) {
         return 'google_maps';
     }
-    if (host === 'instagram.com' || host === 'www.instagram.com') {
-        return 'instagram';
-    }
-    return 'web';
+    return detectSourceTypeFromHost(host);
 }
 
 // ── Text normalization for dedupe ─────────────────────────────────────────────
@@ -631,7 +625,16 @@ async function callPlacesSearch(
 // ── Exported decision helpers (TICKET-063 fix-pass-1, testable) ──────────────
 // Implementations live in _helpers.ts (no serve() call) so test files can
 // import them without triggering the HTTP server.
-import { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds, mapVerifiedRestaurantIds, isSpotPinnable } from './_helpers.ts';
+import {
+    isGhostExternalId,
+    buildGhostExternalId,
+    filterUnauthorizedTableIds,
+    mapVerifiedRestaurantIds,
+    isSpotPinnable,
+    detectSourceTypeFromHost,
+    isWebExtractionSource,
+    type SourceType,
+} from './_helpers.ts';
 export { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds };
 
 // ── Places Details by place_id (FIX #5: never text-search for place_id candidates) ──
@@ -1597,7 +1600,8 @@ async function handleUrlResolve(
         if (!query) {
             query = await expandMapsQuery(rawUrl, deadline.stageSignal(2500));
         }
-    } else if (sourceType === 'web') {
+    } else if (isWebExtractionSource(sourceType)) {
+        // TICKET-079: 'web' + reddit/substack all unfurl the page <title> here.
         const title = await unfurlWebTitle(rawUrl, deadline.stageSignal(2000)).catch(() => null);
         if (title) {
             query = title.replace(/\s*[\|—\-]\s*.+$/, '').trim();
