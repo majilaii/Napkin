@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/s/:token", "destination": "/api/render?t=:token" }
+  ]
+}
