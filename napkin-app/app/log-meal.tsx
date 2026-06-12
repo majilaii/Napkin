@@ -685,11 +685,6 @@ export default function LogMealScreen() {
                                     }
                                     palette={palette}
                                 />
-                                <Text
-                                    style={[styles.detailsMurmur, { color: palette.textMuted }]}
-                                >
-                                    — only if the meal asks. never shown on rows.
-                                </Text>
                             </View>
                         )}
                     </View>
@@ -846,9 +841,6 @@ export default function LogMealScreen() {
                                     </Pressable>
                                 );
                             })}
-                            <Text style={[styles.shareCaption, { color: palette.textMuted }]}>
-                                unchecked = journal only. visibility is derived, never chosen.
-                            </Text>
                         </View>
                     )}
 
@@ -1073,12 +1065,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         lineHeight: 16,
     },
-    shareCaption: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-        lineHeight: 16,
-        marginTop: 4,
-    },
     // Details drawer
     detailsToggle: {
         alignSelf: 'flex-start',
@@ -1091,11 +1077,6 @@ const styles = StyleSheet.create({
         gap: 4,
         paddingTop: 2,
         paddingBottom: 4,
-    },
-    detailsMurmur: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
-        marginTop: 4,
     },
     // Footer — pinned, true bottom edge
     footer: {

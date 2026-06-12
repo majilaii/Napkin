@@ -959,33 +959,47 @@ export default function EntryDetailScreen() {
                             )}
                         </View>
                     ) : (
+                        // ── Photoless: letterpress masthead (mirrors restaurant-page take-B) ──
                         <>
-                            <View style={styles.topBar}>
-                                <Pressable onPress={() => router.back()}>
-                                    <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
-                                </Pressable>
+                            {/* Quiet back affordance — canvas idiom, not the primary "← Back" */}
+                            <Pressable
+                                onPress={() => router.back()}
+                                style={styles.breadcrumb}
+                                hitSlop={12}
+                                accessibilityLabel="back"
+                                accessibilityRole="button"
+                            >
+                                <Ionicons name="chevron-back" size={18} color={palette.textSecondary} />
+                                <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>
+                                    back
+                                </Text>
+                            </Pressable>
+
+                            {/* Centered masthead: hairline · italic serif name · meta · hairline */}
+                            <View style={styles.masthead}>
+                                <View style={[styles.mastheadHairline, { backgroundColor: 'rgba(160,63,40,0.25)' }]} />
+                                <Text style={[styles.mastheadName, { color: palette.text }]} numberOfLines={2}>
+                                    {restaurantName}
+                                </Text>
+                                {entry.restaurants?.city ? (
+                                    <Text style={[styles.mastheadMeta, { color: palette.textMuted }]}>
+                                        {entry.restaurants.city}
+                                    </Text>
+                                ) : null}
+                                <View style={[styles.mastheadHairline, { backgroundColor: 'rgba(160,63,40,0.25)' }]} />
                             </View>
-                            {/* Muted "Add photos" row in the hero area when own entry has no hero */}
+
+                            {/* Own-entry: quiet add-photo murmur (no big camera box) */}
                             {isOwnEntry && (
                                 <Pressable
                                     onPress={handlePhotoPress}
-                                    style={[
-                                        styles.addPhotosHero,
-                                        { backgroundColor: palette.surfaceContainerLow },
-                                    ]}
+                                    style={styles.addPhotoMurmurRow}
+                                    hitSlop={8}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Add a photo"
                                 >
-                                    <Ionicons
-                                        name="camera-outline"
-                                        size={22}
-                                        color={palette.textMuted}
-                                    />
-                                    <Text
-                                        style={[
-                                            Type.body,
-                                            { color: palette.textMuted, marginTop: Spacing.xs },
-                                        ]}
-                                    >
-                                        Add photos
+                                    <Text style={[styles.addPhotoMurmur, { color: palette.primary }]}>
+                                        + add a photo
                                     </Text>
                                 </Pressable>
                             )}
@@ -2292,13 +2306,48 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    addPhotosHero: {
-        marginHorizontal: PAGE_H,
-        marginTop: Spacing.sm,
-        paddingVertical: Spacing.lg,
-        borderRadius: Radius.lg,
+    // ── Photoless letterpress masthead (mirrors restaurant-page take-B) ──
+    breadcrumb: {
+        flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
+        gap: 4,
+        paddingHorizontal: PAGE_H,
+        paddingVertical: 8,
+    },
+    breadcrumbLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+    },
+    masthead: {
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 24,
+        paddingTop: 8,
+        paddingBottom: 4,
+    },
+    mastheadHairline: {
+        width: 56,
+        height: 1,
+    },
+    mastheadName: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 28,
+        lineHeight: 32,
+        textAlign: 'center',
+    },
+    mastheadMeta: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        textAlign: 'center',
+    },
+    addPhotoMurmurRow: {
+        alignItems: 'center',
+        paddingTop: Spacing.md,
+    },
+    addPhotoMurmur: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        letterSpacing: 0.2,
     },
     addPhotoButton: {
         flexDirection: 'row',
