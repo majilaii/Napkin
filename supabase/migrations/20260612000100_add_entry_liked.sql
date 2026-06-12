@@ -134,10 +134,17 @@ REVOKE EXECUTE ON FUNCTION public.fn_create_entry_with_tables(uuid, jsonb, uuid[
 GRANT EXECUTE ON FUNCTION public.fn_create_entry_with_tables(uuid, jsonb, uuid[], uuid[], uuid[])
     TO service_role;
 
--- 3) CREATE OR REPLACE fn_my_solo_entries to surface `liked` in the journal feed.
+-- 3) Recreate fn_my_solo_entries to surface `liked` in the journal feed.
 --    Body byte-identical to 20260509000070 except the added `liked` column in both
---    the RETURNS TABLE signature and the SELECT list. Same REVOKE/GRANT.
-CREATE OR REPLACE FUNCTION public.fn_my_solo_entries(p_user_id uuid, p_limit int DEFAULT 50)
+--    the RETURNS TABLE signature and the SELECT list. Same REVOKE/GRANT + COMMENT.
+--
+--    CRITICAL: this adds an OUT column (`liked`) to the RETURNS TABLE row type.
+--    Postgres REJECTS that via CREATE OR REPLACE ("cannot change return type of
+--    existing function") → `db push` would ERROR. We must DROP first, then CREATE.
+--    The signature matches 20260509000070 exactly: (uuid, int).
+DROP FUNCTION IF EXISTS public.fn_my_solo_entries(uuid, int);
+
+CREATE FUNCTION public.fn_my_solo_entries(p_user_id uuid, p_limit int DEFAULT 50)
 RETURNS TABLE (
     id uuid,
     user_id uuid,
@@ -178,3 +185,18 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.fn_my_solo_entries(uuid, int) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.fn_my_solo_entries(uuid, int) TO authenticated;
+
+COMMENT ON FUNCTION public.fn_my_solo_entries(uuid, int) IS
+    'TICKET-043: SECURITY DEFINER helper for useMySoloEntries.ts. '
+    'Needed because authenticated cannot filter on entries.table_id after the '
+    'column-level revoke in 20260509000005. '
+    'Includes auth.uid() check to prevent reading other users solo entries. '
+    'TICKET-075: surfaces entries.liked.';
+
+-- 4) Column-level SELECT grant for `liked`.
+--    entries lost table-level SELECT for authenticated (20260509000100); only an
+--    explicit column whitelist is readable. Without granting `liked`, the direct
+--    `from('entries').select(...liked...)` in app/entry-detail.tsx throws
+--    42501 permission denied for column liked → entry-detail dead-ends for EVERY
+--    entry. This is additive — it does not narrow any existing column grant.
+GRANT SELECT (liked) ON public.entries TO authenticated;
