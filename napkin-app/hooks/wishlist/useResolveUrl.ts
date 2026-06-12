@@ -13,7 +13,10 @@ import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'screenshot' | 'vision';
+// TICKET-079: reddit/substack widen the union. They route through the same 'web'
+// extraction path server-side but carry a finer label so copy can say "from reddit" /
+// "from substack" and pick the right noun (post / page).
+type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'reddit' | 'substack' | 'screenshot' | 'vision';
 type Confidence = 'exact' | 'high' | 'low';
 
 export interface ResolvedCandidate {

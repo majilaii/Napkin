@@ -66,6 +66,7 @@ import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { safeRandomUUID } from '@/lib/uuid';
+import { sourceNoun } from '@/lib/sourceNoun';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
 import { useToast } from '@/providers/ToastProvider';
 import { CandidatePickerPanel, buildInitialTicked, keyFor, isResolved } from './CandidatePickerPanel';
@@ -196,6 +197,13 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
 
     // Effective candidates (patched overrides original)
     const effectiveCandidates = patchedCandidates ?? resolvedData?.candidates ?? [];
+
+    // TICKET-079: source-aware copy noun. Before the resolver returns, infer from
+    // the URL host (a maps link reads "reading the map…", not "video"); once
+    // resolvedData arrives, use its source_type. The screenshot/vision flows are a
+    // separate state ('screenshot-uploading') whose panel hardcodes the screenshot
+    // copy, so this noun covers the URL paths.
+    const noun = sourceNoun(resolvedData?.source_type, lastUrl || inputValue);
 
     // ── Clipboard probe on mount ───────────────────────────────────────
     useEffect(() => {
@@ -658,12 +666,20 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
 
     // Canvas kicker: "FROM TIKTOK · @{handle}" — panel uppercases the string.
     // Handle not yet in data model; use source-type label only.
+    // TICKET-079: reddit/substack/screenshot get named labels; everything else
+    // (the generic 'web' page) falls back to "from the web".
     function sourceTagLabel(): string | null {
         if (!resolvedData) return null;
-        if (resolvedData.source_type === 'tiktok') return 'from tiktok';
-        if (resolvedData.source_type === 'instagram') return 'from instagram';
-        if (resolvedData.source_type === 'google_maps') return 'from google maps';
-        return 'from the web';
+        switch (resolvedData.source_type) {
+            case 'tiktok': return 'from tiktok';
+            case 'instagram': return 'from instagram';
+            case 'google_maps': return 'from google maps';
+            case 'reddit': return 'from reddit';
+            case 'substack': return 'from substack';
+            case 'screenshot':
+            case 'vision': return 'from a screenshot';
+            default: return 'from the web';
+        }
     }
 
     // ── Render ─────────────────────────────────────────────────────────
@@ -717,7 +733,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                             <LoadingPanel
                                 palette={palette}
                                 onCancel={handleCancel}
-                                copy="reading the video…"
+                                copy={`reading the ${noun}…`}
                             />
                         )}
 
@@ -728,6 +744,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 onSave={handleSaveSpots}
                                 isSaving={saveImportSpots.isPending}
                                 sourceTag={sourceTagLabel()}
+                                noun={noun}
                                 onCorrectRow={handleCorrectRow}
                                 onOpenRestaurant={(id) => {
                                     handleDismiss();
@@ -772,6 +789,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                         {sheetState === 'zero' && (
                             <ZeroPanel
                                 palette={palette}
+                                noun={noun}
                                 onSearchManually={() => handleSearchManually(resolvedData?.best_query ?? '')}
                             />
                         )}
@@ -800,7 +818,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                             <LoadingPanel
                                 palette={palette}
                                 onCancel={handleCancel}
-                                copy="reading it…"
+                                copy="reading the screenshot…"
                             />
                         )}
 
@@ -1086,11 +1104,11 @@ function EditMatchPanel({
 }
 
 // Zero
-function ZeroPanel({ palette, onSearchManually }: { palette: Palette; onSearchManually: () => void }) {
+function ZeroPanel({ palette, noun, onSearchManually }: { palette: Palette; noun: string; onSearchManually: () => void }) {
     return (
         <View style={styles.centeredPanel}>
             <Text style={[Type.headlineItalic, { color: palette.text, textAlign: 'center' }]}>
-                {`couldn't spot a restaurant in that video`}
+                {`couldn't spot a restaurant in that ${noun}`}
             </Text>
             <Text style={[Type.bodySmall, styles.zeroCopy, { color: palette.textMuted }]}>
                 try a different link, or search by name.

@@ -22,6 +22,8 @@ import {
     buildGhostExternalId,
     filterUnauthorizedTableIds,
     isSpotPinnable,
+    detectSourceTypeFromHost,
+    isWebExtractionSource,
 } from './_helpers.ts';
 import { deriveClientNonce } from '../handoff/nonce.ts';
 import { loadHandoffWriteAuthorization, type LiveSpotsClient } from '../handoff/snapshot.ts';
@@ -472,4 +474,67 @@ Deno.test('write-boundary auth: live share with present spots → carries the FR
     // The real per-spot gate passes both present spots and rejects an unknown one.
     assertEquals(isSpotPinnable('R1', writeAuth.liveRestaurantIds), true);
     assertEquals(isSpotPinnable('R-not-shared', writeAuth.liveRestaurantIds), false);
+});
+
+// ── TICKET-079: source detection (reddit/substack labels + web-path routing) ──
+//
+// reddit/substack are recognized as their own source_type so the client can
+// label them ("from reddit" / "from substack") and pick the right copy noun —
+// but they MUST still flow the generic web-title → Places extraction path, so
+// they never mislabel as video and never 500. detectSourceTypeFromHost +
+// isWebExtractionSource are the pure decisions that guarantee this.
+
+Deno.test('detectSourceTypeFromHost: tiktok hosts → tiktok', () => {
+    assertEquals(detectSourceTypeFromHost('www.tiktok.com'), 'tiktok');
+    assertEquals(detectSourceTypeFromHost('vm.tiktok.com'), 'tiktok');
+    assertEquals(detectSourceTypeFromHost('m.tiktok.com'), 'tiktok');
+});
+
+Deno.test('detectSourceTypeFromHost: maps share hosts → google_maps', () => {
+    assertEquals(detectSourceTypeFromHost('maps.app.goo.gl'), 'google_maps');
+    assertEquals(detectSourceTypeFromHost('maps.google.com'), 'google_maps');
+    assertEquals(detectSourceTypeFromHost('goo.gl'), 'google_maps');
+});
+
+Deno.test('detectSourceTypeFromHost: instagram hosts → instagram', () => {
+    assertEquals(detectSourceTypeFromHost('instagram.com'), 'instagram');
+    assertEquals(detectSourceTypeFromHost('www.instagram.com'), 'instagram');
+});
+
+Deno.test('detectSourceTypeFromHost: reddit hosts (incl. redd.it + subdomains) → reddit', () => {
+    assertEquals(detectSourceTypeFromHost('reddit.com'), 'reddit');
+    assertEquals(detectSourceTypeFromHost('www.reddit.com'), 'reddit');
+    assertEquals(detectSourceTypeFromHost('old.reddit.com'), 'reddit');
+    assertEquals(detectSourceTypeFromHost('redd.it'), 'reddit');
+});
+
+Deno.test('detectSourceTypeFromHost: substack hosts (incl. custom subdomains) → substack', () => {
+    assertEquals(detectSourceTypeFromHost('substack.com'), 'substack');
+    assertEquals(detectSourceTypeFromHost('someone.substack.com'), 'substack');
+});
+
+Deno.test('detectSourceTypeFromHost: unknown host → web', () => {
+    assertEquals(detectSourceTypeFromHost('example.com'), 'web');
+    assertEquals(detectSourceTypeFromHost('eater.com'), 'web');
+});
+
+Deno.test('detectSourceTypeFromHost: case-insensitive on host', () => {
+    assertEquals(detectSourceTypeFromHost('WWW.Reddit.com'), 'reddit');
+    assertEquals(detectSourceTypeFromHost('Someone.SUBSTACK.com'), 'substack');
+});
+
+Deno.test('isWebExtractionSource: reddit + substack ride the web extraction path', () => {
+    // The invariant that keeps reddit/substack from mislabeling as video / 500ing:
+    // they take the SAME unfurl→extraction branch as a generic web page.
+    assertEquals(isWebExtractionSource('web'), true);
+    assertEquals(isWebExtractionSource('reddit'), true);
+    assertEquals(isWebExtractionSource('substack'), true);
+});
+
+Deno.test('isWebExtractionSource: tiktok/maps/instagram/screenshot do NOT take the web path', () => {
+    assertEquals(isWebExtractionSource('tiktok'), false);
+    assertEquals(isWebExtractionSource('google_maps'), false);
+    assertEquals(isWebExtractionSource('instagram'), false);
+    assertEquals(isWebExtractionSource('screenshot'), false);
+    assertEquals(isWebExtractionSource('vision'), false);
 });

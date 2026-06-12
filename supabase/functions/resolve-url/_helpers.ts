@@ -7,6 +7,63 @@
  * TICKET-063 fix-pass-1.
  */
 
+// ── Source detection (TICKET-079) ─────────────────────────────────────────────
+
+/**
+ * The source_type values resolve-url can emit for a URL/image share.
+ * Mirrors the SourceType union in index.ts (kept in sync — this is the testable copy).
+ */
+export type SourceType =
+    | 'tiktok'
+    | 'google_maps'
+    | 'web'
+    | 'instagram'
+    | 'reddit'
+    | 'substack'
+    | 'screenshot'
+    | 'vision';
+
+/**
+ * Detect the source_type from a URL host.
+ *
+ * TICKET-079: reddit + substack are labeled distinctly (so copy can say
+ * "from reddit" / "from substack" and pick the right noun) but are extracted via
+ * the SAME generic web-title → Places path as 'web' (see isWebExtractionSource).
+ *
+ * Unrecognized hosts → 'web'.
+ */
+export function detectSourceTypeFromHost(host: string): SourceType {
+    const h = host.toLowerCase();
+    if (h === 'tiktok.com' || h === 'www.tiktok.com' || h === 'vm.tiktok.com' || h === 'm.tiktok.com') {
+        return 'tiktok';
+    }
+    if (h === 'maps.app.goo.gl' || h === 'maps.google.com' || h === 'goo.gl') {
+        return 'google_maps';
+    }
+    if (h === 'instagram.com' || h === 'www.instagram.com') {
+        return 'instagram';
+    }
+    if (h === 'reddit.com' || h === 'www.reddit.com' || h === 'redd.it' || h.endsWith('.reddit.com')) {
+        return 'reddit';
+    }
+    if (h === 'substack.com' || h.endsWith('.substack.com')) {
+        return 'substack';
+    }
+    return 'web';
+}
+
+/**
+ * TICKET-079: reddit/substack are labeled distinctly but extracted exactly like a
+ * generic web page (unfurl <title> → text extraction → Places). Anywhere the
+ * pipeline forks on "is this the web path?", use this instead of `=== 'web'`.
+ *
+ * This guarantees reddit/substack never mislabel as video and never 500 — they
+ * degrade to manual search like any noisy-title web page if extraction is poor.
+ */
+export function isWebExtractionSource(s: SourceType): boolean {
+    return s === 'web' || s === 'reddit' || s === 'substack';
+}
+
 /**
  * Returns true when an external_id value represents an unresolved ghost
  * candidate (null, empty string, or the legacy 'ghost_pending' sentinel).
