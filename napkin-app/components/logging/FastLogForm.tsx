@@ -25,6 +25,7 @@ import {
     Pressable,
     ActivityIndicator,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -79,7 +80,8 @@ export function FastLogForm({
 }: FastLogFormProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const { user } = useAuth();
+    const { user, signOut } = useAuth();
+    const router = useRouter();
 
     // TICKET-043: convert to table_ids array; pass [] for feed-only.
     const selectedTableIds = initialTableId ? [initialTableId] : [];
@@ -126,6 +128,16 @@ export function FastLogForm({
             const entryId = result?.id ?? result?.entry?.id ?? '';
             onSubmitted(entryId);
         } catch (e: any) {
+            // TICKET-075: useCreateEntry now throws SessionExpiredError (code
+            // 'session_expired') on a stale-session 401 it couldn't refresh.
+            // Mirror the loggers: sign out → /auth instead of stranding the user
+            // behind a dead "Tap to retry" that will only 401 again.
+            const code = (e as any)?.cause?.code ?? (e as any)?.code;
+            if (code === 'session_expired') {
+                try { await signOut(); } catch { /* noop */ }
+                router.replace('/auth');
+                return;
+            }
             setSubmitError(e.message ?? 'Could not save entry. Tap to retry.');
         }
     }, [
@@ -136,6 +148,8 @@ export function FastLogForm({
         selectedTableIds,
         createEntry,
         onSubmitted,
+        signOut,
+        router,
     ]);
 
     const caption = ratingCaption(rating);

@@ -852,27 +852,35 @@ export default function CreateEntryScreen() {
                         />
                     ) : null}
 
-                    {/* SECTION 2: Rating band + inline like heart (TICKET-075) */}
+                    {/* SECTION 2: Rating band + inline like heart (TICKET-075).
+                        The like heart is solo-only in v1: neither the round path
+                        (buildRoundPayload/StartRound) nor the merge path
+                        (handleMerge/CreateEntryWithMergeInput) carries `liked`, so
+                        showing it there would let a user heart and silently lose it.
+                        Hidden in round mode and when a merge candidate is active —
+                        same solo-only gate as the Table checklist. */}
                     {!showSearch ? (
                         <View style={[styles.sectionDivider, styles.ratingRow, { borderTopColor: palette.divider }]}>
                             <RatingBand
                                 rating={rating}
                                 onRatingChange={setRating}
                             />
-                            <Pressable
-                                onPress={() => setLiked((v) => !v)}
-                                hitSlop={10}
-                                style={styles.likeToggle}
-                                accessibilityRole="button"
-                                accessibilityState={{ selected: liked }}
-                                accessibilityLabel={liked ? 'liked' : 'like'}
-                            >
-                                <Ionicons
-                                    name={liked ? 'heart' : 'heart-outline'}
-                                    size={26}
-                                    color={liked ? palette.primary : palette.textMuted}
-                                />
-                            </Pressable>
+                            {postMode !== 'round' && !showMergeCard ? (
+                                <Pressable
+                                    onPress={() => setLiked((v) => !v)}
+                                    hitSlop={10}
+                                    style={styles.likeToggle}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ selected: liked }}
+                                    accessibilityLabel={liked ? 'liked' : 'like'}
+                                >
+                                    <Ionicons
+                                        name={liked ? 'heart' : 'heart-outline'}
+                                        size={26}
+                                        color={liked ? palette.primary : palette.textMuted}
+                                    />
+                                </Pressable>
+                            ) : null}
                         </View>
                     ) : null}
 
