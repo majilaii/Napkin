@@ -43,9 +43,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker, {
-    type DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
+import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -62,6 +60,7 @@ import { CompanionPickerSheet } from '@/components/logging/CompanionPickerSheet'
 import { PhotoMosaic } from '@/components/log/PhotoMosaic';
 import { PhotoViewer } from '@/components/log/PhotoViewer';
 import { NoteEditorModal } from '@/components/log/NoteEditorModal';
+import { CalendarModal } from '@/components/log/CalendarModal';
 import type { LogSheetRestaurant } from '@/components/log/LogSheet';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 
@@ -293,8 +292,8 @@ export default function LogMealScreen() {
     // TICKET-075: Letterboxd-style like — independent of the rating value.
     const [liked, setLiked] = useState(false);
     const [visitedAt, setVisitedAt] = useState(new Date());
-    // TICKET-075: native month-calendar visibility (WHEN row).
-    const [showCalendar, setShowCalendar] = useState(false);
+    // TICKET-078: calendar lives in a bottom-sheet Modal overlay (no layout shift).
+    const [calendarVisible, setCalendarVisible] = useState(false);
     const [notes, setNotes] = useState('');
     const [noteEditorVisible, setNoteEditorVisible] = useState(false);
     const [companionPickerVisible, setCompanionPickerVisible] = useState(false);
@@ -309,8 +308,9 @@ export default function LogMealScreen() {
     // TICKET-075: calendar day selection — preserves the time component, blocks future.
     const handleCalendarChange = useCallback(
         (event: DateTimePickerEvent, selected?: Date) => {
-            // Android fires 'dismissed' on cancel; iOS inline stays open until tapped away.
-            if (Platform.OS === 'android') setShowCalendar(false);
+            // Android's 'calendar' display is itself a system dialog — close the
+            // wrapping modal on any Android result. iOS inline stays open until done.
+            if (Platform.OS === 'android') setCalendarVisible(false);
             if (event.type === 'dismissed' || !selected) return;
             setVisitedAt((prev) => {
                 const next = new Date(selected);
@@ -697,7 +697,7 @@ export default function LogMealScreen() {
                             </Text>
                         </View>
                         <Pressable
-                            onPress={() => setShowCalendar((v) => !v)}
+                            onPress={() => setCalendarVisible(true)}
                             hitSlop={8}
                             accessibilityRole="button"
                             accessibilityLabel={`when: ${formatWhenLabel(visitedAt)}. tap to change.`}
@@ -706,19 +706,6 @@ export default function LogMealScreen() {
                                 {formatWhenLabel(visitedAt)}
                             </Text>
                         </Pressable>
-                        {showCalendar && (
-                            <View style={styles.calendarWrap}>
-                                <DateTimePicker
-                                    value={visitedAt}
-                                    mode="date"
-                                    display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
-                                    maximumDate={new Date()}
-                                    onChange={handleCalendarChange}
-                                    accentColor={palette.primary}
-                                    themeVariant={scheme}
-                                />
-                            </View>
-                        )}
                     </View>
 
                     {/* 4 ── THE NOTE — tappable preview block → NoteEditorModal ── */}
@@ -901,6 +888,14 @@ export default function LogMealScreen() {
                 }}
             />
 
+            {/* Calendar — bottom-sheet overlay (floats over the body, no shift) */}
+            <CalendarModal
+                visible={calendarVisible}
+                value={visitedAt}
+                onChange={handleCalendarChange}
+                onClose={() => setCalendarVisible(false)}
+            />
+
             {/* Photo viewer */}
             <PhotoViewer
                 visible={viewerVisible}
@@ -1000,10 +995,6 @@ const styles = StyleSheet.create({
     whenDate: {
         fontFamily: 'Manrope_400Regular',
         fontSize: 14,
-    },
-    calendarWrap: {
-        marginTop: 4,
-        ...(Platform.OS === 'android' ? {} : { marginLeft: -8 }),
     },
     // Note preview block
     notePreview: {
