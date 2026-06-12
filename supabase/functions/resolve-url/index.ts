@@ -55,6 +55,10 @@ import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.
 import { detectListMarker } from '../_shared/listicle.ts';
 import { resizeImageToLimit } from '../_shared/imageResize.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
+// TICKET-077: the handoff pin path re-reads the share LIVE (single source of truth,
+// shared with handoff/share-page) so it pins against the CURRENT spot set, never a
+// stale client-sent list.
+import { loadLiveSpots } from '../handoff/snapshot.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -627,7 +631,7 @@ async function callPlacesSearch(
 // ── Exported decision helpers (TICKET-063 fix-pass-1, testable) ──────────────
 // Implementations live in _helpers.ts (no serve() call) so test files can
 // import them without triggering the HTTP server.
-import { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds, mapVerifiedRestaurantIds } from './_helpers.ts';
+import { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds, mapVerifiedRestaurantIds, isSpotPinnable } from './_helpers.ts';
 export { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds };
 
 // ── Places Details by place_id (FIX #5: never text-search for place_id candidates) ──
@@ -1306,17 +1310,41 @@ async function handleSaveSpots(
     // Cap at 6 per spec
     const capped = spots.slice(0, 6);
 
-    // ── TICKET-072 ARCH-REVIEW-2 #1/#4: handoff_token gate ───────────────────
+    // ── TICKET-072 ARCH-REVIEW-2 #1/#4 + TICKET-077: handoff_token gate ──────
     // When handoff_token is present, re-check revocation immediately before writing
     // (never rely on cached resolve data). Server constructs source authoritatively
-    // from the share row — client-sent source is ignored.
+    // from the LIVE share read — client-sent source is ignored.
+    //
+    // TICKET-077: shares are live. We re-read the owner's CURRENT verified spot set
+    // server-side and pin ONLY restaurant_ids that are in it. A client may send a
+    // restaurant_id that the owner has since removed (or that belongs to a different
+    // share) — those are rejected, NOT trusted. sharer_name is the owner's LIVE name.
     const handoffToken = typeof body['handoff_token'] === 'string' ? body['handoff_token'] : null;
     let effectiveSource: unknown = source;
+    // null ⇒ no handoff gate (normal import). A Set ⇒ handoff: the restaurant_ids
+    // in the CURRENT live spot set; only these may be pinned.
+    let liveRestaurantIds: Set<string> | null = null;
+
+    const buildRevokedResponse = () => {
+        const revokedResults = capped.map((spot) => ({
+            candidate_id: spot.candidate_id,
+            client_nonce: spot.client_nonce,
+            status: 'failed' as const,
+            error: 'share revoked or not found',
+            code: 'SHARE_REVOKED',
+        }));
+        return jsonResponse({
+            data: {
+                results: revokedResults,
+                summary: { saved: 0, already_pinned: 0, failed: revokedResults.length },
+            },
+        });
+    };
 
     if (handoffToken) {
         const { data: shareRow, error: shareErr } = await supabase
             .from('wishlist_shares')
-            .select('snapshot, revoked_at')
+            .select('owner_id, list_id, revoked_at')
             .eq('token', handoffToken)
             .maybeSingle();
 
@@ -1324,25 +1352,24 @@ async function handleSaveSpots(
 
         if (!shareRow || (shareRow as any).revoked_at !== null) {
             // Revoked or unknown → all spots fail with SHARE_REVOKED (ARCH-2 #1)
-            const revokedResults = capped.map((spot) => ({
-                candidate_id: spot.candidate_id,
-                client_nonce: spot.client_nonce,
-                status: 'failed' as const,
-                error: 'share revoked or not found',
-                code: 'SHARE_REVOKED',
-            }));
-            return jsonResponse({
-                data: {
-                    results: revokedResults,
-                    summary: { saved: 0, already_pinned: 0, failed: revokedResults.length },
-                },
-            });
+            return buildRevokedResponse();
         }
 
-        // ARCH-2 #4: server-authoritative provenance — ignore any client-sent source
-        const snapshot = (shareRow as any).snapshot as { sharer_name?: string } | null;
-        const sharerName = snapshot?.sharer_name ?? 'someone';
-        effectiveSource = { type: 'handoff', sharer_name: sharerName };
+        // TICKET-077: live read — the CURRENT verified spot set + the owner's live
+        // sharer_name. A deleted/unowned list → null → treat as revoked (the share
+        // points at nothing shareable anymore).
+        const ownerId = (shareRow as any).owner_id as string;
+        const listId = ((shareRow as any).list_id as string | null) ?? null;
+        const live = await loadLiveSpots(supabase, ownerId, listId);
+        if (!live) {
+            return buildRevokedResponse();
+        }
+
+        liveRestaurantIds = new Set(live.spots.map((s) => s.restaurant_id));
+
+        // ARCH-2 #4: server-authoritative provenance — ignore any client-sent source.
+        // sharer_name is the owner's CURRENT display name (TICKET-077).
+        effectiveSource = { type: 'handoff', sharer_name: live.sharer_name };
     }
 
     // ── FIX #3 (P1): validate table memberships BEFORE calling the RPC ──────
@@ -1385,19 +1412,7 @@ async function handleSaveSpots(
             .maybeSingle();
         if (recheckErr) throw recheckErr;
         if (!recheck || (recheck as any).revoked_at !== null) {
-            const revokedResults = capped.map((spot) => ({
-                candidate_id: spot.candidate_id,
-                client_nonce: spot.client_nonce,
-                status: 'failed' as const,
-                error: 'share revoked or not found',
-                code: 'SHARE_REVOKED',
-            }));
-            return jsonResponse({
-                data: {
-                    results: revokedResults,
-                    summary: { saved: 0, already_pinned: 0, failed: revokedResults.length },
-                },
-            });
+            return buildRevokedResponse();
         }
     }
 
@@ -1420,6 +1435,22 @@ async function handleSaveSpots(
                 status: 'failed',
                 error: 'not a member of this table',
                 code: 'NOT_A_MEMBER',
+            });
+            continue;
+        }
+
+        // TICKET-077: for a handoff pin, the spot MUST be in the share's CURRENT
+        // live spot set. The client cannot smuggle a restaurant_id the owner has
+        // since removed (or one from a different share) — we pin only what the
+        // owner shares right now. (isSpotPinnable is the exported pure guard so the
+        // deno test exercises this exact decision.)
+        if (!isSpotPinnable(spot.restaurant_id, liveRestaurantIds)) {
+            results.push({
+                candidate_id: spot.candidate_id,
+                client_nonce: spot.client_nonce,
+                status: 'failed',
+                error: 'spot is not in the shared set',
+                code: 'NOT_IN_SHARE',
             });
             continue;
         }

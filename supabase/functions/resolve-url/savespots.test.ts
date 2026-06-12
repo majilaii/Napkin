@@ -21,7 +21,9 @@ import {
     isGhostExternalId,
     buildGhostExternalId,
     filterUnauthorizedTableIds,
+    isSpotPinnable,
 } from './_helpers.ts';
+import { deriveClientNonce } from '../handoff/nonce.ts';
 
 // ── 1. Source passthrough — object not stringified ────────────────────────────
 //
@@ -228,4 +230,68 @@ Deno.test('mapVerifiedRestaurantIds: maps verified rows only', () => {
 Deno.test('mapVerifiedRestaurantIds: missing verification field treated as unmapped', () => {
     const map = mapVerifiedRestaurantIds([{ id: 'r4', external_id: 'place_c' }]);
     if (map.size !== 0) throw new Error('rows without verification must not map');
+});
+
+// ── TICKET-077: LIVE handoff pin guard ────────────────────────────────────────
+//
+// A handoff pin may only target a restaurant_id in the share's CURRENT live spot
+// set (read server-side via loadLiveSpots). A client cannot smuggle a restaurant_id
+// the owner has since removed, or one from a different share. Off-set spots →
+// NOT_IN_SHARE (rejected, not pinned).
+
+Deno.test('isSpotPinnable: restaurant_id IN the live set → pinnable', () => {
+    const live = new Set(['r1', 'r2']);
+    assertEquals(isSpotPinnable('r1', live), true);
+});
+
+Deno.test('isSpotPinnable: restaurant_id NOT in the live set → rejected (NOT_IN_SHARE)', () => {
+    const live = new Set(['r1', 'r2']);
+    // Owner removed r3 (or it belongs to a different share) since the recipient viewed.
+    assertEquals(isSpotPinnable('r3', live), false);
+});
+
+Deno.test('isSpotPinnable: null/undefined restaurant_id on handoff → rejected (live spots always carry an id)', () => {
+    const live = new Set(['r1']);
+    assertEquals(isSpotPinnable(null, live), false);
+    assertEquals(isSpotPinnable(undefined, live), false);
+});
+
+Deno.test('isSpotPinnable: empty live set → nothing pinnable (revoked-to-empty share)', () => {
+    const live = new Set<string>();
+    assertEquals(isSpotPinnable('r1', live), false);
+});
+
+Deno.test('isSpotPinnable: no handoff gate (null set) → every spot pinnable (normal import)', () => {
+    // The non-handoff import path passes liveRestaurantIds = null — the guard is a no-op.
+    assertEquals(isSpotPinnable('anything', null), true);
+    assertEquals(isSpotPinnable(null, null), true);
+});
+
+// ── TICKET-077: per-spot client_nonce determinism (token, restaurant_id) ──────
+//
+// The pin nonce derives from (token, restaurant_id). Stable for a given
+// restaurant across views → re-receipt is idempotent (rides the
+// (user_id, client_nonce) UNIQUE in fn_save_import_spot). restaurant_id comes
+// from the LIVE read, which is stable for a given restaurant.
+
+Deno.test('client_nonce determinism: same (token, restaurant_id) → same nonce', async () => {
+    const token = 'ABCdefGHIjklMNOpqrSTUv';
+    const rid = 'aabbccdd-0000-4000-8000-000000000001';
+    const a = await deriveClientNonce(token, rid);
+    const b = await deriveClientNonce(token, rid);
+    assertEquals(a, b, 'nonce must be stable per (token, restaurant_id) for idempotent re-receipt');
+});
+
+Deno.test('client_nonce determinism: different restaurant_id → different nonce', async () => {
+    const token = 'ABCdefGHIjklMNOpqrSTUv';
+    const a = await deriveClientNonce(token, 'aabbccdd-0000-4000-8000-000000000001');
+    const b = await deriveClientNonce(token, 'aabbccdd-0000-4000-8000-000000000002');
+    assertNotEquals(a, b, 'distinct restaurants must derive distinct nonces');
+});
+
+Deno.test('client_nonce determinism: different token → different nonce (no cross-share collision)', async () => {
+    const rid = 'aabbccdd-0000-4000-8000-000000000001';
+    const a = await deriveClientNonce('ABCdefGHIjklMNOpqrSTUv', rid);
+    const b = await deriveClientNonce('ZZZdefGHIjklMNOpqrSTUv', rid);
+    assertNotEquals(a, b, 'same restaurant under different shares must not collide');
 });

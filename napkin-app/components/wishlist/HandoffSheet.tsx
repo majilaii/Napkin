@@ -48,7 +48,7 @@ interface HandoffSheetProps {
     pinnedCount: number;
     /** TICKET-074: when set, the sheet shares THIS list instead of the wishlist. */
     listId?: string;
-    /** Frozen into the share message + sheet copy; required alongside listId. */
+    /** Used in the share message + sheet copy; required alongside listId. */
     listName?: string;
 }
 
@@ -140,7 +140,7 @@ export function HandoffSheet({ visible, onDismiss, pinnedCount, listId, listName
                 {/* Body */}
                 <View style={styles.body}>
                     <Text style={[styles.murmur, { color: palette.textMuted }]}>
-                        {`${pinnedCount} spot${pinnedCount !== 1 ? 's' : ''} · frozen at this moment`}
+                        {`${pinnedCount} spot${pinnedCount !== 1 ? 's' : ''} · stays in sync as you add more`}
                     </Text>
 
                     {/* Share CTA */}
