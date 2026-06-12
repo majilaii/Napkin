@@ -518,6 +518,53 @@ async function fetchAndResizeThumbnail(
 
 // ── Web unfurl ────────────────────────────────────────────────────────────────
 
+/** Parse a place query from an EXPANDED Google Maps URL (/place/<name>/ or ?q=). */
+function parsePlaceFromMapsUrl(u: string): string | null {
+    try {
+        const parsed = new URL(u);
+        const parts = parsed.pathname.split('/');
+        const i = parts.findIndex((p) => p === 'place' || p === 'Place');
+        if (i >= 0 && parts[i + 1]) {
+            return decodeURIComponent(parts[i + 1]).replace(/\+/g, ' ').trim() || null;
+        }
+        return parsed.searchParams.get('q') ?? parsed.searchParams.get('query');
+    } catch {
+        return null;
+    }
+}
+
+/** "Carbone · Greenwich Village - Google Maps" → "Carbone · Greenwich Village" */
+function cleanMapsTitle(t: string): string {
+    return t.replace(/\s*[-–—|]\s*Google\s*Maps\s*$/i, '').trim();
+}
+
+/**
+ * Google Maps SHARE links are short redirects (maps.app.goo.gl/…, goo.gl/maps/…)
+ * with no /place/ segment. Follow the redirect to the canonical URL and parse
+ * the place from it; fall back to the page's og:title / <title>. Fully fail-soft.
+ */
+async function expandMapsQuery(url: string, signal: AbortSignal): Promise<string | null> {
+    try {
+        const res = await fetch(url, {
+            signal,
+            redirect: 'follow',
+            headers: { 'User-Agent': 'Napkin/1.0 (link-resolver; +https://napkin.app)' },
+        });
+        const fromUrl = parsePlaceFromMapsUrl(res.url || url);
+        if (fromUrl) { res.body?.cancel().catch(() => {}); return fromUrl; }
+        const text = await res.text().catch(() => null);
+        if (text) {
+            const og = text.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']{1,200})["']/i);
+            if (og?.[1]) return cleanMapsTitle(og[1]) || null;
+            const t = text.match(/<title[^>]*>([^<]{1,200})<\/title>/i);
+            if (t?.[1]) return cleanMapsTitle(t[1]) || null;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
 async function unfurlWebTitle(url: string, signal: AbortSignal): Promise<string | null> {
     try {
         const res = await fetch(url, {
@@ -1529,12 +1576,12 @@ async function handleUrlResolve(
             partialSource = partial;
         }
     } else if (sourceType === 'google_maps') {
-        const pathParts = parsedUrl.pathname.split('/');
-        const placeIndex = pathParts.findIndex((p) => p === 'place' || p === 'Place');
-        if (placeIndex >= 0 && pathParts[placeIndex + 1]) {
-            query = decodeURIComponent(pathParts[placeIndex + 1]).replace(/\+/g, ' ');
-        } else {
-            query = parsedUrl.searchParams.get('q') ?? parsedUrl.searchParams.get('query');
+        // Already-expanded links: parse directly.
+        query = parsePlaceFromMapsUrl(rawUrl);
+        // Share links (maps.app.goo.gl/…) are short redirects with no place
+        // segment — follow the redirect to recover the place name.
+        if (!query) {
+            query = await expandMapsQuery(rawUrl, deadline.stageSignal(2500));
         }
     } else if (sourceType === 'web') {
         const title = await unfurlWebTitle(rawUrl, deadline.stageSignal(2000)).catch(() => null);
