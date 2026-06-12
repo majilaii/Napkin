@@ -112,6 +112,11 @@ type RestaurantPageData = {
         // TICKET-057: photo provenance and attribution for Places-sourced heroes.
         photo_source: 'user' | 'table' | 'places' | 'none' | null;
         places_photo_attribution_html: string | null;
+        // TICKET-081: restaurant-page metadata (phone · directions · website · hours).
+        phone: string | null;
+        website: string | null;
+        google_maps_uri: string | null;
+        hours: { weekdayDescriptions: string[]; openNow?: boolean } | null;
     } | null;
     personal: { average: number | null; visit_count: number };
     table_chip: { table_id: string; table_name: string; average: number; visit_count: number } | null;
@@ -509,7 +514,7 @@ serve(async (req) => {
             if (isUuid) {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours')
                     .eq('id', restaurantId)
                     .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();
@@ -518,7 +523,7 @@ serve(async (req) => {
             } else {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours')
                     .eq('external_id', restaurantId)
                     .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();

@@ -34,6 +34,13 @@ export type RestaurantPageRestaurant = {
     // 'none' = we tried Places, got no usable attribution — skip lazy backfill on re-visit.
     photo_source: 'user' | 'table' | 'places' | 'none' | null;
     places_photo_attribution_html: string | null;
+    // TICKET-081: restaurant-page metadata (phone · directions · website · hours).
+    // All nullable; each MetaActions affordance / the hours line renders only when
+    // its datum is present. hours: { weekdayDescriptions[] (index 0 = Monday), openNow? }.
+    phone: string | null;
+    website: string | null;
+    google_maps_uri: string | null;
+    hours: { weekdayDescriptions: string[]; openNow?: boolean } | null;
 };
 
 export type PageVisit = {
@@ -192,6 +199,14 @@ async function fetchRestaurantPage(
     if (data.restaurant && data.restaurant.places_photo_attribution_html === undefined) {
         (data.restaurant as any).places_photo_attribution_html = null;
     }
+    // TICKET-081: back-fill metadata fields for responses predating the column add.
+    if (data.restaurant) {
+        const r = data.restaurant as any;
+        if (r.phone === undefined) r.phone = null;
+        if (r.website === undefined) r.website = null;
+        if (r.google_maps_uri === undefined) r.google_maps_uri = null;
+        if (r.hours === undefined) r.hours = null;
+    }
     if (!data.distributions) {
         data.distributions = { you: [0,0,0,0,0], your_table: null, napkin: [0,0,0,0,0] };
     }
@@ -255,6 +270,12 @@ export function restaurantFromPlace(
         cuisine?: string;
         photoReference?: string;
         photoAttributionHtml?: string | null;
+        // TICKET-081: metadata may ride along on a Places lookup payload.
+        phone?: string | null;
+        website?: string | null;
+        google_maps_uri?: string | null;
+        link?: string | null;
+        hours?: { weekdayDescriptions: string[]; openNow?: boolean } | null;
         name: string;
         external_id: string;
     },
@@ -297,5 +318,10 @@ export function restaurantFromPlace(
         external_id: place.external_id,
         photo_source: photoSource,
         places_photo_attribution_html: attributionHtml,
+        // TICKET-081: surface metadata on the ghost render when the payload carries it.
+        phone: place.phone ?? null,
+        website: place.website ?? null,
+        google_maps_uri: place.google_maps_uri ?? place.link ?? null,
+        hours: place.hours ?? null,
     };
 }

@@ -70,6 +70,7 @@ import {
     VoicesStream,
     ProfessionalTakesBand,
     SavedFromTikTokPanel,
+    MetaActions,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
@@ -112,6 +113,11 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
         photoAttributionHtml: payload.photoAttributionHtml ?? null,
         googleRating: payload.googleRating ?? undefined,
         googleRatingCount: payload.googleRatingCount ?? undefined,
+        // TICKET-081: forward metadata to the ghost render when present.
+        phone: payload.phone ?? null,
+        website: payload.website ?? null,
+        google_maps_uri: payload.google_maps_uri ?? payload.link ?? null,
+        hours: payload.hours ?? null,
     });
 }
 
@@ -218,10 +224,20 @@ export default function RestaurantScreen() {
         pageData?.restaurant ?? ghostRestaurant ?? null;
 
     // ── Lazy backfill ─────────────────────────────────────────────────────
+    // TICKET-081: also heal rows that predate the metadata columns. A row with an
+    // external_id but no phone AND no hours never had a Places-details lookup for
+    // metadata — fire the same backfill (persist=true), which now persists
+    // phone/website/google_maps_uri/hours alongside city/photo. Reuses the existing
+    // trigger + upsert; no separate fetch.
     const persistedRow = pageData?.restaurant ?? null;
+    const missingMetadata = !!persistedRow
+        && !!persistedRow.external_id
+        && !persistedRow.phone
+        && !persistedRow.hours;
     const isStale = !!persistedRow
         && (!persistedRow.city
-            || (!persistedRow.photo_url && persistedRow.photo_source !== 'none'));
+            || (!persistedRow.photo_url && persistedRow.photo_source !== 'none')
+            || missingMetadata);
     useLazyBackfillRestaurant({
         enabled: isStale,
         externalId: persistedRow?.external_id ?? null,
@@ -537,6 +553,20 @@ export default function RestaurantScreen() {
                                 </Text>
                             </Pressable>
                         </View>
+                    ) : null}
+
+                    {/* Metadata: call · directions · website + hours.
+                        Only for real Places restaurants (external_id present).
+                        MetaActions itself returns null when no datum exists. */}
+                    {restaurant?.external_id ? (
+                        <MetaActions
+                            phone={restaurant.phone}
+                            website={restaurant.website}
+                            googleMapsUri={restaurant.google_maps_uri}
+                            hours={restaurant.hours}
+                            name={restaurant.name}
+                            city={restaurant.city}
+                        />
                     ) : null}
 
                     {/* Framed photo card — omit when no photo */}

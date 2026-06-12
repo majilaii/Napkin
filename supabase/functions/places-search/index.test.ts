@@ -8,7 +8,7 @@ import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
 // Import from utils.ts (doesn't trigger serve())
-import { parsePayload, clamp, firstNumber } from './utils.ts';
+import { parsePayload, clamp, firstNumber, mapRegularOpeningHours } from './utils.ts';
 
 Deno.test('places-search utility functions', async (t) => {
 
@@ -57,6 +57,54 @@ Deno.test('places-search utility functions', async (t) => {
         assertEquals(payload.query, 'sushi');
         assertEquals(payload.latitude, 35.6);
         assertEquals(payload.limit, 10);
+    });
+});
+
+Deno.test('mapRegularOpeningHours (TICKET-081)', async (t) => {
+    await t.step('maps weekdayDescriptions + openNow', () => {
+        const result = mapRegularOpeningHours({
+            openNow: true,
+            weekdayDescriptions: [
+                'Monday: 9:00 AM – 11:00 PM',
+                'Tuesday: 9:00 AM – 11:00 PM',
+            ],
+        });
+        assertEquals(result, {
+            weekdayDescriptions: ['Monday: 9:00 AM – 11:00 PM', 'Tuesday: 9:00 AM – 11:00 PM'],
+            openNow: true,
+        });
+    });
+
+    await t.step('omits openNow when Places does not provide it', () => {
+        const result = mapRegularOpeningHours({
+            weekdayDescriptions: ['Monday: Closed'],
+        });
+        assertEquals(result, { weekdayDescriptions: ['Monday: Closed'] });
+    });
+
+    await t.step('returns null for missing / empty / non-object input', () => {
+        assertEquals(mapRegularOpeningHours(undefined), null);
+        assertEquals(mapRegularOpeningHours(null), null);
+        assertEquals(mapRegularOpeningHours('nope'), null);
+        assertEquals(mapRegularOpeningHours({}), null);
+        assertEquals(mapRegularOpeningHours({ weekdayDescriptions: [] }), null);
+    });
+
+    await t.step('filters non-string / blank descriptions; null if none survive', () => {
+        const result = mapRegularOpeningHours({
+            weekdayDescriptions: ['Monday: 9–5', '', '   ', 42, null],
+        });
+        assertEquals(result, { weekdayDescriptions: ['Monday: 9–5'] });
+
+        assertEquals(mapRegularOpeningHours({ weekdayDescriptions: ['', 99] }), null);
+    });
+
+    await t.step('ignores non-boolean openNow', () => {
+        const result = mapRegularOpeningHours({
+            openNow: 'yes',
+            weekdayDescriptions: ['Monday: 9–5'],
+        });
+        assertEquals(result, { weekdayDescriptions: ['Monday: 9–5'] });
     });
 });
 

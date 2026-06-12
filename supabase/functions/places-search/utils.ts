@@ -56,6 +56,36 @@ export function clamp(value: number, min: number, max: number) {
     return Math.min(Math.max(value, min), max);
 }
 
+/**
+ * Shape persisted to restaurants.hours (jsonb) and returned in the search payload.
+ * weekdayDescriptions: 7 strings, index 0 = Monday (Places v1 convention).
+ * openNow: snapshot at fetch time when Places provides it.
+ */
+export type PlaceHours = {
+    weekdayDescriptions: string[];
+    openNow?: boolean;
+};
+
+/**
+ * Normalize a Places v1 `regularOpeningHours` object into our PlaceHours shape.
+ * Returns null when there are no usable weekday descriptions — callers treat a
+ * null hours payload as "no hours" and omit the UI entirely (no empty rows).
+ *
+ * TICKET-081: kept pure + in utils.ts (not index.ts) so it's importable in tests
+ * without triggering serve().
+ */
+export function mapRegularOpeningHours(raw: unknown): PlaceHours | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = raw as Record<string, unknown>;
+    const descriptions = Array.isArray(obj.weekdayDescriptions)
+        ? obj.weekdayDescriptions.filter((d): d is string => typeof d === 'string' && d.trim() !== '')
+        : [];
+    if (descriptions.length === 0) return null;
+    const hours: PlaceHours = { weekdayDescriptions: descriptions };
+    if (typeof obj.openNow === 'boolean') hours.openNow = obj.openNow;
+    return hours;
+}
+
 export function firstNumber(bodyValue?: number, queryValue?: string | null) {
     if (typeof bodyValue === 'number') return bodyValue;
     if (typeof queryValue === 'string') {

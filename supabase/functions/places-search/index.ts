@@ -2,7 +2,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
-import { parsePayload, clamp, type SearchPayload } from './utils.ts';
+import { parsePayload, clamp, mapRegularOpeningHours, type SearchPayload } from './utils.ts';
 
 const GOOGLE_PLACES_API_KEY = Deno.env.get('GOOGLE_PLACES_API_KEY');
 const GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com/v1/places:searchText';
@@ -43,6 +43,9 @@ const PLACE_FIELDS = [
     'priceLevel',
     'websiteUri',
     'googleMapsUri',
+    // TICKET-081: phone + structured hours for the restaurant-page metadata row.
+    'nationalPhoneNumber',
+    'regularOpeningHours',
     'photos',
     // TICKET-057: authorAttributions is nested under each photo object in Places v1.
     // This field provides the structured attribution data (displayName, uri) that we
@@ -151,6 +154,12 @@ function sanitizePlace(place: any) {
         photoAttributionHtml,
         website: place.websiteUri ?? null,
         link: place.googleMapsUri ?? null,
+        // TICKET-081: metadata for the restaurant-page action row + hours line.
+        // `google_maps_uri` is the canonical name the upsert + page consume;
+        // `link` is kept above for backward-compat with any existing reader.
+        phone: place.nationalPhoneNumber ?? null,
+        google_maps_uri: place.googleMapsUri ?? null,
+        hours: mapRegularOpeningHours(place.regularOpeningHours),
     };
 }
 
@@ -280,6 +289,11 @@ serve(async req => {
                         googleRatingCount: sanitized.googleRatingCount ?? undefined,
                         priceLevel: sanitized.priceLevel ?? undefined,
                         cuisine: sanitized.cuisine ?? undefined,
+                        // TICKET-081: persist metadata on the same backfill upsert.
+                        phone: sanitized.phone ?? undefined,
+                        website: sanitized.website ?? undefined,
+                        googleMapsUri: sanitized.google_maps_uri ?? undefined,
+                        hours: sanitized.hours ?? undefined,
                     });
                 } catch (e) {
                     // Persist failure is non-fatal; the client still gets the

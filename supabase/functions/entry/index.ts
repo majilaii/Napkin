@@ -259,6 +259,11 @@ serve(async (req) => {
                     googleRatingCount: rInput.googleRatingCount ?? rInput.userRatingCount,
                     priceLevel: rInput.priceLevel,
                     cuisine: rInput.cuisine,
+                    // TICKET-081: pass metadata through if the client carries it (additive).
+                    phone: rInput.phone,
+                    website: rInput.website,
+                    googleMapsUri: rInput.googleMapsUri ?? rInput.google_maps_uri,
+                    hours: rInput.hours,
                 });
 
                 return new Response(
@@ -748,6 +753,11 @@ serve(async (req) => {
                         googleRatingCount: restaurant.googleRatingCount,
                         priceLevel: restaurant.priceLevel,
                         cuisine: restaurant.cuisine,
+                        // TICKET-081: pass metadata through if the client carries it (additive).
+                        phone: restaurant.phone,
+                        website: restaurant.website,
+                        googleMapsUri: restaurant.googleMapsUri ?? restaurant.google_maps_uri,
+                        hours: restaurant.hours,
                     });
                 } else {
                     // Upsert to places table (non-restaurant)
