@@ -155,8 +155,12 @@ serve(async (req) => {
                 return errorResponse('TOKEN_GENERATION_FAILED', 'Could not mint a unique token', 500);
             }
 
-            // Share URL = share-page edge function with token as query param
-            const shareUrl = `${supabaseUrl}/functions/v1/share-page?t=${shareToken}`;
+            // Share URL = the web renderer (a Vercel proxy that serves the
+            // share-page HTML with the correct text/html content-type — Supabase
+            // edge functions force text/plain on *.supabase.co so the raw page
+            // would not render in a browser). Configurable via SHARE_WEB_BASE.
+            const shareWebBase = Deno.env.get('SHARE_WEB_BASE') ?? 'https://napkinshare.vercel.app';
+            const shareUrl = `${shareWebBase}/s/${shareToken}`;
 
             return jsonResponse({ data: { token: shareToken, share_url: shareUrl } }, 201);
         }
