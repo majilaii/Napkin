@@ -36,11 +36,16 @@ export type RestaurantPageRestaurant = {
     places_photo_attribution_html: string | null;
     // TICKET-081: restaurant-page metadata (phone · directions · website · hours).
     // All nullable; each MetaActions affordance / the hours line renders only when
-    // its datum is present. hours: { weekdayDescriptions[] (index 0 = Monday), openNow? }.
+    // its datum is present. hours: { weekdayDescriptions[] }. No openNow — it's a
+    // point-in-time flag and stale once cached (the page derives "today" by matching
+    // the weekday name, never by array position; see lib/restaurantHours.ts).
     phone: string | null;
     website: string | null;
     google_maps_uri: string | null;
-    hours: { weekdayDescriptions: string[]; openNow?: boolean } | null;
+    hours: { weekdayDescriptions: string[] } | null;
+    // TICKET-081 fix-pass: durable Places-sync sentinel — gates the lazy backfill so
+    // a place with no phone/hours stops re-hitting Place Details after one sync.
+    places_synced_at: string | null;
 };
 
 export type PageVisit = {
@@ -206,6 +211,7 @@ async function fetchRestaurantPage(
         if (r.website === undefined) r.website = null;
         if (r.google_maps_uri === undefined) r.google_maps_uri = null;
         if (r.hours === undefined) r.hours = null;
+        if (r.places_synced_at === undefined) r.places_synced_at = null;
     }
     if (!data.distributions) {
         data.distributions = { you: [0,0,0,0,0], your_table: null, napkin: [0,0,0,0,0] };
@@ -275,7 +281,7 @@ export function restaurantFromPlace(
         website?: string | null;
         google_maps_uri?: string | null;
         link?: string | null;
-        hours?: { weekdayDescriptions: string[]; openNow?: boolean } | null;
+        hours?: { weekdayDescriptions: string[] } | null;
         name: string;
         external_id: string;
     },
@@ -323,5 +329,8 @@ export function restaurantFromPlace(
         website: place.website ?? null,
         google_maps_uri: place.google_maps_uri ?? place.link ?? null,
         hours: place.hours ?? null,
+        // A ghost is not yet persisted/synced — null sentinel (no backfill gating uses
+        // this on the ghost path; the page only backfills persisted rows).
+        places_synced_at: null,
     };
 }

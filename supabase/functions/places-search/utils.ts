@@ -58,12 +58,17 @@ export function clamp(value: number, min: number, max: number) {
 
 /**
  * Shape persisted to restaurants.hours (jsonb) and returned in the search payload.
- * weekdayDescriptions: 7 strings, index 0 = Monday (Places v1 convention).
- * openNow: snapshot at fetch time when Places provides it.
+ * weekdayDescriptions: Places v1 `regularOpeningHours.weekdayDescriptions` strings.
+ *
+ * TICKET-081 fix-pass (Codex HIGH): NO `openNow`. Places' openNow is a point-in-time
+ * flag — true only when Places served it. We persist `hours` and re-read it for weeks,
+ * so a stored open/closed claim is stale. We never store it; the page derives "today's
+ * hours" by matching the weekday name (see lib/restaurantHours.ts) and shows no live
+ * open/closed badge. We also do NOT trust array order (it's locale-dependent) — the
+ * request pins languageCode=en for deterministic English day names.
  */
 export type PlaceHours = {
     weekdayDescriptions: string[];
-    openNow?: boolean;
 };
 
 /**
@@ -72,7 +77,7 @@ export type PlaceHours = {
  * null hours payload as "no hours" and omit the UI entirely (no empty rows).
  *
  * TICKET-081: kept pure + in utils.ts (not index.ts) so it's importable in tests
- * without triggering serve().
+ * without triggering serve(). openNow is intentionally dropped (see PlaceHours).
  */
 export function mapRegularOpeningHours(raw: unknown): PlaceHours | null {
     if (!raw || typeof raw !== 'object') return null;
@@ -81,9 +86,7 @@ export function mapRegularOpeningHours(raw: unknown): PlaceHours | null {
         ? obj.weekdayDescriptions.filter((d): d is string => typeof d === 'string' && d.trim() !== '')
         : [];
     if (descriptions.length === 0) return null;
-    const hours: PlaceHours = { weekdayDescriptions: descriptions };
-    if (typeof obj.openNow === 'boolean') hours.openNow = obj.openNow;
-    return hours;
+    return { weekdayDescriptions: descriptions };
 }
 
 export function firstNumber(bodyValue?: number, queryValue?: string | null) {

@@ -1278,11 +1278,13 @@ interface SaveSpotPlacePayload {
     priceLevel?: number | null;
     cuisine?: string | null;
     // TICKET-081: optional restaurant-page metadata forwarded from the client.
+    // hours carries weekdayDescriptions only — no openNow (stale once cached; the page
+    // derives "today" by matching the weekday name, not array position).
     phone?: string | null;
     website?: string | null;
     googleMapsUri?: string | null;
     google_maps_uri?: string | null;
-    hours?: { weekdayDescriptions: string[]; openNow?: boolean } | null;
+    hours?: { weekdayDescriptions: string[] } | null;
 }
 
 interface SaveSpotInput {

@@ -61,7 +61,7 @@ Deno.test('places-search utility functions', async (t) => {
 });
 
 Deno.test('mapRegularOpeningHours (TICKET-081)', async (t) => {
-    await t.step('maps weekdayDescriptions + openNow', () => {
+    await t.step('maps weekdayDescriptions only — openNow is dropped (stale-when-cached)', () => {
         const result = mapRegularOpeningHours({
             openNow: true,
             weekdayDescriptions: [
@@ -69,13 +69,13 @@ Deno.test('mapRegularOpeningHours (TICKET-081)', async (t) => {
                 'Tuesday: 9:00 AM – 11:00 PM',
             ],
         });
+        // openNow is NOT persisted — point-in-time, wrong once cached.
         assertEquals(result, {
             weekdayDescriptions: ['Monday: 9:00 AM – 11:00 PM', 'Tuesday: 9:00 AM – 11:00 PM'],
-            openNow: true,
         });
     });
 
-    await t.step('omits openNow when Places does not provide it', () => {
+    await t.step('maps weekdayDescriptions when Places omits openNow', () => {
         const result = mapRegularOpeningHours({
             weekdayDescriptions: ['Monday: Closed'],
         });
@@ -99,7 +99,7 @@ Deno.test('mapRegularOpeningHours (TICKET-081)', async (t) => {
         assertEquals(mapRegularOpeningHours({ weekdayDescriptions: ['', 99] }), null);
     });
 
-    await t.step('ignores non-boolean openNow', () => {
+    await t.step('a non-boolean openNow has no effect (still dropped)', () => {
         const result = mapRegularOpeningHours({
             openNow: 'yes',
             weekdayDescriptions: ['Monday: 9–5'],

@@ -12,11 +12,15 @@
 -- `website` is referenced in code as a mapped Places field (websiteUri → website) but
 -- was never persisted as a column until now.
 --
--- `hours` jsonb shape: { weekdayDescriptions: string[], openNow?: boolean }
---   - weekdayDescriptions: Places v1 `regularOpeningHours.weekdayDescriptions`,
---     7 strings, index 0 = Monday.
---   - openNow: Places v1 `regularOpeningHours.openNow` when present (snapshot at
---     fetch time; treated as a soft hint, not authoritative).
+-- `hours` jsonb shape: { weekdayDescriptions: string[] }
+--   - weekdayDescriptions: Places v1 `regularOpeningHours.weekdayDescriptions`.
+--     We pin the Places request to languageCode=en so day-name prefixes are English
+--     and deterministic; the page derives "today" by MATCHING the weekday name in each
+--     description (never by array position — that order is locale-dependent).
+--   - NO openNow: Places' `regularOpeningHours.openNow` is a point-in-time flag (true
+--     only at fetch time). We persist `hours` and re-read it for weeks, so a stored
+--     open/closed claim would be stale. We never store it and show no live open/closed
+--     badge. (TICKET-081 fix-pass, Codex HIGH.)
 
 ALTER TABLE public.restaurants
     ADD COLUMN IF NOT EXISTS phone text,
@@ -25,4 +29,4 @@ ALTER TABLE public.restaurants
     ADD COLUMN IF NOT EXISTS hours jsonb;
 
 COMMENT ON COLUMN public.restaurants.hours IS
-    'Places regularOpeningHours snapshot: { weekdayDescriptions: string[] (index 0 = Monday), openNow?: boolean }. TICKET-081.';
+    'Places regularOpeningHours snapshot: { weekdayDescriptions: string[] } (English day-name prefixes via languageCode=en; matched by name, not index). No openNow — point-in-time, stale when cached. TICKET-081.';
