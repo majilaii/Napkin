@@ -63,15 +63,23 @@ export function HandoffSheet({ visible, onDismiss, pinnedCount, listId, listName
 
     const handleShare = () => {
         create(buildCreateInput(listId), {
-            onSuccess: (result) => {
-                Share.share({
-                    message: buildShareMessage({
-                        listName,
-                        count: pinnedCount,
-                        shareUrl: result.share_url,
-                    }),
-                });
-                // Dismiss the sheet; the native Share sheet takes over
+            onSuccess: async (result) => {
+                // AWAIT the native share sheet before dismissing. iOS cannot
+                // present the share sheet while this modal is being torn down —
+                // dismissing synchronously here swallowed it ("nothing happens,
+                // the modal just drops"). Present first, dismiss after the user
+                // shares or cancels.
+                try {
+                    await Share.share({
+                        message: buildShareMessage({
+                            listName,
+                            count: pinnedCount,
+                            shareUrl: result.share_url,
+                        }),
+                    });
+                } catch {
+                    // share-sheet present/dismiss error — non-fatal
+                }
                 onDismiss();
             },
             onError: (err) => {
