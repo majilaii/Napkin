@@ -116,7 +116,11 @@ type RestaurantPageData = {
         phone: string | null;
         website: string | null;
         google_maps_uri: string | null;
-        hours: { weekdayDescriptions: string[]; openNow?: boolean } | null;
+        hours: { weekdayDescriptions: string[] } | null;
+        // TICKET-081 fix-pass: durable Places-sync sentinel. The page gates its lazy
+        // backfill on this freshness (NOT on metadata-presence), so a place that
+        // legitimately has no phone/hours stops re-hitting Google after one sync.
+        places_synced_at: string | null;
     } | null;
     personal: { average: number | null; visit_count: number };
     table_chip: { table_id: string; table_name: string; average: number; visit_count: number } | null;
@@ -514,7 +518,7 @@ serve(async (req) => {
             if (isUuid) {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at')
                     .eq('id', restaurantId)
                     .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();
@@ -523,7 +527,7 @@ serve(async (req) => {
             } else {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at')
                     .eq('external_id', restaurantId)
                     .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();

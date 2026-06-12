@@ -242,7 +242,12 @@ serve(async req => {
 
         // ── Branch A: lookup by place_id (Place Details) ─────────────────
         if (placeId) {
-            const detailsUrl = `${GOOGLE_PLACE_DETAILS_BASE_URL}/${encodeURIComponent(placeId)}`;
+            // TICKET-081 fix-pass: pin languageCode=en so regularOpeningHours
+            // weekdayDescriptions come back with English day-name prefixes. The
+            // restaurant page derives "today" by matching that day name (never by
+            // array position, which is locale-dependent), so deterministic English
+            // labels are required for the match to fire.
+            const detailsUrl = `${GOOGLE_PLACE_DETAILS_BASE_URL}/${encodeURIComponent(placeId)}?languageCode=en`;
             const detailsRes = await fetch(detailsUrl, {
                 method: 'GET',
                 headers: {
@@ -311,9 +316,13 @@ serve(async req => {
         // ── Branch B: text search (existing behaviour) ────────────────────
 
         // Build the request body for Google Places Text Search
+        // TICKET-081 fix-pass: languageCode=en pins English weekday-name prefixes in
+        // regularOpeningHours.weekdayDescriptions (the page matches "today" by day name,
+        // not by locale-dependent array position).
         const requestBody: any = {
             textQuery: query,
             maxResultCount: clamp(payload.limit ?? 5, 1, 20),
+            languageCode: 'en',
         };
 
         // Add location bias if coordinates provided

@@ -117,7 +117,7 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
         phone: payload.phone ?? null,
         website: payload.website ?? null,
         google_maps_uri: payload.google_maps_uri ?? payload.link ?? null,
-        hours: payload.hours ?? null,
+        hours: payload.hours ?? null, // { weekdayDescriptions } — no openNow
     });
 }
 
@@ -224,20 +224,27 @@ export default function RestaurantScreen() {
         pageData?.restaurant ?? ghostRestaurant ?? null;
 
     // ── Lazy backfill ─────────────────────────────────────────────────────
-    // TICKET-081: also heal rows that predate the metadata columns. A row with an
-    // external_id but no phone AND no hours never had a Places-details lookup for
-    // metadata — fire the same backfill (persist=true), which now persists
-    // phone/website/google_maps_uri/hours alongside city/photo. Reuses the existing
-    // trigger + upsert; no separate fetch.
+    // TICKET-081 fix-pass (Codex MEDIUM): gate the backfill on the DURABLE
+    // `places_synced_at` sentinel, NOT on metadata-presence. The old
+    // `missingMetadata = external_id && !phone && !hours` predicate stayed TRUE
+    // forever for places that legitimately have no phone/hours, so every page
+    // mount / cold start re-hit Place Details (real Google $). Once a row has been
+    // synced, we do NOT re-fetch for 30 days even when phone/hours are absent —
+    // the upsert stamps places_synced_at = now() on every Places write.
+    // city/photo staleness still trigger (they heal pre-metadata rows on first view,
+    // and that same upsert stamps the sentinel).
     const persistedRow = pageData?.restaurant ?? null;
-    const missingMetadata = !!persistedRow
-        && !!persistedRow.external_id
-        && !persistedRow.phone
-        && !persistedRow.hours;
+    const SYNC_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+    const syncedAtMs = persistedRow?.places_synced_at
+        ? Date.parse(persistedRow.places_synced_at)
+        : NaN;
+    const syncIsStale =
+        Number.isNaN(syncedAtMs) || (Date.now() - syncedAtMs) > SYNC_TTL_MS;
     const isStale = !!persistedRow
+        && !!persistedRow.external_id
         && (!persistedRow.city
             || (!persistedRow.photo_url && persistedRow.photo_source !== 'none')
-            || missingMetadata);
+            || syncIsStale);
     useLazyBackfillRestaurant({
         enabled: isStale,
         externalId: persistedRow?.external_id ?? null,

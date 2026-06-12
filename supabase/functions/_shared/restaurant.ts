@@ -41,7 +41,10 @@ export interface RestaurantInput {
     phone?: string;
     website?: string;
     googleMapsUri?: string;    // → google_maps_uri column
-    hours?: { weekdayDescriptions: string[]; openNow?: boolean } | null;
+    // TICKET-081 fix-pass (Codex HIGH): no openNow (point-in-time, stale when cached).
+    // Only weekdayDescriptions is persisted; normalized to non-empty trimmed strings
+    // before write so a ['']/whitespace/garbage payload can't overwrite good hours.
+    hours?: { weekdayDescriptions: string[] } | null;
     // TICKET-060 H4/R3: ghost quarantine.
     // 'verified' (default) = canonical Places-matched or confirmed restaurant.
     // 'unverified' = model-created ghost, owned per-save by createdBy.
@@ -73,9 +76,6 @@ export async function upsertRestaurant(
     if (input.cuisine !== undefined && input.cuisine !== null) {
         placesMetadata.cuisine = input.cuisine;
     }
-    if (Object.keys(placesMetadata).length > 0) {
-        placesMetadata.places_synced_at = new Date().toISOString();
-    }
 
     // Build the upsert payload. We deliberately DROP undefined/null/empty
     // location fields so a follow-up call with a sparse payload (e.g. an
@@ -104,10 +104,33 @@ export async function upsertRestaurant(
     if (phone) upsertRow.phone = phone;
     if (website) upsertRow.website = website;
     if (googleMapsUri) upsertRow.google_maps_uri = googleMapsUri;
-    // hours: only write a non-empty weekdayDescriptions payload. null / empty
-    // descriptions are dropped so they can't overwrite previously-fetched hours.
-    if (input.hours && Array.isArray(input.hours.weekdayDescriptions) && input.hours.weekdayDescriptions.length > 0) {
-        upsertRow.hours = input.hours;
+    // hours: NORMALIZE before write (TICKET-081 fix-pass, Codex MEDIUM). The naive
+    // `weekdayDescriptions.length > 0` guard let a ['']/whitespace/non-string array
+    // through, overwriting good hours with garbage. Filter to non-empty trimmed
+    // strings and only write when ≥1 usable string survives — matching the trim
+    // rigor already applied to phone/website above. openNow is never stored.
+    const usableDescriptions = Array.isArray(input.hours?.weekdayDescriptions)
+        ? input.hours!.weekdayDescriptions.filter(
+            (d): d is string => typeof d === 'string' && d.trim() !== '',
+        ).map(d => d.trim())
+        : [];
+    if (usableDescriptions.length > 0) {
+        upsertRow.hours = { weekdayDescriptions: usableDescriptions };
+    }
+    // TICKET-081 fix-pass (Codex MEDIUM): stamp places_synced_at whenever this upsert
+    // carried ANY Places-sourced field (ratings/cuisine OR phone/website/maps/hours).
+    // This is the durable sentinel the lazy backfill gates on — once stamped, the page
+    // stops re-fetching Place Details for 30 days even when a place legitimately has no
+    // phone/hours. Without this, a metadata-only backfill (no ratings) would never set
+    // the sentinel and would re-hit Google forever.
+    const wroteAnyPlacesField =
+        Object.keys(placesMetadata).length > 0
+        || !!phone
+        || !!website
+        || !!googleMapsUri
+        || usableDescriptions.length > 0;
+    if (wroteAnyPlacesField) {
+        upsertRow.places_synced_at = new Date().toISOString();
     }
     // TICKET-060 H4/R3: preserve verification + created_by for ghost management.
     if (input.verification !== undefined) upsertRow.verification = input.verification;
