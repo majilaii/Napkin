@@ -95,7 +95,8 @@ type TopPick = {
     name: string;
     city: string | null;
     photo_url: string | null;
-    max_rating: number;
+    // null when the viewer has no non-private rating for a curated pick.
+    max_rating: number | null;
     visit_count: number;
     last_visited_at: string | null;
 };
@@ -458,11 +459,86 @@ async function fetchTablePreviews(
  * Fetch Top 4 — auto-derived: rating >= 4.0, grouped by restaurant,
  * ordered by max rating / visit_count / last_visited.
  */
+// Build TopPick[] for a fixed, ordered set of restaurant ids (the manual
+// profile Top 4 override). Aggregates the user's own ratings for each pick.
+async function buildPicksFromIds(
+    supabase: any,
+    userId: string,
+    orderedIds: string[],
+    includePrivate: boolean,
+): Promise<TopPick[]> {
+    if (orderedIds.length === 0) return [];
+
+    // Curated MEMBERSHIP is public, but the rating NUMBER must still respect
+    // per-entry visibility — a public viewer must not see a private rating.
+    let entriesQuery = supabase
+        .from('entries')
+        .select('restaurant_id, rating, visited_at, created_at')
+        .eq('user_id', userId)
+        .in('restaurant_id', orderedIds);
+    if (!includePrivate) entriesQuery = entriesQuery.neq('visibility', 'private');
+    const { data: entries, error } = await entriesQuery;
+    if (error) throw error;
+
+    const agg = new Map<string, { max_rating: number; visit_count: number; last_visited_at: string | null }>();
+    for (const e of (entries ?? []) as any[]) {
+        if (e.rating == null) continue;
+        const rid = e.restaurant_id as string;
+        const rating = Number(e.rating);
+        const visited = (e.visited_at ?? e.created_at) as string;
+        const ex = agg.get(rid);
+        if (!ex) {
+            agg.set(rid, { max_rating: rating, visit_count: 1, last_visited_at: visited });
+        } else {
+            ex.max_rating = Math.max(ex.max_rating, rating);
+            ex.visit_count += 1;
+            if (!ex.last_visited_at || visited > ex.last_visited_at) ex.last_visited_at = visited;
+        }
+    }
+
+    const { data: rests, error: restErr } = await supabase
+        .from('restaurants')
+        .select('id, name, city, photo_url')
+        .in('id', orderedIds);
+    if (restErr) throw restErr;
+
+    const byId = new Map<string, any>((rests ?? []).map((r: any) => [r.id, r]));
+    return orderedIds
+        .map((rid): TopPick | null => {
+            const rest = byId.get(rid);
+            if (!rest) return null;
+            const a = agg.get(rid);
+            return {
+                restaurant_id: rid,
+                name: rest.name,
+                city: rest.city ?? null,
+                photo_url: rest.photo_url ?? null,
+                max_rating: a ? a.max_rating : null,
+                visit_count: a ? a.visit_count : 0,
+                last_visited_at: a ? a.last_visited_at : null,
+            };
+        })
+        .filter((p): p is TopPick => p !== null);
+}
+
 async function fetchTopFour(
     supabase: any,
     userId: string,
     includePrivate: boolean,
 ): Promise<TopPick[]> {
+    // Manual override: a hand-curated profile Top 4 takes precedence over the
+    // auto-derived list. Curated picks are a public-expression surface (like a
+    // list) — shown to anyone who can see the profile, rating included.
+    const { data: manual, error: manualErr } = await supabase
+        .from('user_profile_top_4')
+        .select('position, restaurant_id')
+        .eq('user_id', userId)
+        .order('position', { ascending: true });
+    if (manualErr) throw manualErr;
+    if (manual && manual.length > 0) {
+        return await buildPicksFromIds(supabase, userId, manual.map((m: any) => m.restaurant_id), includePrivate);
+    }
+
     let query = supabase
         .from('entries')
         .select('restaurant_id, rating, visited_at, created_at')

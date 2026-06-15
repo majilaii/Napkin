@@ -459,6 +459,67 @@ serve(async (req) => {
                 return jsonResponse({ data: result });
             }
 
+            // ── eligible_restaurants (global — for the profile Top 4 picker) ──
+            if (action === 'eligible_restaurants') {
+                const targetUserId = url.searchParams.get('user_id');
+                if (!targetUserId) return errResponse('BAD_REQUEST', 'user_id is required');
+                if (user.id !== targetUserId) {
+                    return errResponse('FORBIDDEN', 'eligible_restaurants is owner-only', 403);
+                }
+
+                // All restaurants the owner has logged, aggregated by best rating +
+                // most-recent log. Global (no city filter). No cap (mirrors ARCH-10).
+                const { data: entriesData, error: entriesErr } = await supabase
+                    .from('entries')
+                    .select('restaurant_id, rating, created_at')
+                    .eq('user_id', user.id)
+                    .not('restaurant_id', 'is', null);
+
+                if (entriesErr) return errResponse('DB_ERROR', entriesErr.message, 500);
+                if (!entriesData || entriesData.length === 0) return jsonResponse({ data: [] });
+
+                const aggMap: Map<string, { last_logged_at: string; best_rating: number | null }> = new Map();
+                for (const e of entriesData as Array<{ restaurant_id: string; rating: number | null; created_at: string }>) {
+                    const existing = aggMap.get(e.restaurant_id);
+                    if (!existing) {
+                        aggMap.set(e.restaurant_id, { last_logged_at: e.created_at, best_rating: e.rating });
+                    } else {
+                        if (e.created_at > existing.last_logged_at) existing.last_logged_at = e.created_at;
+                        if (e.rating != null && (existing.best_rating == null || e.rating > existing.best_rating)) {
+                            existing.best_rating = e.rating;
+                        }
+                    }
+                }
+
+                const rids = Array.from(aggMap.keys());
+                const { data: rests, error: restErr } = await supabase
+                    .from('restaurants')
+                    .select('id, name, photo_url, city')
+                    .in('id', rids);
+                if (restErr) return errResponse('DB_ERROR', restErr.message, 500);
+
+                const restMap = new Map(
+                    (rests ?? []).map((r: { id: string; name: string; photo_url: string | null; city: string | null }) => [r.id, r]),
+                );
+                const result = Array.from(aggMap.entries())
+                    .map(([restaurant_id, agg]) => {
+                        const r = restMap.get(restaurant_id);
+                        if (!r) return null;
+                        return {
+                            restaurant_id,
+                            name: r.name,
+                            photo_url: r.photo_url,
+                            city: r.city,
+                            last_logged_at: agg.last_logged_at,
+                            best_rating: agg.best_rating,
+                        };
+                    })
+                    .filter(Boolean)
+                    .sort((a, b) => b!.last_logged_at.localeCompare(a!.last_logged_at));
+
+                return jsonResponse({ data: result });
+            }
+
             return errResponse('BAD_REQUEST', `Unknown GET action: ${action}`);
         }
 
@@ -571,6 +632,45 @@ serve(async (req) => {
 
                 const payload = await buildGetPayload(supabase, user.id, true);
                 return jsonResponse({ data: payload });
+            }
+
+            // ── set_profile_picks (global profile Top 4 override) ──────
+            if (postAction === 'set_profile_picks') {
+                const { picks } = body as { picks: PickInput[] };
+                if (!Array.isArray(picks)) {
+                    return errResponse('BAD_REQUEST', 'picks must be an array');
+                }
+                if (picks.length > 4) {
+                    return errResponse('BAD_REQUEST', 'picks must have at most 4 elements');
+                }
+
+                // Empty array is allowed — clears the override (reverts to auto-derive).
+                const rids = picks.map(p => p.restaurant_id);
+                if (new Set(rids).size !== rids.length) {
+                    return errResponse('DUPLICATE_PICK', 'picks contain duplicate restaurant_id values');
+                }
+                for (const p of picks) {
+                    if (!Number.isInteger(p.position) || p.position < 1 || p.position > 4) {
+                        return errResponse('BAD_REQUEST', `invalid position ${p.position} — must be 1–4`);
+                    }
+                }
+                const positions = picks.map(p => p.position);
+                if (new Set(positions).size !== positions.length) {
+                    return errResponse('BAD_REQUEST', 'duplicate positions in picks');
+                }
+
+                try {
+                    const { error: rpcErr } = await supabase.rpc('set_profile_top_four_picks', {
+                        p_user_id: user.id,
+                        p_picks: picks,
+                    });
+                    if (rpcErr) return errResponse('RPC_ERROR', rpcErr.message);
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    return errResponse('RPC_ERROR', msg);
+                }
+
+                return jsonResponse({ data: { ok: true } });
             }
 
             // ── unclaim ────────────────────────────────────────────────

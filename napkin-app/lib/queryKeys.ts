@@ -165,6 +165,8 @@ export const queryKeys = {
         availableCities: (userId: string) => ['topFours', 'availableCities', userId] as const,
         eligibleRestaurants: (userId: string, city: string) =>
             ['topFours', 'eligibleRestaurants', userId, city] as const,
+        profileEligible: (userId: string) =>
+            ['topFours', 'profileEligible', userId] as const,
     },
 
     // Rounds — merged-round candidate + merged-round detail (TICKET-044)

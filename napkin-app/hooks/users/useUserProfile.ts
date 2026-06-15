@@ -80,7 +80,7 @@ export type TopPick = {
     name: string;
     city: string | null;
     photo_url: string | null;
-    max_rating: number;
+    max_rating: number | null;
     visit_count: number;
     last_visited_at: string | null;
 };

@@ -21,9 +21,12 @@ import type { TopPick } from '@/hooks/users/useUserProfile';
 
 interface Props {
     picks: TopPick[];
+    /** When true (own profile), shows an "edit" affordance + tappable empty slots. */
+    isOwner?: boolean;
+    onEdit?: () => void;
 }
 
-export function TopFour({ picks }: Props) {
+export function TopFour({ picks, isOwner = false, onEdit }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -38,7 +41,11 @@ export function TopFour({ picks }: Props) {
 
     return (
         <View>
-            <SectionHeader title="Top 4" />
+            <SectionHeader
+                title="Top 4"
+                rightLabel={isOwner && onEdit ? 'edit' : undefined}
+                onRightLabelPress={onEdit}
+            />
             <View style={styles.grid}>
                 {slots.map((pick, i) =>
                     pick ? (
@@ -49,7 +56,7 @@ export function TopFour({ picks }: Props) {
                             accessibilityRole="button"
                             accessibilityLabel={`View ${pick.name}`}
                         >
-                            {/* Plate — score plated in the centre */}
+                            {/* Plate — the restaurant NAME is plated (it's the hero) */}
                             <View
                                 style={[
                                     styles.plate,
@@ -62,17 +69,19 @@ export function TopFour({ picks }: Props) {
                                         { borderColor: palette.outlineVariant },
                                     ]}
                                 />
+                                <Text
+                                    style={[styles.plateName, { color: palette.text }]}
+                                    numberOfLines={2}
+                                >
+                                    {pick.name}
+                                </Text>
+                            </View>
+                            {/* Score + city beneath — quiet, secondary (hidden when no visible rating) */}
+                            {pick.max_rating != null ? (
                                 <Text style={[styles.score, { color: palette.primary }]}>
                                     {pick.max_rating.toFixed(1)}
                                 </Text>
-                            </View>
-                            {/* Name + city beneath */}
-                            <Text
-                                style={[styles.name, { color: palette.text }]}
-                                numberOfLines={1}
-                            >
-                                {pick.name}
-                            </Text>
+                            ) : null}
                             {pick.city ? (
                                 <Text
                                     style={[styles.city, { color: palette.textMuted }]}
@@ -83,7 +92,13 @@ export function TopFour({ picks }: Props) {
                             ) : null}
                         </Pressable>
                     ) : (
-                        <View key={i} style={styles.cell}>
+                        <Pressable
+                            key={i}
+                            style={styles.cell}
+                            onPress={isOwner && onEdit ? onEdit : undefined}
+                            accessibilityRole={isOwner && onEdit ? 'button' : undefined}
+                            accessibilityLabel={isOwner && onEdit ? 'Add to your Top 4' : undefined}
+                        >
                             <View
                                 style={[
                                     styles.plate,
@@ -100,7 +115,7 @@ export function TopFour({ picks }: Props) {
                                     +
                                 </Text>
                             </View>
-                        </View>
+                        </Pressable>
                     )
                 )}
             </View>
@@ -140,14 +155,16 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderStyle: 'dashed',
     },
+    plateName: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 12.5,
+        lineHeight: 15,
+        textAlign: 'center',
+        paddingHorizontal: 8,
+    },
     score: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
-    },
-    name: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12,
-        lineHeight: 15,
+        fontSize: 14,
         textAlign: 'center',
     },
     city: {
