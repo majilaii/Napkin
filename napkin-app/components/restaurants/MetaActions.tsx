@@ -56,19 +56,38 @@ interface ActionProps {
     label: string;
     onPress: () => void;
     palette: Palette;
+    /** 'pill' = bordered terracotta affordance with label (directions);
+     *  'icon' = quiet icon-only (call / website). */
+    variant: 'pill' | 'icon';
 }
 
-function Action({ icon, label, onPress, palette }: ActionProps) {
+function Action({ icon, label, onPress, palette, variant }: ActionProps) {
+    if (variant === 'pill') {
+        return (
+            <Pressable
+                onPress={onPress}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={label}
+                style={({ pressed }) => [
+                    styles.pill,
+                    { borderColor: 'rgba(160,63,40,0.35)', opacity: pressed ? 0.7 : 1 },
+                ]}
+            >
+                <Ionicons name={icon} size={16} color={palette.primary} />
+                <Text style={[styles.pillLabel, { color: palette.primary }]}>{label}</Text>
+            </Pressable>
+        );
+    }
     return (
         <Pressable
             onPress={onPress}
-            hitSlop={8}
+            hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={label}
-            style={({ pressed }) => [styles.action, { opacity: pressed ? 0.6 : 1 }]}
+            style={({ pressed }) => [styles.iconBtn, { opacity: pressed ? 0.6 : 1 }]}
         >
-            <Ionicons name={icon} size={22} color={palette.textSecondary} />
-            <Text style={[styles.actionLabel, { color: palette.textSecondary }]}>{label}</Text>
+            <Ionicons name={icon} size={20} color={palette.textSecondary} />
         </Pressable>
     );
 }
@@ -97,16 +116,9 @@ export function MetaActions({ phone, website, googleMapsUri, hours, name, city }
         <View style={styles.container}>
             {hasAnyAction ? (
                 <View style={styles.actionRow}>
-                    {hasCall ? (
-                        <Action
-                            icon="call-outline"
-                            label="call"
-                            onPress={() => openUrl(`tel:${phone!.replace(/\s/g, '')}`)}
-                            palette={palette}
-                        />
-                    ) : null}
                     {hasDirections ? (
                         <Action
+                            variant="pill"
                             icon="navigate-outline"
                             label="directions"
                             onPress={() =>
@@ -119,8 +131,18 @@ export function MetaActions({ phone, website, googleMapsUri, hours, name, city }
                             palette={palette}
                         />
                     ) : null}
+                    {hasCall ? (
+                        <Action
+                            variant="icon"
+                            icon="call-outline"
+                            label="call"
+                            onPress={() => openUrl(`tel:${phone!.replace(/\s/g, '')}`)}
+                            palette={palette}
+                        />
+                    ) : null}
                     {hasWebsite ? (
                         <Action
+                            variant="icon"
                             icon="globe-outline"
                             label="website"
                             onPress={() => {
@@ -192,18 +214,25 @@ const styles = StyleSheet.create({
     },
     actionRow: {
         flexDirection: 'row',
-        gap: 28,
+        gap: 14,
         alignItems: 'center',
     },
-    action: {
+    pill: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
+        borderWidth: 1.5,
+        borderRadius: 20,
+        paddingHorizontal: 14,
+        paddingVertical: 7,
     },
-    actionLabel: {
+    pillLabel: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 12,
         letterSpacing: 0.2,
+    },
+    iconBtn: {
+        padding: 4,
     },
     hoursToday: {
         flexDirection: 'row',

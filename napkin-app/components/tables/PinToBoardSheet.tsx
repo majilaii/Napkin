@@ -110,16 +110,7 @@ export function PinToBoardSheet({
                                     style={StyleSheet.absoluteFill}
                                     resizeMode="cover"
                                 />
-                            ) : (
-                                <Text
-                                    style={[
-                                        styles.photoInitial,
-                                        { color: palette.primary },
-                                    ]}
-                                >
-                                    {restaurant.name[0]?.toUpperCase() ?? '?'}
-                                </Text>
-                            )}
+                            ) : null}
                         </View>
                         <View style={{ flex: 1 }}>
                             <Text
@@ -336,11 +327,6 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    photoInitial: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 26,
-        opacity: 0.35,
     },
     kicker: {
         fontFamily: 'Manrope_600SemiBold',

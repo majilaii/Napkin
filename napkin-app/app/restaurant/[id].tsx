@@ -8,12 +8,12 @@
  *
  * Route: /restaurant/[id]?tableId=...&placeId=...&placePayload=...
  *
- * Canvas layout (take B letterpress):
- *   ‹ search breadcrumb
- *   Letterpress masthead: 56×1px hairline · italic 34 name · meta · hairline
+ * Canvas layout (reshaped 2026-06-15):
+ *   Top bar: ‹ search breadcrumb + bookmark (save) icon, top-right
+ *   Masthead: left-aligned italic 34 name · meta (no hairlines)
+ *   Metadata: directions pill · call · website + hours (real Places rows only)
  *   Signal strip (letterpress variant: surface-journal-low pill, amber nums)
- *   CTA row: LOG THIS MEAL terracotta pill + PIN outline pill
- *   Framed photo card 180px r16 (omitted when no photo)
+ *   CTA row: LOG THIS MEAL terracotta pill (full width)
  *   FROM YOUR TABLE — em-dash quotes + avatar · name · rating · month
  *   YOUR HISTORY — tick rows (rating · note/occasion · date)
  *   [below canvas, gated/quiet]:
@@ -21,6 +21,8 @@
  *     Voices / public reviews stream
  *     Professional takes band
  *     Atlas cross-link chip
+ *
+ * Save: the bookmark (top-right) opens AddToListSheet — Wishlist + curated lists.
  *
  * All data hooks and TICKET-065 behaviors (collapse, lens) are preserved.
  * LogSheet replaces LogVisitSheet + FastLogSheet.
@@ -51,6 +53,7 @@ import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
+import { useListsContainingRestaurant } from '@/hooks/lists/useListsContainingRestaurant';
 import { useMyTikTokSourceForRestaurant } from '@/hooks/wishlist/useMyTikTokSourceForRestaurant';
 import {
     useRestaurantPage,
@@ -73,6 +76,7 @@ import {
     MetaActions,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
+import { AddToListSheet } from '@/components/lists';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
 type Palette = typeof Colors.light;
@@ -351,13 +355,42 @@ export default function RestaurantScreen() {
         };
     }, [pageData?.visits]);
 
-    // ── Wishlist wiring ────────────────────────────────────────────────────
+    // ── Save wiring (wishlist + lists) ─────────────────────────────────────
     const persistedRestaurantId =
         pageData?.restaurant?.id ?? (isGhost ? undefined : restaurantId ?? undefined);
-    const bookmarked = useIsWishlisted(persistedRestaurantId, user?.id);
+    // Fall back to external_id for ghosts so a freshly-saved ghost's bookmark
+    // (and the sheet's Wishlist checkmark) fills in-session via the optimistic cache.
+    const bookmarked = useIsWishlisted(persistedRestaurantId ?? restaurant?.external_id, user?.id);
     const wishlistAdd = useWishlistAdd(user?.id);
     const wishlistRemove = useWishlistRemove(user?.id);
+    const { data: containingListIds = [] } = useListsContainingRestaurant(
+        user?.id,
+        persistedRestaurantId,
+    );
     const bookmarkDisabled = !user?.id || !restaurant;
+    // Pin reads "saved" when the restaurant is wishlisted OR in any curated list.
+    const isSaved = bookmarked || containingListIds.length > 0;
+    const [saveSheetOpen, setSaveSheetOpen] = useState(false);
+
+    // Payload used for BOTH the wishlist toggle and list adds (ghost-safe: a
+    // not-yet-persisted restaurant carries its Places payload so the server upserts).
+    const savePayload: RestaurantPayload | null = useMemo(() => {
+        if (ghostWishlistPayload) return ghostWishlistPayload;
+        if (restaurant?.external_id) {
+            return placePayloadToWishlistPayload({
+                id: restaurant.external_id,
+                name: restaurant.name,
+                formattedAddress: restaurant.address,
+                city: restaurant.city,
+                country: restaurant.country,
+                cuisine: restaurant.cuisine,
+                priceLevel: restaurant.price_level,
+                googleRating: restaurant.google_rating,
+                googleRatingCount: restaurant.google_rating_count,
+            });
+        }
+        return null;
+    }, [ghostWishlistPayload, restaurant]);
 
     const handleBookmarkPress = useCallback(() => {
         if (bookmarkDisabled || !restaurant) return;
@@ -366,25 +399,12 @@ export default function RestaurantScreen() {
             if (!rid) return;
             wishlistRemove.mutate(rid, { onError: () => Alert.alert("Couldn't remove", 'Try again') });
         } else {
-            const payload = ghostWishlistPayload ?? (restaurant?.external_id
-                ? placePayloadToWishlistPayload({
-                    id: restaurant.external_id,
-                    name: restaurant.name,
-                    formattedAddress: restaurant.address,
-                    city: restaurant.city,
-                    country: restaurant.country,
-                    cuisine: restaurant.cuisine,
-                    priceLevel: restaurant.price_level,
-                    googleRating: restaurant.google_rating,
-                    googleRatingCount: restaurant.google_rating_count,
-                })
-                : null);
-            const input = payload
-                ? { restaurant: payload }
+            const input = savePayload
+                ? { restaurant: savePayload }
                 : { restaurant_id: persistedRestaurantId! };
             wishlistAdd.mutate(input as any, { onError: () => Alert.alert("Couldn't save", 'Try again') });
         }
-    }, [bookmarkDisabled, bookmarked, persistedRestaurantId, wishlistAdd, wishlistRemove, ghostWishlistPayload, restaurant]);
+    }, [bookmarkDisabled, bookmarked, persistedRestaurantId, wishlistAdd, wishlistRemove, savePayload, restaurant]);
 
     // ── Signal strip collapse ─────────────────────────────────────────────
     const tiersWithData = [
@@ -478,26 +498,47 @@ export default function RestaurantScreen() {
                         </View>
                     ) : null}
 
-                    {/* ‹ search breadcrumb */}
+                    {/* Top bar: ‹ search breadcrumb + pin (save) top-right.
+                        Pin is a fixed-size icon → no PIN↔PINNED width jump. */}
                     {restaurant ? (
-                        <Pressable
-                            onPress={() => router.back()}
-                            style={styles.breadcrumb}
-                            hitSlop={12}
-                            accessibilityLabel="back to search"
-                            accessibilityRole="button"
-                        >
-                            <Ionicons name="chevron-back" size={16} color={palette.textSecondary} />
-                            <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>
-                                search
-                            </Text>
-                        </Pressable>
+                        <View style={styles.topBar}>
+                            <Pressable
+                                onPress={() => router.back()}
+                                style={styles.breadcrumb}
+                                hitSlop={12}
+                                accessibilityLabel="back to search"
+                                accessibilityRole="button"
+                            >
+                                <Ionicons name="chevron-back" size={16} color={palette.textSecondary} />
+                                <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>
+                                    search
+                                </Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={bookmarkDisabled ? undefined : () => setSaveSheetOpen(true)}
+                                style={({ pressed }) => [
+                                    styles.pinTop,
+                                    {
+                                        backgroundColor: isSaved ? palette.primaryMuted : 'transparent',
+                                        opacity: pressed ? 0.7 : 1,
+                                    },
+                                ]}
+                                hitSlop={8}
+                                accessibilityLabel={isSaved ? 'Saved — change where this is saved' : 'Save restaurant'}
+                                accessibilityRole="button"
+                            >
+                                <Ionicons
+                                    name={isSaved ? 'bookmark' : 'bookmark-outline'}
+                                    size={20}
+                                    color={palette.primary}
+                                />
+                            </Pressable>
+                        </View>
                     ) : null}
 
-                    {/* Letterpress masthead */}
+                    {/* Masthead — left-aligned editorial (no hairlines, no centred slab) */}
                     {restaurant ? (
                         <View style={styles.masthead}>
-                            <View style={[styles.hairline, { backgroundColor: 'rgba(160,63,40,0.25)' }]} />
                             <Text style={[styles.mastheadName, { color: palette.text }]} numberOfLines={2}>
                                 {restaurant.name}
                             </Text>
@@ -506,8 +547,21 @@ export default function RestaurantScreen() {
                                     {buildMeta(restaurant)}
                                 </Text>
                             ) : null}
-                            <View style={[styles.hairline, { backgroundColor: 'rgba(160,63,40,0.25)' }]} />
                         </View>
+                    ) : null}
+
+                    {/* Metadata: directions · call · website + hours — right under the
+                        masthead so directions isn't buried mid-stack. Real Places rows only;
+                        MetaActions returns null when no datum exists. */}
+                    {restaurant?.external_id ? (
+                        <MetaActions
+                            phone={restaurant.phone}
+                            website={restaurant.website}
+                            googleMapsUri={restaurant.google_maps_uri}
+                            hours={restaurant.hours}
+                            name={restaurant.name}
+                            city={restaurant.city}
+                        />
                     ) : null}
 
                     {/* Signal strip — letterpress variant with TICKET-065 collapse logic */}
@@ -524,7 +578,7 @@ export default function RestaurantScreen() {
                         />
                     ) : null}
 
-                    {/* CTA row: LOG THIS MEAL + PIN */}
+                    {/* CTA row: LOG THIS MEAL (full width — pin lives top-right now) */}
                     {restaurant ? (
                         <View style={styles.ctaRow}>
                             <Pressable
@@ -538,52 +592,7 @@ export default function RestaurantScreen() {
                             >
                                 <Text style={styles.logBtnLabel}>LOG THIS MEAL</Text>
                             </Pressable>
-                            <Pressable
-                                onPress={bookmarkDisabled ? undefined : handleBookmarkPress}
-                                style={({ pressed }) => [
-                                    styles.pinBtn,
-                                    {
-                                        borderColor: 'rgba(160,63,40,0.35)',
-                                        opacity: pressed ? 0.75 : 1,
-                                    },
-                                ]}
-                                accessibilityLabel={bookmarked ? 'Unpin restaurant' : 'Pin restaurant'}
-                                accessibilityRole="button"
-                            >
-                                <Ionicons
-                                    name={bookmarked ? 'location' : 'location-outline'}
-                                    size={14}
-                                    color={palette.primary}
-                                />
-                                <Text style={[styles.pinBtnLabel, { color: palette.primary }]}>
-                                    {bookmarked ? 'PINNED' : 'PIN'}
-                                </Text>
-                            </Pressable>
                         </View>
-                    ) : null}
-
-                    {/* Metadata: call · directions · website + hours.
-                        Only for real Places restaurants (external_id present).
-                        MetaActions itself returns null when no datum exists. */}
-                    {restaurant?.external_id ? (
-                        <MetaActions
-                            phone={restaurant.phone}
-                            website={restaurant.website}
-                            googleMapsUri={restaurant.google_maps_uri}
-                            hours={restaurant.hours}
-                            name={restaurant.name}
-                            city={restaurant.city}
-                        />
-                    ) : null}
-
-                    {/* Framed photo card — omit when no photo */}
-                    {restaurant?.photo_url ? (
-                        <Image
-                            source={{ uri: restaurant.photo_url }}
-                            style={styles.photoCard}
-                            accessibilityIgnoresInvertColors
-                            resizeMode="cover"
-                        />
                     ) : null}
 
                     {/* TikTok source panel — personal-first, before sibling voices */}
@@ -745,6 +754,21 @@ export default function RestaurantScreen() {
                 </ScrollView>
 
             </View>
+
+            {/* Save sheet — pin opens this: Wishlist + curated lists + new list */}
+            {restaurant ? (
+                <AddToListSheet
+                    visible={saveSheetOpen}
+                    onClose={() => setSaveSheetOpen(false)}
+                    userId={user?.id}
+                    restaurantId={persistedRestaurantId}
+                    restaurantPayload={savePayload ?? undefined}
+                    restaurantName={restaurant.name}
+                    showWishlist
+                    isWishlisted={bookmarked}
+                    onToggleWishlist={handleBookmarkPress}
+                />
+            ) : null}
         </>
     );
 }
@@ -762,39 +786,47 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     // Breadcrumb
+    topBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 24,
+        paddingVertical: 8,
+    },
     breadcrumb: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        paddingHorizontal: 24,
-        paddingVertical: 8,
+    },
+    pinTop: {
+        width: 34,
+        height: 34,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     breadcrumbLabel: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
     },
-    // Masthead
+    // Masthead — left-aligned editorial
     masthead: {
-        alignItems: 'center',
-        gap: 12,
+        alignItems: 'flex-start',
+        gap: 6,
         paddingHorizontal: 24,
-        paddingTop: 8,
-        paddingBottom: 4,
-    },
-    hairline: {
-        width: 56,
-        height: 1,
+        paddingTop: 4,
+        paddingBottom: 2,
     },
     mastheadName: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 34,
         lineHeight: 38,
-        textAlign: 'center',
+        textAlign: 'left',
     },
     mastheadMeta: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
-        textAlign: 'center',
+        textAlign: 'left',
     },
     // CTA row
     ctaRow: {
@@ -816,26 +848,6 @@ const styles = StyleSheet.create({
         letterSpacing: 1.6,
         textTransform: 'uppercase',
         color: '#fffdf8',
-    },
-    pinBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        borderWidth: 1.5,
-        borderRadius: Radius.full,
-        paddingHorizontal: 18,
-    },
-    pinBtnLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
-        letterSpacing: 1.2,
-        textTransform: 'uppercase',
-    },
-    // Photo card
-    photoCard: {
-        marginHorizontal: 24,
-        height: 180,
-        borderRadius: 16,
     },
     // FROM YOUR TABLE + YOUR HISTORY
     section: {

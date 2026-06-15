@@ -109,13 +109,7 @@ function FilledTile({ slot, tileWidth, palette, onPress }: FilledTileProps) {
                             styles.ghostTile,
                             { backgroundColor: palette.surfaceJournalHi },
                         ]}
-                    >
-                        <Text
-                            style={[styles.ghostInitial, { color: palette.textMuted }]}
-                        >
-                            {photo.kind === 'ghost' ? photo.initial : '?'}
-                        </Text>
-                    </View>
+                    />
                 ) : (
                     <Image
                         source={{ uri: (photo as any).url }}
@@ -377,11 +371,6 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    ghostInitial: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontStyle: 'italic',
-        fontSize: 22,
     },
     tileOverlay: {
         position: 'absolute',

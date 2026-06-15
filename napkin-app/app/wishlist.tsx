@@ -312,29 +312,35 @@ export default function WishlistScreen() {
                     },
                 ]}
             >
-                {/* Back button — only when actually pushed onto a stack.
-                    Wishlist is a TAB root (TICKET-070); from the tab there is
-                    nothing to pop, so no chevron. */}
-                {router.canGoBack() ? (
-                    <Pressable
-                        onPress={() => router.back()}
-                        hitSlop={12}
-                        style={styles.headerBack}
-                        accessibilityLabel="back"
-                    >
-                        <Ionicons name="chevron-back" size={20} color={palette.textMuted} />
-                    </Pressable>
-                ) : (
-                    <View style={styles.headerBack} />
-                )}
+                {/* Left slot — flex:1 so the title centres against the SCREEN,
+                    not the leftover space. (Was off-centre because the title used
+                    flex:1 between a 32px back slot and a wider actions cluster.) */}
+                <View style={styles.headerSide}>
+                    {/* Back button — only when actually pushed onto a stack.
+                        Wishlist is a TAB root (TICKET-070); from the tab there is
+                        nothing to pop, so no chevron. */}
+                    {router.canGoBack() ? (
+                        <Pressable
+                            onPress={() => router.back()}
+                            hitSlop={12}
+                            style={styles.headerBack}
+                            accessibilityLabel="back"
+                        >
+                            <Ionicons name="chevron-back" size={20} color={palette.textMuted} />
+                        </Pressable>
+                    ) : (
+                        <View style={styles.headerBack} />
+                    )}
+                </View>
 
                 <Text style={[styles.headerTitle, { color: palette.text }]}>
                     Wishlist
                 </Text>
 
                 {/* TICKET-074: share promoted from the kicker murmur to the header,
-                    beside import — "share · import", both quiet text affordances. */}
-                <View style={styles.headerActions}>
+                    beside import — "share · import", both quiet text affordances.
+                    Equal-flex side slots keep the title optically centred. */}
+                <View style={[styles.headerSide, styles.headerSideRight]}>
                     {pinnedRows.length > 0 ? (
                         <>
                             <Pressable
@@ -540,6 +546,15 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.md,
         paddingHorizontal: 22,
     },
+    headerSide: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    headerSideRight: {
+        justifyContent: 'flex-end',
+        gap: 6,
+    },
     headerBack: {
         width: 32,
     },
@@ -547,13 +562,7 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 26,
         lineHeight: 30,
-        flex: 1,
         textAlign: 'center',
-    },
-    headerActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
     },
     headerActionLabel: {
         fontFamily: 'Manrope_700Bold',

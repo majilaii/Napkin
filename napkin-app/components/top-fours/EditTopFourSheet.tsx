@@ -99,13 +99,7 @@ function SlotItem({ item, index, drag, isActive, palette, onRemove }: SlotItemPr
                             style={StyleSheet.absoluteFill}
                             contentFit="cover"
                         />
-                    ) : (
-                        <Text
-                            style={[Type.headlineItalic, { fontSize: 14, color: palette.textMuted }]}
-                        >
-                            {item.name.charAt(0)}
-                        </Text>
-                    )}
+                    ) : null}
                 </View>
 
                 {/* Name */}

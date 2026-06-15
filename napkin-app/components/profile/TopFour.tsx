@@ -1,14 +1,17 @@
 /**
- * TopFour — 4-up grid of poster cards with rating badge + italic caption.
- * TICKET-025
+ * TopFour — 4-up row of "plates": the score plated in the centre of a round
+ * dish, name + city beneath. TICKET-025 · reshaped 2026-06-15.
+ *
+ * Why plates, not posters: restaurants rarely carry a reliable photo, and a
+ * portrait poster slot with no image reads as a broken/missing picture. A round
+ * plate has no photo expectation — the rating IS the face. Form fixes the
+ * "empty box" problem the poster grid couldn't.
  *
  * Auto-derived from `top_four` in profile payload — no edit affordance.
- * Cold-start: 4 dashed empty frames.
- * Partial fill: real posters for qualifying picks + dashed frames for remainder.
+ * Cold-start / partial fill: empty plates (dashed ring + '+') for the remainder.
  */
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
@@ -46,58 +49,54 @@ export function TopFour({ picks }: Props) {
                             accessibilityRole="button"
                             accessibilityLabel={`View ${pick.name}`}
                         >
-                            {/* Poster */}
+                            {/* Plate — score plated in the centre */}
                             <View
                                 style={[
-                                    styles.poster,
+                                    styles.plate,
                                     { backgroundColor: palette.surfaceContainerHigh },
                                 ]}
                             >
-                                {pick.photo_url ? (
-                                    <Image
-                                        source={{ uri: pick.photo_url }}
-                                        style={StyleSheet.absoluteFill}
-                                        contentFit="cover"
-                                        transition={150}
-                                    />
-                                ) : null}
-                                {/* Rating badge — bottom-left overlay */}
-                                <View style={styles.ratingBadge}>
-                                    <Text
-                                        style={{
-                                            fontFamily: 'Newsreader_400Regular_Italic',
-                                            fontSize: 10,
-                                            color: palette.textInverse,
-                                        }}
-                                    >
-                                        {pick.max_rating.toFixed(1)}
-                                    </Text>
-                                </View>
+                                <View
+                                    style={[
+                                        styles.plateRing,
+                                        { borderColor: palette.outlineVariant },
+                                    ]}
+                                />
+                                <Text style={[styles.score, { color: palette.primary }]}>
+                                    {pick.max_rating.toFixed(1)}
+                                </Text>
                             </View>
-                            {/* Caption */}
+                            {/* Name + city beneath */}
                             <Text
-                                style={[
-                                    styles.caption,
-                                    { color: palette.text, fontFamily: 'Newsreader_400Regular_Italic' },
-                                ]}
-                                numberOfLines={2}
+                                style={[styles.name, { color: palette.text }]}
+                                numberOfLines={1}
                             >
                                 {pick.name}
                             </Text>
+                            {pick.city ? (
+                                <Text
+                                    style={[styles.city, { color: palette.textMuted }]}
+                                    numberOfLines={1}
+                                >
+                                    {pick.city}
+                                </Text>
+                            ) : null}
                         </Pressable>
                     ) : (
                         <View key={i} style={styles.cell}>
                             <View
                                 style={[
-                                    styles.poster,
-                                    styles.emptyPoster,
+                                    styles.plate,
+                                    styles.emptyPlate,
                                     {
                                         borderColor: palette.outlineVariant,
                                         backgroundColor: palette.surfaceContainerLow,
                                     },
                                 ]}
                             >
-                                <Text style={[Type.headlineMedium, { color: palette.textMuted, fontWeight: '300' }]}>
+                                <Text
+                                    style={[Type.headlineMedium, { color: palette.textMuted, fontWeight: '300' }]}
+                                >
                                     +
                                 </Text>
                             </View>
@@ -117,33 +116,45 @@ const styles = StyleSheet.create({
     },
     cell: {
         flex: 1,
-        gap: 4,
+        alignItems: 'center',
+        gap: 6,
     },
-    poster: {
-        aspectRatio: 3 / 4,
-        borderRadius: Radius.sm,
-        overflow: 'hidden',
+    plate: {
+        width: '100%',
+        aspectRatio: 1,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
         position: 'relative',
-        justifyContent: 'flex-end',
     },
-    emptyPoster: {
+    plateRing: {
+        position: 'absolute',
+        top: 7,
+        left: 7,
+        right: 7,
+        bottom: 7,
+        borderRadius: Radius.full,
+        borderWidth: 1,
+    },
+    emptyPlate: {
         borderWidth: 1,
         borderStyle: 'dashed',
-        justifyContent: 'center',
-        alignItems: 'center',
     },
-    ratingBadge: {
-        position: 'absolute',
-        bottom: 4,
-        left: 4,
-        backgroundColor: 'rgba(28,28,25,0.7)',
-        paddingHorizontal: 5,
-        paddingVertical: 2,
-        borderRadius: 3,
+    score: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
     },
-    caption: {
-        fontSize: 11,
-        lineHeight: 14,
-        overflow: 'hidden',
+    name: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 12,
+        lineHeight: 15,
+        textAlign: 'center',
+    },
+    city: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+        textAlign: 'center',
     },
 });
