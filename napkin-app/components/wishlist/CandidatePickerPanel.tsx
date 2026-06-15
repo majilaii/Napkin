@@ -125,12 +125,6 @@ export interface CandidatePickerPanelProps {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Get the initial letter for the 48px initial-tile. */
-function initialChar(name: string | null | undefined): string {
-    if (!name) return '?';
-    return name.trim()[0]?.toUpperCase() ?? '?';
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function CandidatePickerPanel({
@@ -414,13 +408,6 @@ function CandidateRow({
                 { opacity: (checked || isAlreadySaved) ? 1 : 0.45 },
             ]}
         >
-            {/* 48px r12 initial-tile */}
-            <View style={[styles.tile, { backgroundColor: palette.surfaceContainerHigh }]}>
-                <Text style={[styles.tileInitial, { color: palette.textSecondary }]}>
-                    {initialChar(r.name)}
-                </Text>
-            </View>
-
             {/* Text block */}
             <View style={styles.textBlock}>
                 <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
@@ -526,19 +513,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 12,
         paddingVertical: 10,
-    },
-    tile: {
-        width: 48,
-        height: 48,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-    },
-    tileInitial: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
-        lineHeight: 26,
     },
     textBlock: {
         flex: 1,

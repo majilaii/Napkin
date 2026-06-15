@@ -17,6 +17,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
     View,
     Text,
+    Image,
     Pressable,
     StyleSheet,
     Modal,
@@ -199,7 +200,6 @@ interface PinnedRowProps {
 
 function PinnedRow({ item, palette, onPress }: PinnedRowProps) {
     const r = item.restaurant!;
-    const initial = r.name.trim()[0]?.toUpperCase() ?? '?';
     // TICKET-072 ARCH-2 #8: append provenance murmur for handoff-sourced spots
     const provenance = item.source?.type === 'handoff'
         ? `via ${(item.source as WishlistSourceHandoff).sharer_name}'s napkin`
@@ -212,12 +212,10 @@ function PinnedRow({ item, palette, onPress }: PinnedRowProps) {
             style={({ pressed }) => [styles.pinnedRow, { opacity: pressed ? 0.75 : 1 }]}
             accessibilityLabel={`Open ${r.name}`}
         >
-            {/* 52px r12 initial tile */}
-            <View style={[styles.pinnedTile, { backgroundColor: palette.surfaceContainerHigh }]}>
-                <Text style={[styles.pinnedTileInitial, { color: palette.textSecondary }]}>
-                    {initial}
-                </Text>
-            </View>
+            {/* Photo thumb — only when present. No initial-letter placeholder. */}
+            {r.photo_url ? (
+                <Image source={{ uri: r.photo_url }} style={styles.pinnedTile} />
+            ) : null}
 
             {/* Name + meta */}
             <View style={styles.pinnedTextBlock}>
@@ -611,14 +609,7 @@ const styles = StyleSheet.create({
         width: 52,
         height: 52,
         borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
         flexShrink: 0,
-    },
-    pinnedTileInitial: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 24,
-        lineHeight: 28,
     },
     pinnedTextBlock: {
         flex: 1,
