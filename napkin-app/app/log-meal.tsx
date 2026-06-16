@@ -46,6 +46,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 import { Colors, Radius, Spacing } from '@/constants/theme';
+import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
@@ -298,6 +299,9 @@ export default function LogMealScreen() {
     const [noteEditorVisible, setNoteEditorVisible] = useState(false);
     const [companionPickerVisible, setCompanionPickerVisible] = useState(false);
     const [companions, setCompanions] = useState<UserSearchResult[]>([]);
+    // TICKET-082: opt this log into a Supper — only offered when ≥1 friend is
+    // tagged; tagging alone stays a plain companion log. Default OFF.
+    const [isSupper, setIsSupper] = useState(false);
     const [selectedTableIds, setSelectedTableIds] = useState<string[]>(() =>
         initialTableId ? [initialTableId] : [],
     );
@@ -455,10 +459,13 @@ export default function LogMealScreen() {
     const companionIds = new Set(companions.map((c) => c.user_id));
     const handleToggleCompanion = useCallback((u: UserSearchResult) => {
         setCompanions((prev) => {
-            if (prev.some((c) => c.user_id === u.user_id)) {
-                return prev.filter((c) => c.user_id !== u.user_id);
-            }
-            return [...prev, u];
+            const next = prev.some((c) => c.user_id === u.user_id)
+                ? prev.filter((c) => c.user_id !== u.user_id)
+                : [...prev, u];
+            // TICKET-082: a Supper needs ≥1 tagged friend — un-tagging the last
+            // one drops the Supper opt-in so we never send supper:true with [].
+            if (next.length === 0) setIsSupper(false);
+            return next;
         });
     }, []);
 
@@ -504,17 +511,37 @@ export default function LogMealScreen() {
             restaurantData = undefined;
         }
 
+        // TICKET-082: opt into a Supper only when toggled AND friends are tagged.
+        // supper_participant_ids = the tagged ids; server seeds them into
+        // supper_members + writes entry_companions (so companion_ids in `payload`
+        // stays harmless — the server skips the duplicate companion insert).
+        const supperFields =
+            isSupper && companions.length > 0
+                ? {
+                      supper: true,
+                      supper_participant_ids: companions.map((c) => c.user_id),
+                  }
+                : {};
+
         createEntry.mutate(
             {
                 ...(restaurantData ? { restaurant: restaurantData } : {}),
                 ...(restaurant.id && !restaurantData ? { restaurant_id: restaurant.id } : {}),
                 ...payload,
+                ...supperFields,
             } as any,
             {
-                onSuccess: () => {
+                onSuccess: (result) => {
                     // Mark saved BEFORE navigating: the unmount cleanup must
                     // not delete photos now owned by the entry (TICKET-071 bug).
                     savedRef.current = true;
+                    // TICKET-082: if the host entry saved but the Supper failed to
+                    // open, the server returns a soft warning + a plain entry. Surface
+                    // it quietly; the log itself still landed.
+                    const warnings: Array<{ type: string }> | undefined =
+                        (result as any)?.__warnings;
+                    const supperFailed =
+                        isSupper && warnings?.some((w) => w.type === 'supper_open_failed');
                     // Invalidate the originating page's cache (pageId covers
                     // ghost first-logs where restaurant.id is undefined).
                     const invalidateId = pageId ?? restaurant.id;
@@ -526,7 +553,11 @@ export default function LogMealScreen() {
                             ),
                         });
                     }
-                    toast.show(`tried ${restaurant.name}`);
+                    if (supperFailed) {
+                        toast.show("logged, but couldn't start the Supper");
+                    } else {
+                        toast.show(`tried ${restaurant.name}`);
+                    }
                     router.back();
                 },
                 onError: (err) => {
@@ -552,6 +583,7 @@ export default function LogMealScreen() {
         photos,
         breakdown,
         companions,
+        isSupper,
         restaurant,
         initialTableId,
         pageId,
@@ -768,6 +800,43 @@ export default function LogMealScreen() {
                         >
                             <Text style={[styles.companionsLine, { color: palette.textMuted }]}>
                                 {`with ${companions.map((c) => c.display_name).join(', ')}`}
+                            </Text>
+                        </Pressable>
+                    )}
+
+                    {/* TICKET-082: quiet Supper opt-in — only when friends are tagged.
+                        Default OFF; tagging alone stays a plain companion log. */}
+                    {!FRIEND_TEST.hideSuppers && companions.length > 0 && (
+                        <Pressable
+                            onPress={() => setIsSupper((v) => !v)}
+                            style={styles.supperToggleRow}
+                            accessibilityRole="switch"
+                            accessibilityState={{ checked: isSupper }}
+                            accessibilityLabel="make this a Supper — let them add their own take"
+                            hitSlop={6}
+                        >
+                            <View
+                                style={[
+                                    styles.supperCheck,
+                                    {
+                                        backgroundColor: isSupper ? palette.primary : 'transparent',
+                                        borderColor: isSupper
+                                            ? palette.primary
+                                            : 'rgba(160,63,40,0.35)',
+                                    },
+                                ]}
+                            >
+                                {isSupper ? (
+                                    <Text style={[styles.supperCheckMark, { color: '#fffdf8' }]}>✓</Text>
+                                ) : null}
+                            </View>
+                            <Text
+                                style={[
+                                    styles.supperToggleLabel,
+                                    { color: isSupper ? palette.text : palette.textMuted },
+                                ]}
+                            >
+                                make this a Supper — let them add their own take
                             </Text>
                         </Pressable>
                     )}
@@ -1029,6 +1098,33 @@ const styles = StyleSheet.create({
         lineHeight: 20,
         marginTop: 2,
     },
+    // TICKET-082: Supper opt-in toggle
+    supperToggleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginTop: 8,
+    },
+    supperCheck: {
+        width: 20,
+        height: 20,
+        borderRadius: Radius.sm,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
+    supperCheckMark: {
+        fontSize: 11,
+        lineHeight: 14,
+    },
+    supperToggleLabel: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        lineHeight: 20,
+        flex: 1,
+    },
+
     // Share to
     tableRow: {
         flexDirection: 'row',

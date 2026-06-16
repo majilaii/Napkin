@@ -216,5 +216,15 @@ export const queryKeys = {
         resolve: (token: string) => ['handoff', 'resolve', token] as const,
     },
 
+    // Suppers — shared-table meal posts (TICKET-082). A Supper is an `entries`
+    // cluster keyed by supper_id; supper_members is the roster + trust anchor.
+    // `detail` is the merged-review read ({ supper, roster, takes }); `roster`
+    // and `takes` are derived sub-keys for any future narrower reads/invalidations.
+    suppers: {
+        detail: (supperId: string) => ['suppers', 'detail', supperId] as const,
+        roster: (supperId: string) => ['suppers', 'roster', supperId] as const,
+        takes: (supperId: string) => ['suppers', 'takes', supperId] as const,
+    },
+
 } as const;
 

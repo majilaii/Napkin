@@ -39,6 +39,9 @@ import { StarRating } from '@/components/StarRating';
 import { MultiPhotoRow } from '@/components/MultiPhotoRow';
 import { useRoundContext } from '@/hooks/tables/useTableNight';
 import { useUserRestaurantHistory } from '@/hooks/restaurants/useRestaurantHistory';
+import { useSupper } from '@/hooks/suppers';
+import { SupperTable } from '@/components/suppers';
+import { FRIEND_TEST } from '@/constants/flags';
 import { PreviouslyHereBanner } from '@/components/restaurants';
 import { PullQuote, GiantRatingNumeral } from '@/components/ui/napkin';
 import { useAuth } from '@/providers/AuthProvider';
@@ -85,6 +88,8 @@ interface EntryDetail {
     allow_public_replies: boolean;
     table_id: string | null;
     table_night_id: string | null;
+    /** TICKET-082: group key — non-null when this entry is part of a Supper. */
+    supper_id: string | null;
     visibility: string;
     vibe_rating: number | null;
     flavor_rating: number | null;
@@ -140,6 +145,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 visited_at,
                 created_at,
                 table_night_id,
+                supper_id,
                 visibility,
                 vibe_rating,
                 flavor_rating,
@@ -175,6 +181,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
                 visited_at,
                 created_at,
                 table_night_id,
+                supper_id,
                 visibility,
                 vibe_rating,
                 flavor_rating,
@@ -365,6 +372,14 @@ export default function EntryDetailScreen() {
     const repliesDisabled = isPublicView && !(entry?.allow_public_replies ?? false);
     // Round context for banner — enabled only once we know the entry's table_night_id
     const { data: roundContext } = useRoundContext(entry?.table_night_id ?? null);
+
+    // TICKET-082: Supper mode — when this entry is part of a Supper, fetch the
+    // merged-review payload (roster + every member's take). Gated by the curtain
+    // flag; the centerpiece entry stays the hero, SupperTable renders everyone else.
+    const supperEnabled = !FRIEND_TEST.hideSuppers && !isPublicView;
+    const { data: supperDetail } = useSupper(
+        supperEnabled ? entry?.supper_id ?? null : null,
+    );
 
     // Post interactions — scope determined by viewAs param
     // Table scope = default (existing behavior); public scope = restaurant-page review view
@@ -1097,6 +1112,8 @@ export default function EntryDetailScreen() {
                             {' \u00B7 '}
                             {shortDate.toLowerCase()}
                             {isRoundEntry ? ' \u00B7 round' : ''}
+                            {/* TICKET-082: Supper entries get a "supper" kicker suffix. */}
+                            {!isRoundEntry && supperEnabled && entry.supper_id ? ' \u00B7 supper' : ''}
                         </Text>
 
                         {/* Prior-visit metadata — own entries, hidden for first visit and public view */}
@@ -1481,6 +1498,19 @@ export default function EntryDetailScreen() {
                             </View>
                         ) : null}
                     </View>
+
+                    {/* ── Supper "at the table" accordion (TICKET-082) ─────────────
+                        Rendered below the body card when this entry is part of a
+                        Supper. The centerpiece entry above stays the hero; this
+                        block shows everyone ELSE at the table (roster minus author),
+                        each expandable in place to their full take. */}
+                    {supperEnabled && entry.supper_id && supperDetail ? (
+                        <SupperTable
+                            detail={supperDetail}
+                            centerpieceUserId={entry.user_id}
+                            palette={palette}
+                        />
+                    ) : null}
 
                     {/* Comments — plain rows on the warm cream page, outside the note card. */}
                     {/* Comments — shown for table scope (existing) and public scope (viewAs=public) */}

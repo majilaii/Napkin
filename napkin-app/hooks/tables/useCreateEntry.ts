@@ -82,6 +82,13 @@ export interface CreateEntryInput {
     participant_ids?: string[];
     /** Companion tagging — who was there (distinct from Round participant_ids) */
     companion_ids?: string[];
+    /**
+     * TICKET-082: when true, this host entry opens a Supper — a shared-table meal
+     * the tagged friends can add their own take to. `supper_participant_ids` are
+     * the tagged friend ids (server seeds them into supper_members + companions).
+     */
+    supper?: boolean;
+    supper_participant_ids?: string[];
     vibe_rating?: number | null;
     flavor_rating?: number | null;
     service_rating?: number | null;
