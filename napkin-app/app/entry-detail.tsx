@@ -886,68 +886,63 @@ export default function EntryDetailScreen() {
                         Photos are the first thing on the screen; tappable; the top-bar
                         back + pencil-manage affordances float over them. */}
                     {hasHeroDisplay ? (
-                        <View>
-                            {hasUserPhotos && allPhotos.length > 1 ? (
-                                <PhotoMosaic
-                                    photos={allPhotos}
-                                    onPressPhoto={(i) => {
-                                        setActivePhotoIndex(i);
-                                        setLightboxOpen(true);
-                                    }}
-                                    palette={palette}
-                                />
-                            ) : (
-                                // Single hero image — tappable to open the lightbox.
+                        <View style={{ paddingTop: insets.top + Spacing.xs }}>
+                            {/* Quiet top bar — on the warm page, not floating over the photo */}
+                            <View style={styles.topBar}>
                                 <Pressable
-                                    onPress={() => {
-                                        if (hasUserPhotos) {
-                                            setActivePhotoIndex(0);
-                                            setLightboxOpen(true);
-                                        }
-                                    }}
-                                    disabled={!hasUserPhotos}
+                                    onPress={() => router.back()}
+                                    style={styles.breadcrumb}
+                                    hitSlop={12}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="back"
                                 >
-                                    <Image
-                                        source={{ uri: heroDisplayUrl! }}
-                                        style={{ width: '100%', aspectRatio: 4 / 3 }}
-                                        resizeMode="cover"
-                                    />
+                                    <Ionicons name="chevron-back" size={18} color={palette.textSecondary} />
+                                    <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>back</Text>
                                 </Pressable>
-                            )}
-                            <View
-                                style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    right: 0,
-                                    height: insets.top + 56,
-                                    backgroundColor: 'rgba(0,0,0,0.28)',
-                                }}
-                            />
-                            <View
-                                style={[
-                                    styles.topBar,
-                                    { position: 'absolute', top: insets.top, left: 0, right: 0 },
-                                ]}
-                            >
-                                <Pressable onPress={() => router.back()}>
-                                    <Text style={[Type.body, { color: palette.textInverse }]}>← Back</Text>
-                                </Pressable>
-                                {/* Pencil icon toggles unified photo manage mode (add + remove) */}
                                 {isOwnEntry && (
                                     <Pressable
                                         onPress={() => setPhotoManageMode((v) => !v)}
                                         hitSlop={12}
+                                        accessibilityLabel="Manage photos"
                                     >
-                                        <View style={[styles.editPhotoButton, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
-                                            <Ionicons
-                                                name={photoManageMode ? 'checkmark' : 'pencil-outline'}
-                                                size={14}
-                                                color={palette.textInverse}
-                                            />
-                                        </View>
+                                        <Ionicons
+                                            name={photoManageMode ? 'checkmark' : 'pencil-outline'}
+                                            size={18}
+                                            color={palette.textSecondary}
+                                        />
                                     </Pressable>
                                 )}
+                            </View>
+                            {/* Framed photos — warm prints on the journal page */}
+                            <View style={[styles.heroPhotoFrame, { backgroundColor: palette.surfaceNote }]}>
+                                <View style={styles.heroPhotoClip}>
+                                    {hasUserPhotos && allPhotos.length > 1 ? (
+                                        <PhotoMosaic
+                                            photos={allPhotos}
+                                            onPressPhoto={(i) => {
+                                                setActivePhotoIndex(i);
+                                                setLightboxOpen(true);
+                                            }}
+                                            palette={palette}
+                                        />
+                                    ) : (
+                                        <Pressable
+                                            onPress={() => {
+                                                if (hasUserPhotos) {
+                                                    setActivePhotoIndex(0);
+                                                    setLightboxOpen(true);
+                                                }
+                                            }}
+                                            disabled={!hasUserPhotos}
+                                        >
+                                            <Image
+                                                source={{ uri: heroDisplayUrl! }}
+                                                style={{ width: '100%', aspectRatio: 3 / 2 }}
+                                                resizeMode="cover"
+                                            />
+                                        </Pressable>
+                                    )}
+                                </View>
                             </View>
                         </View>
                     ) : (
@@ -1075,9 +1070,8 @@ export default function EntryDetailScreen() {
                         style={[
                             styles.bodyCard,
                             {
-                                backgroundColor: palette.surfaceNote,
-                                borderColor: palette.divider,
-                                marginTop: hasHeroDisplay ? -18 : 8,
+                                backgroundColor: palette.background,
+                                marginTop: hasHeroDisplay ? Spacing.md : 8,
                             },
                         ]}
                     >
@@ -2191,15 +2185,23 @@ const styles = StyleSheet.create({
     bodyCard: {
         marginHorizontal: 0,
         paddingHorizontal: PAGE_H,
-        paddingTop: 16,
+        paddingTop: 6,
         paddingBottom: 20,
+    },
+
+    // Framed photos — warm prints on the journal page (replaces full-bleed).
+    heroPhotoFrame: {
+        marginHorizontal: PAGE_H,
         borderRadius: Radius.lg,
-        borderWidth: StyleSheet.hairlineWidth,
         shadowColor: '#1c1c19',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.05,
-        shadowRadius: 24,
-        elevation: 3,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.10,
+        shadowRadius: 16,
+        elevation: 4,
+    },
+    heroPhotoClip: {
+        borderRadius: Radius.lg,
+        overflow: 'hidden',
     },
 
     // Kicker — lowercase past-tense verb · relative date · short date
@@ -2549,9 +2551,9 @@ const styles = StyleSheet.create({
     // ── Photo mosaic (multi-photo gallery centerpiece) ──
     mosaic: {
         width: '100%',
-        aspectRatio: 4 / 3,
+        aspectRatio: 3 / 2,
         flexDirection: 'row',
-        gap: 2,
+        gap: 4,
     },
     mosaicMain: {
         flex: 1.6,
@@ -2563,7 +2565,7 @@ const styles = StyleSheet.create({
     },
     mosaicSide: {
         flex: 1,
-        gap: 2,
+        gap: 4,
     },
     mosaicSideTile: {
         flex: 1,
