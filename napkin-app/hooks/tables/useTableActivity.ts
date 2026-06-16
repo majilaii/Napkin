@@ -24,6 +24,8 @@ export interface SoloShareActivity {
     dish_description: string | null;
     /** TICKET-075: author's Letterboxd-style like. Read-only on feed/journal rows. */
     liked?: boolean;
+    /** true when this entry is attached to a Table or Round (journal badge, 20260616000100). */
+    is_shared?: boolean;
     visited_at: string;
     created_at: string;
     sort_date: string;

@@ -187,6 +187,7 @@ export function JournalList({
                         rating={entry.rating}
                         restaurantName={restaurantName}
                         liked={entry.liked}
+                        shared={entry.is_shared}
                         weekday={weekday}
                         photoUrl={entry.photo_url}
                         note={entry.content}
@@ -201,6 +202,7 @@ export function JournalList({
                     rating={entry.rating}
                     restaurantName={restaurantName}
                     city={city}
+                    shared={entry.is_shared}
                     weekday={weekday}
                     onPress={() => onPressEntry(entry.id)}
                 />

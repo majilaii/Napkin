@@ -1,11 +1,16 @@
 /**
- * useMySoloEntries — viewer's own feed-only solo entries.
+ * useMySoloEntries — viewer's own personal Journal / Diary feed.
  *
- * TICKET-043: switched from direct `.from('entries').is('table_id', null)` to
- * `fn_my_solo_entries` RPC. Reason: the column-level REVOKE in migration
- * 20260509000005 removes authenticated's SELECT right on entries.table_id, so
- * PostgREST can no longer filter on it. fn_my_solo_entries is SECURITY DEFINER
- * and includes an auth.uid() check so callers cannot read another user's entries.
+ * Returns ALL of the viewer's own entries — feed-only AND ones shared to a Table
+ * or logged in a Round — per the "the feed IS your personal journal" doctrine
+ * (scope widened 20260616000100; the RPC keeps its legacy "solo" name so already-
+ * installed app builds keep working). `is_shared` flags Table/Round entries so the
+ * UI can badge them.
+ *
+ * TICKET-043: uses the `fn_my_solo_entries` RPC instead of a direct query because
+ * the column-level REVOKE in migration 20260509000005 removes authenticated's
+ * SELECT right on entries.table_id. The RPC is SECURITY DEFINER and includes an
+ * auth.uid() check so callers cannot read another user's entries.
  *
  * The RPC returns flat rows (no nested joins). Restaurants and profiles are
  * fetched in a second query and merged in-memory.
@@ -26,6 +31,8 @@ interface SoloEntryRpcRow {
     created_at: string;
     photo_url: string | null;
     liked: boolean | null;
+    /** true when the entry is attached to a Table or Round (20260616000100). */
+    is_shared: boolean | null;
 }
 
 async function fetchMySoloEntries(userId: string): Promise<SoloShareActivity[]> {
@@ -70,6 +77,7 @@ async function fetchMySoloEntries(userId: string): Promise<SoloShareActivity[]> 
         content: r.content,
         dish_description: r.dish_description,
         liked: r.liked ?? false,
+        is_shared: r.is_shared ?? false,
         visited_at: r.visited_at ?? r.created_at,
         created_at: r.created_at,
         sort_date: r.visited_at ?? r.created_at,

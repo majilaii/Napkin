@@ -8,14 +8,15 @@
  *   (a) success reconcile — all four caches patched + nonce swapped for server id
  *   (b) failure rollback — all four caches rolled back to snapshots
  *   (c) rapid double-mutation — no races
- *   (d) table entry — tables.activity patched, mySolo NOT patched
+ *   (d) table entry — tables.activity patched, mySolo ALSO patched (journal = all
+ *       own entries since 20260616000100)
  *   (e) solo entry — mySolo patched, tables.activity NOT patched
  *   (f) day-bucket migration — row migrates to server date when crossing midnight
  *
  * TICKET-043 additions:
  *   (g) 0 table_ids — feed-only; mySolo patched, no tables.activity patch
- *   (h) 1 table_id via table_ids[] — single tables.activity patch, no mySolo
- *   (i) 3 table_ids — three tables.activity patches, no mySolo, one atlas invalidation (primary only)
+ *   (h) 1 table_id via table_ids[] — single tables.activity patch, mySolo ALSO patched
+ *   (i) 3 table_ids — three tables.activity patches, mySolo patched once, one atlas invalidation (primary only)
  *   (j) atomic rollback — all per-Table activity caches rolled back on server error
  *   (k) nonce-dedup — second call with same nonce returns same entry (was_dedup=true)
  *   (l) table_not_authorized error — triggers toast + onTableNotAuthorized + rollback
@@ -184,7 +185,7 @@ describe('useCreateEntry', () => {
         expect(mySoloData).toEqual([]);
     });
 
-    it('(d) table entry: reconciles tables.activity; does NOT patch mySolo', async () => {
+    it('(d) table entry: reconciles tables.activity AND patches mySolo (journal = all own entries)', async () => {
         const { result, client } = renderHookWithClient(
             () => useCreateEntry(USER_ID, TABLE_ID),
         );
@@ -205,9 +206,12 @@ describe('useCreateEntry', () => {
         expect(actData?.pages[0].rows.find((r) => r.id === `optimistic-${NONCE}`)).toBeUndefined();
         expect(actData?.pages[0].rows.find((r) => r.id === 'server-entry-1')).toBeDefined();
 
-        // mySolo should remain empty (table entries don't go to mySolo)
+        // mySolo ALSO gets the entry — the personal Journal shows ALL own meals,
+        // including ones shared to a Table, flagged is_shared.
         const mySoloData = client.getQueryData<SoloShareActivity[]>(mySoloKey);
-        expect(mySoloData).toEqual([]);
+        const soloRow = mySoloData?.find((r) => r.id === 'server-entry-1');
+        expect(soloRow).toBeDefined();
+        expect(soloRow?.is_shared).toBe(true);
     });
 
     it('(e) solo entry: patches mySolo; does NOT patch tables.activity', async () => {
@@ -257,7 +261,7 @@ describe('useCreateEntry', () => {
         expect(actData?.pages[0].rows).toHaveLength(0);
     });
 
-    it('(h) 1 table via table_ids[] — single tables.activity patched, mySolo not', async () => {
+    it('(h) 1 table via table_ids[] — tables.activity patched, mySolo ALSO patched', async () => {
         const { result, client } = renderHookWithClient(
             () => useCreateEntry(USER_ID, null),
         );
@@ -277,7 +281,9 @@ describe('useCreateEntry', () => {
         expect(actData?.pages[0].rows.find((r) => r.id === 'server-entry-1')).toBeDefined();
 
         const mySoloData = client.getQueryData<SoloShareActivity[]>(mySoloKey);
-        expect(mySoloData).toHaveLength(0);
+        const soloRow = mySoloData?.find((r) => r.id === 'server-entry-1');
+        expect(soloRow).toBeDefined();
+        expect(soloRow?.is_shared).toBe(true);
     });
 
     it('(i) 3 table_ids — three tables.activity caches all receive one row', async () => {
@@ -307,8 +313,10 @@ describe('useCreateEntry', () => {
             expect(actData?.pages[0].rows.find((r) => r.id === 'server-entry-1')).toBeDefined();
         }
 
+        // One row in the Journal regardless of how many Tables it was shared to.
         const mySoloData = client.getQueryData<SoloShareActivity[]>(mySoloKey);
-        expect(mySoloData).toHaveLength(0);
+        expect(mySoloData?.filter((r) => r.id === 'server-entry-1')).toHaveLength(1);
+        expect(mySoloData?.find((r) => r.id === 'server-entry-1')?.is_shared).toBe(true);
     });
 
     it('(j) atomic rollback — all per-Table activity caches rolled back on error', async () => {
