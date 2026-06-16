@@ -294,12 +294,17 @@ export function useToggleReaction() {
                     },
                 );
 
-                // feed = useQuery → { entries: FeedEntry[], trending, windowDays }
-                queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
+                // feed = useCursorPagedQuery → { pages: [{ rows }] }; older callers
+                // may still hold a { entries } shape — handle both.
+                queryClient.setQueriesData<any>(
                     { queryKey: queryKeys.feed.rootAll() },
-                    (data) => {
-                        if (!data?.entries) return data;
-                        return { ...data, entries: data.entries.map(flipItem) };
+                    (data: any) => {
+                        if (!data) return data;
+                        if (data.pages) {
+                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(flipItem) ?? p.rows })) };
+                        }
+                        if (data.entries) return { ...data, entries: data.entries.map(flipItem) };
+                        return data;
                     },
                 );
             }
@@ -378,11 +383,15 @@ export function useToggleReaction() {
                         return { ...data, pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(syncItem) })) };
                     },
                 );
-                queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
+                queryClient.setQueriesData<any>(
                     { queryKey: queryKeys.feed.rootAll() },
-                    (data) => {
-                        if (!data?.entries) return data;
-                        return { ...data, entries: data.entries.map(syncItem) };
+                    (data: any) => {
+                        if (!data) return data;
+                        if (data.pages) {
+                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(syncItem) ?? p.rows })) };
+                        }
+                        if (data.entries) return { ...data, entries: data.entries.map(syncItem) };
+                        return data;
                     },
                 );
             }

@@ -162,10 +162,13 @@ export function useSaveImportSpots(userId: string | null | undefined) {
                     return [...newRows, ...old];
                 }
                 if (old?.pages?.[0]) {
+                    // wishlist.personal pages are { data, next_cursor } (plain
+                    // useInfiniteQuery in useMyWishlist) — field is `data`, not
+                    // `rows`. Writing `rows` here silently no-ops the optimistic prepend.
                     const newPages = [...old.pages];
                     newPages[0] = {
                         ...newPages[0],
-                        rows: [...newRows, ...(newPages[0].rows ?? [])],
+                        data: [...newRows, ...(newPages[0].data ?? [])],
                     };
                     return { ...old, pages: newPages };
                 }
