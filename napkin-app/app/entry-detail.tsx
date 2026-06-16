@@ -23,6 +23,7 @@ import {
     ActionSheetIOS,
     Platform,
     KeyboardAvoidingView,
+    Modal,
     findNodeHandle,
     UIManager,
 } from 'react-native';
@@ -43,7 +44,8 @@ import { useSupper } from '@/hooks/suppers';
 import { SupperTable } from '@/components/suppers';
 import { FRIEND_TEST } from '@/constants/flags';
 import { PreviouslyHereBanner } from '@/components/restaurants';
-import { PullQuote, GiantRatingNumeral } from '@/components/ui/napkin';
+// (PullQuote / GiantRatingNumeral retired here — the writing is now rendered
+//  inline as the hero and the rating as a small amber chip.)
 import { useAuth } from '@/providers/AuthProvider';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
 import { CommentRow } from '@/components/posts/CommentRow';
@@ -410,8 +412,9 @@ export default function EntryDetailScreen() {
     useEffect(() => {
         if (focus === 'reply') setReplyOpen(true);
     }, [focus]);
-    // Photo carousel index
+    // Photo lightbox — opens a full-screen pager when a mosaic tile is tapped.
     const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+    const [lightboxOpen, setLightboxOpen] = useState(false);
 
     // ── Own-entry edit hooks ───────────────────────────────────────────────────
     const isOwnEntry = !!(viewer && entry && viewer.id === entry.user_id);
@@ -877,57 +880,39 @@ export default function EntryDetailScreen() {
                     }}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Hero image / carousel */}
+                    {/* ── Photos — prominent gallery centerpiece ("the night, gathered") ──
+                        Multiple user photos → mosaic (one large + smaller tiles).
+                        Single photo (user or restaurant fallback) → carousel/single image.
+                        Photos are the first thing on the screen; tappable; the top-bar
+                        back + pencil-manage affordances float over them. */}
                     {hasHeroDisplay ? (
                         <View>
                             {hasUserPhotos && allPhotos.length > 1 ? (
-                                // Multi-photo carousel
-                                <View>
-                                    <ScrollView
-                                        horizontal
-                                        pagingEnabled
-                                        showsHorizontalScrollIndicator={false}
-                                        style={{ width: SCREEN_WIDTH }}
-                                        onMomentumScrollEnd={(e) => {
-                                            const idx = Math.round(
-                                                e.nativeEvent.contentOffset.x / SCREEN_WIDTH
-                                            );
-                                            setActivePhotoIndex(idx);
-                                        }}
-                                    >
-                                        {allPhotos.map((url, i) => (
-                                            <Image
-                                                key={i}
-                                                source={{ uri: url }}
-                                                style={{ width: SCREEN_WIDTH, aspectRatio: 16 / 9 }}
-                                                resizeMode="cover"
-                                            />
-                                        ))}
-                                    </ScrollView>
-                                    {/* Page dots */}
-                                    <View style={styles.pageDots}>
-                                        {allPhotos.map((_, i) => (
-                                            <View
-                                                key={i}
-                                                style={[
-                                                    styles.pageDot,
-                                                    {
-                                                        backgroundColor: i === activePhotoIndex
-                                                            ? palette.tertiary
-                                                            : `${palette.textMuted}4D`,
-                                                    },
-                                                ]}
-                                            />
-                                        ))}
-                                    </View>
-                                </View>
-                            ) : (
-                                // Single hero image
-                                <Image
-                                    source={{ uri: heroDisplayUrl! }}
-                                    style={{ width: '100%', aspectRatio: 16 / 9 }}
-                                    resizeMode="cover"
+                                <PhotoMosaic
+                                    photos={allPhotos}
+                                    onPressPhoto={(i) => {
+                                        setActivePhotoIndex(i);
+                                        setLightboxOpen(true);
+                                    }}
+                                    palette={palette}
                                 />
+                            ) : (
+                                // Single hero image — tappable to open the lightbox.
+                                <Pressable
+                                    onPress={() => {
+                                        if (hasUserPhotos) {
+                                            setActivePhotoIndex(0);
+                                            setLightboxOpen(true);
+                                        }
+                                    }}
+                                    disabled={!hasUserPhotos}
+                                >
+                                    <Image
+                                        source={{ uri: heroDisplayUrl! }}
+                                        style={{ width: '100%', aspectRatio: 4 / 3 }}
+                                        resizeMode="cover"
+                                    />
+                                </Pressable>
                             )}
                             <View
                                 style={{
@@ -936,7 +921,7 @@ export default function EntryDetailScreen() {
                                     left: 0,
                                     right: 0,
                                     height: insets.top + 56,
-                                    backgroundColor: 'rgba(0,0,0,0.35)',
+                                    backgroundColor: 'rgba(0,0,0,0.28)',
                                 }}
                             />
                             <View
@@ -964,14 +949,6 @@ export default function EntryDetailScreen() {
                                     </Pressable>
                                 )}
                             </View>
-                            {/* "User photo" caption — only shown for user-uploaded single photos */}
-                            {hasUserPhotos && allPhotos.length === 1 && (
-                                <View style={styles.userPhotoCaptionContainer}>
-                                    <Text style={[Type.caption, { color: 'rgba(255,255,255,0.85)' }]}>
-                                        User photo
-                                    </Text>
-                                </View>
-                            )}
                         </View>
                     ) : (
                         // ── Photoless: letterpress masthead (mirrors restaurant-page take-B) ──
@@ -1132,7 +1109,39 @@ export default function EntryDetailScreen() {
                             );
                         })() : null}
 
-                        {/* Title row: restaurant name + address | GiantRatingNumeral (detail scale) */}
+                        {/* ── Who was there — overlapping faces + "with X & Y" line.
+                            Sits just under the photos, above the name. Photos are the
+                            night; this is who you shared it with. */}
+                        {(entry.companions ?? []).length > 0 ? (
+                            <View style={styles.facesRow}>
+                                <View style={styles.facesStack}>
+                                    {(entry.companions ?? []).slice(0, 4).map((c, i) => (
+                                        <View
+                                            key={c.user_id}
+                                            style={[
+                                                styles.faceWrap,
+                                                {
+                                                    marginLeft: i === 0 ? 0 : -10,
+                                                    zIndex: 4 - i,
+                                                    borderColor: palette.surfaceNote,
+                                                },
+                                            ]}
+                                        >
+                                            <InitialsAvatar name={c.display_name} size={26} palette={palette} />
+                                        </View>
+                                    ))}
+                                </View>
+                                <Text
+                                    style={[styles.facesLine, { color: palette.textSecondary }]}
+                                    numberOfLines={1}
+                                >
+                                    {formatCompanions(entry.companions)}
+                                </Text>
+                            </View>
+                        ) : null}
+
+                        {/* Title row: restaurant name (24px italic) + small amber rating chip.
+                            The chip — not a giant numeral — keeps the writing as the hero. */}
                         <View style={styles.titleRow}>
                             <Pressable
                                 onPress={() => {
@@ -1149,7 +1158,7 @@ export default function EntryDetailScreen() {
                                 disabled={!entry.restaurant_id}
                                 style={{ flex: 1, paddingRight: Spacing.sm }}
                             >
-                                <Text style={[styles.restaurantName, { color: palette.text }]}>
+                                <Text style={[styles.restaurantName, { color: palette.text }]} numberOfLines={2}>
                                     {restaurantName}
                                 </Text>
                                 {addressLine ? (
@@ -1159,35 +1168,69 @@ export default function EntryDetailScreen() {
                                 ) : null}
                             </Pressable>
 
-                            {/* Giant rating numeral — detail scale (Concept B2) */}
-                            {!isEditingRating && entry.rating != null ? (
+                            {/* Small amber-cream rating chip — tappable to edit (own entries). */}
+                            {!isEditingRating && entry.rating != null && entry.rating > 0 ? (
                                 <Pressable
                                     onPress={isOwnEntry ? handleRatingTap : undefined}
                                     disabled={!isOwnEntry}
                                     hitSlop={8}
-                                    style={styles.ratingStack}
+                                    style={[
+                                        styles.ratingChip,
+                                        { backgroundColor: palette.tertiaryFixed },
+                                    ]}
+                                    accessibilityLabel={`rated ${entry.rating} out of 5`}
                                 >
-                                    <GiantRatingNumeral value={entry.rating} scale="detail" />
-                                    {/* TICKET-075: read-only like, sits under the numeral */}
+                                    <Text style={[styles.ratingChipNum, { color: palette.tertiary }]}>
+                                        {Number.isInteger(entry.rating) ? entry.rating : entry.rating.toFixed(1)}
+                                    </Text>
+                                    <Ionicons
+                                        name="star"
+                                        size={11}
+                                        color={palette.tertiary}
+                                        style={{ marginLeft: 3 }}
+                                    />
+                                    {/* TICKET-075: read-only like sits inside the chip when present. */}
                                     {entry.liked ? (
                                         <Ionicons
                                             name="heart"
-                                            size={16}
+                                            size={11}
                                             color={palette.primary}
-                                            style={{ marginTop: 2 }}
+                                            style={{ marginLeft: 4 }}
                                             accessibilityLabel="liked"
                                         />
                                     ) : null}
                                 </Pressable>
-                            ) : entry.liked ? (
-                                // No rating but hearted — still surface the like.
-                                <Ionicons
-                                    name="heart"
-                                    size={18}
-                                    color={palette.primary}
-                                    style={styles.ratingStack}
-                                    accessibilityLabel="liked"
-                                />
+                            ) : !isEditingRating && entry.liked ? (
+                                // No rating but hearted — still surface the like as a small chip.
+                                <Pressable
+                                    onPress={isOwnEntry ? handleRatingTap : undefined}
+                                    disabled={!isOwnEntry}
+                                    hitSlop={8}
+                                    style={[
+                                        styles.ratingChip,
+                                        { backgroundColor: palette.primaryMuted },
+                                    ]}
+                                >
+                                    <Ionicons
+                                        name="heart"
+                                        size={13}
+                                        color={palette.primary}
+                                        accessibilityLabel="liked"
+                                    />
+                                </Pressable>
+                            ) : !isEditingRating && isOwnEntry ? (
+                                // Own entry, no rating yet — quiet tap target to add one.
+                                <Pressable
+                                    onPress={handleRatingTap}
+                                    hitSlop={8}
+                                    style={[
+                                        styles.ratingChip,
+                                        { backgroundColor: palette.surfaceContainerLow },
+                                    ]}
+                                    accessibilityLabel="Add a rating"
+                                >
+                                    <Text style={[styles.ratingChipAdd, { color: palette.textMuted }]}>rate</Text>
+                                </Pressable>
                             ) : null}
                         </View>
 
@@ -1325,8 +1368,25 @@ export default function EntryDetailScreen() {
                                 disabled={!isOwnEntry}
                                 style={styles.proseBlock}
                             >
-                                {/* PullQuote — detail scale, full content (Concept B2) */}
-                                <PullQuote text={entry.content} size="detail" />
+                                {/* The writing is the hero — largest text on the screen.
+                                    Em-dash lead, terracotta left rule, Newsreader 22/1.5. */}
+                                <View style={[styles.proseQuote, { borderLeftColor: palette.primary }]}>
+                                    <Text style={[styles.proseHero, { color: palette.text }]}>
+                                        {'— '}{entry.content}
+                                    </Text>
+                                </View>
+                            </Pressable>
+                        ) : isOwnEntry ? (
+                            // Own entry, no writing yet — invite the hero.
+                            <Pressable
+                                onPress={handleNoteEditStart}
+                                style={styles.proseBlock}
+                                accessibilityRole="button"
+                                accessibilityLabel="Add your writing"
+                            >
+                                <Text style={[styles.proseHeroMurmur, { color: palette.textMuted }]}>
+                                    {'— say something about the night'}
+                                </Text>
                             </Pressable>
                         ) : null}
 
@@ -1415,24 +1475,29 @@ export default function EntryDetailScreen() {
                                 disabled={!isOwnEntry}
                                 style={styles.breakdownStripWrap}
                             >
-                                <Text style={[styles.breakdownStrip, { color: palette.textSecondary }]}>
+                                <View style={styles.breakdownChips}>
                                     {CATEGORY_LABELS
                                         .filter(({ key }) => entry[key] != null)
-                                        .map(({ key, label }, i, arr) => {
+                                        .map(({ key, label }) => {
                                             const val = entry[key] as number;
                                             return (
-                                                <Text key={key}>
-                                                    <Text style={{ color: palette.textMuted }}>
-                                                        {label.toLowerCase()}{' '}
+                                                <View
+                                                    key={key}
+                                                    style={[
+                                                        styles.breakdownChip,
+                                                        { backgroundColor: palette.tertiaryFixed },
+                                                    ]}
+                                                >
+                                                    <Text style={[styles.breakdownChipLabel, { color: palette.tertiary }]}>
+                                                        {label.toLowerCase()}
                                                     </Text>
-                                                    <Text style={styles.breakdownNum}>
+                                                    <Text style={[styles.breakdownChipNum, { color: palette.tertiary }]}>
                                                         {val.toFixed(1)}
                                                     </Text>
-                                                    {i < arr.length - 1 ? '  \u00B7  ' : ''}
-                                                </Text>
+                                                </View>
                                             );
                                         })}
-                                </Text>
+                                </View>
                             </Pressable>
                         ) : null}
 
@@ -1459,28 +1524,12 @@ export default function EntryDetailScreen() {
                             </Pressable>
                         )}
 
-                        {/* ── Companion row ─────────────────────────────────────── */}
-                        {/* Read view: show "with X · Y" line */}
-                        {!isOwnEntry && (entry.companions ?? []).length > 0 ? (
-                            <Text
-                                style={[styles.companionLine, { color: palette.textMuted }]}
-                                numberOfLines={1}
-                            >
-                                {formatCompanions(entry.companions)}
-                            </Text>
-                        ) : null}
-
-                        {/* Edit view (owner): chips with × + "Add companion" button */}
+                        {/* ── Companion edit affordance (owner only) ─────────────────
+                            The read display ("who was there" faces + line) now lives at
+                            the top of the card; here we keep only the owner's edit entry
+                            point so the companion editor stays reachable. */}
                         {isOwnEntry ? (
                             <View style={styles.companionEditBlock}>
-                                {(entry.companions ?? []).length > 0 ? (
-                                    <Text
-                                        style={[styles.companionLine, { color: palette.textMuted }]}
-                                        numberOfLines={1}
-                                    >
-                                        {formatCompanions(entry.companions)}
-                                    </Text>
-                                ) : null}
                                 <Pressable
                                     onPress={handleCompanionEditStart}
                                     hitSlop={8}
@@ -1601,6 +1650,16 @@ export default function EntryDetailScreen() {
                     palette={palette}
                 />
             ) : null}
+
+            {/* Full-screen photo lightbox — opened from the mosaic / single hero. */}
+            <PhotoLightbox
+                visible={lightboxOpen && hasUserPhotos}
+                photos={allPhotos}
+                initialIndex={activePhotoIndex}
+                palette={palette}
+                topInset={insets.top}
+                onClose={() => setLightboxOpen(false)}
+            />
         </>
     );
 }
@@ -1651,6 +1710,144 @@ function InitialsAvatar({
                 {initials}
             </Text>
         </View>
+    );
+}
+
+// ── PhotoMosaic ───────────────────────────────────────────────────────────────
+//
+// Prominent multi-photo gallery for the entry centerpiece ("the night, gathered").
+// One large lead photo on the left + a stacked column of up to two smaller tiles
+// on the right. A "+N" overlay covers any photos beyond the first three. Every
+// tile is tappable and reports its index up so the parent can open the lightbox.
+
+function PhotoMosaic({
+    photos,
+    onPressPhoto,
+    palette,
+}: {
+    photos: string[];
+    onPressPhoto: (index: number) => void;
+    palette: Palette;
+}) {
+    const main = photos[0];
+    const side = photos.slice(1, 3); // up to two side tiles
+    const remaining = photos.length - 3; // photos hidden behind the +N overlay
+
+    return (
+        <View style={[styles.mosaic, { backgroundColor: palette.surfaceContainerLow }]}>
+            <Pressable style={styles.mosaicMain} onPress={() => onPressPhoto(0)}>
+                <Image source={{ uri: main }} style={styles.mosaicMainImg} resizeMode="cover" />
+            </Pressable>
+            {side.length > 0 ? (
+                <View style={styles.mosaicSide}>
+                    {side.map((url, i) => {
+                        const photoIndex = i + 1;
+                        const isLastTile = i === side.length - 1;
+                        const showMore = isLastTile && remaining > 0;
+                        return (
+                            <Pressable
+                                key={photoIndex}
+                                style={styles.mosaicSideTile}
+                                onPress={() => onPressPhoto(photoIndex)}
+                            >
+                                <Image
+                                    source={{ uri: url }}
+                                    style={styles.mosaicSideImg}
+                                    resizeMode="cover"
+                                />
+                                {showMore ? (
+                                    <View style={styles.mosaicMoreOverlay}>
+                                        <Text style={styles.mosaicMoreText}>+{remaining}</Text>
+                                    </View>
+                                ) : null}
+                            </Pressable>
+                        );
+                    })}
+                </View>
+            ) : null}
+        </View>
+    );
+}
+
+// ── PhotoLightbox ─────────────────────────────────────────────────────────────
+//
+// Full-screen black pager opened when a mosaic tile (or the single hero) is
+// tapped. Horizontal paging carousel with dot indicators; close affordance
+// top-right. Read-only — photo editing still lives in the pencil-gated manage
+// panel on the main screen.
+
+function PhotoLightbox({
+    visible,
+    photos,
+    initialIndex,
+    palette,
+    topInset,
+    onClose,
+}: {
+    visible: boolean;
+    photos: string[];
+    initialIndex: number;
+    palette: Palette;
+    topInset: number;
+    onClose: () => void;
+}) {
+    const [index, setIndex] = useState(initialIndex);
+    const scrollRef = useRef<ScrollView>(null);
+
+    useEffect(() => {
+        if (visible) setIndex(initialIndex);
+    }, [visible, initialIndex]);
+
+    return (
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+            <View style={styles.lightboxBackdrop}>
+                <Pressable
+                    onPress={onClose}
+                    style={[styles.lightboxClose, { top: topInset + 8 }]}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close photo"
+                >
+                    <Ionicons name="close" size={22} color="#fff" />
+                </Pressable>
+                <ScrollView
+                    ref={scrollRef}
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    contentOffset={{ x: initialIndex * SCREEN_WIDTH, y: 0 }}
+                    onMomentumScrollEnd={(e) => {
+                        setIndex(Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH));
+                    }}
+                    style={{ flex: 1 }}
+                >
+                    {photos.map((url, i) => (
+                        <Image
+                            key={i}
+                            source={{ uri: url }}
+                            style={styles.lightboxImg}
+                            resizeMode="contain"
+                        />
+                    ))}
+                </ScrollView>
+                {photos.length > 1 ? (
+                    <View style={styles.pageDots}>
+                        {photos.map((_, i) => (
+                            <View
+                                key={i}
+                                style={[
+                                    styles.pageDot,
+                                    {
+                                        backgroundColor:
+                                            i === index ? palette.tertiary : 'rgba(255,255,255,0.4)',
+                                    },
+                                ]}
+                            />
+                        ))}
+                    </View>
+                ) : null}
+            </View>
+        </Modal>
     );
 }
 
@@ -2020,18 +2217,39 @@ const styles = StyleSheet.create({
         marginBottom: 2,
     },
 
-    // Title row — name + inline rating
+    // ── Who-was-there faces row ──
+    facesRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginTop: Spacing.sm,
+    },
+    facesStack: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    faceWrap: {
+        borderRadius: 999,
+        borderWidth: 1.5,
+    },
+    facesLine: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        flexShrink: 1,
+    },
+
+    // Title row — name (24px) + small amber rating chip
     titleRow: {
         flexDirection: 'row',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         justifyContent: 'space-between',
         marginTop: Spacing.sm + 2,
     },
     restaurantName: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 34,
-        lineHeight: 38,
-        letterSpacing: -0.4,
+        fontSize: 24,
+        lineHeight: 28,
+        letterSpacing: -0.2,
     },
     address: {
         fontFamily: 'Manrope_400Regular',
@@ -2040,14 +2258,23 @@ const styles = StyleSheet.create({
         letterSpacing: 0.2,
     },
 
-    // Inline rating stack — italic serif number + "/ 5"
-    ratingStack: {
-        alignItems: 'flex-end',
-        paddingTop: 4,
+    // Small amber-cream rating chip — replaces the giant numeral.
+    ratingChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: Radius.full,
     },
-    // Stars row — 16px single line below title row
-    starsRow: {
-        marginTop: Spacing.sm + 2,
+    ratingChipNum: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 16,
+        lineHeight: 18,
+    },
+    ratingChipAdd: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        letterSpacing: 0.4,
     },
 
     // Rating editor (shown inline when isEditingRating)
@@ -2072,24 +2299,36 @@ const styles = StyleSheet.create({
         fontSize: 13,
     },
 
-    // Prose — em-dash pull-quote, Newsreader 18/1.55
+    // ── Prose — the HERO. Largest text on the screen. Newsreader 22/1.5,
+    //    em-dash lead, 2px terracotta left rule. ──
     proseBlock: {
-        marginTop: Spacing.md,
+        marginTop: Spacing.lg,
     },
-    prose: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 18,
-        lineHeight: 28,
+    proseQuote: {
+        borderLeftWidth: 2,
+        paddingLeft: 14,
+        paddingVertical: 4,
+    },
+    proseHero: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
+        lineHeight: 33,
+        fontWeight: '400',
+    },
+    proseHeroMurmur: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 20,
+        lineHeight: 30,
     },
 
-    // Prose editor (tapped to edit)
+    // Prose editor (tapped to edit) — matches the hero size for continuity.
     proseEditor: {
-        marginTop: Spacing.md,
+        marginTop: Spacing.lg,
     },
     proseInput: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 18,
-        lineHeight: 28,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
+        lineHeight: 33,
         minHeight: 120,
         padding: 0,
         textAlignVertical: 'top',
@@ -2114,21 +2353,32 @@ const styles = StyleSheet.create({
         marginTop: Spacing.md,
     },
 
-    // Breakdown strip — "food 2.0 · vibe 1.0 · service 2.5 · value 1.5"
+    // Breakdown — small amber chips: "vibe 2.0  flavor 1.0  …"
     breakdownStripWrap: {
         marginTop: Spacing.md,
-        paddingTop: Spacing.sm,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: 'transparent', // filled by parent's divider if needed; keep structural
     },
-    breakdownStrip: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
-        letterSpacing: 0.2,
+    breakdownChips: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: Spacing.xs,
     },
-    breakdownNum: {
+    breakdownChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: Radius.full,
+    },
+    breakdownChipLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        letterSpacing: 0.3,
+        textTransform: 'lowercase',
+    },
+    breakdownChipNum: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
+        fontSize: 13,
     },
 
     // Breakdown editor
@@ -2187,12 +2437,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
 
-    // Companion row — "with X · Y" under attribution
-    companionLine: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 11,
-        marginTop: Spacing.sm,
-    },
     companionEditBlock: {
         marginTop: Spacing.sm,
         gap: Spacing.xs,
@@ -2285,19 +2529,10 @@ const styles = StyleSheet.create({
         marginTop: Spacing.sm,
     },
 
-    // Photo caption + page dots (hero carousel)
-    userPhotoCaptionContainer: {
-        position: 'absolute',
-        bottom: Spacing.sm,
-        right: Spacing.sm,
-        backgroundColor: 'rgba(0,0,0,0.35)',
-        paddingHorizontal: Spacing.sm,
-        paddingVertical: 3,
-        borderRadius: Radius.sm,
-    },
+    // Page dots — reused by the full-screen lightbox pager.
     pageDots: {
         position: 'absolute',
-        bottom: Spacing.sm,
+        bottom: Spacing.lg,
         left: 0,
         right: 0,
         flexDirection: 'row',
@@ -2309,6 +2544,66 @@ const styles = StyleSheet.create({
         width: 6,
         height: 6,
         borderRadius: 3,
+    },
+
+    // ── Photo mosaic (multi-photo gallery centerpiece) ──
+    mosaic: {
+        width: '100%',
+        aspectRatio: 4 / 3,
+        flexDirection: 'row',
+        gap: 2,
+    },
+    mosaicMain: {
+        flex: 1.6,
+        height: '100%',
+    },
+    mosaicMainImg: {
+        width: '100%',
+        height: '100%',
+    },
+    mosaicSide: {
+        flex: 1,
+        gap: 2,
+    },
+    mosaicSideTile: {
+        flex: 1,
+        width: '100%',
+    },
+    mosaicSideImg: {
+        width: '100%',
+        height: '100%',
+    },
+    mosaicMoreOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.42)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    mosaicMoreText: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
+        color: '#fff',
+    },
+
+    // ── Photo lightbox (full-screen pager) ──
+    lightboxBackdrop: {
+        flex: 1,
+        backgroundColor: '#000',
+    },
+    lightboxClose: {
+        position: 'absolute',
+        right: 16,
+        zIndex: 10,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.14)',
+    },
+    lightboxImg: {
+        width: SCREEN_WIDTH,
+        flex: 1,
     },
 
     // Photo manage mode
