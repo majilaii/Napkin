@@ -5,8 +5,11 @@ Pod::Spec.new do |s|
   s.description    = 'Samples video frames for Vision OCR and transcribes audio via SFSpeechRecognizer, fully on-device.'
   s.author         = 'Napkin'
   s.homepage       = 'https://docs.expo.dev/modules/'
+  # Must be <= the app's iOS deployment target (15.1) — a higher floor makes
+  # autolinking silently SKIP this module as "unsupported platform" (that was the
+  # b35 launch crash: unlinked module → requireNativeModule threw at import).
   s.platforms      = {
-    :ios => '16.4'
+    :ios => '15.1'
   }
   s.source         = { git: '' }
   s.static_framework = true

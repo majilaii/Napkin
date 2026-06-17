@@ -30,7 +30,7 @@ public class MediaExtractModule: Module {
       if transcribe ?? true {
         transcript = (try? await Self.transcribe(url: url)) ?? ""
       }
-      let durationSec = (try? await asset.load(.duration))?.seconds ?? 0
+      let durationSec = CMTimeGetSeconds(asset.duration)
 
       return [
         "ocr": ocr,
@@ -55,8 +55,9 @@ public class MediaExtractModule: Module {
   // MARK: - Frame OCR
 
   private static func ocrFrames(asset: AVURLAsset, fps: Double, maxFrames: Int) async throws -> [String] {
-    let duration = try await asset.load(.duration)
-    let totalSec = duration.seconds
+    // Synchronous duration — AVAsset.duration works on iOS 15 (the async
+    // load(.duration) API is iOS 16+; the app's deployment target is 15.1).
+    let totalSec = CMTimeGetSeconds(asset.duration)
     guard totalSec.isFinite, totalSec > 0 else { return [] }
 
     // Spread up to `maxFrames` samples EVENLY across the whole clip so a spot in
