@@ -1,12 +1,11 @@
 /**
- * ProfileTopFourSheet — full-screen editor for the curated profile Top 4.
+ * ProfileTopFourSheet — editor for the curated profile Top 4.
  *
- * Global (not city-scoped). Top: up to 4 ordered slots (DraggableFlatList to
- * reorder, × to remove). Below: every restaurant the user has logged, tap to add.
- * Save → useSetProfileTopFour. Saving with 0 picks clears the override and the
- * profile reverts to the auto-derived list.
- *
- * Mirrors EditTopFourSheet (TICKET-047) minus the claim-a-city machinery.
+ * Global (not city-scoped). Up to 4 ordered slots (chevron reorder, × to remove).
+ * "+ add a spot" opens TopFourSearchModal — a full-screen Google Places search;
+ * any restaurant is featurable, logged or not (a ghost is upserted to mint an
+ * id first). Save → useSetProfileTopFour. Saving with 0 picks clears the override
+ * and the profile reverts to the auto-derived list.
  */
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
@@ -17,8 +16,6 @@ import {
     StyleSheet,
     Alert,
     ActivityIndicator,
-    ScrollView,
-    TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image as ExpoImage } from 'expo-image';
@@ -27,10 +24,8 @@ import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatli
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useMyEligibleRestaurants } from '@/hooks/users/useMyEligibleRestaurants';
 import { useSetProfileTopFour } from '@/hooks/users/useSetProfileTopFour';
-import { EligibleRestaurantRow } from '@/components/top-fours/EligibleRestaurantRow';
-import type { EligibleRestaurant } from '@/hooks/top-fours/useEligibleRestaurantsForCity';
+import { TopFourSearchScreen, type TopFourSearchPick } from './TopFourSearchScreen';
 
 export interface ProfileTopFourPick {
     restaurant_id: string;
@@ -143,10 +138,9 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
     const insets = useSafeAreaInsets();
 
     const setPicks = useSetProfileTopFour();
-    const { data: eligible, isLoading: eligibleLoading } = useMyEligibleRestaurants(userId, visible);
 
     const [draft, setDraft] = useState<DraftItem[]>([]);
-    const [pickerQuery, setPickerQuery] = useState('');
+    const [searchVisible, setSearchVisible] = useState(false);
 
     // Reset the draft only on the closed→open transition, so a profile refetch
     // (new currentPicks identity) can't clobber an in-progress edit.
@@ -167,33 +161,26 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
 
     const pickedIds = useMemo(() => new Set(draft.map((d) => d.restaurant_id)), [draft]);
 
-    // Search-filter the add list — a flat scroll of every logged spot is unusable at
-    // 50–200 saves; a search bar is how you actually find the one to add.
-    const filteredEligible = useMemo(() => {
-        const all = eligible ?? [];
-        const q = pickerQuery.trim().toLowerCase();
-        if (!q) return all;
-        return all.filter((r) => r.name.toLowerCase().includes(q));
-    }, [eligible, pickerQuery]);
-
     const hasDiff = useMemo(() => {
         if (draft.length !== currentPicks.length) return true;
         return draft.some((d, i) => d.restaurant_id !== currentPicks[i]?.restaurant_id);
     }, [draft, currentPicks]);
 
-    const handleAdd = useCallback((restaurant: EligibleRestaurant) => {
-        if (pickedIds.has(restaurant.restaurant_id)) return;
-        if (draft.length >= 4) return;
-        setDraft((prev) => [
-            ...prev,
-            {
-                key: restaurant.restaurant_id,
-                restaurant_id: restaurant.restaurant_id,
-                name: restaurant.name,
-                photo_url: restaurant.photo_url,
-            },
-        ]);
-    }, [pickedIds, draft.length]);
+    const handleAdd = useCallback((pick: TopFourSearchPick) => {
+        setDraft((prev) => {
+            if (prev.length >= 4) return prev;
+            if (prev.some((d) => d.restaurant_id === pick.restaurant_id)) return prev;
+            return [
+                ...prev,
+                {
+                    key: pick.restaurant_id,
+                    restaurant_id: pick.restaurant_id,
+                    name: pick.name,
+                    photo_url: pick.photo_url,
+                },
+            ];
+        });
+    }, []);
 
     const handleRemove = useCallback((id: string) => {
         setDraft((prev) => prev.filter((d) => d.restaurant_id !== id));
@@ -234,9 +221,24 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
     }, [hasDiff, onClose]);
 
     const isPending = setPicks.isPending;
+    const atCapacity = draft.length >= 4;
 
     return (
-        <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleCancel}>
+        <Modal
+            visible={visible}
+            animationType="slide"
+            presentationStyle="pageSheet"
+            onRequestClose={searchVisible ? () => setSearchVisible(false) : handleCancel}
+        >
+            {searchVisible ? (
+                <TopFourSearchScreen
+                    onClose={() => setSearchVisible(false)}
+                    onPick={handleAdd}
+                    userId={userId}
+                    pickedIds={pickedIds}
+                    atCapacity={atCapacity}
+                />
+            ) : (
             <View style={[styles.container, { backgroundColor: palette.background }]}>
                 {/* Header */}
                 <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
@@ -283,12 +285,12 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                     Pick up to 4 and use the arrows to reorder. Leave it empty to go back to automatic.
                 </Text>
 
-                {/* Draft slots (draggable) */}
+                {/* Draft slots */}
                 <View style={[styles.slotsSection, { borderBottomColor: palette.dividerSoft }]}>
                     {draft.length === 0 ? (
                         <View style={styles.emptyDraft}>
                             <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
-                                Tap restaurants below to add them
+                                Add up to four favourites below
                             </Text>
                         </View>
                     ) : (
@@ -319,69 +321,26 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                     </Text>
                 </View>
 
-                {/* Add a restaurant — search your logged spots */}
-                <Text
-                    style={[Type.labelSmall, { color: palette.textMuted, marginHorizontal: 22, marginTop: Spacing.md, marginBottom: Spacing.xs }]}
+                {/* Add a spot — opens the full-screen Places search */}
+                <Pressable
+                    onPress={() => setSearchVisible(true)}
+                    style={({ pressed }) => [
+                        styles.addBtn,
+                        {
+                            borderColor: 'rgba(160,63,40,0.35)',
+                            backgroundColor: pressed ? palette.primaryMuted : 'transparent',
+                        },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add a spot to your Top 4"
                 >
-                    ADD A SPOT
-                </Text>
-                <View style={[styles.searchField, { backgroundColor: palette.surfaceJournalLow }]}>
-                    <Ionicons name="search" size={16} color={palette.textMuted} />
-                    <TextInput
-                        value={pickerQuery}
-                        onChangeText={setPickerQuery}
-                        placeholder="search your spots"
-                        placeholderTextColor={palette.textMuted}
-                        style={[styles.searchInput, { color: palette.text }]}
-                        autoCorrect={false}
-                        returnKeyType="search"
-                    />
-                    {pickerQuery.length > 0 ? (
-                        <Pressable onPress={() => setPickerQuery('')} hitSlop={8} accessibilityLabel="Clear search">
-                            <Ionicons name="close-circle" size={16} color={palette.textMuted} />
-                        </Pressable>
-                    ) : null}
-                </View>
-
-                {eligibleLoading ? (
-                    <ActivityIndicator color={palette.primary} style={{ marginTop: Spacing.xl }} />
-                ) : (
-                    <ScrollView
-                        style={{ flex: 1 }}
-                        keyboardShouldPersistTaps="handled"
-                        showsVerticalScrollIndicator={false}
-                        contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
-                    >
-                        {filteredEligible.map((r) => (
-                            <EligibleRestaurantRow
-                                key={r.restaurant_id}
-                                restaurant={r}
-                                isSelected={pickedIds.has(r.restaurant_id)}
-                                onPress={
-                                    draft.length < 4 || pickedIds.has(r.restaurant_id) ? handleAdd : () => {}
-                                }
-                            />
-                        ))}
-                        {filteredEligible.length === 0 ? (
-                            <Text
-                                style={[
-                                    Type.bodySmall,
-                                    {
-                                        color: palette.textMuted,
-                                        textAlign: 'center',
-                                        paddingHorizontal: Spacing.xl,
-                                        paddingTop: Spacing.xl,
-                                    },
-                                ]}
-                            >
-                                {pickerQuery.trim()
-                                    ? `No saved spot matches “${pickerQuery.trim()}”.`
-                                    : 'Log a few restaurants to see them here.'}
-                            </Text>
-                        ) : null}
-                    </ScrollView>
-                )}
+                    <Ionicons name="search" size={18} color={palette.primary} />
+                    <Text style={[styles.addBtnLabel, { color: palette.primary }]}>
+                        {atCapacity ? 'swap a spot' : 'add a spot'}
+                    </Text>
+                </Pressable>
             </View>
+            )}
         </Modal>
     );
 }
@@ -389,22 +348,6 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-    },
-    searchField: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        marginHorizontal: 22,
-        marginBottom: Spacing.sm,
-        paddingHorizontal: 12,
-        height: 40,
-        borderRadius: Radius.md,
-    },
-    searchInput: {
-        flex: 1,
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 15,
-        padding: 0,
     },
     header: {
         flexDirection: 'row',
@@ -448,5 +391,21 @@ const styles = StyleSheet.create({
     emptyDraft: {
         paddingVertical: Spacing.md,
         alignItems: 'center',
+    },
+    addBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginHorizontal: 22,
+        marginTop: Spacing.lg,
+        height: 48,
+        borderRadius: Radius.full,
+        borderWidth: 1,
+    },
+    addBtnLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 14,
+        letterSpacing: 0.3,
     },
 });

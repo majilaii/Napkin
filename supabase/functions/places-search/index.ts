@@ -308,7 +308,10 @@ serve(async req => {
             }
 
             return new Response(
-                JSON.stringify({ data: [sanitized] }),
+                // Echo the upserted Napkin id (when persist minted/merged a row) so
+                // callers that need a restaurant_id — e.g. the Top 4 picker featuring
+                // a never-logged place — can use it without a second round-trip.
+                JSON.stringify({ data: [{ ...sanitized, restaurant_id: restaurantId }] }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
             );
         }

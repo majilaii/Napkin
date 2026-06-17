@@ -29,6 +29,12 @@ export interface PlacesResult {
     formattedAddress: string | null;
     latitude: number | null;
     longitude: number | null;
+    /**
+     * Napkin restaurant id — present ONLY on a place_id lookup with persist=true
+     * (places-search upserts the row and echoes its id back). Lets the Top 4
+     * picker mint an id for a never-logged Google place. Absent on text search.
+     */
+    restaurant_id?: string | null;
 }
 
 export interface PersistedRow {

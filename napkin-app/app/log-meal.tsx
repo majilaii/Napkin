@@ -45,7 +45,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
-import { Colors, Radius, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
@@ -668,7 +668,7 @@ export default function LogMealScreen() {
              * header (pinned) / body (flex-1 scroll) / footer (pinned, true bottom).
              * This is the fix for the "floating save button" complaint (TICKET-071).
              */}
-            <View style={[styles.root, { backgroundColor: palette.surfaceNote }]}>
+            <View style={[styles.root, { backgroundColor: palette.background }]}>
 
                 {/* ── Pinned header ── */}
                 <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
@@ -702,8 +702,8 @@ export default function LogMealScreen() {
                     showsVerticalScrollIndicator={false}
                     automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
                 >
-                    {/* 1 ── YOUR APPRAISAL — rating + inline like heart ── */}
-                    <View style={styles.section}>
+                    {/* 1 ── YOUR APPRAISAL + rate the details — one vellum card ── */}
+                    <View style={[styles.card, { backgroundColor: palette.surfaceNote }]}>
                         <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
                             YOUR APPRAISAL
                         </Text>
@@ -733,13 +733,10 @@ export default function LogMealScreen() {
                                 />
                             </Pressable>
                         </View>
-                    </View>
-
-                    {/* 2 ── rate the details — sub-ratings, directly under the main rating ── */}
-                    <View style={styles.section}>
+                        {/* 2 ── rate the details — sub-ratings, inside the appraisal card ── */}
                         <Pressable
                             onPress={() => setShowDetails((v) => !v)}
-                            style={styles.detailsToggle}
+                            style={[styles.detailsToggle, { marginTop: 2 }]}
                             accessibilityLabel="rate the details"
                             hitSlop={8}
                         >
@@ -786,7 +783,7 @@ export default function LogMealScreen() {
                     </View>
 
                     {/* 3 ── WHEN — month calendar (no future dates) ── */}
-                    <View style={styles.section}>
+                    <View style={[styles.card, { backgroundColor: palette.surfaceNote }]}>
                         <View style={styles.whenRow}>
                             <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
                                 WHEN
@@ -805,7 +802,7 @@ export default function LogMealScreen() {
                     </View>
 
                     {/* 4 ── THE NOTE — tappable preview block → NoteEditorModal ── */}
-                    <View style={styles.section}>
+                    <View style={[styles.card, { backgroundColor: palette.surfaceNote }]}>
                         <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
                             THE NOTE
                         </Text>
@@ -833,86 +830,95 @@ export default function LogMealScreen() {
                         </Pressable>
                     </View>
 
-                    {/* 5 ── photo mosaic ── */}
-                    <PhotoMosaic
-                        photos={photos}
-                        maxPhotos={MAX_PHOTOS}
-                        onAdd={handleAddPhoto}
-                        onRemove={handleRemovePhoto}
-                        onRetry={handleRetryPhoto}
-                        onTapPhoto={handleTapPhoto}
-                    />
+                    {/* 5 ── PHOTOS — kept prominent (the mosaic is the visual anchor) ── */}
+                    <View style={[styles.card, { backgroundColor: palette.surfaceNote }]}>
+                        <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                            PHOTOS
+                        </Text>
+                        <PhotoMosaic
+                            photos={photos}
+                            maxPhotos={MAX_PHOTOS}
+                            onAdd={handleAddPhoto}
+                            onRemove={handleRemovePhoto}
+                            onRetry={handleRetryPhoto}
+                            onTapPhoto={handleTapPhoto}
+                        />
+                    </View>
 
-                    {/* 6 ── + who was there — companions (kept). Hidden in supper-take
-                        mode: the roster is inherited from the Supper, not re-tagged. ── */}
+                    {/* 6 ── WHO WAS THERE — companions + Supper opt-in. Hidden in
+                        supper-take mode: the roster is inherited from the Supper. ── */}
                     {!isSupperTake && (
-                        <View style={styles.expanderRow}>
-                            <Pressable
-                                onPress={() => setCompanionPickerVisible(true)}
-                                hitSlop={8}
-                                accessibilityLabel="add who was there"
-                            >
-                                <Text style={[styles.expander, { color: palette.textMuted }]}>
-                                    {companions.length > 0 ? '— who was there' : '+ who was there'}
-                                </Text>
-                            </Pressable>
-                        </View>
-                    )}
-
-                    {!isSupperTake && companions.length > 0 && (
-                        <Pressable
-                            onPress={() => setCompanionPickerVisible(true)}
-                            hitSlop={8}
-                            accessibilityLabel="edit companions"
-                        >
-                            <Text style={[styles.companionsLine, { color: palette.textMuted }]}>
-                                {`with ${companions.map((c) => c.display_name).join(', ')}`}
+                        <View style={[styles.card, { backgroundColor: palette.surfaceNote }]}>
+                            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                                WHO WAS THERE
                             </Text>
-                        </Pressable>
-                    )}
-
-                    {/* TICKET-082: quiet Supper opt-in — only when friends are tagged.
-                        Default OFF; tagging alone stays a plain companion log. Never
-                        shown in take mode (you're joining an existing Supper). */}
-                    {!isSupperTake && !FRIEND_TEST.hideSuppers && companions.length > 0 && (
-                        <Pressable
-                            onPress={() => setIsSupper((v) => !v)}
-                            style={styles.supperToggleRow}
-                            accessibilityRole="switch"
-                            accessibilityState={{ checked: isSupper }}
-                            accessibilityLabel="make this a Supper — let them add their own take"
-                            hitSlop={6}
-                        >
-                            <View
-                                style={[
-                                    styles.supperCheck,
-                                    {
-                                        backgroundColor: isSupper ? palette.primary : 'transparent',
-                                        borderColor: isSupper
-                                            ? palette.primary
-                                            : 'rgba(160,63,40,0.35)',
-                                    },
-                                ]}
-                            >
-                                {isSupper ? (
-                                    <Text style={[styles.supperCheckMark, { color: '#fffdf8' }]}>✓</Text>
-                                ) : null}
+                            <View style={styles.expanderRow}>
+                                <Pressable
+                                    onPress={() => setCompanionPickerVisible(true)}
+                                    hitSlop={8}
+                                    accessibilityLabel="add who was there"
+                                >
+                                    <Text style={[styles.expander, { color: palette.textMuted }]}>
+                                        {companions.length > 0 ? '— who was there' : '+ who was there'}
+                                    </Text>
+                                </Pressable>
                             </View>
-                            <Text
-                                style={[
-                                    styles.supperToggleLabel,
-                                    { color: isSupper ? palette.text : palette.textMuted },
-                                ]}
-                            >
-                                make this a Supper — let them add their own take
-                            </Text>
-                        </Pressable>
+
+                            {companions.length > 0 && (
+                                <Pressable
+                                    onPress={() => setCompanionPickerVisible(true)}
+                                    hitSlop={8}
+                                    accessibilityLabel="edit companions"
+                                >
+                                    <Text style={[styles.companionsLine, { color: palette.textMuted }]}>
+                                        {`with ${companions.map((c) => c.display_name).join(', ')}`}
+                                    </Text>
+                                </Pressable>
+                            )}
+
+                            {/* TICKET-082: quiet Supper opt-in — only when friends are
+                                tagged. Default OFF; tagging alone stays a plain log. */}
+                            {!FRIEND_TEST.hideSuppers && companions.length > 0 && (
+                                <Pressable
+                                    onPress={() => setIsSupper((v) => !v)}
+                                    style={styles.supperToggleRow}
+                                    accessibilityRole="switch"
+                                    accessibilityState={{ checked: isSupper }}
+                                    accessibilityLabel="make this a Supper — let them add their own take"
+                                    hitSlop={6}
+                                >
+                                    <View
+                                        style={[
+                                            styles.supperCheck,
+                                            {
+                                                backgroundColor: isSupper ? palette.primary : 'transparent',
+                                                borderColor: isSupper
+                                                    ? palette.primary
+                                                    : 'rgba(160,63,40,0.35)',
+                                            },
+                                        ]}
+                                    >
+                                        {isSupper ? (
+                                            <Text style={[styles.supperCheckMark, { color: '#fffdf8' }]}>✓</Text>
+                                        ) : null}
+                                    </View>
+                                    <Text
+                                        style={[
+                                            styles.supperToggleLabel,
+                                            { color: isSupper ? palette.text : palette.textMuted },
+                                        ]}
+                                    >
+                                        make this a Supper — let them add their own take
+                                    </Text>
+                                </Pressable>
+                            )}
+                        </View>
                     )}
 
                     {/* 7 ── SHARE TO — hidden when no tables, and in supper-take mode
                         (the take is bound to the Supper, not shared to a Table). ── */}
                     {!isSupperTake && hasAnyTable && (
-                        <View style={styles.section}>
+                        <View style={[styles.card, { backgroundColor: palette.surfaceNote }]}>
                             <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
                                 SHARE TO
                             </Text>
@@ -1078,7 +1084,7 @@ const styles = StyleSheet.create({
     },
     headerLeft: {
         flex: 1,
-        gap: 2,
+        gap: 6,
     },
     kicker: {
         fontFamily: 'Manrope_600SemiBold',
@@ -1101,13 +1107,20 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     scrollContent: {
-        paddingHorizontal: 24,
-        gap: 18,
-        paddingTop: 4,
+        paddingHorizontal: 16,
+        gap: 12,
+        paddingTop: 8,
     },
-    // Sections
-    section: {
-        gap: 8,
+    // Vellum cards — each section floats as a warm-white note on the cream page.
+    // Background shift + ambient shadow IS the brand's sanctioned sectioning
+    // (never 1px borders). Cream root → white note cards = the stacked-vellum
+    // layers the theme is built around.
+    card: {
+        borderRadius: Radius.lg,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        gap: 10,
+        ...Shadow.note,
     },
     sectionLabel: {
         fontFamily: 'Manrope_600SemiBold',
@@ -1140,7 +1153,7 @@ const styles = StyleSheet.create({
     },
     // Note preview block
     notePreview: {
-        minHeight: 120,
+        minHeight: 170,
         borderBottomWidth: 1,
         paddingBottom: 10,
         paddingTop: 6,
