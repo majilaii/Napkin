@@ -461,8 +461,9 @@ serve(async (req) => {
             if (deduped.length > 0) {
                 const { data: shareRows } = await supabase
                     .from('table_shares')
-                    .select('id, job_id, table_id, author_id, restaurant_id, note, source, extraction_status, reaction_count, top_emojis, created_at')
-                    .in('id', deduped);
+                    .select('id, job_id, table_id, author_id, restaurant_id, note, source, extraction_status, reaction_count, comment_count, top_emojis, created_at')
+                    .in('id', deduped)
+                    .is('deleted_at', null);
 
                 const shareAuthorIds = [...new Set((shareRows ?? []).map((s: any) => s.author_id as string))];
                 const shareAuthorMap = new Map<string, any>();
@@ -516,6 +517,7 @@ serve(async (req) => {
                     note: child.note ?? null,
                     extractionStatus: child.extraction_status ?? null,
                     reactionCount: child.reaction_count ?? 0,
+                    commentCount: child.comment_count ?? 0,
                     topEmojis: child.top_emojis ?? [],
                     myReactions: myShareReactionMap.get(child.id) ?? [],
                     createdAt: child.created_at,
@@ -538,6 +540,7 @@ serve(async (req) => {
                                 table_id: child.table_id ?? tableId,
                                 created_at: child.created_at,
                                 reaction_count: child.reaction_count ?? 0,
+                                comment_count: child.comment_count ?? 0,
                                 top_emojis: child.top_emojis ?? [],
                                 my_reactions: myShareReactionMap.get(child.id) ?? [],
                             });
