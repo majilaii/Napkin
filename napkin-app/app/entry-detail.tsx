@@ -400,6 +400,18 @@ export default function EntryDetailScreen() {
     const { data: entryPhotoRows } = useEntryPhotos(entry?.id);
     // Viewer's personal history at this restaurant (cross-Table, excludes this entry)
     const { user: viewer } = useAuth();
+
+    // TICKET-082: the viewer is a Supper member who hasn't logged their own take
+    // yet → offer an "add your take" CTA. Host (and anyone who already took) is in
+    // `takes`, so they never see it.
+    const viewerIsPendingTaker = !!(
+        supperEnabled &&
+        entry?.supper_id &&
+        supperDetail &&
+        viewer?.id &&
+        supperDetail.roster.some((r) => r.user_id === viewer.id) &&
+        !supperDetail.takes.some((t) => t.user_id === viewer.id)
+    );
     const { data: userHistory } = useUserRestaurantHistory(
         entry?.restaurant_id ?? null,
         viewer?.id ?? null,
@@ -1555,6 +1567,34 @@ export default function EntryDetailScreen() {
                         />
                     ) : null}
 
+                    {/* ── "add your take" — only for a Supper member who hasn't logged
+                        their own take. Opens the logger in supper-take mode. ──────── */}
+                    {viewerIsPendingTaker && entry.restaurant_id ? (
+                        <Pressable
+                            onPress={() =>
+                                router.push({
+                                    pathname: '/log-meal',
+                                    params: {
+                                        supperTakeId: entry.supper_id!,
+                                        restaurant: JSON.stringify({
+                                            id: entry.restaurant_id,
+                                            name: entry.restaurants?.name ?? 'Restaurant',
+                                        }),
+                                    },
+                                })
+                            }
+                            style={({ pressed }) => [
+                                styles.addTakeCta,
+                                { backgroundColor: palette.primary, opacity: pressed ? 0.88 : 1 },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="add your take to this supper"
+                        >
+                            <Ionicons name="add" size={18} color="#fffdf8" />
+                            <Text style={styles.addTakeCtaLabel}>add your take</Text>
+                        </Pressable>
+                    ) : null}
+
                     {/* Comments — plain rows on the warm cream page, outside the note card. */}
                     {/* Comments — shown for table scope (existing) and public scope (viewAs=public) */}
                     {entry.id && (isPublicView || entry.table_id) && (interactions?.comments ?? []).length > 0 && (
@@ -2170,6 +2210,21 @@ const PAGE_H = 14;
 
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    addTakeCta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        marginHorizontal: PAGE_H,
+        marginTop: Spacing.md,
+        paddingVertical: 14,
+        borderRadius: Radius.lg,
+    },
+    addTakeCtaLabel: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 17,
+        color: '#fffdf8',
+    },
     topBar: {
         paddingHorizontal: PAGE_H,
         paddingBottom: Spacing.sm,

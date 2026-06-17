@@ -51,6 +51,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
+import { useAddSupperTake } from '@/hooks/suppers';
 import { useToast } from '@/providers/ToastProvider';
 import { queryKeys } from '@/lib/queryKeys';
 import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
@@ -268,11 +269,18 @@ export default function LogMealScreen() {
     }, [toast, signOut, router]);
 
     // ── Parse route params ─────────────────────────────────────────────
-    const { restaurant: restaurantParam, initialTableId, pageId } = useLocalSearchParams<{
+    const { restaurant: restaurantParam, initialTableId, pageId, supperTakeId } = useLocalSearchParams<{
         restaurant: string;
         initialTableId?: string;
         pageId?: string;
+        /** TICKET-082: present → "add your take" mode for an existing Supper. */
+        supperTakeId?: string;
     }>();
+    // Supper-take mode: this log is the caller's own take on an existing Supper.
+    // Reuses the whole logger (rating/note/photos/details) but routes the submit
+    // through useAddSupperTake and hides share-to / companions / supper-opt-in
+    // (those are inherited from the Supper, not re-chosen per take).
+    const isSupperTake = !!supperTakeId;
 
     const restaurant: LogSheetRestaurant = React.useMemo(() => {
         if (restaurantParam) {
@@ -287,6 +295,7 @@ export default function LogMealScreen() {
     const hasAnyTable = tableList.length > 0;
 
     const createEntry = useCreateEntry(user?.id, null);
+    const addSupperTake = useAddSupperTake();
 
     // ── Form state ──────────────────────────────────────────────────────
     const [rating, setRating] = useState(0);
@@ -470,10 +479,62 @@ export default function LogMealScreen() {
     }, []);
 
     // ── Submit ─────────────────────────────────────────────────────────
-    const canSubmit = rating > 0 && !createEntry.isPending && !photos.some((p) => p.uploading);
+    const canSubmit =
+        rating > 0 &&
+        !createEntry.isPending &&
+        !addSupperTake.isPending &&
+        !photos.some((p) => p.uploading);
 
     const handleSave = useCallback(async () => {
         if (!canSubmit || !user?.id) return;
+
+        // ── Supper-take mode: post the caller's own take, not a new log ──
+        if (isSupperTake && supperTakeId) {
+            const takePhotoUrls = photos
+                .filter((p) => p.publicUrl)
+                .map((p) => p.publicUrl as string);
+            addSupperTake.mutate(
+                {
+                    supper_id: supperTakeId,
+                    rating: Math.round(rating * 2) / 2,
+                    content: notes.trim() || null,
+                    visited_at: visitedAt.toISOString(),
+                    photo_urls: takePhotoUrls,
+                    vibe_rating: breakdown.vibe > 0 ? breakdown.vibe : null,
+                    flavor_rating: breakdown.flavor > 0 ? breakdown.flavor : null,
+                    service_rating: breakdown.service > 0 ? breakdown.service : null,
+                    value_rating: breakdown.value > 0 ? breakdown.value : null,
+                    liked,
+                },
+                {
+                    onSuccess: () => {
+                        // Photos now belong to the take entry — don't clean them up.
+                        savedRef.current = true;
+                        // The take is the caller's own entry → surface it in their
+                        // Journal (which shows all own entries since 20260616000100).
+                        if (user?.id) {
+                            qc.invalidateQueries({ queryKey: queryKeys.entries.mySolo(user.id) });
+                        }
+                        // The take marks the author "been" at the restaurant server-side
+                        // → refresh the restaurant page's who's-been / numbers.
+                        if (restaurant.id) {
+                            qc.invalidateQueries({ queryKey: queryKeys.restaurants.page(restaurant.id) });
+                        }
+                        toast.show('added your take');
+                        router.back();
+                    },
+                    onError: (err) => {
+                        const code = (err as any)?.cause?.code ?? (err as any)?.code;
+                        if (code === 'session_expired') {
+                            handleSessionExpired();
+                            return;
+                        }
+                        Alert.alert('Error', (err as any)?.message ?? 'Could not add your take');
+                    },
+                },
+            );
+            return;
+        }
 
         const photoSlots = photos.map((s) => ({ publicUrl: s.publicUrl }));
         const payload = buildEntryPayload({
@@ -584,6 +645,9 @@ export default function LogMealScreen() {
         breakdown,
         companions,
         isSupper,
+        isSupperTake,
+        supperTakeId,
+        addSupperTake,
         restaurant,
         initialTableId,
         pageId,
@@ -610,7 +674,7 @@ export default function LogMealScreen() {
                 <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                     <View style={styles.headerLeft}>
                         <Text style={[styles.kicker, { color: palette.textMuted }]}>
-                            LOG A MEAL
+                            {isSupperTake ? 'ADD YOUR TAKE' : 'LOG A MEAL'}
                         </Text>
                         <Text
                             style={[styles.restaurantName, { color: palette.text }]}
@@ -779,20 +843,23 @@ export default function LogMealScreen() {
                         onTapPhoto={handleTapPhoto}
                     />
 
-                    {/* 6 ── + who was there — companions (kept) ── */}
-                    <View style={styles.expanderRow}>
-                        <Pressable
-                            onPress={() => setCompanionPickerVisible(true)}
-                            hitSlop={8}
-                            accessibilityLabel="add who was there"
-                        >
-                            <Text style={[styles.expander, { color: palette.textMuted }]}>
-                                {companions.length > 0 ? '— who was there' : '+ who was there'}
-                            </Text>
-                        </Pressable>
-                    </View>
+                    {/* 6 ── + who was there — companions (kept). Hidden in supper-take
+                        mode: the roster is inherited from the Supper, not re-tagged. ── */}
+                    {!isSupperTake && (
+                        <View style={styles.expanderRow}>
+                            <Pressable
+                                onPress={() => setCompanionPickerVisible(true)}
+                                hitSlop={8}
+                                accessibilityLabel="add who was there"
+                            >
+                                <Text style={[styles.expander, { color: palette.textMuted }]}>
+                                    {companions.length > 0 ? '— who was there' : '+ who was there'}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    )}
 
-                    {companions.length > 0 && (
+                    {!isSupperTake && companions.length > 0 && (
                         <Pressable
                             onPress={() => setCompanionPickerVisible(true)}
                             hitSlop={8}
@@ -805,8 +872,9 @@ export default function LogMealScreen() {
                     )}
 
                     {/* TICKET-082: quiet Supper opt-in — only when friends are tagged.
-                        Default OFF; tagging alone stays a plain companion log. */}
-                    {!FRIEND_TEST.hideSuppers && companions.length > 0 && (
+                        Default OFF; tagging alone stays a plain companion log. Never
+                        shown in take mode (you're joining an existing Supper). */}
+                    {!isSupperTake && !FRIEND_TEST.hideSuppers && companions.length > 0 && (
                         <Pressable
                             onPress={() => setIsSupper((v) => !v)}
                             style={styles.supperToggleRow}
@@ -841,8 +909,9 @@ export default function LogMealScreen() {
                         </Pressable>
                     )}
 
-                    {/* 7 ── SHARE TO — hidden when no tables ── */}
-                    {hasAnyTable && (
+                    {/* 7 ── SHARE TO — hidden when no tables, and in supper-take mode
+                        (the take is bound to the Supper, not shared to a Table). ── */}
+                    {!isSupperTake && hasAnyTable && (
                         <View style={styles.section}>
                             <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
                                 SHARE TO
@@ -925,11 +994,15 @@ export default function LogMealScreen() {
                                 backgroundColor: canSubmit
                                     ? palette.primary
                                     : palette.surfaceContainerHigh,
-                                opacity: pressed ? 0.85 : createEntry.isPending ? 0.65 : 1,
+                                opacity: pressed
+                                    ? 0.85
+                                    : createEntry.isPending || addSupperTake.isPending
+                                    ? 0.65
+                                    : 1,
                             },
                         ]}
                     >
-                        {createEntry.isPending ? (
+                        {createEntry.isPending || addSupperTake.isPending ? (
                             <ActivityIndicator color="#fffdf8" size="small" />
                         ) : (
                             <Text
@@ -940,7 +1013,7 @@ export default function LogMealScreen() {
                                     },
                                 ]}
                             >
-                                SAVE
+                                {isSupperTake ? 'ADD TAKE' : 'SAVE'}
                             </Text>
                         )}
                     </Pressable>

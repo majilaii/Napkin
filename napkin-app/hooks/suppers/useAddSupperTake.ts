@@ -33,6 +33,8 @@ export interface AddSupperTakeInput {
     rating: number | null;
     content?: string | null;
     dish_description?: string | null;
+    /** When the caller ate (ISO). Defaults server-side to now when omitted. */
+    visited_at?: string | null;
     photo_urls?: string[];
     vibe_rating?: number | null;
     flavor_rating?: number | null;
@@ -70,6 +72,7 @@ async function addSupperTake(input: AddSupperTakeInput): Promise<ServerTakeRow> 
             rating: input.rating,
             content: input.content ?? null,
             dish_description: input.dish_description ?? null,
+            visited_at: input.visited_at ?? null,
             photo_urls: input.photo_urls ?? [],
             vibe_rating: input.vibe_rating ?? null,
             flavor_rating: input.flavor_rating ?? null,
@@ -116,7 +119,7 @@ export function useAddSupperTake() {
                     rating: input.rating ?? null,
                     content: input.content ?? null,
                     dish_description: input.dish_description ?? null,
-                    visited_at: now,
+                    visited_at: input.visited_at ?? now,
                     created_at: now,
                     vibe_rating: input.vibe_rating ?? null,
                     flavor_rating: input.flavor_rating ?? null,
