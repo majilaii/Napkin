@@ -65,7 +65,12 @@ import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
-import { extractFromVideo } from '@/modules/media-extract';
+import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
+
+// Gate the video-import entry point on the native module actually being linked.
+// Computed once at import (safe — never throws). Hidden until the module links,
+// so we never show a button that just errors.
+const VIDEO_IMPORT_AVAILABLE = isVideoImportAvailable();
 import { safeRandomUUID } from '@/lib/uuid';
 import { sourceNoun } from '@/lib/sourceNoun';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
@@ -793,7 +798,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 onClipboardChip={handleClipboardChip}
                                 inputRef={inputRef}
                                 onPickScreenshot={handlePickScreenshot}
-                                onPickVideo={handlePickVideo}
+                                onPickVideo={VIDEO_IMPORT_AVAILABLE ? handlePickVideo : undefined}
                             />
                         )}
 
