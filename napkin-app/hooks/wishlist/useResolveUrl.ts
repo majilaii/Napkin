@@ -16,7 +16,7 @@ import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
 // TICKET-079: reddit/substack widen the union. They route through the same 'web'
 // extraction path server-side but carry a finer label so copy can say "from reddit" /
 // "from substack" and pick the right noun (post / page).
-type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'reddit' | 'substack' | 'screenshot' | 'vision';
+type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'reddit' | 'substack' | 'screenshot' | 'vision' | 'video';
 type Confidence = 'exact' | 'high' | 'low';
 
 export interface ResolvedCandidate {
@@ -100,6 +100,8 @@ export function useResolveUrl() {
         /** TICKET-060: optional image_path for screenshot/vision path */
         imagePath?: string,
         caption?: string,
+        /** TICKET-082: on-device video OCR + transcript text (URL-less path). */
+        extractedText?: string,
     ) => {
         // Abort any in-flight request
         abortControllerRef.current?.abort();
@@ -119,6 +121,7 @@ export function useResolveUrl() {
                     url: url || undefined,
                     ...(imagePath ? { image_path: imagePath } : {}),
                     ...(caption ? { caption } : {}),
+                    ...(extractedText ? { extracted_text: extractedText } : {}),
                 },
                 signal: controller.signal,
             });

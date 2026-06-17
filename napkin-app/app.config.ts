@@ -32,6 +32,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
             // distance ("near me"). Requested lazily, never background.
             NSLocationWhenInUseUsageDescription:
                 'Napkin uses your location to sort your saved spots by distance and find places near you.',
+            // TICKET-082: on-device voiceover transcription when importing a video
+            // (the spoken restaurant names). Runs on-device; audio is not uploaded.
+            NSSpeechRecognitionUsageDescription:
+                'Napkin reads the names spoken in a video you import so it can find those restaurants. This runs on your device.',
             // ARCH-REVIEW-3: Belt-and-suspenders in case Expo SDK 54 string-array
             // scheme doesn't emit both entries. Explicit declaration guarantees both.
             CFBundleURLTypes: [

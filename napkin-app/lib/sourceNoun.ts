@@ -29,7 +29,8 @@ export type SourceNounType =
     | 'reddit'
     | 'substack'
     | 'screenshot'
-    | 'vision';
+    | 'vision'
+    | 'video';
 
 /**
  * Map a known `source_type` to its copy noun.
@@ -42,6 +43,8 @@ export function sourceNoun(
 ): string {
     switch (sourceType) {
         case 'tiktok':
+            return 'video';
+        case 'video':
             return 'video';
         case 'instagram':
             return 'post';

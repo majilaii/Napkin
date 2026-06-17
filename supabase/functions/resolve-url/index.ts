@@ -253,6 +253,7 @@ interface StagedCandidate {
 function dedupeAndRank(
     textCandidates: ExtractedCandidate[],
     visionCandidates: ExtractedCandidate[],
+    cap = 6,
 ): StagedCandidate[] {
     const staged: StagedCandidate[] = [];
     const fuzzySet = new Map<string, number>(); // fuzzyKey → staged index
@@ -320,7 +321,7 @@ function dedupeAndRank(
         return a.ordinal - b.ordinal;
     });
 
-    return staged.slice(0, 6); // cap 6
+    return staged.slice(0, cap);
 }
 
 /** Merge two ExtractedCandidates: `primary` wins on non-null fields; `secondary` fills nulls. */
@@ -2038,6 +2039,195 @@ async function buildLegacyCandidateResponse(
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
+/**
+ * TICKET-082 — resolve restaurants from on-device-extracted video text.
+ *
+ * The client runs Vision OCR (frame overlays) + Speech transcription (voiceover)
+ * on the phone and POSTs the combined text. We feed it through the SAME
+ * multi-candidate text extractor the TikTok caption path uses, then resolve each
+ * candidate to a Place. Mirrors handleUrlResolve's text-tier + resolution
+ * (steps 3,5,7–10) minus oEmbed/thumbnail-vision/deadline-budget — the heavy
+ * perception already happened for free on-device. Cap raised to 12 (listicles
+ * routinely run to 10–11 spots, vs the URL path's 6).
+ */
+async function handleVideoText(
+    supabase: any,
+    user: { id: string },
+    extractedText: string,
+    caption: string | null,
+    authHeader: string,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
+): Promise<Response> {
+    const sourceType: SourceType = 'video';
+    const notePrefill = caption ? captionToNote(caption) : '';
+    const CAP = 12;
+
+    // Caption (hashtags/handle → city hints) joins the on-device text.
+    const fullText = [caption, extractedText].filter(Boolean).join('\n').slice(0, 8000);
+    const listMarker = detectListMarker(fullText);
+
+    // Content hash for cache + stable candidate ids (re-importing a clip is free).
+    const hashBuf = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(`video:${fullText}`).buffer as ArrayBuffer,
+    );
+    const contentHash = Array.from(new Uint8Array(hashBuf))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    const modelId = Deno.env.get('EXTRACTION_MODEL') ?? 'claude-haiku-4-5-20251001';
+
+    let textCandidates = await readExtractionCache(supabase, contentHash);
+    if (!textCandidates || textCandidates.length === 0) {
+        // Bound the (paid) model call — URL path uses a deadline budget; here we
+        // didn't pay for on-device perception, but a hung extraction still needs
+        // a graceful ceiling.
+        const extractAc = new AbortController();
+        const extractTimer = setTimeout(() => extractAc.abort(), 7000);
+        try {
+            textCandidates = await extractFromTextMulti(fullText, extractAc.signal, CAP);
+        } catch {
+            textCandidates = [];
+        } finally {
+            clearTimeout(extractTimer);
+        }
+        if (textCandidates.length > 0) {
+            writeExtractionCache(supabase, contentHash, null, textCandidates, modelId).catch(() => null);
+        }
+    }
+
+    // CAP=12: listicles routinely run to 10–11 spots. dedupeAndRank's default
+    // cap is 6 (right for the URL path); the video path passes 12 explicitly.
+    const staged = dedupeAndRank(textCandidates ?? [], [], CAP);
+    if (staged.length === 0) {
+        return jsonResponse({
+            data: {
+                source_type: sourceType,
+                best_query: null,
+                note_prefill: notePrefill,
+                candidates: [],
+                partial_source: null,
+                list_count: listMarker.count,
+            } satisfies ResolveUrlResponse,
+        });
+    }
+
+    // Resolve each candidate to a Place in parallel (bounded).
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 9000);
+    let placeResults: (PlacesPayload | null)[];
+    try {
+        placeResults = await Promise.all(
+            staged.map(async (s) => {
+                try {
+                    return await resolveCandidateToPlace(
+                        supabase, s.extracted, authHeader, supabaseUrl, supabaseAnonKey, ac.signal,
+                    );
+                } catch {
+                    return null;
+                }
+            }),
+        );
+    } finally {
+        clearTimeout(timer);
+    }
+
+    // Post-Places dedupe by google_place_id.
+    const seenPlaceIds = new Set<string>();
+    const deduped: Array<{ s: StagedCandidate; place: PlacesPayload | null }> = [];
+    for (let i = 0; i < staged.length; i++) {
+        const place = placeResults[i];
+        const placeId = place?.id ?? staged[i].extracted.google_place_id;
+        if (placeId && seenPlaceIds.has(placeId)) continue;
+        if (placeId) seenPlaceIds.add(placeId);
+        deduped.push({ s: staged[i], place });
+    }
+
+    // Map verified restaurants + wishlist dedupe.
+    const allPlaceIds = deduped.map((d) => d.place?.id).filter(Boolean) as string[];
+    const { data: restaurantRows } = allPlaceIds.length > 0
+        ? await supabase.from('restaurants').select('id, external_id, verification').in('external_id', allPlaceIds)
+        : { data: [] };
+    const placeIdToRestaurantId = mapVerifiedRestaurantIds(restaurantRows ?? []);
+
+    const knownRestaurantIds = [...placeIdToRestaurantId.values()];
+    const wishlistedSet = new Set<string>();
+    if (knownRestaurantIds.length > 0) {
+        const { data: wishlistRows } = await supabase
+            .from('wishlist_items')
+            .select('restaurant_id')
+            .eq('user_id', user.id)
+            .in('restaurant_id', knownRestaurantIds);
+        for (const row of (wishlistRows ?? [])) {
+            if (row.restaurant_id) wishlistedSet.add(row.restaurant_id);
+        }
+    }
+
+    const candidates: ResolvedCandidate[] = await Promise.all(
+        deduped.slice(0, CAP).map(async ({ s, place }, idx) => {
+            const restaurantId = place ? (placeIdToRestaurantId.get(place.id) ?? null) : null;
+            const alreadyWishlisted = restaurantId ? wishlistedSet.has(restaurantId) : false;
+            const confidence: Confidence = s.extracted.confidence === 'high' ? 'high' : 'low';
+            const candidateId = await computeCandidateId(contentHash, normalizeName(s.extracted.name), idx);
+            const restaurant: PlacesPayload = place
+                ? {
+                    ...place,
+                    external_id: place.id,
+                    location: {
+                        address: place.formattedAddress ?? undefined,
+                        locality: place.city ?? undefined,
+                        country: place.country ?? undefined,
+                    },
+                }
+                : {
+                    id: '',
+                    name: s.extracted.name,
+                    formattedAddress: s.extracted.address,
+                    city: s.extracted.city,
+                    country: null,
+                    latitude: null,
+                    longitude: null,
+                    categories: [],
+                    cuisine: s.extracted.cuisine,
+                    googleRating: null,
+                    googleRatingCount: null,
+                    priceLevel: null,
+                    photoReference: null,
+                    website: null,
+                    link: null,
+                    external_id: null,
+                    location: {
+                        address: s.extracted.address ?? undefined,
+                        locality: s.extracted.city ?? undefined,
+                    },
+                };
+            return {
+                candidate_id: candidateId,
+                restaurant,
+                confidence,
+                google_place_id: place?.id ?? s.extracted.google_place_id ?? null,
+                restaurant_id: restaurantId,
+                already_wishlisted: alreadyWishlisted,
+                city_inferred: s.extracted.city_inferred,
+            };
+        }),
+    );
+
+    const top = staged[0]?.extracted;
+    const bestQuery = top?.name ? [top.name, top.city].filter(Boolean).join(', ') : null;
+
+    return jsonResponse({
+        data: {
+            source_type: sourceType,
+            best_query: bestQuery,
+            note_prefill: notePrefill,
+            candidates,
+            partial_source: null,
+            list_count: listMarker.count,
+        } satisfies ResolveUrlResponse,
+    });
+}
+
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
@@ -2056,6 +2246,8 @@ serve(async (req) => {
     let body: {
         url?: string;
         image_path?: string;
+        /** TICKET-082: on-device video OCR + voiceover transcript (text-only path). */
+        extracted_text?: string;
         caption?: string;
         action?: string;
         job_id?: string;
@@ -2115,6 +2307,31 @@ serve(async (req) => {
     // ── save_spots action (ARCH-REVIEW-2 #1) ──────────────────────────────────
     if (body?.action === 'save_spots') {
         return handleSaveSpots(supabase, user, body as Record<string, unknown>);
+    }
+
+    // ── Video text path (TICKET-082): on-device OCR/transcript supplied ────────
+    // The phone did the heavy perception (Vision OCR + Speech) for free; we only
+    // run the cheap text extractor + Places resolution here. No URL required.
+    const extractedText = typeof body?.extracted_text === 'string' ? body.extracted_text.trim() : '';
+    if (extractedText) {
+        const { data: rlRows, error: rlErr } = await supabase.rpc('check_and_increment_rate_limit', {
+            p_user_id: user.id, p_bucket_key: 'resolve_url', p_max: 30, p_window_seconds: 3600,
+        });
+        if (!rlErr && rlRows?.[0] && !rlRows[0].allowed) {
+            return jsonResponse(
+                { error: { code: 'RATE_LIMITED', message: 'Too many requests', details: { retry_after_seconds: rlRows[0].retry_after_seconds } } },
+                429,
+            );
+        }
+        try {
+            return await handleVideoText(
+                supabase, user, extractedText, body?.caption ?? null,
+                authHeader, supabaseUrl, supabaseAnonKey,
+            );
+        } catch (e: any) {
+            console.error('resolve-url video-text error:', e);
+            return errorResponse('INTERNAL', 'Internal server error', 500);
+        }
     }
 
     const rawUrl = body?.url;

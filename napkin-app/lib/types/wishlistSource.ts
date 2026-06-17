@@ -17,6 +17,7 @@ export type {
     WishlistSourceWeb,
     WishlistSourceScreenshot,
     WishlistSourceVision,
+    WishlistSourceVideo,
     WishlistSourceHandoff,
 } from '../../../supabase/functions/_shared/wishlistSource';
 

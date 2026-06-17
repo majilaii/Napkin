@@ -21,7 +21,8 @@ export type SourceType =
     | 'reddit'
     | 'substack'
     | 'screenshot'
-    | 'vision';
+    | 'vision'
+    | 'video';
 
 /**
  * Detect the source_type from a URL host.

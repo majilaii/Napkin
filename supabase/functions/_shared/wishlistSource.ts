@@ -8,7 +8,7 @@
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type WishlistSourceType = 'tiktok' | 'google_maps' | 'web' | 'screenshot' | 'vision' | 'handoff';
+export type WishlistSourceType = 'tiktok' | 'google_maps' | 'web' | 'screenshot' | 'vision' | 'video' | 'handoff';
 
 export interface WishlistSourceTikTok {
     type: 'tiktok';
@@ -46,6 +46,15 @@ export interface WishlistSourceVision {
 }
 
 /**
+ * TICKET-082: pinned from a video imported + extracted on-device (Vision OCR +
+ * voiceover). url-optional like screenshot/vision — the user shared/picked a file.
+ */
+export interface WishlistSourceVideo {
+    type: 'video';
+    caption?: string;
+}
+
+/**
  * TICKET-072: pinned via a wishlist handoff (share link).
  * sharer_name is frozen at share time; url is not applicable.
  * DB CHECK: source ? 'sharer_name' must be true.
@@ -61,6 +70,7 @@ export type WishlistSource =
     | WishlistSourceWeb
     | WishlistSourceScreenshot
     | WishlistSourceVision
+    | WishlistSourceVideo
     | WishlistSourceHandoff;
 
 // ── Validator ─────────────────────────────────────────────────────────────────
@@ -92,7 +102,7 @@ export function validateWishlistSource(
 
     // url is required for url-sourced types; optional for screenshot/vision
     const type = raw['type'];
-    const urlRequired = type !== 'screenshot' && type !== 'vision';
+    const urlRequired = type !== 'screenshot' && type !== 'vision' && type !== 'video';
     if (urlRequired && (typeof raw['url'] !== 'string' || raw['url'].trim() === '')) {
         return { ok: false, reason: 'missing_url' };
     }
@@ -128,6 +138,20 @@ export function validateWishlistSource(
         const source: WishlistSourceVision = { type: 'vision' };
         if (typeof raw['source_url'] === 'string') source.source_url = raw['source_url'];
         if (typeof raw['upload_path'] === 'string') source.upload_path = raw['upload_path'];
+        if (typeof raw['caption'] === 'string') source.caption = raw['caption'];
+        return { ok: true, source };
+    }
+
+    if (type === 'video') {
+        const whitelist = new Set(['type', 'caption']);
+        const extraKeys = Object.keys(raw).filter((k) => !whitelist.has(k));
+        if (extraKeys.length > 0) {
+            return { ok: false, reason: 'extra_keys', extra_keys: extraKeys };
+        }
+        if ('caption' in raw && raw['caption'] !== undefined && typeof raw['caption'] !== 'string') {
+            return { ok: false, reason: 'invalid_field_type:caption' };
+        }
+        const source: WishlistSourceVideo = { type: 'video' };
         if (typeof raw['caption'] === 'string') source.caption = raw['caption'];
         return { ok: true, source };
     }
