@@ -33,7 +33,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Type, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import { StarRating } from '@/components/StarRating';
@@ -534,6 +534,9 @@ export default function EntryDetailScreen() {
     const uploadGenRefs = useRef(new Map<string, number>());
     // Photo manage mode — toggled by the pencil icon; shows remove-grid + add button
     const [photoManageMode, setPhotoManageMode] = useState(false);
+    // Overflow (⋯) menu for owner post-actions — keeps destructive/edit actions out
+    // of the reading surface.
+    const [menuOpen, setMenuOpen] = useState(false);
 
     // ── Derived photo state ───────────────────────────────────────────────────
     const entryPhotoUrls: string[] = entryPhotoRows
@@ -943,17 +946,23 @@ export default function EntryDetailScreen() {
                                     <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>back</Text>
                                 </Pressable>
                                 {isOwnEntry && (
-                                    <Pressable
-                                        onPress={() => setPhotoManageMode((v) => !v)}
-                                        hitSlop={12}
-                                        accessibilityLabel="Manage photos"
-                                    >
-                                        <Ionicons
-                                            name={photoManageMode ? 'checkmark' : 'pencil-outline'}
-                                            size={18}
-                                            color={palette.textSecondary}
-                                        />
-                                    </Pressable>
+                                    photoManageMode ? (
+                                        <Pressable
+                                            onPress={() => setPhotoManageMode(false)}
+                                            hitSlop={12}
+                                            accessibilityLabel="Done managing photos"
+                                        >
+                                            <Ionicons name="checkmark" size={18} color={palette.textSecondary} />
+                                        </Pressable>
+                                    ) : (
+                                        <Pressable
+                                            onPress={() => setMenuOpen(true)}
+                                            hitSlop={12}
+                                            accessibilityLabel="More options"
+                                        >
+                                            <Ionicons name="ellipsis-horizontal" size={20} color={palette.textSecondary} />
+                                        </Pressable>
+                                    )
                                 )}
                             </View>
                             {/* Framed photos — warm prints on the journal page */}
@@ -989,34 +998,31 @@ export default function EntryDetailScreen() {
                             </View>
                         </View>
                     ) : (
-                        // ── Photoless: letterpress masthead (mirrors restaurant-page take-B) ──
+                        // ── Photoless: quiet top bar; the name lives once, in the body
+                        //    card below (no separate masthead → no duplicate name). ──
                         <>
-                            {/* Quiet back affordance — canvas idiom, not the primary "← Back" */}
-                            <Pressable
-                                onPress={() => router.back()}
-                                style={styles.breadcrumb}
-                                hitSlop={12}
-                                accessibilityLabel="back"
-                                accessibilityRole="button"
-                            >
-                                <Ionicons name="chevron-back" size={18} color={palette.textSecondary} />
-                                <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>
-                                    back
-                                </Text>
-                            </Pressable>
-
-                            {/* Centered masthead: hairline · italic serif name · meta · hairline */}
-                            <View style={styles.masthead}>
-                                <View style={[styles.mastheadHairline, { backgroundColor: 'rgba(160,63,40,0.25)' }]} />
-                                <Text style={[styles.mastheadName, { color: palette.text }]} numberOfLines={2}>
-                                    {restaurantName}
-                                </Text>
-                                {entry.restaurants?.city ? (
-                                    <Text style={[styles.mastheadMeta, { color: palette.textMuted }]}>
-                                        {entry.restaurants.city}
+                            <View style={styles.topBar}>
+                                <Pressable
+                                    onPress={() => router.back()}
+                                    style={styles.breadcrumb}
+                                    hitSlop={12}
+                                    accessibilityLabel="back"
+                                    accessibilityRole="button"
+                                >
+                                    <Ionicons name="chevron-back" size={18} color={palette.textSecondary} />
+                                    <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>
+                                        back
                                     </Text>
-                                ) : null}
-                                <View style={[styles.mastheadHairline, { backgroundColor: 'rgba(160,63,40,0.25)' }]} />
+                                </Pressable>
+                                {isOwnEntry && (
+                                    <Pressable
+                                        onPress={() => setMenuOpen(true)}
+                                        hitSlop={12}
+                                        accessibilityLabel="More options"
+                                    >
+                                        <Ionicons name="ellipsis-horizontal" size={20} color={palette.textSecondary} />
+                                    </Pressable>
+                                )}
                             </View>
 
                             {/* Own-entry: quiet add-photo murmur (no big camera box) */}
@@ -1108,13 +1114,16 @@ export default function EntryDetailScreen() {
                         </View>
                     )}
 
-                    {/* ── Body (encased note card) ───────────────────────── */}
+                    {/* ── Body (encased note card) — a discernible warm card on the
+                        paper (surface shift + ambient shadow), so the writing/rating
+                        read as a distinct block, not blended into the page. ───────── */}
                     <View
                         style={[
                             styles.bodyCard,
+                            Shadow.note,
                             {
-                                backgroundColor: palette.background,
-                                marginTop: hasHeroDisplay ? Spacing.md : 8,
+                                backgroundColor: palette.surfaceNote,
+                                marginTop: hasHeroDisplay ? Spacing.md : Spacing.sm,
                             },
                         ]}
                     >
@@ -1668,27 +1677,6 @@ export default function EntryDetailScreen() {
                         </View>
                     )}
 
-                    {/* Delete — owner-only, quiet destructive affordance at the foot. */}
-                    {isOwnEntry && !isPublicView && (
-                        <Pressable
-                            onPress={handleDelete}
-                            disabled={deleteEntry.isPending}
-                            style={({ pressed }) => [styles.deleteRow, { opacity: pressed ? 0.6 : 1 }]}
-                            accessibilityRole="button"
-                            accessibilityLabel="Delete this review"
-                        >
-                            {deleteEntry.isPending ? (
-                                <ActivityIndicator size="small" color={palette.textMuted} />
-                            ) : (
-                                <>
-                                    <Ionicons name="trash-outline" size={15} color={palette.textMuted} />
-                                    <Text style={[styles.deleteLabel, { color: palette.textMuted }]}>
-                                        delete review
-                                    </Text>
-                                </>
-                            )}
-                        </Pressable>
-                    )}
                 </ScrollView>
 
                 {/* ── Floating action pill + docked composer ── */}
@@ -1747,6 +1735,52 @@ export default function EntryDetailScreen() {
                 topInset={insets.top}
                 onClose={() => setLightboxOpen(false)}
             />
+
+            {/* ── ⋯ overflow menu — every post action lives here, off the reading surface ── */}
+            <Modal
+                visible={menuOpen}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setMenuOpen(false)}
+            >
+                <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
+                    <Pressable
+                        style={[
+                            styles.menuSheet,
+                            { backgroundColor: palette.surfaceNote, paddingBottom: insets.bottom + Spacing.md },
+                        ]}
+                        onPress={() => {}}
+                    >
+                        {isOwnEntry && hasUserPhotos ? (
+                            <Pressable
+                                style={styles.menuRow}
+                                onPress={() => { setMenuOpen(false); setPhotoManageMode(true); }}
+                                accessibilityRole="button"
+                            >
+                                <Ionicons name="images-outline" size={20} color={palette.text} />
+                                <Text style={[styles.menuLabel, { color: palette.text }]}>manage photos</Text>
+                            </Pressable>
+                        ) : null}
+                        {isOwnEntry ? (
+                            <Pressable
+                                style={styles.menuRow}
+                                onPress={() => { setMenuOpen(false); handleDelete(); }}
+                                accessibilityRole="button"
+                            >
+                                <Ionicons name="trash-outline" size={20} color={palette.primary} />
+                                <Text style={[styles.menuLabel, { color: palette.primary }]}>delete review</Text>
+                            </Pressable>
+                        ) : null}
+                        <Pressable
+                            style={[styles.menuRow, styles.menuCancel]}
+                            onPress={() => setMenuOpen(false)}
+                            accessibilityRole="button"
+                        >
+                            <Text style={[styles.menuLabel, { color: palette.textMuted }]}>cancel</Text>
+                        </Pressable>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </>
     );
 }
@@ -2278,17 +2312,30 @@ const styles = StyleSheet.create({
         fontSize: 17,
         color: '#fffdf8',
     },
-    deleteRow: {
+    menuBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(28,28,25,0.32)',
+        justifyContent: 'flex-end',
+    },
+    menuSheet: {
+        borderTopLeftRadius: Radius.lg,
+        borderTopRightRadius: Radius.lg,
+        paddingTop: Spacing.sm,
+        paddingHorizontal: Spacing.lg,
+    },
+    menuRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        marginTop: Spacing.lg,
+        gap: 12,
         paddingVertical: Spacing.md,
     },
-    deleteLabel: {
+    menuCancel: {
+        justifyContent: 'center',
+        marginTop: Spacing.xs,
+    },
+    menuLabel: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 13,
+        fontSize: 16,
     },
     topBar: {
         paddingHorizontal: PAGE_H,
@@ -2303,10 +2350,11 @@ const styles = StyleSheet.create({
     // Brand: white `--surface-note`, radius-xl, near-invisible warm border,
     // `--shadow-note`. Floats just below the hero (slightly overlapping).
     bodyCard: {
-        marginHorizontal: 0,
-        paddingHorizontal: PAGE_H,
-        paddingTop: 6,
-        paddingBottom: 20,
+        marginHorizontal: PAGE_H,
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.lg,
+        paddingBottom: Spacing.lg,
+        borderRadius: Radius.lg,
     },
 
     // Framed photos — warm prints on the journal page (replaces full-bleed).
