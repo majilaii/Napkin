@@ -1,27 +1,23 @@
 /**
- * SavedFromTikTokPanel — shows the TikTok thumbnail + attribution for a wishlist
- * entry that was saved via a TikTok video (TICKET-054).
+ * SavedFromTikTokPanel — quiet provenance line for a wishlist entry saved via a
+ * TikTok video (TICKET-054; redesigned 2026-06-17).
  *
- * Design rules (Heirloom Journal):
- * - 9:16 portrait thumbnail at ~38% panel width, left-aligned
- * - Attribution column right of thumbnail: italic Newsreader "saved from tiktok"
- *   + Manrope "@handle"
- * - Single Pressable wrapping both; tap → Linking.openURL
- * - onError → warm-paper placeholder (same 9:16 frame, no broken-image icon)
- * - No TikTok logo, no emoji, no hard 1px border
- * - Ambient shadow on thumbnail only
+ * Earlier this was a tall 9:16 thumbnail card with a serif headline parked right
+ * under the primary CTA — it read as a hero content section ("too tacky / front
+ * and center"). It is now a single muted meta line that lives with the other
+ * restaurant metadata (phone · directions · website · hours): a small TikTok
+ * glyph + lowercase Manrope "saved from tiktok · @handle" in textMuted. The
+ * provenance is preserved (and still taps through to the video) — it just no
+ * longer competes with the Table voices.
+ *
+ * Heirloom: lowercase verb, middle-dot metadata separator, Ionicons outline,
+ * muted Manrope (no italic serif — that's reserved for brand names/numerals),
+ * no card background, no shadow, no thumbnail.
  */
-import React, { useState } from 'react';
-import {
-    Alert,
-    Linking,
-    Pressable,
-    StyleSheet,
-    Text,
-    View,
-} from 'react-native';
-import { Image as ExpoImage } from 'expo-image';
-import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
+import React from 'react';
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
 
@@ -33,13 +29,11 @@ export function SavedFromTikTokPanel({ source }: SavedFromTikTokPanelProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
-    const [thumbnailFailed, setThumbnailFailed] = useState(false);
-
-    // Attribution: prefer author_handle, fallback to author_name
     const handle = source.author_handle ?? source.author_name ?? null;
+    const hasUrl = !!source.url;
 
     const handlePress = async () => {
-        if (!source.url) return; // defensive — shouldn't happen post-TICKET-053
+        if (!source.url) return;
         try {
             await Linking.openURL(source.url);
         } catch (err) {
@@ -48,76 +42,23 @@ export function SavedFromTikTokPanel({ source }: SavedFromTikTokPanelProps) {
         }
     };
 
-    const hasUrl = !!source.url;
-    // Only show the tall 9:16 thumbnail frame when there's an actual image.
-    // Without it, the empty frame rendered as a giant blank box on the
-    // restaurant page — collapse to a compact one-line attribution instead.
-    const showThumbnail = !thumbnailFailed && !!source.thumbnail_url;
-
-    const inner = (
-        <View style={styles.inner}>
-            {/* Thumbnail — 9:16 portrait, only when an image actually exists */}
-            {showThumbnail ? (
-                <View
-                    style={[
-                        styles.thumbnailContainer,
-                        {
-                            backgroundColor: palette.surfaceContainerHigh,
-                            ...Shadow.subtle,
-                        },
-                    ]}
-                >
-                    <ExpoImage
-                        source={{ uri: source.thumbnail_url }}
-                        style={StyleSheet.absoluteFill}
-                        contentFit="cover"
-                        onError={() => setThumbnailFailed(true)}
-                    />
-                    {/* Warm-paper inset hairline overlay — Heirloom: no hard 1px border */}
-                    <View
-                        style={[
-                            StyleSheet.absoluteFill,
-                            styles.borderOverlay,
-                            { backgroundColor: palette.surfaceJournalLow },
-                        ]}
-                        pointerEvents="none"
-                    />
-                </View>
-            ) : null}
-
-            {/* Attribution column */}
-            <View style={styles.attribution}>
-                <Text style={[Type.headlineItalic, styles.savedFromText, { color: palette.text }]}>
-                    saved from tiktok
-                </Text>
-                {handle ? (
-                    <Text
-                        style={[Type.body, styles.handleText, { color: palette.textMuted }]}
-                        numberOfLines={1}
-                    >
-                        @{handle}
-                    </Text>
-                ) : null}
-            </View>
+    const line = (
+        <View style={styles.row}>
+            <Ionicons name="logo-tiktok" size={14} color={palette.textMuted} style={styles.glyph} />
+            <Text style={[styles.label, { color: palette.textMuted }]} numberOfLines={1}>
+                saved from tiktok{handle ? ` · @${handle}` : ''}
+            </Text>
         </View>
     );
 
     if (!hasUrl) {
-        // No URL — render non-interactive
         return (
             <View
-                style={[
-                    styles.container,
-                    { backgroundColor: palette.surfaceJournalLow },
-                ]}
+                style={styles.wrap}
                 accessible
-                accessibilityLabel={
-                    handle
-                        ? `saved from tiktok by @${handle}`
-                        : 'saved from tiktok'
-                }
+                accessibilityLabel={handle ? `saved from tiktok by @${handle}` : 'saved from tiktok'}
             >
-                {inner}
+                {line}
             </View>
         );
     }
@@ -127,57 +68,33 @@ export function SavedFromTikTokPanel({ source }: SavedFromTikTokPanelProps) {
             onPress={handlePress}
             accessibilityRole="link"
             accessibilityLabel={
-                handle
-                    ? `saved from tiktok by @${handle}, opens on tiktok`
-                    : 'saved from tiktok, opens on tiktok'
+                handle ? `saved from tiktok by @${handle}, opens on tiktok` : 'saved from tiktok, opens on tiktok'
             }
-            style={({ pressed }) => [
-                styles.container,
-                { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.88 : 1 },
-            ]}
+            style={({ pressed }) => [styles.wrap, { opacity: pressed ? 0.6 : 1 }]}
+            hitSlop={8}
         >
-            {inner}
+            {line}
         </Pressable>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
+    wrap: {
         marginHorizontal: 22,
-        marginVertical: Spacing.md,
-        borderRadius: Radius.md,
-        overflow: 'hidden',
-        minHeight: 48,
+        marginTop: Spacing.xs,
+        marginBottom: Spacing.sm,
     },
-    inner: {
+    row: {
         flexDirection: 'row',
-        padding: Spacing.sm,
         alignItems: 'center',
-        gap: Spacing.md,
+        gap: 6,
     },
-    thumbnailContainer: {
-        // ~38% of panel width — flex: 0.38 relative to attribution flex: 1 gives ≈ 27%,
-        // so we use a fixed flex basis approach: flex: 2 thumbnail vs flex: 3 attribution
-        // gives 40% / 60% split which matches the 38–40% spec.
-        flex: 2,
-        aspectRatio: 9 / 16,
-        borderRadius: Radius.md,
-        overflow: 'hidden',
+    glyph: {
+        marginTop: 1,
     },
-    borderOverlay: {
-        opacity: 0.08,
-        borderRadius: Radius.md,
-    },
-    attribution: {
-        flex: 3,
-        justifyContent: 'center',
-        gap: Spacing.xs,
-    },
-    savedFromText: {
-        fontSize: 15,
-        lineHeight: 20,
-    },
-    handleText: {
+    label: {
+        fontFamily: 'Manrope_500Medium',
         fontSize: 13,
+        flexShrink: 1,
     },
 });

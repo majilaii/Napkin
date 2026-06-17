@@ -72,10 +72,7 @@ export function TableEntryCard({
         <View
             style={[
                 styles.card,
-                {
-                    backgroundColor: palette.surfaceNote,
-                    borderColor: palette.divider,
-                },
+                { backgroundColor: palette.surfaceNote },
                 Shadow.note,
             ]}
         >
@@ -195,12 +192,17 @@ export function TableEntryCard({
 
 const styles = StyleSheet.create({
     pressable: {
-        paddingHorizontal: Spacing.lg,
+        // No self horizontal padding — the feed list already provides the 20px
+        // gutter (tables.tsx feedList). The earlier +24 here made review cards
+        // 44px/side vs 20px for every sibling card, so they read as squished and
+        // not reaching the edge.
         marginBottom: Spacing.sm,
     },
     card: {
         borderRadius: 16,
-        borderWidth: 1,
+        // No 1px sectioning border (Heirloom rule) — separation comes from the
+        // surfaceNote background shift + ambient Shadow.note below.
+        borderWidth: 0,
         padding: Spacing.md,
         gap: 10,
     },

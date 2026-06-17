@@ -564,6 +564,12 @@ export default function RestaurantScreen() {
                         />
                     ) : null}
 
+                    {/* Quiet save-provenance line — sits with the metadata, not as a
+                        hero card. Only when this restaurant was saved from TikTok. */}
+                    {restaurant && tiktokSource ? (
+                        <SavedFromTikTokPanel source={tiktokSource.source} />
+                    ) : null}
+
                     {/* Signal strip — letterpress variant with TICKET-065 collapse logic */}
                     {restaurant ? (
                         <SignalStrip
@@ -593,11 +599,6 @@ export default function RestaurantScreen() {
                                 <Text style={styles.logBtnLabel}>LOG THIS MEAL</Text>
                             </Pressable>
                         </View>
-                    ) : null}
-
-                    {/* TikTok source panel — personal-first, before sibling voices */}
-                    {restaurant && tiktokSource ? (
-                        <SavedFromTikTokPanel source={tiktokSource.source} />
                     ) : null}
 
                     {/* FROM YOUR TABLE */}

@@ -50,6 +50,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
 import { CommentRow } from '@/components/posts/CommentRow';
 import { useUpdateEntry } from '@/hooks/entries/useUpdateEntry';
+import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
 import { useAddEntryPhoto, useRemoveEntryPhoto } from '@/hooks/entries/useEntryPhotoMutations';
 import { useTables } from '@/hooks/tables/useTables';
 import { CompanionPickerSheet } from '@/components/logging';
@@ -431,6 +432,36 @@ export default function EntryDetailScreen() {
     // ── Own-entry edit hooks ───────────────────────────────────────────────────
     const isOwnEntry = !!(viewer && entry && viewer.id === entry.user_id);
     const updateEntry = useUpdateEntry(entry?.id ?? '');
+    const deleteEntry = useDeleteEntry();
+
+    const handleDelete = useCallback(() => {
+        if (!isOwnEntry || !entry?.id || !viewer?.id) return;
+        Alert.alert(
+            'Delete this review?',
+            'This removes your rating, note, and photos. This can’t be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () =>
+                        deleteEntry.mutate(
+                            {
+                                entryId: entry.id,
+                                userId: viewer.id,
+                                restaurantId: entry.restaurant_id ?? null,
+                                supperId: entry.supper_id ?? null,
+                            },
+                            {
+                                onSuccess: () => router.back(),
+                                onError: (err: any) =>
+                                    Alert.alert('Error', err?.message ?? 'Could not delete this review.'),
+                            },
+                        ),
+                },
+            ],
+        );
+    }, [isOwnEntry, entry?.id, entry?.restaurant_id, entry?.supper_id, viewer?.id, deleteEntry, router]);
     const addEntryPhoto = useAddEntryPhoto(entry?.id ?? '');
     const removeEntryPhoto = useRemoveEntryPhoto(entry?.id ?? '');
 
@@ -1636,6 +1667,28 @@ export default function EntryDetailScreen() {
                             </Text>
                         </View>
                     )}
+
+                    {/* Delete — owner-only, quiet destructive affordance at the foot. */}
+                    {isOwnEntry && !isPublicView && (
+                        <Pressable
+                            onPress={handleDelete}
+                            disabled={deleteEntry.isPending}
+                            style={({ pressed }) => [styles.deleteRow, { opacity: pressed ? 0.6 : 1 }]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Delete this review"
+                        >
+                            {deleteEntry.isPending ? (
+                                <ActivityIndicator size="small" color={palette.textMuted} />
+                            ) : (
+                                <>
+                                    <Ionicons name="trash-outline" size={15} color={palette.textMuted} />
+                                    <Text style={[styles.deleteLabel, { color: palette.textMuted }]}>
+                                        delete review
+                                    </Text>
+                                </>
+                            )}
+                        </Pressable>
+                    )}
                 </ScrollView>
 
                 {/* ── Floating action pill + docked composer ── */}
@@ -2224,6 +2277,18 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 17,
         color: '#fffdf8',
+    },
+    deleteRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        marginTop: Spacing.lg,
+        paddingVertical: Spacing.md,
+    },
+    deleteLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
     },
     topBar: {
         paddingHorizontal: PAGE_H,
