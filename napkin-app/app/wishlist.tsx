@@ -39,6 +39,8 @@ import { buildListsSectionRows } from '@/components/wishlist/listsSectionUtils';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
+import { useNearbyLocation } from '@/hooks/useNearbyLocation';
+import { haversineMiles, formatDistance } from '@/lib/geo';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import type { WishlistSourceHandoff } from '@/lib/types/wishlistSource';
 
@@ -195,16 +197,19 @@ const correctStyles = StyleSheet.create({
 interface PinnedRowProps {
     item: PersonalWishlistItem;
     palette: typeof Colors.light;
+    /** "0.3 mi" when sorting by distance; null otherwise. */
+    distanceLabel?: string | null;
     onPress: () => void;
 }
 
-function PinnedRow({ item, palette, onPress }: PinnedRowProps) {
+function PinnedRow({ item, palette, distanceLabel, onPress }: PinnedRowProps) {
     const r = item.restaurant!;
     // TICKET-072 ARCH-2 #8: append provenance murmur for handoff-sourced spots
     const provenance = item.source?.type === 'handoff'
         ? `via ${(item.source as WishlistSourceHandoff).sharer_name}'s napkin`
         : null;
-    const meta = [r.city, r.cuisine, provenance].filter(Boolean).join(' · ');
+    // Distance leads the meta when "near me" is active — it's the deciding signal.
+    const meta = [distanceLabel, r.city, r.cuisine, provenance].filter(Boolean).join(' · ');
 
     return (
         <Pressable
@@ -285,6 +290,51 @@ export default function WishlistScreen() {
         ),
         [allItems],
     );
+
+    // ── "where do I go" — near-me sort + cuisine filter (TICKET-08x) ──────────
+    const [sortMode, setSortMode] = useState<'recent' | 'near'>('recent');
+    const [cuisineFilter, setCuisineFilter] = useState<string | null>(null);
+    const { coords, request: requestLocation } = useNearbyLocation();
+
+    // Chip options derived from what's actually saved.
+    const cuisineOptions = useMemo(() => {
+        const set = new Set<string>();
+        for (const i of pinnedRows) {
+            const c = i.restaurant?.cuisine?.trim();
+            if (c) set.add(c);
+        }
+        return [...set].sort((a, b) => a.localeCompare(b));
+    }, [pinnedRows]);
+
+    const toggleNearMe = useCallback(() => {
+        setSortMode((m) => {
+            if (m === 'near') return 'recent';
+            requestLocation();
+            return 'near';
+        });
+    }, [requestLocation]);
+
+    // Filter → (optional) distance-decorate → sort. Distance label rides along so
+    // the row can show it without recomputing.
+    const displayedRows = useMemo(() => {
+        let rows = pinnedRows;
+        if (cuisineFilter) {
+            rows = rows.filter((i) => i.restaurant?.cuisine?.trim() === cuisineFilter);
+        }
+        const nearActive = sortMode === 'near' && !!coords;
+        const decorated = rows.map((item) => {
+            const r = item.restaurant;
+            const hasCoords = nearActive && r?.lat != null && r?.lng != null;
+            const dist = hasCoords
+                ? haversineMiles(coords!, { latitude: r!.lat as number, longitude: r!.lng as number })
+                : Infinity;
+            return { item, dist, distanceLabel: hasCoords ? formatDistance(dist) : null };
+        });
+        if (nearActive) {
+            decorated.sort((a, b) => a.dist - b.dist); // nearest first; no-coord items (Infinity) sink
+        }
+        return decorated;
+    }, [pinnedRows, cuisineFilter, sortMode, coords]);
 
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);
@@ -404,11 +454,69 @@ export default function WishlistScreen() {
                             {`PINNED · ${pinnedRows.length}`}
                         </Text>
 
-                        {pinnedRows.map((item) => (
+                        {/* where-do-I-go controls: near-me sort + cuisine chips */}
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.filterBar}
+                            keyboardShouldPersistTaps="handled"
+                        >
+                            <Pressable
+                                onPress={toggleNearMe}
+                                style={[
+                                    styles.chip,
+                                    sortMode === 'near'
+                                        ? { backgroundColor: palette.primary }
+                                        : { backgroundColor: palette.surfaceJournalLow },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: sortMode === 'near' }}
+                            >
+                                <Ionicons
+                                    name="navigate"
+                                    size={12}
+                                    color={sortMode === 'near' ? '#fffdf8' : palette.textMuted}
+                                />
+                                <Text style={[styles.chipLabel, { color: sortMode === 'near' ? '#fffdf8' : palette.textMuted }]}>
+                                    near me
+                                </Text>
+                            </Pressable>
+
+                            {cuisineOptions.map((c) => {
+                                const active = cuisineFilter === c;
+                                return (
+                                    <Pressable
+                                        key={c}
+                                        onPress={() => setCuisineFilter(active ? null : c)}
+                                        style={[
+                                            styles.chip,
+                                            active
+                                                ? { backgroundColor: palette.primary }
+                                                : { backgroundColor: palette.surfaceJournalLow },
+                                        ]}
+                                        accessibilityRole="button"
+                                        accessibilityState={{ selected: active }}
+                                    >
+                                        <Text style={[styles.chipLabel, { color: active ? '#fffdf8' : palette.textMuted }]}>
+                                            {c.toLowerCase()}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </ScrollView>
+
+                        {displayedRows.length === 0 ? (
+                            <Text style={[styles.pinnedMeta, { color: palette.textMuted, paddingVertical: Spacing.sm }]}>
+                                {`nothing ${cuisineFilter ? cuisineFilter.toLowerCase() + ' ' : ''}saved yet.`}
+                            </Text>
+                        ) : null}
+
+                        {displayedRows.map(({ item, distanceLabel }) => (
                             <PinnedRow
                                 key={item.id}
                                 item={item}
                                 palette={palette}
+                                distanceLabel={distanceLabel}
                                 onPress={() => handlePinnedRowPress(item)}
                             />
                         ))}
@@ -597,6 +705,25 @@ const styles = StyleSheet.create({
         letterSpacing: 1.4,
         textTransform: 'uppercase',
         marginBottom: 10,
+    },
+    // where-do-I-go filter/sort chips
+    filterBar: {
+        flexDirection: 'row',
+        gap: 7,
+        paddingBottom: 12,
+        paddingRight: 8,
+    },
+    chip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 11,
+        paddingVertical: 6,
+        borderRadius: 999,
+    },
+    chipLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
     },
     // Pinned row
     pinnedRow: {

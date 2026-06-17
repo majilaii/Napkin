@@ -25,6 +25,8 @@ interface RestaurantRow {
     google_rating: number | null;
     price_level: number | null;
     external_id: string | null;
+    lat: number | null;
+    lng: number | null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -191,6 +193,8 @@ serve(async (req) => {
                         google_rating,
                         price_level,
                         external_id,
+                        lat,
+                        lng,
                         verification,
                         created_by
                     )

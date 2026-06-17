@@ -1,20 +1,22 @@
 /**
- * TopFour — 4-up row of "plates": the score plated in the centre of a round
- * dish, name + city beneath. TICKET-025 · reshaped 2026-06-15.
+ * TopFour — the profile's four favourite restaurants, ranked 1–4 in a compact 2x2
+ * grid of warm "plate" tiles. TICKET-025 · redesigned 2026-06-17.
  *
- * Why plates, not posters: restaurants rarely carry a reliable photo, and a
- * portrait poster slot with no image reads as a broken/missing picture. A round
- * plate has no photo expectation — the rating IS the face. Form fixes the
- * "empty box" problem the poster grid couldn't.
+ * Each filled tile glances three things without a tap:
+ *   • amber rating numeral — what they scored it (hidden when unrated)
+ *   • a terracotta heart    — they liked it (Letterboxd-style, distinct from rating)
+ *   • a muted note glyph    — they wrote a review (entry has content)
  *
- * Auto-derived from `top_four` in profile payload — no edit affordance.
- * Cold-start / partial fill: empty plates (dashed ring + '+') for the remainder.
+ * Two accents only (amber + terracotta); the review glyph stays neutral ink.
+ * Auto-derived or curated from `top_four` in the profile payload. Empty slots show
+ * a tappable '+' for the owner.
  */
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SectionHeader } from './SectionHeader';
 import type { TopPick } from '@/hooks/users/useUserProfile';
@@ -31,7 +33,6 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
     const palette = Colors[scheme];
     const router = useRouter();
 
-    // Pad to 4 slots
     const slots: (TopPick | null)[] = [
         picks[0] ?? null,
         picks[1] ?? null,
@@ -51,70 +52,66 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                     pick ? (
                         <Pressable
                             key={i}
-                            style={({ pressed }) => [styles.cell, { opacity: pressed ? 0.92 : 1 }]}
+                            style={({ pressed }) => [
+                                styles.tile,
+                                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.92 : 1 },
+                                Shadow.note,
+                            ]}
                             onPress={() => router.push(`/restaurant/${pick.restaurant_id}` as any)}
                             accessibilityRole="button"
                             accessibilityLabel={`View ${pick.name}`}
                         >
-                            {/* Plate — the restaurant NAME is plated (it's the hero) */}
-                            <View
-                                style={[
-                                    styles.plate,
-                                    { backgroundColor: palette.surfaceContainerHigh },
-                                ]}
-                            >
-                                <View
-                                    style={[
-                                        styles.plateRing,
-                                        { borderColor: palette.outlineVariant },
-                                    ]}
-                                />
-                                <Text
-                                    style={[styles.plateName, { color: palette.text }]}
-                                    numberOfLines={2}
-                                >
+                            <View style={styles.tileHead}>
+                                <Text style={[styles.rank, { color: palette.textMuted }]}>{i + 1}</Text>
+                                <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
                                     {pick.name}
                                 </Text>
                             </View>
-                            {/* Score + city beneath — quiet, secondary (hidden when no visible rating) */}
-                            {pick.max_rating != null ? (
-                                <Text style={[styles.score, { color: palette.primary }]}>
-                                    {pick.max_rating.toFixed(1)}
-                                </Text>
-                            ) : null}
                             {pick.city ? (
-                                <Text
-                                    style={[styles.city, { color: palette.textMuted }]}
-                                    numberOfLines={1}
-                                >
+                                <Text style={[styles.city, { color: palette.textMuted }]} numberOfLines={1}>
                                     {pick.city}
                                 </Text>
                             ) : null}
+
+                            {/* Indicator row — rated · liked · reviewed */}
+                            <View style={styles.indicators}>
+                                {pick.max_rating != null ? (
+                                    <View style={[styles.ratingChip, { backgroundColor: palette.tertiaryFixed }]}>
+                                        <Text style={[styles.ratingNum, { color: palette.tertiary }]}>
+                                            {pick.max_rating.toFixed(1)}
+                                        </Text>
+                                    </View>
+                                ) : null}
+                                {pick.liked ? (
+                                    <Ionicons name="heart" size={13} color={palette.primary} accessibilityLabel="liked" />
+                                ) : null}
+                                {pick.has_review ? (
+                                    <Ionicons
+                                        name="document-text-outline"
+                                        size={13}
+                                        color={palette.textMuted}
+                                        accessibilityLabel="wrote a review"
+                                    />
+                                ) : null}
+                                {/* Liked but unrated — say so, so the tile isn't bare. */}
+                                {pick.max_rating == null && pick.liked ? (
+                                    <Text style={[styles.likedLabel, { color: palette.textMuted }]}>liked</Text>
+                                ) : null}
+                            </View>
                         </Pressable>
                     ) : (
                         <Pressable
                             key={i}
-                            style={styles.cell}
+                            style={[
+                                styles.tile,
+                                styles.emptyTile,
+                                { borderColor: palette.outlineVariant, backgroundColor: palette.surfaceContainerLow },
+                            ]}
                             onPress={isOwner && onEdit ? onEdit : undefined}
                             accessibilityRole={isOwner && onEdit ? 'button' : undefined}
                             accessibilityLabel={isOwner && onEdit ? 'Add to your Top 4' : undefined}
                         >
-                            <View
-                                style={[
-                                    styles.plate,
-                                    styles.emptyPlate,
-                                    {
-                                        borderColor: palette.outlineVariant,
-                                        backgroundColor: palette.surfaceContainerLow,
-                                    },
-                                ]}
-                            >
-                                <Text
-                                    style={[Type.headlineMedium, { color: palette.textMuted, fontWeight: '300' }]}
-                                >
-                                    +
-                                </Text>
-                            </View>
+                            <Text style={[styles.plus, { color: palette.textMuted }]}>+</Text>
                         </Pressable>
                     )
                 )}
@@ -126,52 +123,71 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
 const styles = StyleSheet.create({
     grid: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         paddingHorizontal: Spacing.lg,
         gap: Spacing.sm,
     },
-    cell: {
-        flex: 1,
-        alignItems: 'center',
+    tile: {
+        width: '48%',
+        minHeight: 96,
+        borderRadius: Radius.md,
+        paddingHorizontal: 11,
+        paddingVertical: 10,
+        justifyContent: 'flex-start',
+    },
+    tileHead: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
         gap: 6,
     },
-    plate: {
-        width: '100%',
-        aspectRatio: 1,
-        borderRadius: Radius.full,
-        alignItems: 'center',
-        justifyContent: 'center',
-        position: 'relative',
-    },
-    plateRing: {
-        position: 'absolute',
-        top: 7,
-        left: 7,
-        right: 7,
-        bottom: 7,
-        borderRadius: Radius.full,
-        borderWidth: 1,
-    },
-    emptyPlate: {
-        borderWidth: 1,
-        borderStyle: 'dashed',
-    },
-    plateName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12.5,
-        lineHeight: 15,
-        textAlign: 'center',
-        paddingHorizontal: 8,
-    },
-    score: {
+    rank: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 14,
-        textAlign: 'center',
+        lineHeight: 18,
+    },
+    name: {
+        flex: 1,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15.5,
+        lineHeight: 18,
     },
     city: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 10,
-        letterSpacing: 0.8,
-        textTransform: 'uppercase',
-        textAlign: 'center',
+        letterSpacing: 0.3,
+        marginTop: 3,
+        marginLeft: 20,
+    },
+    indicators: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        marginTop: 'auto',
+        paddingTop: 9,
+        marginLeft: 20,
+    },
+    ratingChip: {
+        borderRadius: 999,
+        paddingHorizontal: 7,
+        paddingVertical: 1,
+    },
+    ratingNum: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+    },
+    likedLabel: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 12,
+    },
+    emptyTile: {
+        borderWidth: 1,
+        borderStyle: 'dashed',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    plus: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 28,
+        fontWeight: '300',
     },
 });

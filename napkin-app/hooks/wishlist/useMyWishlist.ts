@@ -18,6 +18,9 @@ export interface WishlistRestaurant {
     google_rating: number | null;
     price_level: number | null;
     external_id: string | null;
+    /** Optional: absent on payloads cached before the lat/lng edge change. */
+    lat?: number | null;
+    lng?: number | null;
 }
 
 export interface PersonalWishlistItem {

@@ -83,6 +83,9 @@ export type TopPick = {
     max_rating: number | null;
     visit_count: number;
     last_visited_at: string | null;
+    /** Top-Four glance indicators (default false on older payloads). */
+    liked?: boolean;
+    has_review?: boolean;
 };
 
 export type RegularSummary = {

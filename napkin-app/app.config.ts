@@ -28,6 +28,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
             // HTTPS-only networking = exempt; without this every TestFlight
             // upload stalls on the Missing Compliance questionnaire.
             ITSAppUsesNonExemptEncryption: false,
+            // Foreground-only location: bias Places search + sort saved spots by
+            // distance ("near me"). Requested lazily, never background.
+            NSLocationWhenInUseUsageDescription:
+                'Napkin uses your location to sort your saved spots by distance and find places near you.',
             // ARCH-REVIEW-3: Belt-and-suspenders in case Expo SDK 54 string-array
             // scheme doesn't emit both entries. Explicit declaration guarantees both.
             CFBundleURLTypes: [
@@ -58,7 +62,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
                 apiKey: '',
             },
         },
-        permissions: ['android.permission.RECORD_AUDIO'],
+        permissions: [
+            'android.permission.RECORD_AUDIO',
+            // Foreground-only location for Places bias + "near me" wishlist sort.
+            'android.permission.ACCESS_COARSE_LOCATION',
+            'android.permission.ACCESS_FINE_LOCATION',
+        ],
     },
     web: {
         output: 'static',
