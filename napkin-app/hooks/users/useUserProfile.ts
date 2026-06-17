@@ -86,6 +86,8 @@ export type TopPick = {
     /** Top-Four glance indicators (default false on older payloads). */
     liked?: boolean;
     has_review?: boolean;
+    /** Entry id of the author's review for this pick — tap opens the review. */
+    review_entry_id?: string | null;
 };
 
 export type RegularSummary = {

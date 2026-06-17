@@ -57,9 +57,16 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                                 { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.92 : 1 },
                                 Shadow.note,
                             ]}
-                            onPress={() => router.push(`/restaurant/${pick.restaurant_id}` as any)}
+                            onPress={() =>
+                                // Tap a pick with a review → open the review. Gated to the
+                                // owner so a (future) public-profile viewer can't deep-link
+                                // into a Table-visibility entry — they get the restaurant page.
+                                pick.review_entry_id && isOwner
+                                    ? router.push({ pathname: '/entry-detail', params: { entryId: pick.review_entry_id } })
+                                    : router.push(`/restaurant/${pick.restaurant_id}` as any)
+                            }
                             accessibilityRole="button"
-                            accessibilityLabel={`View ${pick.name}`}
+                            accessibilityLabel={pick.review_entry_id && isOwner ? `Read ${pick.name} review` : `View ${pick.name}`}
                         >
                             <View style={styles.tileHead}>
                                 <Text style={[styles.rank, { color: palette.textMuted }]}>{i + 1}</Text>

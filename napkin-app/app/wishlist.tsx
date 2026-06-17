@@ -217,17 +217,7 @@ function PinnedRow({ item, palette, distanceLabel, onPress }: PinnedRowProps) {
             style={({ pressed }) => [styles.pinnedRow, { opacity: pressed ? 0.75 : 1 }]}
             accessibilityLabel={`Open ${r.name}`}
         >
-            {/* Leading tile — always rendered so every row shares one left rail.
-                Photo when present, else a quiet placeholder glyph (not an initial). */}
-            <View style={[styles.pinnedTile, { backgroundColor: palette.surfaceJournalLow }]}>
-                {r.photo_url ? (
-                    <Image source={{ uri: r.photo_url }} style={styles.pinnedTileImg} />
-                ) : (
-                    <Ionicons name="restaurant-outline" size={20} color={palette.textMuted} />
-                )}
-            </View>
-
-            {/* Name + meta */}
+            {/* Name-forward — no thumbnails. Meta (distance · city · cuisine) is text. */}
             <View style={styles.pinnedTextBlock}>
                 <Text style={[styles.pinnedName, { color: palette.text }]} numberOfLines={1}>
                     {r.name}
@@ -238,9 +228,6 @@ function PinnedRow({ item, palette, distanceLabel, onPress }: PinnedRowProps) {
                     </Text>
                 ) : null}
             </View>
-
-            {/* Pin icon */}
-            <Ionicons name="location-outline" size={18} color={palette.primary} />
         </Pressable>
     );
 }

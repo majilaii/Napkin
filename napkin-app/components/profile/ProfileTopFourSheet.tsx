@@ -18,6 +18,7 @@ import {
     Alert,
     ActivityIndicator,
     ScrollView,
+    TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image as ExpoImage } from 'expo-image';
@@ -145,6 +146,7 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
     const { data: eligible, isLoading: eligibleLoading } = useMyEligibleRestaurants(userId, visible);
 
     const [draft, setDraft] = useState<DraftItem[]>([]);
+    const [pickerQuery, setPickerQuery] = useState('');
 
     // Reset the draft only on the closed→open transition, so a profile refetch
     // (new currentPicks identity) can't clobber an in-progress edit.
@@ -164,6 +166,15 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
     }, [visible, currentPicks]);
 
     const pickedIds = useMemo(() => new Set(draft.map((d) => d.restaurant_id)), [draft]);
+
+    // Search-filter the add list — a flat scroll of every logged spot is unusable at
+    // 50–200 saves; a search bar is how you actually find the one to add.
+    const filteredEligible = useMemo(() => {
+        const all = eligible ?? [];
+        const q = pickerQuery.trim().toLowerCase();
+        if (!q) return all;
+        return all.filter((r) => r.name.toLowerCase().includes(q));
+    }, [eligible, pickerQuery]);
 
     const hasDiff = useMemo(() => {
         if (draft.length !== currentPicks.length) return true;
@@ -308,12 +319,29 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                     </Text>
                 </View>
 
-                {/* Eligible restaurants list */}
+                {/* Add a restaurant — search your logged spots */}
                 <Text
                     style={[Type.labelSmall, { color: palette.textMuted, marginHorizontal: 22, marginTop: Spacing.md, marginBottom: Spacing.xs }]}
                 >
-                    YOUR LOGGED SPOTS
+                    ADD A SPOT
                 </Text>
+                <View style={[styles.searchField, { backgroundColor: palette.surfaceJournalLow }]}>
+                    <Ionicons name="search" size={16} color={palette.textMuted} />
+                    <TextInput
+                        value={pickerQuery}
+                        onChangeText={setPickerQuery}
+                        placeholder="search your spots"
+                        placeholderTextColor={palette.textMuted}
+                        style={[styles.searchInput, { color: palette.text }]}
+                        autoCorrect={false}
+                        returnKeyType="search"
+                    />
+                    {pickerQuery.length > 0 ? (
+                        <Pressable onPress={() => setPickerQuery('')} hitSlop={8} accessibilityLabel="Clear search">
+                            <Ionicons name="close-circle" size={16} color={palette.textMuted} />
+                        </Pressable>
+                    ) : null}
+                </View>
 
                 {eligibleLoading ? (
                     <ActivityIndicator color={palette.primary} style={{ marginTop: Spacing.xl }} />
@@ -324,7 +352,7 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                         showsVerticalScrollIndicator={false}
                         contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
                     >
-                        {(eligible ?? []).map((r) => (
+                        {filteredEligible.map((r) => (
                             <EligibleRestaurantRow
                                 key={r.restaurant_id}
                                 restaurant={r}
@@ -334,7 +362,7 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                                 }
                             />
                         ))}
-                        {(eligible ?? []).length === 0 && (
+                        {filteredEligible.length === 0 ? (
                             <Text
                                 style={[
                                     Type.bodySmall,
@@ -346,9 +374,11 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                                     },
                                 ]}
                             >
-                                Log a few restaurants to see them here.
+                                {pickerQuery.trim()
+                                    ? `No saved spot matches “${pickerQuery.trim()}”.`
+                                    : 'Log a few restaurants to see them here.'}
                             </Text>
-                        )}
+                        ) : null}
                     </ScrollView>
                 )}
             </View>
@@ -359,6 +389,22 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+    },
+    searchField: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: 22,
+        marginBottom: Spacing.sm,
+        paddingHorizontal: 12,
+        height: 40,
+        borderRadius: Radius.md,
+    },
+    searchInput: {
+        flex: 1,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 15,
+        padding: 0,
     },
     header: {
         flexDirection: 'row',
