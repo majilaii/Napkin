@@ -425,6 +425,18 @@ export default function RestaurantScreen() {
         tablemateVisits.length > 0 ||
         (pageData?.public_reviews ?? []).length > 0;
 
+    // Cold restaurant: no Napkin signal at all (no self/tablemate/public voices, no
+    // you/table/napkin numbers). Google is external and never makes a page "warm".
+    // When cold, suppress the lonely strip + the two apology murmurs and show one
+    // warm "be the first" block instead.
+    const napkinSignalCount = populatedTiers({
+        you: youCell.hasData,
+        table: yourTableCell.hasData,
+        napkin: napkinCell.hasData,
+        google: false,
+    }).length;
+    const isColdRestaurant = !!restaurant && !hasVoices && napkinSignalCount === 0;
+
     // ── Match-mine filter ──────────────────────────────────────────────────
     const [matchFilterOn, setMatchFilterOn] = useState(false);
 
@@ -570,8 +582,9 @@ export default function RestaurantScreen() {
                         <SavedFromTikTokPanel source={tiktokSource.source} />
                     ) : null}
 
-                    {/* Signal strip — letterpress variant with TICKET-065 collapse logic */}
-                    {restaurant ? (
+                    {/* Signal strip — letterpress variant with TICKET-065 collapse logic.
+                        Hidden on a cold restaurant (a lonely 1-cell pill reads as a bug). */}
+                    {restaurant && !isColdRestaurant ? (
                         <SignalStrip
                             you={youCell}
                             yourTable={yourTableCell}
@@ -601,8 +614,26 @@ export default function RestaurantScreen() {
                         </View>
                     ) : null}
 
+                    {/* Cold restaurant — one warm "be the first" block instead of a
+                        lonely strip + two empty section headers. */}
+                    {isColdRestaurant ? (
+                        <View style={styles.coldState}>
+                            <Text style={[styles.coldHeadline, { color: palette.text }]}>
+                                no one&apos;s logged this yet.
+                            </Text>
+                            <Text style={[styles.coldSub, { color: palette.textMuted }]}>
+                                be the first to write it down.
+                            </Text>
+                            {googleCell.hasData ? (
+                                <Text style={[styles.coldGoogle, { color: palette.textMuted }]}>
+                                    {`google · ${googleCell.value}${googleCell.sub ? ' · ' + googleCell.sub : ''}`}
+                                </Text>
+                            ) : null}
+                        </View>
+                    ) : null}
+
                     {/* FROM YOUR TABLE */}
-                    {restaurant ? (
+                    {restaurant && !isColdRestaurant ? (
                         <View style={styles.section}>
                             <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
                                 FROM YOUR TABLE
@@ -651,7 +682,7 @@ export default function RestaurantScreen() {
                     ) : null}
 
                     {/* YOUR HISTORY */}
-                    {restaurant ? (
+                    {restaurant && !isColdRestaurant ? (
                         <View style={styles.section}>
                             <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
                                 YOUR HISTORY
@@ -828,6 +859,30 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
         textAlign: 'left',
+    },
+    // Cold restaurant empty state
+    coldState: {
+        alignItems: 'center',
+        paddingHorizontal: 28,
+        paddingTop: 28,
+        paddingBottom: 12,
+        gap: 6,
+    },
+    coldHeadline: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 21,
+        lineHeight: 27,
+        textAlign: 'center',
+    },
+    coldSub: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        textAlign: 'center',
+    },
+    coldGoogle: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        marginTop: 8,
     },
     // CTA row
     ctaRow: {

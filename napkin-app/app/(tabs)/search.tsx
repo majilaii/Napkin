@@ -306,17 +306,8 @@ export default function SearchScreen() {
                                 onSelect={handleRecentSelect}
                             />
                         )}
-                        {recentQueries.length === 0 && (
-                            <View style={[styles.emptySlab, { backgroundColor: palette.surfaceJournalLow, marginHorizontal: Spacing.lg }]}>
-                                <Text style={[styles.emptyKicker, { color: palette.primary }]}>Tonight</Text>
-                                <Text style={[styles.emptyHeadline, { color: palette.text }]}>
-                                    {'Find tonight\'s place.'}
-                                </Text>
-                                <Text style={[styles.emptyMurmur, { color: palette.textMuted }]}>
-                                    {'— your places will rise to the top, once you have some.'}
-                                </Text>
-                            </View>
-                        )}
+                        {/* No placeholder slab — a clean, focused search field with
+                            nothing to apologise for is the empty state. */}
                     </ScrollView>
                 ) : isLoading && !hasResults ? (
                     // Loading state
@@ -401,29 +392,6 @@ const styles = StyleSheet.create({
     emptyContainer: {
         flex: 1,
         paddingTop: Spacing.md,
-    },
-    emptySlab: {
-        borderRadius: 24,
-        padding: 30,
-        gap: 12,
-        alignItems: 'flex-start',
-        marginTop: Spacing.md,
-    },
-    emptyKicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
-        letterSpacing: 1.8,
-        textTransform: 'uppercase',
-    },
-    emptyHeadline: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 23,
-        lineHeight: 30,
-    },
-    emptyMurmur: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 15,
-        lineHeight: 22,
     },
     centeredState: {
         flex: 1,

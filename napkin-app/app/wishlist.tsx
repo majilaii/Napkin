@@ -217,10 +217,15 @@ function PinnedRow({ item, palette, distanceLabel, onPress }: PinnedRowProps) {
             style={({ pressed }) => [styles.pinnedRow, { opacity: pressed ? 0.75 : 1 }]}
             accessibilityLabel={`Open ${r.name}`}
         >
-            {/* Photo thumb — only when present. No initial-letter placeholder. */}
-            {r.photo_url ? (
-                <Image source={{ uri: r.photo_url }} style={styles.pinnedTile} />
-            ) : null}
+            {/* Leading tile — always rendered so every row shares one left rail.
+                Photo when present, else a quiet placeholder glyph (not an initial). */}
+            <View style={[styles.pinnedTile, { backgroundColor: palette.surfaceJournalLow }]}>
+                {r.photo_url ? (
+                    <Image source={{ uri: r.photo_url }} style={styles.pinnedTileImg} />
+                ) : (
+                    <Ionicons name="restaurant-outline" size={20} color={palette.textMuted} />
+                )}
+            </View>
 
             {/* Name + meta */}
             <View style={styles.pinnedTextBlock}>
@@ -737,6 +742,14 @@ const styles = StyleSheet.create({
         height: 52,
         borderRadius: 12,
         flexShrink: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    pinnedTileImg: {
+        width: 52,
+        height: 52,
+        borderRadius: 12,
     },
     pinnedTextBlock: {
         flex: 1,
