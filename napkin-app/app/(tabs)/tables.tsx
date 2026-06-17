@@ -803,6 +803,7 @@ export default function TablesScreen() {
                                                               note={(s as any).note}
                                                               extractionStatus={s.extraction_status}
                                                               reactionCount={s.reaction_count ?? 0}
+                                                              commentCount={(s as any).comment_count ?? 0}
                                                               topEmojis={s.top_emojis ?? []}
                                                               myReactions={s.my_reactions ?? []}
                                                               createdAt={s.created_at ?? s.sort_date}

@@ -17,10 +17,10 @@ import {
     StyleSheet,
     Image,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +45,7 @@ export interface SharedSaveCardProps {
     note?: string | null;
     extractionStatus?: string | null;
     reactionCount: number;
+    commentCount?: number;
     topEmojis: string[];
     myReactions?: string[];
     createdAt: string;
@@ -63,6 +64,7 @@ export function SharedSaveCard({
     note,
     extractionStatus,
     reactionCount,
+    commentCount = 0,
     topEmojis,
     myReactions = [],
     createdAt,
@@ -71,20 +73,20 @@ export function SharedSaveCard({
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const router = useRouter();
-    const toggleReaction = useToggleReaction();
 
-    const imInEmoji = '👀';
-    const imInActive = myReactions.includes(imInEmoji);
-
-    const handleImIn = useCallback(() => {
-        toggleReaction.mutate({
-            targetType: 'table_share',
-            targetId: shareId,
-            emoji: imInEmoji,
-            tableId,
-            scope: 'table',
+    // Open the share thread — react with any emoji + reply ("let's go"). Replaces
+    // the old single-👀 "I'm in" toggle with a real post.
+    const handleOpenThread = useCallback(() => {
+        router.push({
+            // New route — expo-router typegen registers it at build time.
+            pathname: '/share-detail' as any,
+            params: {
+                shareId,
+                tableId,
+                share: JSON.stringify({ author, restaurant, note: note ?? null }),
+            },
         });
-    }, [toggleReaction, shareId, imInEmoji, tableId]);
+    }, [router, shareId, tableId, author, restaurant, note]);
 
     const handleRestaurantTap = useCallback(() => {
         if (restaurant?.id) {
@@ -189,26 +191,27 @@ export function SharedSaveCard({
                 </Text>
             ) : null}
 
-            {/* I'm in reaction */}
-            <View style={styles.reactionRow}>
-                <Pressable
-                    onPress={handleImIn}
-                    style={({ pressed }) => [
-                        styles.imInButton,
-                        {
-                            backgroundColor: imInActive ? palette.primaryMuted : palette.surfaceJournalLow,
-                            opacity: pressed ? 0.8 : 1,
-                        },
-                    ]}
-                    accessibilityLabel="I'm in"
-                >
-                    <Text style={[Type.caption, { color: imInActive ? palette.primary : palette.textMuted }]}>
-                        {reactionCount > 0
-                            ? `${reactionCount} in`
-                            : "i'm in"}
+            {/* Footer — reactions + replies summary; taps open the thread where you
+                can react with any emoji and reply ("let's go"). */}
+            <Pressable
+                onPress={handleOpenThread}
+                style={({ pressed }) => [styles.footer, { opacity: pressed ? 0.7 : 1 }]}
+                accessibilityRole="button"
+                accessibilityLabel="open thread to react or reply"
+            >
+                {topEmojis.length > 0 ? (
+                    <Text style={styles.footerEmojis}>{topEmojis.slice(0, 3).join(' ')}</Text>
+                ) : null}
+                {reactionCount > 0 ? (
+                    <Text style={[Type.caption, { color: palette.textMuted }]}>{reactionCount}</Text>
+                ) : null}
+                <View style={styles.footerReplies}>
+                    <Ionicons name="chatbubble-outline" size={14} color={palette.textMuted} />
+                    <Text style={[Type.caption, { color: palette.textMuted }]}>
+                        {commentCount > 0 ? `${commentCount}` : 'reply'}
                     </Text>
-                </Pressable>
-            </View>
+                </View>
+            </Pressable>
         </View>
     );
 }
@@ -255,16 +258,22 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.sm,
         marginTop: Spacing.xs,
     },
-    reactionRow: {
+    footer: {
         flexDirection: 'row',
-        marginTop: Spacing.xs,
-    },
-    imInButton: {
-        paddingVertical: Spacing.xs,
-        paddingHorizontal: Spacing.sm,
-        borderRadius: Radius.sm,
-        minHeight: 32,
         alignItems: 'center',
-        justifyContent: 'center',
+        gap: 8,
+        marginTop: Spacing.sm,
+        paddingTop: Spacing.xs,
+        minHeight: 32,
+    },
+    footerEmojis: {
+        fontSize: 14,
+    },
+    footerReplies: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginLeft: 'auto',
     },
 });
+

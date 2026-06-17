@@ -238,6 +238,10 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
+            name="share-detail"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
             name="table/[id]/settings"
             options={{ headerShown: false }}
           />
