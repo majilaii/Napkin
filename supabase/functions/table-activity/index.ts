@@ -169,6 +169,7 @@ serve(async (req) => {
                     visited_at,
                     created_at,
                     table_night_id,
+                    supper_id,
                     photo_url,
                     reaction_count,
                     comment_count,
@@ -264,12 +265,123 @@ serve(async (req) => {
             // Build sort_date lookup from RPC rows
             const sortDateByEntryId = new Map(entryRpcRows.map((r) => [r.id, r.sort_date]));
 
+            // ── TICKET-082 Wave 2c: supper gathering summary on the feed card ──────
+            // For feed entries that anchor a Supper, attach a summary (head count,
+            // group avg, pooled photos from every take) so the card shows "the night,
+            // gathered" without a tap-through. PRIVACY: only for suppers the VIEWER is
+            // a member of (mirrors can_view_entry branch 5) — a table member who isn't
+            // in the supper sees a plain card, never the takes/photos of non-members.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const supperSummaryMap = new Map<string, any>();
+            const supperIds = [...new Set(
+                allSoloEntries.map((e: any) => e.supper_id).filter(Boolean),
+            )] as string[];
+            if (supperIds.length > 0) {
+                const { data: viewerMemberships } = await supabase
+                    .from('supper_members')
+                    .select('supper_id')
+                    .eq('user_id', user.id)
+                    .in('supper_id', supperIds);
+                const viewerSupperIds = [...new Set((viewerMemberships ?? []).map((m: any) => m.supper_id))] as string[];
+
+                if (viewerSupperIds.length > 0) {
+                    // SECURITY (mandatory — schema mig 20260615000200 lines 17-19): a take
+                    // read MUST be author-membership scoped. entries.supper_id is
+                    // client-writable, and this service-role read bypasses RLS, so without
+                    // filtering authors to the supper roster a stranger could set supper_id
+                    // on their own entry and inject their take/photos into a member's card.
+                    const { data: rosterRows } = await supabase
+                        .from('supper_members')
+                        .select('supper_id, user_id')
+                        .in('supper_id', viewerSupperIds);
+                    const membersBySupper = new Map<string, Set<string>>();
+                    const allMemberIds = new Set<string>();
+                    for (const m of (rosterRows ?? []) as any[]) {
+                        const set = membersBySupper.get(m.supper_id) ?? new Set<string>();
+                        set.add(m.user_id);
+                        membersBySupper.set(m.supper_id, set);
+                        allMemberIds.add(m.user_id);
+                    }
+
+                    // Takes = entries in these suppers AUTHORED BY A MEMBER. The .in()
+                    // narrows server-side; the per-supper roster .filter() is the real
+                    // guard (a member of supper A must not inject into supper B).
+                    const { data: takeRows } = allMemberIds.size > 0
+                        ? await supabase
+                            .from('entries')
+                            .select('id, user_id, supper_id, rating, photo_url, created_at')
+                            .in('supper_id', viewerSupperIds)
+                            .in('user_id', [...allMemberIds])
+                        : { data: [] as any[] };
+                    const takes = ((takeRows ?? []) as any[]).filter(
+                        (t) => membersBySupper.get(t.supper_id)?.has(t.user_id),
+                    );
+                    const takeEntryIds = takes.map((t) => t.id);
+
+                    const { data: takePhotoRows } = takeEntryIds.length > 0
+                        ? await supabase
+                            .from('entry_photos')
+                            .select('entry_id, photo_url, sort_order')
+                            .in('entry_id', takeEntryIds)
+                            .order('sort_order', { ascending: true })
+                        : { data: [] as any[] };
+
+                    const takerIds = [...new Set(takes.map((t) => t.user_id))] as string[];
+                    const { data: takerProfiles } = takerIds.length > 0
+                        ? await supabase.from('profiles').select('user_id, display_name, avatar_url').in('user_id', takerIds)
+                        : { data: [] as any[] };
+                    const takerProfMap = new Map((takerProfiles ?? []).map((p: any) => [p.user_id, p]));
+
+                    const entryToSupper = new Map(takes.map((t) => [t.id, t.supper_id]));
+                    const photosBySupper = new Map<string, string[]>();
+                    // Hero photos first (one per take), then the rest of each take's gallery.
+                    for (const t of takes) {
+                        if (!t.photo_url) continue;
+                        const arr = photosBySupper.get(t.supper_id) ?? [];
+                        if (!arr.includes(t.photo_url)) arr.push(t.photo_url);
+                        photosBySupper.set(t.supper_id, arr);
+                    }
+                    for (const ph of (takePhotoRows ?? []) as any[]) {
+                        const sid = entryToSupper.get(ph.entry_id);
+                        if (!sid || !ph.photo_url) continue;
+                        const arr = photosBySupper.get(sid) ?? [];
+                        if (!arr.includes(ph.photo_url)) arr.push(ph.photo_url);
+                        photosBySupper.set(sid, arr);
+                    }
+
+                    const takesBySupper = new Map<string, any[]>();
+                    for (const t of takes) {
+                        const arr = takesBySupper.get(t.supper_id) ?? [];
+                        arr.push(t);
+                        takesBySupper.set(t.supper_id, arr);
+                    }
+
+                    for (const sid of viewerSupperIds) {
+                        const tks = takesBySupper.get(sid) ?? [];
+                        const ratings = tks.map((t) => t.rating).filter((r) => r !== null && r !== undefined) as number[];
+                        const avg = ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : null;
+                        supperSummaryMap.set(sid, {
+                            head_count: tks.length,
+                            group_avg: avg,
+                            photos: (photosBySupper.get(sid) ?? []).slice(0, 6),
+                            takers: tks.map((t) => ({
+                                user_id: t.user_id,
+                                display_name: takerProfMap.get(t.user_id)?.display_name ?? null,
+                                avatar_url: takerProfMap.get(t.user_id)?.avatar_url ?? null,
+                                rating: t.rating ?? null,
+                            })),
+                        });
+                    }
+                }
+            }
+
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             taggedEntries = (entriesWithProfiles as any[]).map((entry) => {
                 const participants = participantsByEntry.get(entry.id) ?? [];
                 const companions = companionsByEntry.get(entry.id) ?? [];
                 const photoCount = photoCountMap.get(entry.id) ?? 0;
                 const sort_date = sortDateByEntryId.get(entry.id) ?? entry.visited_at ?? entry.created_at;
+                const supper = entry.supper_id ? (supperSummaryMap.get(entry.supper_id) ?? null) : null;
 
                 // TICKET-043: scrub response — member-facing payloads MUST:
                 //   1. Never include table_ids[] (would leak other Tables).
@@ -295,6 +407,7 @@ serve(async (req) => {
                         average_rating: average,
                         sort_date,
                         photo_count: photoCount,
+                        supper,
                     };
                 }
                 return {
@@ -304,6 +417,7 @@ serve(async (req) => {
                     companions,
                     sort_date,
                     photo_count: photoCount,
+                    supper,
                 };
             });
         }

@@ -869,6 +869,7 @@ export default function TablesScreen() {
                                                           dishMeta={dishMeta}
                                                           reactionCount={solo.reaction_count}
                                                           commentCount={solo.comment_count}
+                                                          supper={(solo as any).supper ?? null}
                                                           onPress={() => {
                                                               router.push({
                                                                   pathname: '/entry-detail',
