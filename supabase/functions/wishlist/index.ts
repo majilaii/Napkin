@@ -346,6 +346,102 @@ serve(async (req) => {
             return jsonResponse({ data: sorted });
         }
 
+        // ── list_imports ───────────────────────────────────────────────────
+        // Batch history for the wishlist tab: each import (grouped by job_id)
+        // with its current item count + a few preview names. Scoped to the
+        // caller — service-role bypasses RLS, so the explicit user_id filter is
+        // load-bearing (a missing filter would leak every user's jobs).
+        if (action === 'list_imports') {
+            const limit = Math.min(Number(body.limit ?? 30), 50);
+
+            const { data: jobs, error: jobsErr } = await supabase
+                .from('import_jobs')
+                .select('job_id, source, status, created_at')
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false })
+                .limit(limit);
+            if (jobsErr) throw jobsErr;
+
+            const jobIds = (jobs ?? []).map((j: { job_id: string }) => j.job_id);
+            if (jobIds.length === 0) {
+                return jsonResponse({ data: { imports: [] } });
+            }
+
+            // Items for these jobs (non-deleted). wishlist_items → restaurants is
+            // a single FK (restaurant_id) → unambiguous embed, no PGRST201 risk.
+            const { data: itemRows, error: itemsErr } = await supabase
+                .from('wishlist_items')
+                .select('job_id, created_at, restaurant:restaurants(name)')
+                .eq('user_id', user.id)
+                .in('job_id', jobIds)
+                .is('deleted_at', null)
+                .order('created_at', { ascending: true });
+            if (itemsErr) throw itemsErr;
+
+            const byJob = new Map<string, { count: number; names: string[] }>();
+            for (const row of (itemRows ?? []) as Array<{ job_id: string; restaurant: { name: string } | null }>) {
+                const g = byJob.get(row.job_id) ?? { count: 0, names: [] };
+                g.count++;
+                const nm = row.restaurant?.name;
+                if (nm && g.names.length < 3) g.names.push(nm);
+                byJob.set(row.job_id, g);
+            }
+
+            const imports = (jobs ?? [])
+                .map((j: any) => {
+                    const g = byJob.get(j.job_id);
+                    return {
+                        job_id: j.job_id,
+                        source: j.source ?? null,
+                        status: j.status,
+                        created_at: j.created_at,
+                        item_count: g?.count ?? 0,
+                        preview_names: g?.names ?? [],
+                    };
+                })
+                // Only surface imports that still have saved spots (pruned/empty
+                // batches drop out — keeps the band meaningful).
+                .filter((b: { item_count: number }) => b.item_count > 0);
+
+            return jsonResponse({ data: { imports } });
+        }
+
+        // ── list_import_items ──────────────────────────────────────────────
+        // The spots from one import batch (batch-detail screen). Job scoped to
+        // the caller (service-role bypass → explicit user_id guard, critique #7).
+        if (action === 'list_import_items') {
+            const { job_id } = body;
+            if (!job_id) return jsonResponse({ error: 'job_id is required' }, 400);
+
+            const { data: job, error: jobErr } = await supabase
+                .from('import_jobs')
+                .select('job_id, source, status, created_at')
+                .eq('job_id', job_id)
+                .eq('user_id', user.id)
+                .maybeSingle();
+            if (jobErr) throw jobErr;
+            if (!job) return jsonResponse({ error: 'Not found' }, 404);
+
+            const { data: items, error: itemsErr } = await supabase
+                .from('wishlist_items')
+                .select(`
+                    id,
+                    note,
+                    created_at,
+                    restaurant:restaurants (
+                        id, name, address, city, country, photo_url, cuisine,
+                        google_rating, price_level, external_id, lat, lng
+                    )
+                `)
+                .eq('user_id', user.id)
+                .eq('job_id', job_id)
+                .is('deleted_at', null)
+                .order('created_at', { ascending: true });
+            if (itemsErr) throw itemsErr;
+
+            return jsonResponse({ data: { job, items: items ?? [] } });
+        }
+
         return jsonResponse({ error: 'Unknown action' }, 400);
 
     } catch (err) {

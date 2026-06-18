@@ -33,11 +33,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { ImportLinkSheet, PendingSaveCard, HandoffSheet, ListsRail } from '@/components/wishlist';
+import { ImportLinkSheet, PendingSaveCard, HandoffSheet, ListsRail, RecentlyImportedBand } from '@/components/wishlist';
 import { buildListsSectionRows } from '@/components/wishlist/listsSectionUtils';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
+import { useImportHistory } from '@/hooks/wishlist/useImportHistory';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { haversineMiles, formatDistance } from '@/lib/geo';
 import { callEdgeFn } from '@/lib/edgeInvoke';
@@ -259,6 +260,9 @@ export default function WishlistScreen() {
     const { data: myLists } = useMyLists(user?.id);
     const listRows = useMemo(() => buildListsSectionRows(myLists), [myLists]);
 
+    // Recently-imported batches (async import history) — conditional band.
+    const { data: importBatches = [] } = useImportHistory(user?.id);
+
     const allItems = useMemo(
         () => (wishlistPages?.pages ?? []).flatMap((p) => p.data ?? []),
         [wishlistPages],
@@ -442,6 +446,15 @@ export default function WishlistScreen() {
                     onNewList={() => router.push('/list/new' as any)}
                 />
                 <View style={[styles.railDivider, { backgroundColor: palette.outlineVariant }]} />
+
+                {/* Recently imported — what just landed (async imports). Tertiary +
+                    conditional (renders nothing when there are no imports), so it
+                    never crowds saves for non-importers. */}
+                <RecentlyImportedBand
+                    batches={importBatches}
+                    onOpenBatch={(jobId) => router.push(`/imports/${jobId}` as any)}
+                    onSeeAll={() => router.push('/imports' as any)}
+                />
 
                 {/* Pinned section */}
                 {isLoading && allItems.length === 0 ? (

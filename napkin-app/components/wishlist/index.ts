@@ -17,3 +17,5 @@ export { CandidatePickerPanel } from './CandidatePickerPanel';
 export { HandoffSheet } from './HandoffSheet';
 // Lists shelf at the top of the Wishlist tab
 export { ListsRail } from './ListsRail';
+// "Recently imported" band — async import batch history
+export { RecentlyImportedBand } from './RecentlyImportedBand';
