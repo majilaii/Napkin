@@ -47,8 +47,10 @@ export interface PersistedImportSpot {
 export interface ImportDestinations {
     /** Always true today (wishlist is the base destination). */
     wishlist: boolean;
-    /** Lists to also file every saved spot into (multi-select). */
+    /** Existing lists to also file every saved spot into (multi-select). */
     listIds: string[];
+    /** New lists to CREATE on the fly, then file the spots into. */
+    newListTitles: string[];
     /** One Table to share to — only VERIFIED spots reach it (RPC ghost quarantine). */
     tableId: string | null;
 }
@@ -76,7 +78,12 @@ export interface ImportManifest {
     spots?: PersistedImportSpot[];
 }
 
-const DEFAULT_DESTINATIONS: ImportDestinations = { wishlist: true, listIds: [], tableId: null };
+const DEFAULT_DESTINATIONS: ImportDestinations = {
+    wishlist: true,
+    listIds: [],
+    newListTitles: [],
+    tableId: null,
+};
 
 function normalizeDestinations(d: unknown): ImportDestinations {
     const o = (d ?? {}) as Partial<ImportDestinations>;
@@ -84,6 +91,9 @@ function normalizeDestinations(d: unknown): ImportDestinations {
         wishlist: o.wishlist !== false, // default true
         listIds: Array.isArray(o.listIds)
             ? o.listIds.filter((x): x is string => typeof x === 'string')
+            : [],
+        newListTitles: Array.isArray(o.newListTitles)
+            ? o.newListTitles.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
             : [],
         tableId: typeof o.tableId === 'string' ? o.tableId : null,
     };

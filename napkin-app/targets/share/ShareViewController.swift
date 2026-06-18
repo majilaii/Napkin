@@ -1,17 +1,14 @@
-// TICKET-082 / TICKET-083 — iOS share extension for wishlist import.
+// TICKET-082 / TICKET-083 — iOS share extension: in-extension destination card.
 //
-// In-extension destination card, NO app-switch:
-//   • VIDEO (saved from Photos) → copy the .mov into the App Group
-//   • URL  (TikTok/Maps link)   → keep the link
-// then the user picks destinations (Wishlist always + their lists + one Table),
-// taps Done, and we write a pending-import manifest into the App-Group queue +
-// completeRequest. The main app drains the queue (OCR/caption → resolve →
-// auto-save → route to destinations) on its next open. No redirect, ever.
+// Share a VIDEO (saved file) or a URL (link) → a card lets you pick destinations
+// — Wishlist (always) + your lists (multi) + one table — taps Done, writes a
+// pending-import manifest to the App-Group queue, completeRequest. NO app-switch.
+// The main app drains the queue (OCR/caption → resolve → auto-save → route) next open.
 //
-// The picker is rendered from a snapshot the main app publishes to the App Group
-// (the extension can't read the app's cache). NO OCR in the extension (~120MB cap).
-// .mov is copied FULLY before the manifest is written (manifest never references a
-// half-copied file).
+// Picker is rendered from a snapshot the app publishes (extension can't read the
+// app cache). Max 3 per level; "show all" swaps to a scrollable full picker.
+// "new list" → a tiny alert to type a name (created on the fly when the app saves).
+// NO OCR here (~120MB cap). .mov is copied fully before the manifest is written.
 
 import UIKit
 import UniformTypeIdentifiers
@@ -25,24 +22,27 @@ class ShareViewController: UIViewController {
     private let terracotta = UIColor(red: 0.627, green: 0.247, blue: 0.157, alpha: 1)
     private let note = UIColor(red: 0.996, green: 0.992, blue: 0.973, alpha: 1)
 
-    // Captured source
+    // Capture
     private var capturedVideoPath: String?
     private var capturedURL: String?
     private var captureKind: String? // "video" | "url"
     private var captureReady = false
 
-    // Selections (wishlist is always on)
+    // Selections
     private var selectedListIds = Set<String>()
     private var selectedTableId: String?
-    private var listChecks: [String: UILabel] = [:]
-    private var tableChecks: [String: UILabel] = [:]
+    private var newListTitles: [String] = []
 
-    // Snapshot
+    // Snapshot data
     private var lists: [(id: String, title: String)] = []
     private var tables: [(id: String, name: String)] = []
     private var snapshotUserId: String?
 
+    private enum Screen { case main, allLists, allTables }
+    private var screen: Screen = .main
+
     // UI
+    private let contentContainer = UIView()
     private let statusLabel = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let doneButton = UIButton(type: .system)
@@ -51,7 +51,8 @@ class ShareViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = UIColor.black.withAlphaComponent(0.3)
         loadSnapshot()
-        setupUI()
+        buildChrome()
+        render()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -67,7 +68,6 @@ class ShareViewController: UIViewController {
             let data = try? Data(contentsOf: container.appendingPathComponent("collections-snapshot.json")),
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
-
         snapshotUserId = obj["userId"] as? String
         if let ls = obj["lists"] as? [[String: Any]] {
             lists = ls.compactMap { d in
@@ -83,185 +83,348 @@ class ShareViewController: UIViewController {
         }
     }
 
-    // MARK: - UI
+    // MARK: - Chrome (card + header + swappable content + pinned Done)
 
-    private func setupUI() {
+    private func buildChrome() {
         let card = UIView()
         card.backgroundColor = note
         card.layer.cornerRadius = 20
         card.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(card)
 
+        let grabber = UIView()
+        grabber.backgroundColor = UIColor(red: 0.867, green: 0.753, blue: 0.729, alpha: 1)
+        grabber.layer.cornerRadius = 2
+        grabber.translatesAutoresizingMaskIntoConstraints = false
+
         let title = UILabel()
         title.text = "save to napkin"
-        title.font = UIFont.systemFont(ofSize: 20, weight: .semibold)
+        title.font = UIFont.systemFont(ofSize: 21, weight: .semibold)
         title.textColor = ink
 
         statusLabel.text = "reading the share…"
-        statusLabel.font = UIFont.systemFont(ofSize: 13)
+        statusLabel.font = UIFont.systemFont(ofSize: 12)
         statusLabel.textColor = taupe
-
         spinner.color = terracotta
         spinner.startAnimating()
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel, UIView()])
+        statusRow.axis = .horizontal
+        statusRow.spacing = 6
+        statusRow.alignment = .center
 
-        let headerRow = UIStackView(arrangedSubviews: [title, UIView(), spinner])
-        headerRow.axis = .horizontal
-        headerRow.alignment = .center
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        let content = UIStackView()
-        content.axis = .vertical
-        content.spacing = 2
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addArrangedSubview(headerRow)
-        content.addArrangedSubview(statusLabel)
-        content.setCustomSpacing(14, after: statusLabel)
-
-        // Wishlist — always on (static checked row).
-        content.addArrangedSubview(makeStaticRow(text: "Wishlist"))
-
-        if !lists.isEmpty {
-            content.addArrangedSubview(makeKicker("YOUR LISTS"))
-            for l in lists {
-                content.addArrangedSubview(makeToggleRow(id: l.id, text: l.title, store: .list))
-            }
-        }
-        if !tables.isEmpty {
-            content.addArrangedSubview(makeKicker("SHARE TO A TABLE"))
-            for t in tables {
-                content.addArrangedSubview(makeToggleRow(id: t.id, text: t.name, store: .table))
-            }
-        }
-
-        card.addSubview(content)
-
-        doneButton.setTitle("Done", for: .normal)
+        doneButton.setTitle("done", for: .normal)
         doneButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
-        doneButton.setTitleColor(UIColor.white, for: .normal)
+        doneButton.setTitleColor(.white, for: .normal)
         doneButton.setTitleColor(taupe, for: .disabled)
         doneButton.backgroundColor = terracotta
-        doneButton.layer.cornerRadius = 12
+        doneButton.layer.cornerRadius = 13
         doneButton.isEnabled = false
-        doneButton.translatesAutoresizingMaskIntoConstraints = false
         doneButton.addAction(UIAction { [weak self] _ in self?.onDone() }, for: .touchUpInside)
-        card.addSubview(doneButton)
 
-        // Card hugs its content (no scroll — friend-test users have few collections).
+        let stack = UIStackView(arrangedSubviews: [title, statusRow, contentContainer, doneButton])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.setCustomSpacing(4, after: title)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(grabber)
+        card.addSubview(stack)
+
         NSLayoutConstraint.activate([
             card.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             card.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             card.widthAnchor.constraint(equalToConstant: 320),
 
-            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
-            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            grabber.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            grabber.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            grabber.widthAnchor.constraint(equalToConstant: 36),
+            grabber.heightAnchor.constraint(equalToConstant: 4),
 
-            doneButton.topAnchor.constraint(equalTo: content.bottomAnchor, constant: 16),
-            doneButton.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            doneButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            doneButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+
             doneButton.heightAnchor.constraint(equalToConstant: 48),
         ])
     }
 
-    private enum Store { case list, table }
-
-    private func makeKicker(_ text: String) -> UIView {
-        let l = UILabel()
-        l.text = text
-        l.font = UIFont.systemFont(ofSize: 10, weight: .semibold)
-        l.textColor = taupe
-        l.heightAnchor.constraint(equalToConstant: 30).isActive = true
-        return l
+    private func updateDoneTitle() {
+        let n = selectedListIds.count + newListTitles.count + (selectedTableId != nil ? 1 : 0)
+        doneButton.setTitle(n > 0 ? "done · \(n)" : "done", for: .normal)
     }
 
-    private func makeStaticRow(text: String) -> UIView {
-        let label = UILabel()
-        label.text = text
-        label.font = UIFont.systemFont(ofSize: 16)
-        label.textColor = ink
-        let check = UILabel()
-        check.text = "✓"
-        check.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        check.textColor = terracotta
-        let row = UIStackView(arrangedSubviews: [label, UIView(), check])
+    // MARK: - Render (swap content per screen)
+
+    private func render() {
+        contentContainer.subviews.forEach { $0.removeFromSuperview() }
+        let body: UIView
+        switch screen {
+        case .main: body = buildMain()
+        case .allLists: body = buildAllPicker(isLists: true)
+        case .allTables: body = buildAllPicker(isLists: false)
+        }
+        body.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            body.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            body.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+        ])
+        updateDoneTitle()
+    }
+
+    // MARK: - Screens
+
+    private func buildMain() -> UIView {
+        let s = UIStackView()
+        s.axis = .vertical
+        s.spacing = 2
+
+        s.addArrangedSubview(rule())
+        s.addArrangedSubview(makeRow(text: "Wishlist", checked: true, serif: true, onTap: nil))
+
+        // Lists: max 3 + show all
+        s.addArrangedSubview(kicker("your lists", count: lists.count, showAll: lists.count > 3, onShowAll: { [weak self] in
+            self?.screen = .allLists; self?.render()
+        }))
+        for l in lists.prefix(3) {
+            s.addArrangedSubview(makeRow(text: l.title, checked: selectedListIds.contains(l.id), serif: true, onTap: { [weak self] in
+                self?.toggleList(l.id)
+            }))
+        }
+        for (i, t) in newListTitles.enumerated() {
+            s.addArrangedSubview(makeRow(text: "\(t)  ·  new", checked: true, serif: true, onTap: { [weak self] in
+                self?.newListTitles.remove(at: i); self?.render()
+            }))
+        }
+        s.addArrangedSubview(addRow(text: "new list", onTap: { [weak self] in self?.promptNewList() }))
+
+        // Tables: max 3 + show all (single-select for now)
+        if !tables.isEmpty {
+            s.addArrangedSubview(kicker("share to a table", count: tables.count, showAll: tables.count > 3, onShowAll: { [weak self] in
+                self?.screen = .allTables; self?.render()
+            }))
+            for t in tables.prefix(3) {
+                s.addArrangedSubview(makeRow(text: t.name, checked: selectedTableId == t.id, serif: true, onTap: { [weak self] in
+                    self?.toggleTable(t.id)
+                }))
+            }
+        }
+        return s
+    }
+
+    private func buildAllPicker(isLists: Bool) -> UIView {
+        let outer = UIStackView()
+        outer.axis = .vertical
+        outer.spacing = 6
+
+        let back = UIButton(type: .system)
+        back.setTitle("‹ back", for: .normal)
+        back.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        back.setTitleColor(terracotta, for: .normal)
+        back.contentHorizontalAlignment = .left
+        back.addAction(UIAction { [weak self] _ in self?.screen = .main; self?.render() }, for: .touchUpInside)
+        outer.addArrangedSubview(back)
+
+        let header = UILabel()
+        header.text = isLists ? "all lists" : "all tables"
+        header.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        header.textColor = ink
+        outer.addArrangedSubview(header)
+
+        let inner = UIStackView()
+        inner.axis = .vertical
+        inner.spacing = 2
+        inner.translatesAutoresizingMaskIntoConstraints = false
+
+        if isLists {
+            for l in lists {
+                inner.addArrangedSubview(makeRow(text: l.title, checked: selectedListIds.contains(l.id), serif: true, onTap: { [weak self] in
+                    self?.toggleList(l.id)
+                }))
+            }
+        } else {
+            for t in tables {
+                inner.addArrangedSubview(makeRow(text: t.name, checked: selectedTableId == t.id, serif: true, onTap: { [weak self] in
+                    self?.toggleTable(t.id)
+                }))
+            }
+        }
+
+        let scroll = UIScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.showsVerticalScrollIndicator = true
+        scroll.addSubview(inner)
+        NSLayoutConstraint.activate([
+            scroll.heightAnchor.constraint(equalToConstant: 320),
+            inner.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            inner.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            inner.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            inner.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            inner.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+        ])
+        outer.addArrangedSubview(scroll)
+        return outer
+    }
+
+    // MARK: - Row builders
+
+    private func rule() -> UIView {
+        let v = UIView()
+        v.backgroundColor = UIColor(red: 0.867, green: 0.753, blue: 0.729, alpha: 0.45)
+        v.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return v
+    }
+
+    private func kicker(_ text: String, count: Int, showAll: Bool, onShowAll: @escaping () -> Void) -> UIView {
+        let k = UILabel()
+        k.text = text.uppercased()
+        k.font = UIFont.systemFont(ofSize: 10, weight: .semibold)
+        k.textColor = taupe
+        let row = UIStackView(arrangedSubviews: [k, UIView()])
         row.axis = .horizontal
-        row.alignment = .center
-        row.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        return row
+        row.alignment = .firstBaseline
+        if showAll {
+            let b = UIButton(type: .system)
+            b.setTitle("show all \(count)", for: .normal)
+            b.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: .bold)
+            b.setTitleColor(terracotta, for: .normal)
+            b.addAction(UIAction { _ in onShowAll() }, for: .touchUpInside)
+            row.addArrangedSubview(b)
+        }
+        let wrap = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        wrap.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
+            row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
+            row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+        ])
+        return wrap
     }
 
-    private func makeToggleRow(id: String, text: String, store: Store) -> UIView {
+    private func makeRow(text: String, checked: Bool, serif: Bool, onTap: (() -> Void)?) -> UIView {
         let label = UILabel()
         label.text = text
-        label.font = UIFont.systemFont(ofSize: 16)
+        label.font = serif
+            ? (UIFont(name: "Georgia-Italic", size: 17) ?? UIFont.italicSystemFont(ofSize: 17))
+            : UIFont.systemFont(ofSize: 16)
         label.textColor = ink
         label.numberOfLines = 1
 
         let check = UILabel()
-        check.text = "✓"
+        check.text = checked ? "✓" : ""
         check.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        check.textColor = terracotta
-        check.alpha = 0
+        check.textColor = checked ? terracotta : taupe
+        let checkWrap = UIView()
+        checkWrap.layer.cornerRadius = 11.5
+        checkWrap.layer.borderWidth = checked ? 0 : 2
+        checkWrap.layer.borderColor = UIColor(red: 0.867, green: 0.753, blue: 0.729, alpha: 1).cgColor
+        checkWrap.backgroundColor = checked ? terracotta : .clear
+        check.textColor = checked ? .white : .clear
+        checkWrap.translatesAutoresizingMaskIntoConstraints = false
+        check.translatesAutoresizingMaskIntoConstraints = false
+        checkWrap.addSubview(check)
+        NSLayoutConstraint.activate([
+            checkWrap.widthAnchor.constraint(equalToConstant: 23),
+            checkWrap.heightAnchor.constraint(equalToConstant: 23),
+            check.centerXAnchor.constraint(equalTo: checkWrap.centerXAnchor),
+            check.centerYAnchor.constraint(equalTo: checkWrap.centerYAnchor),
+        ])
 
-        if store == .list { listChecks[id] = check } else { tableChecks[id] = check }
-
-        let row = UIStackView(arrangedSubviews: [label, UIView(), check])
+        let row = UIStackView(arrangedSubviews: [label, UIView(), checkWrap])
         row.axis = .horizontal
         row.alignment = .center
-        row.isLayoutMarginsRelativeArrangement = true
+        row.translatesAutoresizingMaskIntoConstraints = false
         row.heightAnchor.constraint(equalToConstant: 44).isActive = true
 
-        let button = UIButton(type: .system)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.addAction(UIAction { [weak self] _ in
-            if store == .list { self?.toggleList(id) } else { self?.toggleTable(id) }
-        }, for: .touchUpInside)
-        row.addSubview(button)
+        let wrap = UIView()
+        wrap.addSubview(row)
         NSLayoutConstraint.activate([
-            button.topAnchor.constraint(equalTo: row.topAnchor),
-            button.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            button.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            row.topAnchor.constraint(equalTo: wrap.topAnchor),
+            row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
         ])
-        return row
+        if let onTap = onTap {
+            let btn = UIButton(type: .system)
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.addAction(UIAction { _ in onTap() }, for: .touchUpInside)
+            wrap.addSubview(btn)
+            NSLayoutConstraint.activate([
+                btn.topAnchor.constraint(equalTo: wrap.topAnchor),
+                btn.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+                btn.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+                btn.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            ])
+        }
+        return wrap
     }
 
+    private func addRow(text: String, onTap: @escaping () -> Void) -> UIView {
+        let plus = UILabel()
+        plus.text = "+"
+        plus.font = UIFont.systemFont(ofSize: 20, weight: .regular)
+        plus.textColor = terracotta
+        let label = UILabel()
+        label.text = text
+        label.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        label.textColor = terracotta
+        let row = UIStackView(arrangedSubviews: [plus, label, UIView()])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.heightAnchor.constraint(equalToConstant: 42).isActive = true
+        let wrap = UIView()
+        wrap.addSubview(row)
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.addAction(UIAction { _ in onTap() }, for: .touchUpInside)
+        wrap.addSubview(btn)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: wrap.topAnchor),
+            row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            btn.topAnchor.constraint(equalTo: wrap.topAnchor),
+            btn.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+            btn.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+            btn.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+        ])
+        return wrap
+    }
+
+    // MARK: - Selection
+
     private func toggleList(_ id: String) {
-        if selectedListIds.contains(id) {
-            selectedListIds.remove(id)
-            listChecks[id]?.alpha = 0
-        } else {
-            selectedListIds.insert(id)
-            listChecks[id]?.alpha = 1
-        }
+        if selectedListIds.contains(id) { selectedListIds.remove(id) } else { selectedListIds.insert(id) }
+        render()
     }
 
     private func toggleTable(_ id: String) {
-        if selectedTableId == id {
-            selectedTableId = nil
-            tableChecks[id]?.alpha = 0
-        } else {
-            selectedTableId = id
-            for (tid, lbl) in tableChecks { lbl.alpha = (tid == id) ? 1 : 0 } // radio
+        selectedTableId = (selectedTableId == id) ? nil : id // single-select for now
+        render()
+    }
+
+    private func promptNewList() {
+        let alert = UIAlertController(title: "new list", message: nil, preferredStyle: .alert)
+        alert.addTextField { tf in
+            tf.placeholder = "name your list"
+            tf.autocapitalizationType = .none
         }
-    }
-
-    private func markReady(kind: String) {
-        captureKind = kind
-        captureReady = true
-        spinner.stopAnimating()
-        spinner.isHidden = true
-        statusLabel.text = kind == "video" ? "ready to save" : "got the link — save the video for the full list"
-        doneButton.isEnabled = true
-    }
-
-    private func markFailed() {
-        spinner.stopAnimating()
-        spinner.isHidden = true
-        statusLabel.text = "couldn't read that — try again"
-        doneButton.setTitle("Close", for: .normal)
-        doneButton.backgroundColor = UIColor.systemGray4
-        doneButton.isEnabled = true // lets the user dismiss
+        alert.addAction(UIAlertAction(title: "cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "create", style: .default) { [weak self, weak alert] _ in
+            let name = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !name.isEmpty else { return }
+            self?.newListTitles.append(name)
+            self?.render()
+        })
+        present(alert, animated: true)
     }
 
     // MARK: - Capture
@@ -270,10 +433,7 @@ class ShareViewController: UIViewController {
         guard
             let item = (extensionContext?.inputItems as? [NSExtensionItem])?.first,
             let attachments = item.attachments
-        else {
-            markFailed()
-            return
-        }
+        else { markFailed(); return }
 
         let movieType = UTType.movie.identifier
         let urlType = UTType.url.identifier
@@ -283,34 +443,42 @@ class ShareViewController: UIViewController {
                 guard let self = self else { return }
                 let dest = fileURL.flatMap { self.copyToAppGroup($0) }
                 DispatchQueue.main.async {
-                    if let dest = dest {
-                        self.capturedVideoPath = dest.path
-                        self.markReady(kind: "video")
-                    } else {
-                        self.markFailed()
-                    }
+                    if let dest = dest { self.capturedVideoPath = dest.path; self.markReady(kind: "video") }
+                    else { self.markFailed() }
                 }
             }
             return
         }
-
         if let provider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(urlType) }) {
             provider.loadItem(forTypeIdentifier: urlType, options: nil) { [weak self] (data, _) in
                 guard let self = self else { return }
                 let url: URL? = (data as? URL) ?? (data as? String).flatMap(URL.init(string:))
                 DispatchQueue.main.async {
-                    if let url = url {
-                        self.capturedURL = url.absoluteString
-                        self.markReady(kind: "url")
-                    } else {
-                        self.markFailed()
-                    }
+                    if let url = url { self.capturedURL = url.absoluteString; self.markReady(kind: "url") }
+                    else { self.markFailed() }
                 }
             }
             return
         }
-
         markFailed()
+    }
+
+    private func markReady(kind: String) {
+        captureKind = kind
+        captureReady = true
+        spinner.stopAnimating()
+        spinner.isHidden = true
+        statusLabel.text = kind == "video" ? "ready" : "got the link — save the video for the full list"
+        doneButton.isEnabled = true
+    }
+
+    private func markFailed() {
+        spinner.stopAnimating()
+        spinner.isHidden = true
+        statusLabel.text = "couldn't read that — try again"
+        doneButton.setTitle("close", for: .normal)
+        doneButton.backgroundColor = UIColor.systemGray4
+        doneButton.isEnabled = true
     }
 
     private func copyToAppGroup(_ src: URL) -> URL? {
@@ -320,33 +488,20 @@ class ShareViewController: UIViewController {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let ext = src.pathExtension.isEmpty ? "mov" : src.pathExtension
         let dest = dir.appendingPathComponent(UUID().uuidString + "." + ext)
-        do {
-            try FileManager.default.copyItem(at: src, to: dest)
-            return dest
-        } catch {
-            return nil
-        }
+        do { try FileManager.default.copyItem(at: src, to: dest); return dest } catch { return nil }
     }
 
     // MARK: - Done → write manifest
 
-    /// JSON-safe value: the string, or NSNull (→ JSON null). `String? ?? NSNull()`
-    /// won't type-check (mismatched operands), so branch explicitly.
     private func jsonOrNull(_ s: String?) -> Any {
         if let s = s { return s }
         return NSNull()
     }
 
     private func onDone() {
-        guard captureReady, let kind = captureKind else {
-            complete()
-            return
-        }
+        guard captureReady, let kind = captureKind else { complete(); return }
         guard let container = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) else {
-            complete()
-            return
-        }
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) else { complete(); return }
         let dir = container.appendingPathComponent("import-queue", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
@@ -354,6 +509,7 @@ class ShareViewController: UIViewController {
         let destinations: [String: Any] = [
             "wishlist": true,
             "listIds": Array(selectedListIds),
+            "newListTitles": newListTitles,
             "tableId": jsonOrNull(selectedTableId),
         ]
         var manifest: [String: Any] = [
@@ -373,12 +529,8 @@ class ShareViewController: UIViewController {
         if let data = try? JSONSerialization.data(withJSONObject: manifest) {
             let tmp = dir.appendingPathComponent(jobId + ".json.tmp")
             let final = dir.appendingPathComponent(jobId + ".json")
-            do {
-                try data.write(to: tmp)
-                try FileManager.default.moveItem(at: tmp, to: final)
-            } catch {
-                try? FileManager.default.removeItem(at: tmp)
-            }
+            do { try data.write(to: tmp); try FileManager.default.moveItem(at: tmp, to: final) }
+            catch { try? FileManager.default.removeItem(at: tmp) }
         }
         complete()
     }

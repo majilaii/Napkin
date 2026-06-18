@@ -84,6 +84,41 @@ function buildPlace(c: ResolvedCandidate): unknown {
     };
 }
 
+/**
+ * Resolve "create new list" titles to list ids — title-deduped against the user's
+ * existing lists so a re-drain reuses the list it already created (replay-safe;
+ * lists.create is NOT idempotent on its own).
+ */
+async function resolveNewLists(titles: string[]): Promise<string[]> {
+    if (!titles || titles.length === 0) return [];
+    let mine: { id: string; title: string }[] = [];
+    try {
+        mine = (await callEdgeFn<{ id: string; title: string }[]>('lists', { action: 'list_mine' })) ?? [];
+    } catch {
+        mine = [];
+    }
+    const out: string[] = [];
+    for (const raw of titles) {
+        const title = raw.trim();
+        if (!title) continue;
+        const existing = mine.find((l) => (l.title ?? '').trim().toLowerCase() === title.toLowerCase());
+        if (existing) {
+            out.push(existing.id);
+            continue;
+        }
+        try {
+            const created = await callEdgeFn<{ id: string }>('lists', { action: 'create', body: { title } });
+            if (created?.id) {
+                out.push(created.id);
+                mine.push({ id: created.id, title });
+            }
+        } catch {
+            /* skip a failed create */
+        }
+    }
+    return out;
+}
+
 function safeDeleteMov(path: string | undefined): void {
     if (!path) return;
     try {
@@ -191,7 +226,11 @@ export function useProcessImportQueue() {
                 .map((r) => r.restaurant_id)
                 .filter((x): x is string => !!x);
             if (restaurantIds.length > 0) {
-                for (const listId of m.destinations.listIds) {
+                // Create any "new list" titles (title-deduped), then file into every
+                // chosen list (existing + new) via the idempotent bulk add.
+                const newListIds = await resolveNewLists(m.destinations.newListTitles);
+                const allListIds = [...new Set([...m.destinations.listIds, ...newListIds])];
+                for (const listId of allListIds) {
                     try {
                         await callEdgeFn('lists', {
                             action: 'add_entries',
@@ -219,7 +258,7 @@ export function useProcessImportQueue() {
             if (userId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.wishlist.personal(userId) });
                 queryClient.invalidateQueries({ queryKey: queryKeys.importJobs.all(userId) });
-                if (m.destinations.listIds.length > 0) {
+                if (m.destinations.listIds.length > 0 || m.destinations.newListTitles.length > 0) {
                     queryClient.invalidateQueries({ queryKey: queryKeys.lists.mine(userId) });
                     for (const listId of m.destinations.listIds) {
                         queryClient.invalidateQueries({ queryKey: queryKeys.lists.detail(listId) });
