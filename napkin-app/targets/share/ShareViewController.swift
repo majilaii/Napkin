@@ -24,7 +24,6 @@ class ShareViewController: UIViewController {
     private let taupe = UIColor(red: 0.541, green: 0.447, blue: 0.424, alpha: 1)
     private let terracotta = UIColor(red: 0.627, green: 0.247, blue: 0.157, alpha: 1)
     private let note = UIColor(red: 0.996, green: 0.992, blue: 0.973, alpha: 1)
-    private let rule = UIColor(red: 0.867, green: 0.753, blue: 0.729, alpha: 1)
 
     // Captured source
     private var capturedVideoPath: String?
@@ -133,11 +132,7 @@ class ShareViewController: UIViewController {
             }
         }
 
-        // Scroll wraps the content so long collection lists stay usable.
-        let scroll = UIScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.showsVerticalScrollIndicator = false
-        scroll.addSubview(content)
+        card.addSubview(content)
 
         doneButton.setTitle("Done", for: .normal)
         doneButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
@@ -149,25 +144,18 @@ class ShareViewController: UIViewController {
         doneButton.translatesAutoresizingMaskIntoConstraints = false
         doneButton.addAction(UIAction { [weak self] _ in self?.onDone() }, for: .touchUpInside)
         card.addSubview(doneButton)
-        card.addSubview(scroll)
 
+        // Card hugs its content (no scroll — friend-test users have few collections).
         NSLayoutConstraint.activate([
             card.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             card.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             card.widthAnchor.constraint(equalToConstant: 320),
-            card.heightAnchor.constraint(lessThanOrEqualTo: view.heightAnchor, multiplier: 0.7),
 
-            scroll.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
-            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
 
-            content.topAnchor.constraint(equalTo: scroll.topAnchor),
-            content.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.widthAnchor),
-
-            doneButton.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 16),
+            doneButton.topAnchor.constraint(equalTo: content.bottomAnchor, constant: 16),
             doneButton.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
             doneButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
             doneButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
@@ -342,6 +330,13 @@ class ShareViewController: UIViewController {
 
     // MARK: - Done → write manifest
 
+    /// JSON-safe value: the string, or NSNull (→ JSON null). `String? ?? NSNull()`
+    /// won't type-check (mismatched operands), so branch explicitly.
+    private func jsonOrNull(_ s: String?) -> Any {
+        if let s = s { return s }
+        return NSNull()
+    }
+
     private func onDone() {
         guard captureReady, let kind = captureKind else {
             complete()
@@ -356,6 +351,11 @@ class ShareViewController: UIViewController {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let jobId = UUID().uuidString
+        let destinations: [String: Any] = [
+            "wishlist": true,
+            "listIds": Array(selectedListIds),
+            "tableId": jsonOrNull(selectedTableId),
+        ]
         var manifest: [String: Any] = [
             "jobId": jobId,
             "kind": kind,
@@ -364,15 +364,11 @@ class ShareViewController: UIViewController {
             "attempts": 0,
             "status": "pending",
             "mode": "auto",
-            "userId": snapshotUserId ?? NSNull(),
-            "destinations": [
-                "wishlist": true,
-                "listIds": Array(selectedListIds),
-                "tableId": selectedTableId ?? NSNull(),
-            ],
+            "userId": jsonOrNull(snapshotUserId),
+            "destinations": destinations,
         ]
-        if kind == "video" { manifest["videoPath"] = capturedVideoPath }
-        if kind == "url" { manifest["url"] = capturedURL }
+        if kind == "video", let p = capturedVideoPath { manifest["videoPath"] = p }
+        if kind == "url", let u = capturedURL { manifest["url"] = u }
 
         if let data = try? JSONSerialization.data(withJSONObject: manifest) {
             let tmp = dir.appendingPathComponent(jobId + ".json.tmp")
