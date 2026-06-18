@@ -18,7 +18,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { PageVisit, PublicReviewCard } from '@/hooks/restaurants/useRestaurantPage';
 
 interface VoiceRowProps {
-    kind: 'self' | 'tablemate' | 'public';
+    kind: 'self' | 'tablemate' | 'followee' | 'public';
     initial: string;
     name: string;
     rating: number | null;
@@ -105,6 +105,16 @@ function VoiceRow({ kind, initial, name, rating, date, note, matchPct, onPress, 
             >
                 {avatarContent}
             </LinearGradient>
+        ) : kind === 'followee' ? (
+            // people you follow — amber→olive, distinct from self/tablemate/public
+            <LinearGradient
+                colors={['#cda43f', '#6b7c3a']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.av}
+            >
+                {avatarContent}
+            </LinearGradient>
         ) : (
             <View
                 style={[
@@ -179,13 +189,28 @@ export function VoicesStream({
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
 
-    const qualifyingPublicCount = publicReviews.filter(reviewQualifiesForMatchFilter).length;
+    // Letterboxd "from people you follow" — lift followees into their own tier
+    // (above the ring divider) so the public/strangers list never buries them.
+    const followeeReviews = React.useMemo(
+        () =>
+            publicReviews
+                .filter((r) => r.is_followee)
+                .slice()
+                .sort((a, b) => (b.created_at > a.created_at ? 1 : -1)),
+        [publicReviews],
+    );
+    const strangerReviews = React.useMemo(
+        () => publicReviews.filter((r) => !r.is_followee),
+        [publicReviews],
+    );
+
+    const qualifyingPublicCount = strangerReviews.filter(reviewQualifiesForMatchFilter).length;
     const showFilterPill =
         onToggleMatchFilter != null && qualifyingPublicCount >= FILTER_PILL_MIN_QUALIFYING;
 
     const visiblePublic = React.useMemo(() => {
-        if (!matchFilterOn) return publicReviews;
-        return publicReviews
+        if (!matchFilterOn) return strangerReviews;
+        return strangerReviews
             .filter(reviewQualifiesForMatchFilter)
             .slice()
             .sort((a, b) => {
@@ -194,10 +219,12 @@ export function VoicesStream({
                 if (bMatch !== aMatch) return bMatch - aMatch;
                 return b.created_at > a.created_at ? 1 : -1;
             });
-    }, [publicReviews, matchFilterOn]);
+    }, [strangerReviews, matchFilterOn]);
 
-    const hasPrivateVoices = selfVisits.length > 0 || tablemateVisits.length > 0;
-    const total = selfVisits.length + tablemateVisits.length + visiblePublic.length;
+    const hasPrivateVoices =
+        selfVisits.length > 0 || tablemateVisits.length > 0 || followeeReviews.length > 0;
+    const total =
+        selfVisits.length + tablemateVisits.length + followeeReviews.length + visiblePublic.length;
 
     if (!hasPrivateVoices && publicReviews.length === 0) {
         const emptyLine = restaurantName
@@ -250,8 +277,34 @@ export function VoicesStream({
                 />
             ))}
 
-            {/* Ring divider — dashed line + italic murmur */}
-            {hasPrivateVoices && publicReviews.length > 0 ? (
+            {/* People you follow (Letterboxd-style) — own tier above the divider */}
+            {followeeReviews.length > 0 ? (
+                <>
+                    <View style={styles.tierRow}>
+                        <Text style={[styles.tierLabel, { color: palette.textSecondary }]}>
+                            FROM PEOPLE YOU FOLLOW
+                        </Text>
+                    </View>
+                    {followeeReviews.map((r) => (
+                        <VoiceRow
+                            key={`fol-${r.entry_id}`}
+                            kind="followee"
+                            initial={getInitial(r.display_name)}
+                            name={r.display_name}
+                            rating={r.rating}
+                            date={r.created_at}
+                            note={r.note_excerpt}
+                            onPress={onPublicReviewPress ? () => onPublicReviewPress(r.entry_id) : undefined}
+                            palette={palette}
+                        />
+                    ))}
+                </>
+            ) : null}
+
+            {/* Ring divider — dashed line + italic murmur (inner voices → strangers).
+                Gated on visiblePublic (what's rendered below) so the divider never
+                floats above an empty/match-filtered stranger list. */}
+            {hasPrivateVoices && visiblePublic.length > 0 ? (
                 <View style={[styles.ringDivider, { borderTopColor: DIVIDER_COLOR }]}>
                     <Text style={[styles.ringDividerText, { color: palette.textMuted }]}>
                         — from outside your circle
@@ -331,6 +384,16 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 9,
         letterSpacing: 1,
+    },
+    tierRow: {
+        marginTop: 16,
+        marginBottom: 6,
+    },
+    tierLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+        letterSpacing: 1.4,
+        textTransform: 'uppercase',
     },
     voice: {
         flexDirection: 'row',

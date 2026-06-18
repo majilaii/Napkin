@@ -16,7 +16,7 @@
  * 'transparentModal' — cold-start with this as first screen would paint
  * over a black void with a transparent modal.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,64 +26,78 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { validateUrl } from '@/lib/urlValidation';
 import * as pendingImport from '@/lib/pendingImport';
+import { enqueueVideoImport } from '@/lib/importQueue';
+import { useToast } from '@/providers/ToastProvider';
 import { ImportLinkSheet } from '@/components/wishlist';
 
 export default function ImportScreen() {
-    const { url, nonce } = useLocalSearchParams<{ url?: string; nonce?: string }>();
+    const { url, video, nonce } = useLocalSearchParams<{ url?: string; video?: string; nonce?: string }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const { session } = useAuth();
+    const toast = useToast();
 
     const [sheetVisible, setSheetVisible] = useState(false);
-    const [didRoute, setDidRoute] = useState(false);
+    // TICKET-083 stuck-state fix: process per DISTINCT import, keyed on the param
+    // value — NOT a one-shot guard. If a user shares a video, leaves the sheet
+    // open, backgrounds to TikTok, then shares ANOTHER video, the new param must
+    // supersede the stale one (the old one-shot `didRoute` silently ignored it).
+    const processedKeyRef = useRef<string | null>(null);
 
     useEffect(() => {
-        if (didRoute) return;
+        const rawVideoParam = Array.isArray(video) ? video[0] : video;
+        const rawUrlParam = Array.isArray(url) ? url[0] : url;
+        const key = rawVideoParam ? `v:${rawVideoParam}` : rawUrlParam ? `u:${rawUrlParam}` : '';
 
-        const rawUrl = Array.isArray(url) ? url[0] : url;
+        // Same import as last processed → ignore Expo Router re-emitting the param.
+        if (key === processedKeyRef.current) return;
+        processedKeyRef.current = key;
 
-        // No URL provided — show error.
-        if (!rawUrl) {
-            setDidRoute(true);
+        // A new import supersedes any stale sheet; the keyed sheet remounts fresh.
+        setSheetVisible(false);
+
+        // ── Shared VIDEO → enqueue for async background OCR + auto-save
+        // (TICKET-083 Part B). No blocking sheet; the processor mounted in
+        // _layout drains it. Works signed-out — the manifest is durable and
+        // drains on sign-in (single buffer; no pendingImport double-fire). ──
+        if (rawVideoParam) {
+            const signedIn = !!session;
+            enqueueVideoImport(rawVideoParam)
+                .then(() => {
+                    // Only claim "importing…" once the manifest is actually queued.
+                    if (signedIn) toast.show('importing — your spots will appear in a moment');
+                })
+                .catch(() => {/* enqueue failed — no false toast */});
+            router.replace(signedIn ? ('/wishlist' as any) : '/auth');
             return;
         }
 
-        // Signed out — stash and redirect to auth.
-        // ARCH-REVIEW-4: do NOT consume() here.
-        // Fix-pass-2 item 4: pass the `nonce` route param through to stash so a
-        // transient-null-session render cannot rotate the import_nonce, and the
-        // signed-out → resume flow reuses the same job-level idempotency key.
+        // No URL → error state rendered inline.
+        if (!rawUrlParam) return;
+
+        // Signed out — stash + auth (ARCH-REVIEW-4: do NOT consume here). The nonce
+        // keeps job-level idempotency stable across the signed-out → resume flow.
         if (!session) {
-            setDidRoute(true);
             const rawNonce = typeof nonce === 'string' ? nonce : undefined;
-            pendingImport.stash(rawUrl, rawNonce).then(() => {
-                router.replace('/auth');
-            });
+            pendingImport.stash(rawUrlParam, rawNonce).then(() => router.replace('/auth'));
             return;
         }
 
-        // Signed in — validate the URL.
-        const validation = validateUrl(rawUrl.trim());
-        if (!validation.ok) {
-            setDidRoute(true);
-            // Error state is rendered inline; user taps to go back.
-            return;
-        }
+        // Invalid URL → error state rendered inline.
+        if (!validateUrl(rawUrlParam.trim()).ok) return;
 
-        // Valid URL + signed in → open the sheet.
-        // Defensive consume: clear any lingering stash (covers the race where
-        // the user signed in elsewhere and re-launched via a share).
+        // Valid URL + signed in → open the sheet (defensive consume clears any stash).
         pendingImport.consume().catch(() => {/* ignore */});
         setSheetVisible(true);
-        setDidRoute(true);
-    // url is intentionally read once on first session check; the didRoute guard
-    // prevents re-entry if Expo Router re-emits the param.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [session]);
+    }, [video, url, session, nonce, router, toast]);
 
     const rawUrl = Array.isArray(url) ? url[0] : url;
+    const rawVideo = Array.isArray(video) ? video[0] : video;
+    // Distinct per import → forces the sheet to remount fresh when a new share
+    // arrives (clears any stale half-finished sheet from a prior share).
+    const importKey = rawVideo ? `v:${rawVideo}` : rawUrl ? `u:${rawUrl}` : 'none';
     const urlIsInvalid = rawUrl
         ? !validateUrl(rawUrl.trim()).ok
         : true;
@@ -113,7 +127,7 @@ export default function ImportScreen() {
                 ]}
             >
                 {/* Error state — invalid or missing URL */}
-                {(!rawUrl || urlIsInvalid) && !sheetVisible && (
+                {!rawVideo && (!rawUrl || urlIsInvalid) && !sheetVisible && (
                     <Pressable onPress={handleErrorTap} style={styles.errorContainer}>
                         <Text
                             style={[
@@ -135,14 +149,14 @@ export default function ImportScreen() {
                 )}
 
                 {/* Loading placeholder — visible while the sheet mounts */}
-                {rawUrl && !urlIsInvalid && (
+                {(rawVideo || (rawUrl && !urlIsInvalid)) && (
                     <Text
                         style={[
                             Type.headlineItalic,
                             { color: palette.textMuted, textAlign: 'center' },
                         ]}
                     >
-                        opening link...
+                        {rawVideo ? 'opening video...' : 'opening link...'}
                     </Text>
                 )}
             </View>
@@ -151,14 +165,17 @@ export default function ImportScreen() {
                 fires immediately, skipping the paste step.
                 Fix 9: also passes initialImportNonce from the stash so the sheet
                 seeds its importNonceRef from the pre-auth nonce. */}
-            {rawUrl && !urlIsInvalid && (
+            {/* VIDEO shares no longer open a sheet — they enqueue + drain in the
+                background (see the effect). Only the URL-paste path uses the sheet. */}
+            {rawUrl && !urlIsInvalid ? (
                 <ImportLinkSheet
+                    key={importKey}
                     visible={sheetVisible}
                     initialUrl={rawUrl}
                     initialImportNonce={typeof nonce === 'string' ? nonce : undefined}
                     onDismiss={handleDismiss}
                 />
-            )}
+            ) : null}
         </>
     );
 }

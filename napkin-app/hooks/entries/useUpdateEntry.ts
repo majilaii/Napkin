@@ -117,24 +117,34 @@ export function useUpdateEntry(entryId: string) {
 
             const patchEntry = (e: any) => (e?.id === entryId ? { ...e, ...scalarPatch } : e);
 
-            // feed (useQuery → { entries }) and feed (useCursorPagedQuery → { pages })
-            qc.setQueriesData<any>({ queryKey: queryKeys.feed.rootAll() }, (data: any) => {
-                if (!data) return data;
-                if (data.pages) {
-                    return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(patchEntry) ?? p.rows })) };
-                }
-                if (data.entries) return { ...data, entries: data.entries.map(patchEntry) };
-                return data;
-            });
+            // The PATCH already persisted server-side; a glitch in these
+            // list-cache reconciles must never surface as an error on a saved edit.
+            try {
+                // feed (useQuery → { entries }) and feed (useCursorPagedQuery → { pages })
+                qc.setQueriesData<any>({ queryKey: queryKeys.feed.rootAll() }, (data: any) => {
+                    if (!data) return data;
+                    if (data.pages) {
+                        return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(patchEntry) ?? p.rows })) };
+                    }
+                    if (data.entries) return { ...data, entries: data.entries.map(patchEntry) };
+                    return data;
+                });
 
-            // tableActivity (useInfiniteQuery → { pages: ActivityItem[][] })
-            qc.setQueriesData<{ pages?: any[][] }>(
-                { queryKey: queryKeys.tables.activityAll() },
-                (data) => {
-                    if (!data?.pages) return data;
-                    return { ...data, pages: data.pages.map((page) => page.map(patchEntry)) };
-                },
-            );
+                // tableActivity (useCursorPagedQuery → { pages: Page<ActivityItem>[] }
+                // where each page is the canonical { rows, next_cursor, has_more }
+                // envelope — NOT a raw array. Mapping page.map() here treated the page
+                // as an array and threw "undefined is not a function" on every scalar
+                // edit (same class as the usePostInteractions bug fixed in 5bb6c6d).
+                qc.setQueriesData<any>(
+                    { queryKey: queryKeys.tables.activityAll() },
+                    (data: any) => {
+                        if (!data?.pages) return data;
+                        return { ...data, pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(patchEntry) })) };
+                    },
+                );
+            } catch (reconcileErr: any) {
+                console.warn('[useUpdateEntry] list-cache reconcile skipped:', reconcileErr?.message);
+            }
 
             // No userId in scope here; mySolo cache uses the entry's user_id which
             // we don't have access to without an extra fetch. The detail invalidation

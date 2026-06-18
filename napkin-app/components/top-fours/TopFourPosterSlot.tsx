@@ -57,19 +57,7 @@ export function TopFourPosterSlot({ pick, isOwner, onOpenEdit }: Props) {
                             style={StyleSheet.absoluteFill}
                             contentFit="cover"
                         />
-                    ) : (
-                        // Ghost initial
-                        <View style={styles.ghostWrap}>
-                            <Text
-                                style={[
-                                    Type.headlineItalic,
-                                    { fontSize: 16, color: palette.textMuted },
-                                ]}
-                            >
-                                {restaurant.name.charAt(0)}
-                            </Text>
-                        </View>
-                    )}
+                    ) : null}
                     {/* Position badge */}
                     <View
                         style={[
@@ -193,11 +181,6 @@ const styles = StyleSheet.create({
     emptySlot: {
         borderWidth: 1,
         borderStyle: 'dashed',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    ghostWrap: {
-        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
     },

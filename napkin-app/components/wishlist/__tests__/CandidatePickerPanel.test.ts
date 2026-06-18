@@ -47,8 +47,8 @@ function makeCandidate(
 
 // ── buildInitialTicked ────────────────────────────────────────────────────────
 
-describe('buildInitialTicked — default selection by confidence', () => {
-    it('single candidate: always pre-ticked regardless of confidence', () => {
+describe('buildInitialTicked — pre-ticks ALL candidates (TICKET-082)', () => {
+    it('single candidate: pre-ticked regardless of confidence', () => {
         const low = makeCandidate('c1', 'low');
         const ticked = buildInitialTicked([low]);
         expect(ticked.has('c1')).toBe(true);
@@ -60,37 +60,29 @@ describe('buildInitialTicked — default selection by confidence', () => {
         expect(ticked.has('c1')).toBe(true);
     });
 
-    it('N>1: exact candidates are pre-ticked', () => {
+    it('N>1: low candidates are ALSO pre-ticked (import-the-list intent)', () => {
         const exact = makeCandidate('c1', 'exact');
         const low = makeCandidate('c2', 'low');
         const ticked = buildInitialTicked([exact, low]);
         expect(ticked.has('c1')).toBe(true);
-        expect(ticked.has('c2')).toBe(false);
+        expect(ticked.has('c2')).toBe(true);
     });
 
-    it('N>1: high candidates are pre-ticked', () => {
-        const high = makeCandidate('c1', 'high');
-        const low = makeCandidate('c2', 'low');
-        const ticked = buildInitialTicked([high, low]);
-        expect(ticked.has('c1')).toBe(true);
-        expect(ticked.has('c2')).toBe(false);
-    });
-
-    it('N>1: all low → none pre-ticked', () => {
+    it('N>1: all low → all pre-ticked (no silent drop)', () => {
         const low1 = makeCandidate('c1', 'low');
         const low2 = makeCandidate('c2', 'low');
         const ticked = buildInitialTicked([low1, low2]);
-        expect(ticked.size).toBe(0);
+        expect(ticked.size).toBe(2);
     });
 
-    it('N>1: mixed high+exact all ticked, low unticked', () => {
+    it('N>1: mixed exact+high+low → all ticked', () => {
         const exact = makeCandidate('c1', 'exact');
         const high = makeCandidate('c2', 'high');
         const low = makeCandidate('c3', 'low');
         const ticked = buildInitialTicked([exact, high, low]);
         expect(ticked.has('c1')).toBe(true);
         expect(ticked.has('c2')).toBe(true);
-        expect(ticked.has('c3')).toBe(false);
+        expect(ticked.has('c3')).toBe(true);
     });
 });
 

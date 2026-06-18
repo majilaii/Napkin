@@ -451,6 +451,83 @@ serve(async (req) => {
             return jsonResponse({ data: entry });
         }
 
+        // ── add_entries (bulk) ─────────────────────────────────────────────
+        // Fast "import from saved sources" path: add many already-persisted
+        // restaurants to a list in ONE call (e.g. from the wishlist multi-select).
+        // Idempotent — restaurants already in the list are skipped (the unique
+        // (list_id, restaurant_id) index). Returns the authoritative entry_count
+        // so the client can reconcile its optimistic +N patch (dupes were skipped).
+        if (action === 'add_entries') {
+            const { list_id } = body;
+            const rawIds: unknown = body.restaurant_ids;
+            const restaurantIds: string[] = Array.isArray(rawIds)
+                ? rawIds.filter((x): x is string => typeof x === 'string' && x.length > 0)
+                : [];
+            if (!list_id) return jsonResponse({ error: 'list_id is required' }, 400);
+            if (restaurantIds.length === 0) {
+                return jsonResponse({ error: 'restaurant_ids must be a non-empty array' }, 400);
+            }
+            // Dedup the request + cap defensively against a runaway insert.
+            const ids = [...new Set(restaurantIds)].slice(0, 200);
+
+            // Verify caller owns the list
+            const { data: list, error: listErr } = await supabase
+                .from('lists')
+                .select('id, owner_id')
+                .eq('id', list_id)
+                .eq('owner_id', user.id)
+                .maybeSingle();
+            if (listErr) throw listErr;
+            if (!list) return jsonResponse({ error: 'Not found' }, 404);
+
+            // Validate the ids resolve to REAL restaurants. The bulk insert is one
+            // statement — a single bogus id (stale cache / unpersisted ghost) would
+            // 23503 and abort the WHOLE batch. Pre-filter to the ones that exist.
+            const { data: realRows, error: realErr } = await supabase
+                .from('restaurants')
+                .select('id')
+                .in('id', ids);
+            if (realErr) throw realErr;
+            const realSet = new Set((realRows ?? []).map((r: { id: string }) => r.id));
+            const validIds = ids.filter((rid) => realSet.has(rid));
+
+            let added: ListEntry[] = [];
+            if (validIds.length > 0) {
+                const startPos = await nextPosition(supabase, list_id);
+                const rows = validIds.map((rid, i) => ({
+                    list_id,
+                    restaurant_id: rid,
+                    note: null,
+                    position: startPos + i * 1024,
+                }));
+                // Atomic idempotency: ON CONFLICT (list_id, restaurant_id) DO NOTHING.
+                // A dupe (concurrent import / double-tap) is skipped, not a 23505 that
+                // rolls back the batch. ignoreDuplicates → only NEW rows are returned.
+                const { data: inserted, error: insertErr } = await supabase
+                    .from('list_entries')
+                    .upsert(rows, { onConflict: 'list_id,restaurant_id', ignoreDuplicates: true })
+                    .select('*');
+                if (insertErr) throw insertErr;
+                added = (inserted ?? []) as ListEntry[];
+            }
+
+            // Authoritative total after the insert — drives cache reconciliation.
+            const { count } = await supabase
+                .from('list_entries')
+                .select('id', { count: 'exact', head: true })
+                .eq('list_id', list_id);
+
+            return jsonResponse({
+                data: {
+                    added,
+                    added_count: added.length,
+                    // skipped = already in the list + ids that don't resolve.
+                    skipped_count: ids.length - added.length,
+                    entry_count: count ?? 0,
+                },
+            });
+        }
+
         // ── remove_entry ───────────────────────────────────────────────────
         if (action === 'remove_entry') {
             const { list_id, restaurant_id } = body;

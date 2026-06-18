@@ -29,6 +29,8 @@ export interface EntryCardProps {
     restaurantName: string;
     /** TICKET-075: show a small filled terracotta heart by the rating when true. */
     liked?: boolean;
+    /** Shared to a Table/Round — shows a subtle people-outline glyph in the header. */
+    shared?: boolean;
     /** Right-edge of tick header — "sat", "tue", "sat 6 jun" etc. */
     weekday?: string;
     /** Full-width photo above the note. Canvas: 148px tall, r12. */
@@ -44,6 +46,7 @@ export function EntryCard({
     rating,
     restaurantName,
     liked,
+    shared,
     weekday,
     photoUrl,
     note,
@@ -94,6 +97,15 @@ export function EntryCard({
                     {restaurantName}
                 </Text>
                 <View style={{ flex: 1 }} />
+                {shared ? (
+                    <Ionicons
+                        name="people-outline"
+                        size={13}
+                        color={palette.textMuted}
+                        style={styles.sharedGlyph}
+                        accessibilityLabel="shared to a table"
+                    />
+                ) : null}
                 {weekday ? (
                     <Text style={[styles.weekday, { color: palette.textMuted }]}>{weekday}</Text>
                 ) : null}
@@ -185,6 +197,10 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
         flexShrink: 0,
+    },
+    sharedGlyph: {
+        alignSelf: 'center',
+        marginRight: 2,
     },
     photo: {
         width: '100%',

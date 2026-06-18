@@ -65,6 +65,12 @@ import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
+import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
+
+// Gate the video-import entry point on the native module actually being linked.
+// Computed once at import (safe — never throws). Hidden until the module links,
+// so we never show a button that just errors.
+const VIDEO_IMPORT_AVAILABLE = isVideoImportAvailable();
 import { safeRandomUUID } from '@/lib/uuid';
 import { sourceNoun } from '@/lib/sourceNoun';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
@@ -82,6 +88,7 @@ type SheetState =
     | 'error'
     | 'rate-limited'
     | 'screenshot-uploading'
+    | 'video-extracting'      // TICKET-082: on-device OCR + voiceover in progress
     | 'destination'
     | 'share-destination'     // TICKET-063b: single-table picker launched from picking
     | 'ig-nudge';
@@ -118,6 +125,11 @@ export interface ImportLinkSheetProps {
      * uses the same job-level idempotency key as the original share.
      */
     initialImportNonce?: string;
+    /**
+     * TICKET-082: absolute path to a shared video (App Group container) from the
+     * share extension. When set, the sheet opens straight into on-device OCR.
+     */
+    initialVideoPath?: string;
 }
 
 type Palette = typeof Colors.light;
@@ -135,7 +147,7 @@ function truncateHost(url: string): string {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportNonce }: ImportLinkSheetProps) {
+export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportNonce, initialVideoPath }: ImportLinkSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const insets = useSafeAreaInsets();
@@ -191,6 +203,12 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     const [screenshotStoragePath, setScreenshotStoragePath] = useState<string | null>(null);
 
     const inputRef = useRef<TextInput>(null);
+    // TICKET-082: ignore a stale on-device video extraction that finishes after
+    // the user cancelled/dismissed (the native op can't be aborted mid-flight).
+    const videoReqRef = useRef(0);
+    // Retain the picked video URI so "try again" can re-run on-device extraction
+    // (video errors carry no URL to re-resolve).
+    const lastVideoUriRef = useRef<string | null>(null);
     const { resolve, cancel, state: resolverState, data: resolverData, error: resolverError } = useResolveUrl();
     const createImport = useCreateImport(user?.id);
     const saveImportSpots = useSaveImportSpots(user?.id);
@@ -324,11 +342,13 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     }, [inputOk, inputValue, resolve]);
 
     const handleCancel = useCallback(() => {
+        videoReqRef.current++;
         cancel();
         setSheetState('idle');
     }, [cancel]);
 
     const handleDismiss = useCallback(() => {
+        videoReqRef.current++;
         cancel();
         setSheetState('idle');
         setInputValue('');
@@ -512,10 +532,40 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         setSheetState('picking');
     }, []);
 
+    // TICKET-082: run on-device extraction for a video URI, then resolve the text.
+    // Extracted so both the picker and retry can invoke it.
+    const runVideoExtraction = useCallback(async (uri: string) => {
+        const myId = ++videoReqRef.current;
+        setSheetState('video-extracting');
+        try {
+            const { ocr, transcript } = await extractFromVideo(uri);
+            if (videoReqRef.current !== myId) return; // cancelled / dismissed mid-extract
+            const extractedText = [ocr.join('\n'), transcript]
+                .filter((s) => s && s.trim())
+                .join('\n\n')
+                .trim();
+            if (!extractedText) {
+                setErrorCode('VIDEO_EMPTY');
+                setSheetState('error');
+                return;
+            }
+            resolve('', undefined, undefined, extractedText);
+        } catch {
+            if (videoReqRef.current !== myId) return;
+            setErrorCode('VIDEO_FAILED');
+            setSheetState('error');
+        }
+    }, [resolve]);
+
     const handleRetry = useCallback(() => {
+        // Video errors have no URL to re-resolve — re-run the on-device extract.
+        if ((errorCode === 'VIDEO_FAILED' || errorCode === 'VIDEO_EMPTY') && lastVideoUriRef.current) {
+            runVideoExtraction(lastVideoUriRef.current);
+            return;
+        }
         setSheetState('idle');
         resolve(lastUrl);
-    }, [resolve, lastUrl]);
+    }, [resolve, lastUrl, errorCode, runVideoExtraction]);
 
     // TICKET-063: per-row "not this?" opens edit-match for that specific candidate
     const handleCorrectRow = useCallback((candidate: ResolvedCandidate) => {
@@ -548,6 +598,41 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             setSheetState('error');
         }
     }, [user?.id, resolve]);
+
+    // TICKET-082: pick a saved video → on-device OCR + voiceover → resolve text.
+    // The phone does all the perception (free); we only POST the extracted text.
+    const handlePickVideo = useCallback(async () => {
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+            quality: 1,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        const asset = result.assets[0];
+
+        // Fresh nonces for this import (mirrors handleFindIt).
+        importNonceRef.current = safeRandomUUID();
+        spotNonceMapRef.current.clear();
+        savedCandidateIdsRef.current.clear();
+        tableNonceMapRef.current.clear();
+        setFailedCandidateKeys(new Set());
+        setTickedKeys(new Set());
+        setChosenTable(null);
+        setLastUrl('');
+
+        lastVideoUriRef.current = asset.uri;
+        runVideoExtraction(asset.uri);
+    }, [runVideoExtraction]);
+
+    // TICKET-082: share-extension video path → kick off extraction once on open.
+    const videoStartedRef = useRef(false);
+    useEffect(() => {
+        if (visible && initialVideoPath && !videoStartedRef.current) {
+            videoStartedRef.current = true;
+            lastVideoUriRef.current = initialVideoPath;
+            runVideoExtraction(initialVideoPath);
+        }
+        if (!visible) videoStartedRef.current = false;
+    }, [visible, initialVideoPath, runVideoExtraction]);
 
     // TICKET-060: handle destination confirm (async capture fan-out)
     const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
@@ -661,6 +746,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         if (data.source_type === 'google_maps') {
             return { type: 'google_maps', url };
         }
+        if (data.source_type === 'video') {
+            return { type: 'video' };
+        }
         return { type: 'web', url };
     }
 
@@ -678,6 +766,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             case 'substack': return 'from substack';
             case 'screenshot':
             case 'vision': return 'from a screenshot';
+            case 'video': return 'from a video';
             default: return 'from the web';
         }
     }
@@ -725,6 +814,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 onClipboardChip={handleClipboardChip}
                                 inputRef={inputRef}
                                 onPickScreenshot={handlePickScreenshot}
+                                onPickVideo={VIDEO_IMPORT_AVAILABLE ? handlePickVideo : undefined}
                             />
                         )}
 
@@ -822,6 +912,15 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                             />
                         )}
 
+                        {/* ── VIDEO EXTRACTING (on-device OCR + voiceover) ── */}
+                        {sheetState === 'video-extracting' && (
+                            <LoadingPanel
+                                palette={palette}
+                                onCancel={handleCancel}
+                                copy="watching the video…"
+                            />
+                        )}
+
                         {/* ── DESTINATION ──────────────────────────── */}
                         {sheetState === 'destination' && (
                             <DestinationPicker
@@ -872,6 +971,7 @@ interface IdlePanelProps {
     onClipboardChip: () => void;
     inputRef: React.RefObject<TextInput | null>;
     onPickScreenshot?: () => void;
+    onPickVideo?: () => void;
 }
 
 function IdlePanel({
@@ -885,6 +985,7 @@ function IdlePanel({
     onClipboardChip,
     inputRef,
     onPickScreenshot,
+    onPickVideo,
 }: IdlePanelProps) {
     return (
         <View>
@@ -972,6 +1073,19 @@ function IdlePanel({
                 >
                     <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
                         or add a screenshot
+                    </Text>
+                </Pressable>
+            )}
+
+            {onPickVideo && (
+                <Pressable
+                    onPress={onPickVideo}
+                    hitSlop={8}
+                    style={styles.textLinkRow}
+                    accessibilityLabel="import a video"
+                >
+                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
+                        or import a video — gets every spot
                     </Text>
                 </Pressable>
             )}
@@ -1136,8 +1250,11 @@ function ErrorPanel({ palette, code, onRetry, onSearchManually }: {
     onSearchManually: () => void;
 }) {
     const isTikTokBusy = code === 'UPSTREAM_RATE_LIMITED';
+    const isVideo = code === 'VIDEO_FAILED' || code === 'VIDEO_EMPTY';
     const msg = isTikTokBusy
         ? 'tiktok is busy — try again in a minute'
+        : isVideo
+        ? "couldn't read that video — try another"
         : `couldn't read that link — try again`;
 
     return (

@@ -71,11 +71,7 @@ export function SubsetCard({
                             style={StyleSheet.absoluteFill}
                             resizeMode="cover"
                         />
-                    ) : (
-                        <Text style={[styles.heroInitial, { color: palette.primary }]}>
-                            {restaurantName[0]?.toUpperCase() ?? '?'}
-                        </Text>
-                    )}
+                    ) : null}
                     <View
                         style={[
                             styles.badge,
@@ -160,11 +156,6 @@ const styles = StyleSheet.create({
         height: 110,
         justifyContent: 'center',
         alignItems: 'center',
-    },
-    heroInitial: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 42,
-        opacity: 0.35,
     },
     badge: {
         position: 'absolute',

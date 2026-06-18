@@ -95,9 +95,16 @@ type TopPick = {
     name: string;
     city: string | null;
     photo_url: string | null;
-    max_rating: number;
+    // null when the viewer has no non-private rating for a curated pick.
+    max_rating: number | null;
     visit_count: number;
     last_visited_at: string | null;
+    // Top-Four glance indicators: did the author like it, did they write a review.
+    liked: boolean;
+    has_review: boolean;
+    // The entry id of the author's review for this pick (most recent with content),
+    // so tapping a pick opens the REVIEW; null → fall back to the restaurant page.
+    review_entry_id: string | null;
 };
 
 type RegularSummary = {
@@ -458,14 +465,106 @@ async function fetchTablePreviews(
  * Fetch Top 4 — auto-derived: rating >= 4.0, grouped by restaurant,
  * ordered by max rating / visit_count / last_visited.
  */
+// Build TopPick[] for a fixed, ordered set of restaurant ids (the manual
+// profile Top 4 override). Aggregates the user's own ratings for each pick.
+async function buildPicksFromIds(
+    supabase: any,
+    userId: string,
+    orderedIds: string[],
+    includePrivate: boolean,
+): Promise<TopPick[]> {
+    if (orderedIds.length === 0) return [];
+
+    // Curated MEMBERSHIP is public, but the rating NUMBER must still respect
+    // per-entry visibility — a public viewer must not see a private rating.
+    let entriesQuery = supabase
+        .from('entries')
+        .select('id, restaurant_id, rating, visited_at, created_at, liked, content')
+        .eq('user_id', userId)
+        .in('restaurant_id', orderedIds);
+    if (!includePrivate) entriesQuery = entriesQuery.neq('visibility', 'private');
+    const { data: entries, error } = await entriesQuery;
+    if (error) throw error;
+
+    // liked / has_review fold across ALL the author's entries for the pick (not just
+    // rated ones) — a curated pick may be liked or reviewed without a number.
+    // review_entry_id = id of the most-recent entry that has written content.
+    const agg = new Map<string, { max_rating: number | null; visit_count: number; last_visited_at: string | null; liked: boolean; has_review: boolean; review_entry_id: string | null; review_at: string | null }>();
+    for (const e of (entries ?? []) as any[]) {
+        const rid = e.restaurant_id as string;
+        const rating = e.rating != null ? Number(e.rating) : null;
+        const visited = (e.visited_at ?? e.created_at) as string;
+        const liked = e.liked === true;
+        const hasReview = typeof e.content === 'string' && e.content.trim().length > 0;
+        const ex = agg.get(rid);
+        if (!ex) {
+            agg.set(rid, {
+                max_rating: rating, visit_count: 1, last_visited_at: visited, liked, has_review: hasReview,
+                review_entry_id: hasReview ? e.id : null,
+                review_at: hasReview ? visited : null,
+            });
+        } else {
+            if (rating != null) ex.max_rating = ex.max_rating != null ? Math.max(ex.max_rating, rating) : rating;
+            ex.visit_count += 1;
+            if (!ex.last_visited_at || visited > ex.last_visited_at) ex.last_visited_at = visited;
+            ex.liked = ex.liked || liked;
+            ex.has_review = ex.has_review || hasReview;
+            if (hasReview && (!ex.review_at || visited > ex.review_at)) {
+                ex.review_entry_id = e.id;
+                ex.review_at = visited;
+            }
+        }
+    }
+
+    const { data: rests, error: restErr } = await supabase
+        .from('restaurants')
+        .select('id, name, city, photo_url')
+        .in('id', orderedIds);
+    if (restErr) throw restErr;
+
+    const byId = new Map<string, any>((rests ?? []).map((r: any) => [r.id, r]));
+    return orderedIds
+        .map((rid): TopPick | null => {
+            const rest = byId.get(rid);
+            if (!rest) return null;
+            const a = agg.get(rid);
+            return {
+                restaurant_id: rid,
+                name: rest.name,
+                city: rest.city ?? null,
+                photo_url: rest.photo_url ?? null,
+                max_rating: a ? a.max_rating : null,
+                visit_count: a ? a.visit_count : 0,
+                last_visited_at: a ? a.last_visited_at : null,
+                liked: a ? a.liked : false,
+                has_review: a ? a.has_review : false,
+                review_entry_id: a ? a.review_entry_id : null,
+            };
+        })
+        .filter((p): p is TopPick => p !== null);
+}
+
 async function fetchTopFour(
     supabase: any,
     userId: string,
     includePrivate: boolean,
 ): Promise<TopPick[]> {
+    // Manual override: a hand-curated profile Top 4 takes precedence over the
+    // auto-derived list. Curated picks are a public-expression surface (like a
+    // list) — shown to anyone who can see the profile, rating included.
+    const { data: manual, error: manualErr } = await supabase
+        .from('user_profile_top_4')
+        .select('position, restaurant_id')
+        .eq('user_id', userId)
+        .order('position', { ascending: true });
+    if (manualErr) throw manualErr;
+    if (manual && manual.length > 0) {
+        return await buildPicksFromIds(supabase, userId, manual.map((m: any) => m.restaurant_id), includePrivate);
+    }
+
     let query = supabase
         .from('entries')
-        .select('restaurant_id, rating, visited_at, created_at')
+        .select('id, restaurant_id, rating, visited_at, created_at, liked, content')
         .eq('user_id', userId)
         .not('restaurant_id', 'is', null)
         .not('rating', 'is', null)
@@ -481,6 +580,10 @@ async function fetchTopFour(
         max_rating: number;
         visit_count: number;
         last_visited_at: string | null;
+        liked: boolean;
+        has_review: boolean;
+        review_entry_id: string | null;
+        review_at: string | null;
     };
 
     const buckets = new Map<string, Bucket>();
@@ -488,6 +591,8 @@ async function fetchTopFour(
         const rid = e.restaurant_id as string;
         const rating = Number(e.rating);
         const visited = (e.visited_at ?? e.created_at) as string;
+        const liked = e.liked === true;
+        const hasReview = typeof e.content === 'string' && e.content.trim().length > 0;
         const existing = buckets.get(rid);
         if (!existing) {
             buckets.set(rid, {
@@ -495,12 +600,22 @@ async function fetchTopFour(
                 max_rating: rating,
                 visit_count: 1,
                 last_visited_at: visited,
+                liked,
+                has_review: hasReview,
+                review_entry_id: hasReview ? e.id : null,
+                review_at: hasReview ? visited : null,
             });
         } else {
             existing.max_rating = Math.max(existing.max_rating, rating);
             existing.visit_count += 1;
             if (!existing.last_visited_at || visited > existing.last_visited_at) {
                 existing.last_visited_at = visited;
+            }
+            existing.liked = existing.liked || liked;
+            existing.has_review = existing.has_review || hasReview;
+            if (hasReview && (!existing.review_at || visited > existing.review_at)) {
+                existing.review_entry_id = e.id;
+                existing.review_at = visited;
             }
         }
     }
@@ -536,6 +651,9 @@ async function fetchTopFour(
                 max_rating: r.max_rating,
                 visit_count: r.visit_count,
                 last_visited_at: r.last_visited_at,
+                liked: r.liked,
+                has_review: r.has_review,
+                review_entry_id: r.review_entry_id,
             };
         })
         .filter((x): x is TopPick => x !== null);

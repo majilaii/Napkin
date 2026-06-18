@@ -28,6 +28,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
+import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
+import { usePublishCollectionsSnapshot } from '@/hooks/wishlist/usePublishCollectionsSnapshot';
 import { Colors } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 
@@ -167,6 +169,15 @@ function RootLayoutNav() {
   const segments = useSegments();
   const router = useRouter();
 
+  // TICKET-083 Part B: drain the async video-import queue in the background
+  // (launch + every foreground). Self-gated on session; safe no-op when signed
+  // out or when the native OCR module is absent.
+  useProcessImportQueue();
+
+  // Publish lists + tables to the App Group so the share extension's destination
+  // picker can render them (separate process — can't read the app's cache).
+  usePublishCollectionsSnapshot();
+
   useEffect(() => {
     if (isLoading) return;
 
@@ -235,6 +246,10 @@ function RootLayoutNav() {
           />
           <Stack.Screen
             name="entry-detail"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="share-detail"
             options={{ headerShown: false }}
           />
           <Stack.Screen

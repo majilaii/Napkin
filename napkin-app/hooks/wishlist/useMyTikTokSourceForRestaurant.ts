@@ -1,21 +1,26 @@
 /**
- * Selector hook — returns the most-recent TikTok source the *viewing user*
- * has on their personal wishlist for a given restaurant, or null.
+ * Selector hook — returns the most-recent IMPORT PROVENANCE source the viewing
+ * user has on their personal wishlist for a given restaurant, or null.
  *
- * Architecture decision (TICKET-054): reads exclusively from the already-loaded
- * useMyWishlist pages. No new endpoint, no useRestaurantPage change.
- * Trade-off: only sees rows in loaded pages (usually all of them, ≤40 rows/page).
+ * Generalized (TICKET-083 polish): was tiktok-only; now also surfaces 'video'
+ * (saved-video import) and 'web' (shared link) provenance. The restaurant page's
+ * SavedFromTikTokPanel renders the right line per type. Name kept for churn.
  *
- * Returns: { source: WishlistSourceTikTok; createdAt: string } | null
+ * Architecture (TICKET-054): reads exclusively from the already-loaded
+ * useMyWishlist pages — no new endpoint. Trade-off: only sees loaded pages.
+ *
+ * Returns: { source: WishlistSource; createdAt: string } | null
  */
 import { useMemo } from 'react';
 import { useMyWishlist } from './useMyWishlist';
-import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
+import type { WishlistSource } from '@/lib/types/wishlistSource';
 
 export interface TikTokSourceResult {
-    source: WishlistSourceTikTok;
+    source: WishlistSource;
     createdAt: string;
 }
+
+const PROVENANCE_TYPES = ['tiktok', 'video', 'web'];
 
 export function useMyTikTokSourceForRestaurant(
     restaurantId: string | null | undefined,
@@ -26,33 +31,24 @@ export function useMyTikTokSourceForRestaurant(
     return useMemo(() => {
         if (!restaurantId) return null;
 
-        // Flatten all loaded pages
         const allItems = wishlist.data?.pages.flatMap((p) => p.data) ?? [];
 
-        // Filter to rows matching this restaurant with a TikTok source
-        // TICKET-060: skip pending rows (restaurant may be null)
-        const tiktokRows = allItems.filter(
+        const rows = allItems.filter(
             (item) =>
                 item.restaurant?.id === restaurantId &&
-                item.source?.type === 'tiktok',
+                !!item.source?.type &&
+                PROVENANCE_TYPES.includes(item.source.type),
+        );
+        if (rows.length === 0) return null;
+
+        rows.sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
         );
 
-        if (tiktokRows.length === 0) return null;
-
-        // Most-recent by created_at (already sorted desc from server, but re-sort
-        // defensively in case of pagination edge cases)
-        tiktokRows.sort(
-            (a, b) =>
-                new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-        );
-
-        const row = tiktokRows[0];
-        // After the filter above, source.type === 'tiktok' is guaranteed
-        // but TypeScript needs the explicit narrowing
-        if (row.source?.type !== 'tiktok') return null;
-
+        const row = rows[0];
+        if (!row.source) return null;
         return {
-            source: row.source as WishlistSourceTikTok,
+            source: row.source as WishlistSource,
             createdAt: row.created_at,
         };
     }, [restaurantId, wishlist.data]);

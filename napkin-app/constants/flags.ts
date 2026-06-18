@@ -26,4 +26,9 @@ export const FRIEND_TEST = {
      *  Doctrine: search = restaurant-only; invite flows have their own picker.
      *  Flip false to restore people search. */
     hidePeopleSearch: true,
+    /** TICKET-082: Suppers — shared-table meal posts. Gates the logger "make this
+     *  a Supper" toggle + the SupperTable render on entry-detail. Default FALSE
+     *  (testable for the friend-test); flip TRUE to kill-switch the feature.
+     *  Gates JSX only — hooks/routes stay compiled & deep-linkable. */
+    hideSuppers: false,
 } as const;

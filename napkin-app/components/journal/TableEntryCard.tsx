@@ -24,6 +24,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import type { SupperSummary } from '@/hooks/tables/useTableActivity';
 
 interface TableEntryCardProps {
     authorName: string | null;
@@ -42,6 +43,9 @@ interface TableEntryCardProps {
     dishMeta?: string | null;
     reactionCount?: number;
     commentCount?: number;
+    /** Supper gathering — when present, the card shows pooled photos from every take
+     *  + a "{N} at the table · avg" line, so you see the night without tapping in. */
+    supper?: SupperSummary | null;
     onPress?: () => void;
 }
 
@@ -63,19 +67,21 @@ export function TableEntryCard({
     dishMeta,
     reactionCount,
     commentCount,
+    supper,
     onPress,
 }: TableEntryCardProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
+    const supperPhotos = supper?.photos ?? [];
+    const showSupperPhotos = !!supper && supperPhotos.length > 0;
+    const supperAvatars = (supper?.takers ?? []).slice(0, 4);
+
     const inner = (
         <View
             style={[
                 styles.card,
-                {
-                    backgroundColor: palette.surfaceNote,
-                    borderColor: palette.divider,
-                },
+                { backgroundColor: palette.surfaceNote },
                 Shadow.note,
             ]}
         >
@@ -125,8 +131,20 @@ export function TableEntryCard({
                 </View>
             )}
 
-            {/* Photo */}
-            {photoUrl ? (
+            {/* Photo — pooled supper photos (the whole night) when gathered, else the
+                single hero. Pooled set already includes the host's own photo. */}
+            {showSupperPhotos ? (
+                <View style={styles.supperPhotoRow}>
+                    {supperPhotos.slice(0, 3).map((uri, i) => (
+                        <Image
+                            key={`${uri}-${i}`}
+                            source={{ uri }}
+                            style={styles.supperPhoto}
+                            resizeMode="cover"
+                        />
+                    ))}
+                </View>
+            ) : photoUrl ? (
                 <Image
                     source={{ uri: photoUrl }}
                     style={styles.photo}
@@ -139,6 +157,44 @@ export function TableEntryCard({
                 <Text style={[styles.note, { color: palette.text }]}>
                     {`— ${note}`}
                 </Text>
+            ) : null}
+
+            {/* Supper gathering line — avatars + "{N} at the table · avg" */}
+            {supper && supper.head_count > 0 ? (
+                <View style={styles.gatheringRow}>
+                    <View style={styles.gatheringAvatars}>
+                        {supperAvatars.map((t, i) => (
+                            <View
+                                key={t.user_id}
+                                style={[
+                                    styles.gatheringAvatar,
+                                    {
+                                        backgroundColor: palette.surfaceJournalHi,
+                                        marginLeft: i === 0 ? 0 : -7,
+                                        borderColor: palette.surfaceNote,
+                                    },
+                                ]}
+                            >
+                                <Text style={[styles.gatheringAvatarInitial, { color: palette.textMuted }]}>
+                                    {buildInitials(t.display_name)}
+                                </Text>
+                            </View>
+                        ))}
+                    </View>
+                    <Text style={[styles.gatheringText, { color: palette.textMuted }]} numberOfLines={1}>
+                        {supper.head_count === 1
+                            ? '1 at the table'
+                            : `${supper.head_count} at the table`}
+                    </Text>
+                    {supper.group_avg != null ? (
+                        <View style={[styles.avgChip, { backgroundColor: palette.tertiaryFixed }]}>
+                            <Text style={[styles.avgLabel, { color: palette.tertiary }]}>avg</Text>
+                            <Text style={[styles.avgNum, { color: palette.tertiary }]}>
+                                {supper.group_avg.toFixed(1)}
+                            </Text>
+                        </View>
+                    ) : null}
+                </View>
             ) : null}
 
             {/* Dish meta */}
@@ -195,12 +251,17 @@ export function TableEntryCard({
 
 const styles = StyleSheet.create({
     pressable: {
-        paddingHorizontal: Spacing.lg,
+        // No self horizontal padding — the feed list already provides the 20px
+        // gutter (tables.tsx feedList). The earlier +24 here made review cards
+        // 44px/side vs 20px for every sibling card, so they read as squished and
+        // not reaching the edge.
         marginBottom: Spacing.sm,
     },
     card: {
         borderRadius: 16,
-        borderWidth: 1,
+        // No 1px sectioning border (Heirloom rule) — separation comes from the
+        // surfaceNote background shift + ambient Shadow.note below.
+        borderWidth: 0,
         padding: Spacing.md,
         gap: 10,
     },
@@ -266,6 +327,59 @@ const styles = StyleSheet.create({
         width: '100%',
         height: 130,
         borderRadius: 12,
+    },
+    supperPhotoRow: {
+        flexDirection: 'row',
+        gap: 4,
+    },
+    supperPhoto: {
+        flex: 1,
+        height: 110,
+        borderRadius: 10,
+    },
+    gatheringRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    gatheringAvatars: {
+        flexDirection: 'row',
+    },
+    gatheringAvatar: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1.5,
+    },
+    gatheringAvatarInitial: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 11,
+    },
+    gatheringText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        letterSpacing: 0.3,
+        flex: 1,
+    },
+    avgChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 9,
+        paddingVertical: 3,
+        borderRadius: 999,
+    },
+    avgLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+    avgNum: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15,
     },
     note: {
         fontFamily: 'Newsreader_400Regular_Italic',

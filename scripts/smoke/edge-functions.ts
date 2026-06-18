@@ -50,6 +50,11 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
 const JWT = Deno.env.get('SMOKE_TEST_JWT');
 const RESTAURANT_ID = Deno.env.get('SMOKE_TEST_RESTAURANT_ID');
+// Optional: a real table-scoped entry id the SMOKE_TEST_JWT user can read.
+// When set, enables the post-interactions read-path guard below. Left unset in
+// CI until seeded — the check is appended conditionally so a missing value does
+// not fail the suite.
+const ENTRY_ID = Deno.env.get('SMOKE_TEST_ENTRY_ID');
 
 function requireEnv(name: string, val: string | undefined): string {
     if (!val) {
@@ -143,6 +148,26 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-082: entry?action=supper-detail smoke. A bogus supper_id the caller
+    // is not a member of → HTTP 404 (membership gate) with a JSON error envelope.
+    // This exercises the new GET read path: the function parses, hits the suppers /
+    // supper_members schema (catches a missing-table / column-grant / embed drift),
+    // and the membership gate denies a non-member. We assert 404 (not 200) because a
+    // random UUID is never a supper the SMOKE_TEST_JWT user belongs to. A 500 here
+    // would mean the schema or query drifted — exactly what this guard catches.
+    {
+        name: 'entry?action=supper-detail bogus id → 404 membership gate (TICKET-082)',
+        method: 'GET',
+        fn: 'entry',
+        query: 'action=supper-detail&supper_id=00000000-0000-0000-0000-000000000000',
+        expectedStatus: 404,
+        shape: (json) => {
+            const err = (json as { error?: { code?: string } }).error;
+            if (!err) return 'missing error envelope';
+            if (err.code !== 'NOT_FOUND') return `expected error.code NOT_FOUND, got ${err.code}`;
+            return null;
+        },
+    },
     // TICKET-072: share-page public endpoint smoke — bogus token → HTTP 410 + text/html.
     // This check is UNAUTHENTICATED (no Authorization header) because the function
     // is deployed with verify_jwt=false. The smoke asserts:
@@ -169,6 +194,29 @@ const CHECKS: Check[] = [
         },
     },
 ];
+
+// post-interactions read-path guard. This endpoint backs every reaction/comment
+// container on entries. It was NOT in the smoke list when the table-scope
+// entry react/comment fire was investigated (2026-06-15); per CLAUDE.md deploy
+// doctrine ("the smoke test list is sacred — add the endpoint a fire traced to"),
+// it is added here. Conditional on SMOKE_TEST_ENTRY_ID so it stays inert until a
+// real table-scoped entry id is seeded into CI.
+if (ENTRY_ID) {
+    CHECKS.push({
+        name: 'post-interactions GET target_type=entry scope=table (TICKET react/comment fire 2026-06-15)',
+        method: 'GET',
+        fn: 'post-interactions',
+        query: `target_type=entry&target_id=${ENTRY_ID}&scope=table`,
+        shape: (json) => {
+            const data = (json as { data?: { reactions?: unknown[]; comments?: unknown[]; counts?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.reactions)) return 'data.reactions is not an array';
+            if (!Array.isArray(data.comments)) return 'data.comments is not an array';
+            if (!data.counts) return 'missing data.counts';
+            return null;
+        },
+    });
+}
 
 // ── Runner ─────────────────────────────────────────────────────────────────
 

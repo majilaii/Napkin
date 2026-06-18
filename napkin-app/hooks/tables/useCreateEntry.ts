@@ -82,6 +82,13 @@ export interface CreateEntryInput {
     participant_ids?: string[];
     /** Companion tagging — who was there (distinct from Round participant_ids) */
     companion_ids?: string[];
+    /**
+     * TICKET-082: when true, this host entry opens a Supper — a shared-table meal
+     * the tagged friends can add their own take to. `supper_participant_ids` are
+     * the tagged friend ids (server seeds them into supper_members + companions).
+     */
+    supper?: boolean;
+    supper_participant_ids?: string[];
     vibe_rating?: number | null;
     flavor_rating?: number | null;
     service_rating?: number | null;
@@ -392,23 +399,27 @@ export function useCreateEntry(
             await qc.cancelQueries({ queryKey: forDayKey });
             const prevForDay = qc.getQueryData<SoloShareActivity[]>(forDayKey);
             restores.push(() => qc.setQueryData(forDayKey, prevForDay));
-            const optimisticSoloRow = buildOptimisticSoloShare(input, userId, nonce);
+            // is_shared marks Table/Round entries so the Journal can badge them.
+            const optimisticSoloRow = {
+                ...buildOptimisticSoloShare(input, userId, nonce),
+                is_shared: effectiveTableIds.length > 0,
+            };
             qc.setQueryData<SoloShareActivity[]>(forDayKey, (prev) =>
                 prependArray(prev, optimisticSoloRow),
             );
 
             // ── 4. entries.mySolo(userId) — flat SoloShareActivity[] ─────────
-            // Only prepend for feed-only entries (no table context).
-            let mySoloKey: readonly unknown[] | undefined;
-            if (effectiveTableIds.length === 0) {
-                mySoloKey = queryKeys.entries.mySolo(userId);
-                await qc.cancelQueries({ queryKey: mySoloKey });
-                const prevMySolo = qc.getQueryData<SoloShareActivity[]>(mySoloKey);
-                restores.push(() => qc.setQueryData(mySoloKey!, prevMySolo));
-                qc.setQueryData<SoloShareActivity[]>(mySoloKey, (prev) =>
-                    prependArray(prev, optimisticSoloRow),
-                );
-            }
+            // The personal Journal shows ALL the viewer's own entries (feed-only +
+            // Table-shared + Round) since 20260616000100, so prepend regardless of
+            // table context. (Previously gated to feed-only, which hid shared meals
+            // from the author's own Journal.)
+            const mySoloKey: readonly unknown[] = queryKeys.entries.mySolo(userId);
+            await qc.cancelQueries({ queryKey: mySoloKey });
+            const prevMySolo = qc.getQueryData<SoloShareActivity[]>(mySoloKey);
+            restores.push(() => qc.setQueryData(mySoloKey, prevMySolo));
+            qc.setQueryData<SoloShareActivity[]>(mySoloKey, (prev) =>
+                prependArray(prev, optimisticSoloRow),
+            );
 
             return {
                 restores,

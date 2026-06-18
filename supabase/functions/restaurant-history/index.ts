@@ -62,6 +62,7 @@ type PublicReviewCard = {
     public_reaction_count: number;
     public_reply_count: number;
     calibration: Calibration | null;
+    is_followee: boolean;
 };
 
 type PhotoItem = {
@@ -812,6 +813,33 @@ serve(async (req) => {
                 ? Number((publicReviewRows[0] as any).total_count ?? 0)
                 : 0;
 
+            // ── Followee set — which public-review authors the viewer follows ──
+            // Letterboxd-style "from people you follow": a follow is a directional
+            // row in `follows` (follower_id → following_id). Service-role bypasses
+            // RLS, so the explicit follower_id filter is load-bearing; the
+            // .in(...) scopes the read to the handful of authors on this page.
+            const followedSet = new Set<string>();
+            {
+                const reviewerIds = [...new Set<string>(
+                    (publicReviewRows ?? [])
+                        .map((r: any) => r.user_id as string)
+                        .filter((uid: string) => !!uid && uid !== user.id),
+                )];
+                if (reviewerIds.length > 0) {
+                    const { data: followRows, error: followErr } = await supabase
+                        .from('follows')
+                        .select('following_id')
+                        .eq('follower_id', user.id)
+                        .in('following_id', reviewerIds);
+                    // Non-fatal (like calibration below): a failed read just means no
+                    // followee tier this load, never a 500 for the whole page.
+                    if (followErr) console.error('restaurant-history follows error:', followErr);
+                    for (const fr of followRows ?? []) {
+                        followedSet.add((fr as { following_id: string }).following_id);
+                    }
+                }
+            }
+
             // ── Calibration batch for public review authors ──
             // Filter out the viewer and Tablemates — calibration is Ring 2 only.
             // The helper defends against Tablemates internally, but we pre-filter
@@ -849,6 +877,8 @@ serve(async (req) => {
                 calibration: (row.user_id === user.id || allSharedMemberIds.has(row.user_id))
                     ? null
                     : (calMap.get(row.user_id) ?? null),
+                // Letterboxd "from people you follow" — surfaced as its own tier.
+                is_followee: followedSet.has(row.user_id),
             }));
 
             // ── v3: Distributions ──

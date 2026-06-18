@@ -50,16 +50,7 @@ export function EligibleRestaurantRow({ restaurant, isSelected, onPress }: Props
                         style={StyleSheet.absoluteFill}
                         contentFit="cover"
                     />
-                ) : (
-                    <Text
-                        style={[
-                            Type.headlineItalic,
-                            { fontSize: 14, color: palette.textMuted },
-                        ]}
-                    >
-                        {restaurant.name.charAt(0)}
-                    </Text>
-                )}
+                ) : null}
             </View>
 
             {/* Details */}

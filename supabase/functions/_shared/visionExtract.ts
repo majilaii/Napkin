@@ -65,7 +65,8 @@ const MAX_TOKENS = 1024;
  *   2. Infer city from hashtags/handle/context when explicit city is absent
  *   3. Return a top-level JSON array, one object per restaurant
  */
-const MULTI_SYSTEM_PROMPT = `You are a restaurant extraction assistant. Given an image and/or text, extract ALL distinct restaurants mentioned or visible.
+function buildMultiSystemPrompt(cap: number): string {
+    return `You are a restaurant extraction assistant. Given an image and/or text, extract ALL distinct restaurants mentioned or visible.
 Respond with ONLY a JSON array — no prose, no markdown, no wrapper object. Each element matches this schema:
 {
   "name": string | null,
@@ -88,8 +89,13 @@ Rules:
 - booking_url: only if explicitly visible (Resy, OpenTable URL). Otherwise null.
 - google_place_id: only if a Google Maps place_id is visible. Otherwise null.
 - If no restaurant is identifiable, return an empty array: []
-- Cap at 6 restaurants. If more are present, include only the first 6 mentioned.
+- Cap at ${cap} restaurants. If more are present, include only the first ${cap} mentioned.
 - Output ONLY the JSON array. No explanation. No markdown fences.`;
+}
+
+// Default (6-cap) prompt — the URL/screenshot/vision callers. The video path
+// builds a higher-cap prompt on the fly (listicles run to 10–11 spots).
+const MULTI_SYSTEM_PROMPT = buildMultiSystemPrompt(6);
 
 // ── Anthropic API call ────────────────────────────────────────────────────────
 
@@ -106,6 +112,8 @@ async function callAnthropic(
     modelId: string,
     apiKey: string,
     signal?: AbortSignal,
+    system: string = MULTI_SYSTEM_PROMPT,
+    maxTokens: number = MAX_TOKENS,
 ): Promise<string> {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -116,8 +124,8 @@ async function callAnthropic(
         },
         body: JSON.stringify({
             model: modelId,
-            max_tokens: MAX_TOKENS,
-            system: MULTI_SYSTEM_PROMPT,
+            max_tokens: maxTokens,
+            system,
             messages,
         }),
         signal,
@@ -176,7 +184,7 @@ function coerceCandidate(p: unknown): ExtractedCandidate {
  * Elements that don't have a parseable name are filtered out.
  * Result is capped at 6.
  */
-export function parseMultiExtractionResponse(raw: string): ExtractedCandidate[] {
+export function parseMultiExtractionResponse(raw: string, max = 6): ExtractedCandidate[] {
     const cleaned = raw
         .replace(/^```(?:json)?\s*/i, '')
         .replace(/```\s*$/i, '')
@@ -197,7 +205,7 @@ export function parseMultiExtractionResponse(raw: string): ExtractedCandidate[] 
     const candidates = (parsed as unknown[])
         .map(coerceCandidate)
         .filter((c) => c.name !== null) // drop unnamed entries
-        .slice(0, 6);                   // cap 6
+        .slice(0, max);                 // cap (default 6; video path passes 12)
 
     return candidates;
 }
@@ -288,6 +296,7 @@ function salvageTruncatedArray(text: string): unknown[] | null {
 export async function extractFromTextMulti(
     caption: string,
     signal?: AbortSignal,
+    max = 6,
 ): Promise<ExtractedCandidate[]> {
     if (signal?.aborted) return [];
 
@@ -298,6 +307,10 @@ export async function extractFromTextMulti(
     }
 
     const modelId = Deno.env.get('EXTRACTION_MODEL') ?? EXTRACTION_MODEL_DEFAULT;
+    // A higher cap (video listicles pass 12) needs a matching prompt instruction
+    // AND a bigger token budget so the JSON array isn't truncated.
+    const system = max === 6 ? MULTI_SYSTEM_PROMPT : buildMultiSystemPrompt(max);
+    const maxTokens = max > 6 ? 2560 : MAX_TOKENS;
 
     try {
         const raw = await callAnthropic(
@@ -311,8 +324,10 @@ export async function extractFromTextMulti(
             modelId,
             apiKey,
             signal,
+            system,
+            maxTokens,
         );
-        return parseMultiExtractionResponse(raw);
+        return parseMultiExtractionResponse(raw, max);
     } catch (e) {
         if ((e as Error)?.name === 'AbortError') throw e;
         console.error('visionExtract.extractFromTextMulti error:', e);

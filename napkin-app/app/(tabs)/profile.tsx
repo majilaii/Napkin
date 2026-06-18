@@ -17,7 +17,7 @@
  * Deferred until a user-level personal-top-4 edit flow is built.
  * Tracker: link to follow-up ticket.
  */
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -38,6 +38,7 @@ import { useUserProfile } from '@/hooks/users/useUserProfile';
 import type { SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { Avatar } from '@/components/feed/Avatar';
 import { TopFour } from '@/components/profile/TopFour';
+import { ProfileTopFourSheet } from '@/components/profile/ProfileTopFourSheet';
 import { JournalList, getEstMonth } from '@/components/journal';
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -79,6 +80,12 @@ export default function ProfileTab() {
     const avatarUrl = profileData?.profile?.avatar_url ?? null;
     // Memoized so the array reference is stable (avoids ListHeader re-mount on every render).
     const topFourPicks = useMemo(() => profileData?.top_four ?? [], [profileData]);
+    const topFourEditPicks = useMemo(
+        () => topFourPicks.map((p) => ({ restaurant_id: p.restaurant_id, name: p.name, photo_url: p.photo_url })),
+        [topFourPicks],
+    );
+    const [editTopFourOpen, setEditTopFourOpen] = useState(false);
+    const handleEditTopFour = useCallback(() => setEditTopFourOpen(true), []);
 
     const handleEntry = useCallback(
         (id: string) => {
@@ -126,14 +133,12 @@ export default function ProfileTab() {
                     </View>
                 </View>
 
-                {/* Top 4 — ungated at this call-site only.
-                    FRIEND_TEST.hideTopFours keeps gating top-fours on the tables
-                    grid, FoundedHero, cold-start nudge, and anywhere else. */}
-                {topFourPicks.length > 0 && (
-                    <View style={styles.topFourWrap}>
-                        <TopFour picks={topFourPicks} />
-                    </View>
-                )}
+                {/* Top 4 — ungated at this call-site only. Own profile → always
+                    shown (empty plates + "edit" are the entry point to curate).
+                    FRIEND_TEST.hideTopFours keeps gating top-fours elsewhere. */}
+                <View style={styles.topFourWrap}>
+                    <TopFour picks={topFourPicks} isOwner onEdit={handleEditTopFour} />
+                </View>
 
                 {/* Diary section divider */}
                 <View style={styles.diaryDivider}>
@@ -151,6 +156,7 @@ export default function ProfileTab() {
             mealCount,
             estMonth,
             topFourPicks,
+            handleEditTopFour,
             router,
         ],
     );
@@ -178,6 +184,12 @@ export default function ProfileTab() {
                     />
                 }
                 contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+            />
+            <ProfileTopFourSheet
+                visible={editTopFourOpen}
+                onClose={() => setEditTopFourOpen(false)}
+                userId={user?.id}
+                currentPicks={topFourEditPicks}
             />
         </View>
     );

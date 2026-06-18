@@ -47,6 +47,10 @@ interface Props {
     /** Places ghost payload. Server will upsert it. */
     restaurantPayload?: RestaurantPayload;
     restaurantName?: string;
+    /** Show the personal Wishlist as the first, pinned destination row. */
+    showWishlist?: boolean;
+    isWishlisted?: boolean;
+    onToggleWishlist?: () => void;
 }
 
 export function AddToListSheet({
@@ -56,6 +60,9 @@ export function AddToListSheet({
     restaurantId,
     restaurantPayload,
     restaurantName,
+    showWishlist = false,
+    isWishlisted = false,
+    onToggleWishlist,
 }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
@@ -132,8 +139,61 @@ export function AddToListSheet({
                             },
                         ]}
                     >
-                        Add to list
+                        {showWishlist ? 'Save to…' : 'Add to list'}
                     </Text>
+
+                    {/* Wishlist — the personal, private save. Pinned above curated lists. */}
+                    {showWishlist ? (
+                        <>
+                            <Pressable
+                                onPress={onToggleWishlist}
+                                accessibilityRole="button"
+                                accessibilityLabel={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+                                style={({ pressed }) => [
+                                    styles.row,
+                                    {
+                                        backgroundColor: pressed
+                                            ? palette.surfaceContainerLow
+                                            : 'transparent',
+                                    },
+                                ]}
+                            >
+                                <View
+                                    style={[
+                                        styles.iconCircle,
+                                        {
+                                            backgroundColor: isWishlisted
+                                                ? palette.primaryMuted
+                                                : palette.surfaceContainerLow,
+                                        },
+                                    ]}
+                                >
+                                    <Ionicons
+                                        name={isWishlisted ? 'bookmark' : 'bookmark-outline'}
+                                        size={18}
+                                        color={isWishlisted ? palette.primary : palette.textMuted}
+                                    />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text
+                                        style={[Type.titleSmall, { color: palette.text }]}
+                                        numberOfLines={1}
+                                    >
+                                        Wishlist
+                                    </Text>
+                                    <Text
+                                        style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}
+                                    >
+                                        your private saves
+                                    </Text>
+                                </View>
+                                {isWishlisted ? (
+                                    <Ionicons name="checkmark" size={18} color={palette.primary} />
+                                ) : null}
+                            </Pressable>
+                            <View style={[styles.divider, { backgroundColor: palette.surfaceContainerLow }]} />
+                        </>
+                    ) : null}
 
                     {/* + New list */}
                     <Pressable

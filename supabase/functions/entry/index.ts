@@ -219,6 +219,176 @@ serve(async (req) => {
                 );
             }
 
+            // ── GET: supper-detail (TICKET-082) ────────────────────────────────
+            // Returns { supper, roster, takes } for one Supper. The caller MUST be a
+            // supper member (host or supper_members row) — else a generic 404 (no
+            // enumeration). Returns nested in `data` (callEdgeFn strips the envelope).
+            //
+            // SECURITY (Codex Phase-2 carry-forward, migration header lines 17-19):
+            //   The service-role client BYPASSES RLS — can_view_entry branch 5 does NOT
+            //   protect this read path. The `takes` query MUST filter
+            //   `user_id IN (<member ids>)` so a stranger who set supper_id on their own
+            //   entry (client-writable group key) cannot leak into the supper. This
+            //   mirrors the branch-5 author-membership conjunct at the application layer.
+            if (action === 'supper-detail') {
+                const supperId = url.searchParams.get('supper_id');
+                if (!supperId) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'supper_id is required' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+                // Codex Phase-2 review: reject a malformed supper_id with a clean 400
+                // rather than letting the uuid cast 500 downstream.
+                if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(supperId)) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'supper_id is malformed' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Roster = the trust anchor. We read it first; caller-membership is then
+                // a membership check against this set (host is included via the seed at
+                // creation, so a roster row always exists for the host too).
+                const { data: rosterRows, error: rosterErr } = await supabase
+                    .from('supper_members')
+                    .select(`
+                        user_id,
+                        created_at,
+                        profiles:user_id (
+                            display_name,
+                            avatar_url
+                        )
+                    `)
+                    .eq('supper_id', supperId);
+                if (rosterErr) throw rosterErr;
+
+                const memberIds = (rosterRows ?? []).map((r: { user_id: string }) => r.user_id);
+
+                // Membership gate. The host is always seeded into supper_members at
+                // creation, but defend in depth: also accept suppers.host_user_id.
+                let isMember = memberIds.includes(user.id);
+                if (!isMember) {
+                    const { data: hostRow } = await supabase
+                        .from('suppers')
+                        .select('host_user_id')
+                        .eq('id', supperId)
+                        .maybeSingle();
+                    isMember = hostRow?.host_user_id === user.id;
+                }
+                if (!isMember) {
+                    // Generic 404 — a non-member learns nothing about whether the
+                    // supper exists.
+                    return new Response(
+                        JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Supper not found' } }),
+                        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Supper anchor.
+                const { data: supperRow, error: supperFetchErr } = await supabase
+                    .from('suppers')
+                    .select('id, restaurant_id, host_user_id, created_at')
+                    .eq('id', supperId)
+                    .single();
+                if (supperFetchErr || !supperRow) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Supper not found' } }),
+                        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Takes = entries in this supper authored by a MEMBER. The
+                // `user_id IN (memberIds)` filter is MANDATORY — without it, service-role
+                // RLS-bypass would surface a stranger's entry that merely set supper_id.
+                let takeRows: unknown[] = [];
+                if (memberIds.length > 0) {
+                    const { data: takesData, error: takesErr } = await supabase
+                        .from('entries')
+                        .select(`
+                            id,
+                            user_id,
+                            restaurant_id,
+                            supper_id,
+                            rating,
+                            content,
+                            dish_description,
+                            visited_at,
+                            created_at,
+                            vibe_rating,
+                            flavor_rating,
+                            service_rating,
+                            value_rating,
+                            liked,
+                            photo_url,
+                            profiles:user_id (
+                                display_name,
+                                avatar_url
+                            ),
+                            entry_photos (
+                                photo_url,
+                                sort_order
+                            )
+                        `)
+                        .eq('supper_id', supperId)
+                        .in('user_id', memberIds)
+                        .order('created_at', { ascending: true });
+                    if (takesErr) throw takesErr;
+                    takeRows = takesData ?? [];
+                }
+
+                // Normalize the PostgREST embeds (single-object vs array shape drift).
+                const roster = (rosterRows ?? []).map((r: any) => {
+                    const p = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles;
+                    return {
+                        user_id: r.user_id,
+                        display_name: p?.display_name ?? null,
+                        avatar_url: p?.avatar_url ?? null,
+                        created_at: r.created_at,
+                    };
+                });
+
+                const takes = (takeRows as any[]).map((t) => {
+                    const p = Array.isArray(t.profiles) ? t.profiles[0] : t.profiles;
+                    const photos = Array.isArray(t.entry_photos)
+                        ? [...t.entry_photos].sort(
+                            (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order,
+                          )
+                        : [];
+                    return {
+                        entry_id: t.id,
+                        user_id: t.user_id,
+                        restaurant_id: t.restaurant_id,
+                        supper_id: t.supper_id,
+                        rating: t.rating,
+                        content: t.content,
+                        dish_description: t.dish_description,
+                        visited_at: t.visited_at,
+                        created_at: t.created_at,
+                        vibe_rating: t.vibe_rating,
+                        flavor_rating: t.flavor_rating,
+                        service_rating: t.service_rating,
+                        value_rating: t.value_rating,
+                        liked: t.liked,
+                        photo_url: t.photo_url,
+                        photos: photos.map((ph: { photo_url: string }) => ph.photo_url),
+                        display_name: p?.display_name ?? null,
+                        avatar_url: p?.avatar_url ?? null,
+                    };
+                });
+
+                return new Response(
+                    JSON.stringify({
+                        data: {
+                            supper: supperRow,
+                            roster,
+                            takes,
+                        },
+                    }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
             return new Response(
                 JSON.stringify({ error: 'Method not allowed' }),
                 { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -549,6 +719,200 @@ serve(async (req) => {
             if (body.action === 'add-take') {
                 const { entry_id, rating, notes } = body;
 
+                // ── TICKET-082: supper-take variant ──────────────────────────
+                // When called with a supper_id, the caller adds THEIR OWN take to a
+                // Supper: we validate membership (service-side — supper_members is the
+                // trust anchor, NOT the client-writable entries.supper_id) and then
+                // create the caller's own `entries` row with supper_id set. Each take
+                // is its own entry (counts in the author's journal + restaurant history),
+                // mirroring the normal create path via fn_create_entry_with_tables.
+                const supperTakeId = body.supper_id;
+                if (supperTakeId) {
+                    // Codex Phase-2 review: malformed supper_id → clean 400, not a 500
+                    // from the uuid cast in the membership query below.
+                    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(supperTakeId)) {
+                        return new Response(
+                            JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'supper_id is malformed' } }),
+                            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        );
+                    }
+                    // Validate rating if provided (same bounds as the legacy path).
+                    if (rating !== null && rating !== undefined) {
+                        if (typeof rating !== 'number' || rating < 0.5 || rating > 5.0) {
+                            return new Response(
+                                JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'Rating must be between 0.5 and 5.0' } }),
+                                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                            );
+                        }
+                    }
+
+                    // CRITICAL (security): the caller MUST already be a supper member.
+                    // A non-member must not be able to add a take — supper_members is
+                    // service-role-write-only, so this is the authoritative gate.
+                    const { data: takeMembership, error: takeMemberErr } = await supabase
+                        .from('supper_members')
+                        .select('user_id')
+                        .eq('supper_id', supperTakeId)
+                        .eq('user_id', user.id)
+                        .maybeSingle();
+                    if (takeMemberErr) throw takeMemberErr;
+                    if (!takeMembership) {
+                        // Generic 403 — do not distinguish "no such supper" from
+                        // "not a member" (no enumeration of supper ids).
+                        return new Response(
+                            JSON.stringify({ error: { code: 'FORBIDDEN', message: 'Not a member of this supper' } }),
+                            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        );
+                    }
+
+                    // Fetch the supper anchor for the restaurant_id (every take shares it).
+                    const { data: supperAnchor, error: anchorErr } = await supabase
+                        .from('suppers')
+                        .select('restaurant_id')
+                        .eq('id', supperTakeId)
+                        .single();
+                    if (anchorErr || !supperAnchor) {
+                        return new Response(
+                            JSON.stringify({ error: { code: 'FORBIDDEN', message: 'Not a member of this supper' } }),
+                            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        );
+                    }
+
+                    const {
+                        content: takeContent,
+                        dish_description: takeDish,
+                        visited_at: takeVisitedAt,
+                        visibility: takeVisibility,
+                        vibe_rating: takeVibe,
+                        flavor_rating: takeFlavor,
+                        service_rating: takeService,
+                        value_rating: takeValue,
+                        liked: takeLiked,
+                        photo_url: takePhotoUrl,
+                        photo_urls: takePhotoUrls,
+                        client_nonce: takeNonce,
+                    } = body;
+
+                    // Validate secondary ratings if provided.
+                    for (const [name, val] of Object.entries({
+                        vibe_rating: takeVibe, flavor_rating: takeFlavor,
+                        service_rating: takeService, value_rating: takeValue,
+                    })) {
+                        if (val !== null && val !== undefined) {
+                            if (typeof val !== 'number' || val < 0.5 || val > 5.0) {
+                                return new Response(
+                                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: `${name} must be between 0.5 and 5.0` } }),
+                                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                                );
+                            }
+                        }
+                    }
+
+                    const safeTakeNonce = await coerceClientNonce(takeNonce);
+                    const takeRatingValue = (rating === 0 || rating === undefined || rating === null) ? null : rating;
+                    const takeVisitedAtValue = takeVisitedAt
+                        ? new Date(takeVisitedAt).toISOString()
+                        : new Date().toISOString();
+                    const takePhotoArray: string[] = Array.isArray(takePhotoUrls) ? takePhotoUrls : [];
+                    const takeHeroPhoto = takePhotoUrl || takePhotoArray[0] || null;
+
+                    const takePayload = {
+                        restaurant_id: supperAnchor.restaurant_id,
+                        rating: takeRatingValue,
+                        content: (takeContent ?? notes)?.trim() || null,
+                        dish_description: takeDish?.trim() || null,
+                        visited_at: takeVisitedAtValue,
+                        visibility: takeVisibility ?? 'private',
+                        ...(takeVibe != null ? { vibe_rating: takeVibe } : {}),
+                        ...(takeFlavor != null ? { flavor_rating: takeFlavor } : {}),
+                        ...(takeService != null ? { service_rating: takeService } : {}),
+                        ...(takeValue != null ? { value_rating: takeValue } : {}),
+                        liked: takeLiked === true,
+                        ...(takeHeroPhoto ? { photo_url: takeHeroPhoto } : {}),
+                        ...(safeTakeNonce ? { client_nonce: safeTakeNonce } : {}),
+                    };
+
+                    // Create the caller's own entry via the canonical RPC (handles
+                    // client_nonce dedup). No tables, only the author as participant.
+                    const { data: takeRpc, error: takeRpcErr } = await supabase.rpc(
+                        'fn_create_entry_with_tables',
+                        {
+                            p_user_id: user.id,
+                            p_entry: takePayload,
+                            p_table_ids: null,
+                            p_participant_ids: [user.id],
+                            p_companion_ids: null,
+                        }
+                    );
+                    if (takeRpcErr) {
+                        const { code, status } = mapPgError(takeRpcErr);
+                        return errorResponse(code, takeRpcErr.message ?? 'add-take failed', status);
+                    }
+                    const takeRow = Array.isArray(takeRpc) ? takeRpc[0] : takeRpc;
+                    const takeEntryId = takeRow?.entry_id ?? takeRow?.id;
+                    if (!takeEntryId) {
+                        throw new Error('add-take (supper): fn_create_entry_with_tables returned no entry_id');
+                    }
+                    const takeWasDedup = takeRow?.was_dedup === true;
+
+                    // Bind the take entry to the supper (group key). The RPC does not
+                    // carry supper_id, so we patch it here via service-role UPDATE.
+                    const { error: takeBindErr } = await supabase
+                        .from('entries')
+                        .update({ supper_id: supperTakeId })
+                        .eq('id', takeEntryId);
+                    if (takeBindErr) throw takeBindErr;
+
+                    // Bulk-insert this take's extra photos (non-fatal). Skip on dedup
+                    // so a retried take doesn't double-insert photos.
+                    if (!takeWasDedup && takePhotoArray.length > 0) {
+                        const takePhotoRows = takePhotoArray.map((url: string, idx: number) => ({
+                            entry_id: takeEntryId,
+                            photo_url: url,
+                            sort_order: idx,
+                        }));
+                        const { error: takePhotosErr } = await supabase
+                            .from('entry_photos')
+                            .insert(takePhotoRows);
+                        if (takePhotosErr) {
+                            console.error('[entry] supper take entry_photos insert error (non-fatal):', takePhotosErr);
+                        }
+                    }
+
+                    // Mark the author "been" at the restaurant (mirrors create path).
+                    const { error: takeStatusErr } = await supabase
+                        .from('user_restaurant_status')
+                        .upsert({
+                            user_id: user.id,
+                            restaurant_id: supperAnchor.restaurant_id,
+                            been: true,
+                            want_to_try: false,
+                            updated_at: new Date().toISOString(),
+                        }, { onConflict: 'user_id,restaurant_id' });
+                    if (takeStatusErr) {
+                        console.error('[entry] supper take user_restaurant_status upsert error (non-fatal):', takeStatusErr);
+                    }
+
+                    // Fetch the created take row for the response.
+                    const { data: takeEntryData } = await supabase
+                        .from('entries')
+                        .select('*')
+                        .eq('id', takeEntryId)
+                        .single();
+
+                    // supper_id nested INSIDE data (callEdgeFn strips the outer envelope).
+                    return new Response(
+                        JSON.stringify({
+                            data: {
+                                ...(takeEntryData ?? { id: takeEntryId }),
+                                supper_id: supperTakeId,
+                            },
+                            ...(takeWasDedup ? { warnings: [{ type: 'duplicate_submission' }] } : {}),
+                        }),
+                        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
                 if (!entry_id) {
                     return new Response(
                         JSON.stringify({ error: 'entry_id is required' }),
@@ -653,9 +1017,20 @@ serve(async (req) => {
                 // companion_ids = who was there; participant_ids = Round raters
                 companion_ids,
 
+                // TICKET-082 (Supper): when supper === true, this host entry opens a
+                // shared-table meal. supper_participant_ids = the friends tagged to
+                // (later) add their own take. The host is always seeded as a member.
+                supper,
+                supper_participant_ids,
+
                 // Idempotency key (TICKET-036 wires client; RPC handles dedup)
                 client_nonce,
             } = body;
+
+            // TICKET-082: a Supper requires a restaurant (the anchor's restaurant_id
+            // is NOT NULL). If supper is requested without a resolvable restaurant we
+            // surface a clear 400 rather than 500ing on the suppers insert below.
+            const isSupper = supper === true;
 
             // Coerce a possibly-malformed client nonce to a valid uuid. RN
             // runtimes lacking crypto.randomUUID sent `Date.now()-Math.random()`
@@ -796,6 +1171,32 @@ serve(async (req) => {
 
                 if (placeError) throw placeError;
                 placeId = placeData.id;
+            }
+
+            // ── TICKET-082: Supper pre-validation (BEFORE entry creation) ─────────
+            // Codex Phase-2 review (HIGH): validate Supper inputs BEFORE the entry RPC
+            // so a rejected Supper never leaves an orphan plain entry behind. The
+            // validated participant set is reused by the supper-open block below.
+            let validSupperParticipantIds: string[] = [];
+            if (isSupper) {
+                if (!restaurantId) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'supper_requires_restaurant', message: 'A Supper requires a restaurant' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+                const rawSupperIds: string[] = Array.isArray(supper_participant_ids) ? supper_participant_ids : [];
+                let sids = [...new Set(rawSupperIds.filter((id: string) => id && id !== user.id))];
+                if (sids.length > 0) {
+                    const { data: realProfiles, error: profilesErr } = await supabase
+                        .from('profiles')
+                        .select('user_id')
+                        .in('user_id', sids);
+                    if (profilesErr) throw profilesErr;
+                    const realSet = new Set((realProfiles ?? []).map((p: { user_id: string }) => p.user_id));
+                    sids = sids.filter((id) => realSet.has(id));
+                }
+                validSupperParticipantIds = sids;
             }
 
             // Prepare participant list before creating entry
@@ -957,6 +1358,87 @@ serve(async (req) => {
                 throw entryFetchError;
             }
 
+            // ── TICKET-082: open a Supper on this host entry ──────────────────
+            // A Supper is a shared `entries` cluster keyed by `supper_id`. The host's
+            // entry (just created above) becomes the first take. We:
+            //   1. validate the host entry has a restaurant (suppers.restaurant_id NOT NULL),
+            //   2. validate each supper_participant_id is a real user (drop unknowns),
+            //   3. insert the suppers anchor row,
+            //   4. set entries.supper_id on the host entry (service-role UPDATE — the
+            //      fn_create_entry_with_tables RPC does not carry supper_id, so we patch
+            //      it here rather than touching the shared RPC / requiring a migration),
+            //   5. seed supper_members (host + each tagged friend) — service-role-write-only,
+            //   6. write entry_companions (host entry, each participant) so the existing
+            //      "with X · Y" line renders everywhere companions already render.
+            // supper_members is the trust anchor; entries.supper_id is the group key but
+            // is NOT trusted for membership (it stays client-writable).
+            let createdSupperId: string | null = null;
+            let supperOpenFailed = false;
+            if (isSupper && restaurantId) {
+                // Atomic-ish Supper open with COMPENSATING CLEANUP (Codex Phase-2 review,
+                // MEDIUM): inputs were validated before the entry RPC; here, if any write
+                // fails partway, we roll the Supper back so no partial state survives — the
+                // host's entry is preserved as a plain log + a `supper_open_failed` warning.
+                try {
+                    // 1. Insert the suppers anchor.
+                    const { data: supperRow, error: supperErr } = await supabase
+                        .from('suppers')
+                        .insert({ restaurant_id: restaurantId, host_user_id: user.id })
+                        .select('id')
+                        .single();
+                    if (supperErr) throw supperErr;
+                    createdSupperId = supperRow.id;
+
+                    // 2. Bind the host entry to the supper (group key).
+                    const { error: bindErr } = await supabase
+                        .from('entries')
+                        .update({ supper_id: createdSupperId })
+                        .eq('id', entryData.id);
+                    if (bindErr) throw bindErr;
+
+                    // 3. Seed supper_members: host + each validated tagged friend.
+                    const memberRows = [user.id, ...validSupperParticipantIds].map((uid) => ({
+                        supper_id: createdSupperId,
+                        user_id: uid,
+                    }));
+                    const { error: membersErr } = await supabase
+                        .from('supper_members')
+                        .insert(memberRows);
+                    if (membersErr) throw membersErr;
+
+                    // Reflect the binding in the in-memory row so the response carries it.
+                    (entryData as { supper_id?: string | null }).supper_id = createdSupperId;
+
+                    // 4. Write entry_companions on the host entry so the "with X · Y" line
+                    //    renders. Union of validated participants + any client companion_ids.
+                    const clientCompanionIds: string[] = Array.isArray(companion_ids) ? companion_ids : [];
+                    const supperCompanionIds = [...new Set(
+                        [...validSupperParticipantIds, ...clientCompanionIds].filter((id: string) => id && id !== user.id)
+                    )];
+                    if (supperCompanionIds.length > 0) {
+                        const { error: supperCompErr } = await supabase
+                            .from('entry_companions')
+                            .insert(supperCompanionIds.map((uid: string) => ({ entry_id: entryData.id, user_id: uid })));
+                        // Non-fatal: a companion-write failure must not orphan the supper.
+                        if (supperCompErr) {
+                            console.error('[entry] supper entry_companions insert error (non-fatal):', supperCompErr);
+                        }
+                    }
+                } catch (supperOpenErr) {
+                    // Compensating cleanup: roll back partial Supper state. Deleting the
+                    // suppers row cascades supper_members; we also unset the entry's
+                    // supper_id. The host's entry survives as a plain successful log.
+                    console.error('[entry] supper open failed, rolling back:', supperOpenErr);
+                    supperOpenFailed = true;
+                    if (createdSupperId) {
+                        await supabase.from('entries').update({ supper_id: null }).eq('id', entryData.id);
+                        await supabase.from('suppers').delete().eq('id', createdSupperId);
+                    }
+                    (entryData as { supper_id?: string | null }).supper_id = null;
+                    createdSupperId = null;
+                }
+            }
+
             // Bulk-insert entry_photos if photo_urls provided (non-fatal if it fails)
             if (photoUrlsArray.length > 0) {
                 const photoRows = photoUrlsArray.map((url: string, idx: number) => ({
@@ -995,7 +1477,12 @@ serve(async (req) => {
             // companion_ids: arbitrary Napkin users; no Table-membership gate (Instagram-style)
             // TICKET-037 (P1-11): explicitly exclude allParticipantIds so a user can't appear
             // in both the "6 ratings" strip and the "with X" companions list.
-            const rawCompanionIds: string[] = Array.isArray(companion_ids) ? companion_ids : [];
+            // TICKET-082: for a Supper the companion rows were already written above
+            // (union of supper_participant_ids + companion_ids). Skip here so we don't
+            // attempt a duplicate (entry_id,user_id) insert that the PK would reject.
+            const rawCompanionIds: string[] = isSupper
+                ? []
+                : (Array.isArray(companion_ids) ? companion_ids : []);
             const sanitizedCompanionIds = [...new Set(
                 rawCompanionIds.filter((id: string) => id && id !== user.id && !allParticipantIds.includes(id))
             )];
@@ -1009,6 +1496,12 @@ serve(async (req) => {
             }
 
             const warnings: Array<{ type: string; failed_ids?: string[]; reason?: string }> = [];
+
+            // TICKET-082: if the Supper failed to open (rolled back above), the entry
+            // still succeeded as a plain log — tell the client so it can message it.
+            if (supperOpenFailed) {
+                warnings.push({ type: 'supper_open_failed' });
+            }
 
             if (sanitizedCompanionIds.length > 0) {
                 const companionRows = sanitizedCompanionIds.map((uid: string) => ({
@@ -1132,6 +1625,9 @@ serve(async (req) => {
                         ...entryData,
                         table_id: effectiveTableIds[0] ?? null,  // primary (legacy mirror)
                         table_ids: effectiveTableIds,            // author-facing only
+                        // TICKET-082: nest supper_id INSIDE data (callEdgeFn strips the
+                        // outer envelope, so a sibling field would be dropped).
+                        supper_id: createdSupperId,
                     },
                     entry_ordinal,
                     ...(warnings.length > 0 ? { warnings } : {}),

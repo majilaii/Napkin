@@ -80,9 +80,14 @@ export type TopPick = {
     name: string;
     city: string | null;
     photo_url: string | null;
-    max_rating: number;
+    max_rating: number | null;
     visit_count: number;
     last_visited_at: string | null;
+    /** Top-Four glance indicators (default false on older payloads). */
+    liked?: boolean;
+    has_review?: boolean;
+    /** Entry id of the author's review for this pick — tap opens the review. */
+    review_entry_id?: string | null;
 };
 
 export type RegularSummary = {

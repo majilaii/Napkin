@@ -1,0 +1,7 @@
+{
+  "name": "media-extract",
+  "version": "0.1.0",
+  "description": "On-device video OCR + voiceover extraction",
+  "main": "index.ts",
+  "platforms": ["ios"]
+}

@@ -112,12 +112,15 @@ export function useCreateImport(userId: string | null | undefined) {
                     if (Array.isArray(old)) {
                         return [optimisticItem, ...old];
                     }
-                    // InfiniteData shape
+                    // InfiniteData shape. wishlist.personal pages are
+                    // { data: PersonalWishlistItem[], next_cursor } (useMyWishlist is
+                    // a plain useInfiniteQuery, NOT useCursorPagedQuery) — the field
+                    // is `data`, not `rows`. Writing `rows` here silently no-ops.
                     if (old?.pages?.[0]) {
                         const newPages = [...old.pages];
                         newPages[0] = {
                             ...newPages[0],
-                            rows: [optimisticItem, ...(newPages[0].rows ?? [])],
+                            data: [optimisticItem, ...(newPages[0].data ?? [])],
                         };
                         return { ...old, pages: newPages };
                     }

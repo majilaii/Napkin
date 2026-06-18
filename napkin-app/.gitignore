@@ -21,6 +21,7 @@ npm-debug.*
 # Build directories
 build/
 dist/
+*.ipa
 
 # Logs
 logs

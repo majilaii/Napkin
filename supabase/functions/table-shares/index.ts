@@ -123,6 +123,9 @@ serve(async (req) => {
     if (action === 'dismiss_float') {
         return handleDismissFloat(supabase, user, body as DismissFloatBody & { action: string });
     }
+    if (action === 'remove_share') {
+        return handleRemoveShare(supabase, user, body as { action: string; share_id?: string });
+    }
 
     return err('UNKNOWN_ACTION', `Unknown action: ${action}`, 400);
 });
@@ -327,6 +330,54 @@ async function handleCorrect(
     }
 
     return json({ job_id, restaurant_id, status: 'resolved' });
+}
+
+// ── Action: remove_share ──────────────────────────────────────────────────────
+// Author retracts their own shared_save card from a Table feed (soft-delete).
+// The card disappears from the feed (fn_table_activity_page filters deleted_at IS
+// NULL); existing reactions/comments stay attached to the tombstoned row rather
+// than dangling. Author-only — never removes another member's share.
+
+async function handleRemoveShare(
+    supabase: any,
+    user: { id: string },
+    body: { action: string; share_id?: string },
+): Promise<Response> {
+    const share_id = body.share_id;
+    if (!share_id) {
+        return err('MISSING_PARAMS', 'share_id is required', 400);
+    }
+
+    const { data: shareRow } = await supabase
+        .from('table_shares')
+        .select('id, author_id, deleted_at')
+        .eq('id', share_id)
+        .maybeSingle();
+
+    if (!shareRow) {
+        return err('NOT_FOUND', 'Share not found', 404);
+    }
+    if (shareRow.author_id !== user.id) {
+        // Generic 403 — only the author can retract their own share.
+        return err('FORBIDDEN', 'Only the author can remove this share', 403);
+    }
+    if (shareRow.deleted_at) {
+        // Idempotent — already retracted.
+        return json({ share_id, removed: true });
+    }
+
+    const { error: removeErr } = await supabase
+        .from('table_shares')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', share_id)
+        .eq('author_id', user.id);
+
+    if (removeErr) {
+        console.error('remove_share update error:', removeErr);
+        return err('REMOVE_FAILED', 'Failed to remove share', 500);
+    }
+
+    return json({ share_id, removed: true });
 }
 
 // ── Action: dismiss_float ─────────────────────────────────────────────────────

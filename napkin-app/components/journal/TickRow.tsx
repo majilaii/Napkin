@@ -9,6 +9,7 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -16,6 +17,8 @@ export interface TickRowProps {
     rating: number | null;
     restaurantName: string;
     city?: string | null;
+    /** Shared to a Table/Round — subtle people-outline glyph before the weekday. */
+    shared?: boolean;
     weekday?: string;          // "tue", "sat 23", etc.
     onPress?: () => void;
 }
@@ -24,6 +27,7 @@ export function TickRow({
     rating,
     restaurantName,
     city,
+    shared,
     weekday,
     onPress,
 }: TickRowProps) {
@@ -66,6 +70,17 @@ export function TickRow({
 
             {/* Spacer */}
             <View style={{ flex: 1 }} />
+
+            {/* Shared-to-a-Table glyph */}
+            {shared ? (
+                <Ionicons
+                    name="people-outline"
+                    size={13}
+                    color={palette.textMuted}
+                    style={styles.sharedGlyph}
+                    accessibilityLabel="shared to a table"
+                />
+            ) : null}
 
             {/* Weekday */}
             {weekday ? (
@@ -120,5 +135,9 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
         flexShrink: 0,
+    },
+    sharedGlyph: {
+        alignSelf: 'center',
+        marginRight: 2,
     },
 });

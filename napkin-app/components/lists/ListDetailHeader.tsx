@@ -30,13 +30,21 @@ interface Props {
     onEdit: () => void;
     /** TICKET-074: open the HandoffSheet for this list. Hidden when the list is empty. */
     onShare?: () => void;
+    /** Open the import-spots sheet (owner only). The fast add-from-saved path. */
+    onAddSpots?: () => void;
 }
 
-export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEdit, onShare }: Props) {
+export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEdit, onShare, onAddSpots }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
     const router = useRouter();
     const { user } = useAuth();
+
+    // Quiet middle-dot meta line — replaces the old chip badges (Heirloom voice).
+    const metaParts: string[] = [`${entryCount} ${entryCount === 1 ? 'spot' : 'spots'}`];
+    if (list.ranked) metaParts.push('ranked');
+    if (isOwner && list.privacy === 'private') metaParts.push('only you');
+    const metaLine = metaParts.join(' · ');
 
     return (
         <View style={styles.container}>
@@ -88,27 +96,26 @@ export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEd
                 return content;
             })()}
 
-            {/* Badges row */}
-            <View style={[styles.badgesRow, { marginTop: Spacing.sm }]}>
-                <View style={[styles.badge, { backgroundColor: palette.surfaceContainerLow }]}>
-                    <Text style={[Type.caption, { color: palette.textSecondary }]}>
-                        {entryCount} {entryCount === 1 ? 'place' : 'places'}
-                    </Text>
-                </View>
-                <View style={[styles.badge, { backgroundColor: palette.surfaceContainerLow }]}>
-                    <Text style={[Type.caption, { color: palette.textSecondary }]}>
-                        {list.ranked ? 'Ranked' : 'Unranked'}
-                    </Text>
-                </View>
-                {isOwner && list.privacy === 'private' && (
-                    <View style={[styles.badge, { backgroundColor: palette.surfaceContainerLow }]}>
-                        <Ionicons name="lock-closed" size={10} color={palette.textMuted} style={{ marginRight: 3 }} />
-                        <Text style={[Type.caption, { color: palette.textMuted }]}>
-                            Private
-                        </Text>
-                    </View>
-                )}
-            </View>
+            {/* Meta line — quiet middle-dot text, no chip badges (Heirloom voice) */}
+            <Text style={[styles.metaLine, { color: palette.textMuted, marginTop: Spacing.sm }]}>
+                {metaLine}
+            </Text>
+
+            {/* Add spots — the fast import-from-saved affordance (owner only) */}
+            {isOwner && onAddSpots ? (
+                <Pressable
+                    onPress={onAddSpots}
+                    style={({ pressed }) => [
+                        styles.addSpotsBtn,
+                        { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="add spots to this list"
+                >
+                    <Ionicons name="add" size={18} color="#fffdf8" />
+                    <Text style={[Type.titleSmall, { color: '#fffdf8' }]}>add spots</Text>
+                </Pressable>
+            ) : null}
 
             {/* Quiet owner affordances: share · edit (canvas idiom — TICKET-074) */}
             {isOwner && (
@@ -156,18 +163,18 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    badgesRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.xs,
-        flexWrap: 'wrap',
+    metaLine: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
     },
-    badge: {
-        borderRadius: Radius.sm,
-        paddingHorizontal: 8,
-        paddingVertical: 3,
+    addSpotsBtn: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: 12,
+        borderRadius: Radius.md,
+        marginTop: Spacing.md,
     },
     actionsRow: {
         flexDirection: 'row',

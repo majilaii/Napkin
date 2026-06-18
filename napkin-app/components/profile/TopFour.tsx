@@ -1,31 +1,38 @@
 /**
- * TopFour — 4-up grid of poster cards with rating badge + italic caption.
- * TICKET-025
+ * TopFour — the profile's four favourite restaurants, ranked 1–4 in a compact 2x2
+ * grid of warm "plate" tiles. TICKET-025 · redesigned 2026-06-17.
  *
- * Auto-derived from `top_four` in profile payload — no edit affordance.
- * Cold-start: 4 dashed empty frames.
- * Partial fill: real posters for qualifying picks + dashed frames for remainder.
+ * Each filled tile glances three things without a tap:
+ *   • amber rating numeral — what they scored it (hidden when unrated)
+ *   • a terracotta heart    — they liked it (Letterboxd-style, distinct from rating)
+ *   • a muted note glyph    — they wrote a review (entry has content)
+ *
+ * Two accents only (amber + terracotta); the review glyph stays neutral ink.
+ * Auto-derived or curated from `top_four` in the profile payload. Empty slots show
+ * a tappable '+' for the owner.
  */
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SectionHeader } from './SectionHeader';
 import type { TopPick } from '@/hooks/users/useUserProfile';
 
 interface Props {
     picks: TopPick[];
+    /** When true (own profile), shows an "edit" affordance + tappable empty slots. */
+    isOwner?: boolean;
+    onEdit?: () => void;
 }
 
-export function TopFour({ picks }: Props) {
+export function TopFour({ picks, isOwner = false, onEdit }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
 
-    // Pad to 4 slots
     const slots: (TopPick | null)[] = [
         picks[0] ?? null,
         picks[1] ?? null,
@@ -35,73 +42,84 @@ export function TopFour({ picks }: Props) {
 
     return (
         <View>
-            <SectionHeader title="Top 4" />
+            <SectionHeader
+                title="Top 4"
+                rightLabel={isOwner && onEdit ? 'edit' : undefined}
+                onRightLabelPress={onEdit}
+            />
             <View style={styles.grid}>
                 {slots.map((pick, i) =>
                     pick ? (
                         <Pressable
                             key={i}
-                            style={({ pressed }) => [styles.cell, { opacity: pressed ? 0.92 : 1 }]}
-                            onPress={() => router.push(`/restaurant/${pick.restaurant_id}` as any)}
+                            style={({ pressed }) => [
+                                styles.tile,
+                                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.92 : 1 },
+                                Shadow.note,
+                            ]}
+                            onPress={() =>
+                                // Tap a pick with a review → open the review. Gated to the
+                                // owner so a (future) public-profile viewer can't deep-link
+                                // into a Table-visibility entry — they get the restaurant page.
+                                pick.review_entry_id && isOwner
+                                    ? router.push({ pathname: '/entry-detail', params: { entryId: pick.review_entry_id } })
+                                    : router.push(`/restaurant/${pick.restaurant_id}` as any)
+                            }
                             accessibilityRole="button"
-                            accessibilityLabel={`View ${pick.name}`}
+                            accessibilityLabel={pick.review_entry_id && isOwner ? `Read ${pick.name} review` : `View ${pick.name}`}
                         >
-                            {/* Poster */}
-                            <View
-                                style={[
-                                    styles.poster,
-                                    { backgroundColor: palette.surfaceContainerHigh },
-                                ]}
-                            >
-                                {pick.photo_url ? (
-                                    <Image
-                                        source={{ uri: pick.photo_url }}
-                                        style={StyleSheet.absoluteFill}
-                                        contentFit="cover"
-                                        transition={150}
-                                    />
-                                ) : null}
-                                {/* Rating badge — bottom-left overlay */}
-                                <View style={styles.ratingBadge}>
-                                    <Text
-                                        style={{
-                                            fontFamily: 'Newsreader_400Regular_Italic',
-                                            fontSize: 10,
-                                            color: palette.textInverse,
-                                        }}
-                                    >
-                                        {pick.max_rating.toFixed(1)}
-                                    </Text>
-                                </View>
-                            </View>
-                            {/* Caption */}
-                            <Text
-                                style={[
-                                    styles.caption,
-                                    { color: palette.text, fontFamily: 'Newsreader_400Regular_Italic' },
-                                ]}
-                                numberOfLines={2}
-                            >
-                                {pick.name}
-                            </Text>
-                        </Pressable>
-                    ) : (
-                        <View key={i} style={styles.cell}>
-                            <View
-                                style={[
-                                    styles.poster,
-                                    styles.emptyPoster,
-                                    {
-                                        borderColor: palette.outlineVariant,
-                                        backgroundColor: palette.surfaceContainerLow,
-                                    },
-                                ]}
-                            >
-                                <Text style={[Type.headlineMedium, { color: palette.textMuted, fontWeight: '300' }]}>
-                                    +
+                            <View style={styles.tileHead}>
+                                <Text style={[styles.rank, { color: palette.textMuted }]}>{i + 1}</Text>
+                                <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
+                                    {pick.name}
                                 </Text>
                             </View>
-                        </View>
+                            {pick.city ? (
+                                <Text style={[styles.city, { color: palette.textMuted }]} numberOfLines={1}>
+                                    {pick.city}
+                                </Text>
+                            ) : null}
+
+                            {/* Indicator row — rated · liked · reviewed */}
+                            <View style={styles.indicators}>
+                                {pick.max_rating != null ? (
+                                    <View style={[styles.ratingChip, { backgroundColor: palette.tertiaryFixed }]}>
+                                        <Text style={[styles.ratingNum, { color: palette.tertiary }]}>
+                                            {pick.max_rating.toFixed(1)}
+                                        </Text>
+                                    </View>
+                                ) : null}
+                                {pick.liked ? (
+                                    <Ionicons name="heart" size={13} color={palette.primary} accessibilityLabel="liked" />
+                                ) : null}
+                                {pick.has_review ? (
+                                    <Ionicons
+                                        name="document-text-outline"
+                                        size={13}
+                                        color={palette.textMuted}
+                                        accessibilityLabel="wrote a review"
+                                    />
+                                ) : null}
+                                {/* Liked but unrated — say so, so the tile isn't bare. */}
+                                {pick.max_rating == null && pick.liked ? (
+                                    <Text style={[styles.likedLabel, { color: palette.textMuted }]}>liked</Text>
+                                ) : null}
+                            </View>
+                        </Pressable>
+                    ) : (
+                        <Pressable
+                            key={i}
+                            style={[
+                                styles.tile,
+                                styles.emptyTile,
+                                { borderColor: palette.outlineVariant, backgroundColor: palette.surfaceContainerLow },
+                            ]}
+                            onPress={isOwner && onEdit ? onEdit : undefined}
+                            accessibilityRole={isOwner && onEdit ? 'button' : undefined}
+                            accessibilityLabel={isOwner && onEdit ? 'Add to your Top 4' : undefined}
+                        >
+                            <Text style={[styles.plus, { color: palette.textMuted }]}>+</Text>
+                        </Pressable>
                     )
                 )}
             </View>
@@ -112,38 +130,71 @@ export function TopFour({ picks }: Props) {
 const styles = StyleSheet.create({
     grid: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         paddingHorizontal: Spacing.lg,
         gap: Spacing.sm,
     },
-    cell: {
+    tile: {
+        width: '48%',
+        minHeight: 96,
+        borderRadius: Radius.md,
+        paddingHorizontal: 11,
+        paddingVertical: 10,
+        justifyContent: 'flex-start',
+    },
+    tileHead: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 6,
+    },
+    rank: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        lineHeight: 18,
+    },
+    name: {
         flex: 1,
-        gap: 4,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15.5,
+        lineHeight: 18,
     },
-    poster: {
-        aspectRatio: 3 / 4,
-        borderRadius: Radius.sm,
-        overflow: 'hidden',
-        position: 'relative',
-        justifyContent: 'flex-end',
+    city: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        letterSpacing: 0.3,
+        marginTop: 3,
+        marginLeft: 20,
     },
-    emptyPoster: {
+    indicators: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        marginTop: 'auto',
+        paddingTop: 9,
+        marginLeft: 20,
+    },
+    ratingChip: {
+        borderRadius: 999,
+        paddingHorizontal: 7,
+        paddingVertical: 1,
+    },
+    ratingNum: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+    },
+    likedLabel: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 12,
+    },
+    emptyTile: {
         borderWidth: 1,
         borderStyle: 'dashed',
-        justifyContent: 'center',
         alignItems: 'center',
+        justifyContent: 'center',
     },
-    ratingBadge: {
-        position: 'absolute',
-        bottom: 4,
-        left: 4,
-        backgroundColor: 'rgba(28,28,25,0.7)',
-        paddingHorizontal: 5,
-        paddingVertical: 2,
-        borderRadius: 3,
-    },
-    caption: {
-        fontSize: 11,
-        lineHeight: 14,
-        overflow: 'hidden',
+    plus: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 28,
+        fontWeight: '300',
     },
 });

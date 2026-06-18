@@ -206,7 +206,9 @@ export function useToggleReaction() {
         },
 
         onMutate: async ({ targetType, targetId, emoji, scope }) => {
-            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
+          const key = queryKeys.postInteractions.all(targetType, targetId, scope);
+          // Optimistic-update failures must NEVER abort the real reaction toggle.
+          try {
             await queryClient.cancelQueries({ queryKey: key });
 
             // Only invalidate feed caches for table-scope reactions (public reactions
@@ -287,22 +289,32 @@ export function useToggleReaction() {
                         if (!data?.pages) return data;
                         return {
                             ...data,
-                            pages: data.pages.map((page) => page.map(flipItem)),
+                            pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(flipItem) })),
                         };
                     },
                 );
 
-                // feed = useQuery → { entries: FeedEntry[], trending, windowDays }
-                queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
+                // feed = useCursorPagedQuery → { pages: [{ rows }] }; older callers
+                // may still hold a { entries } shape — handle both.
+                queryClient.setQueriesData<any>(
                     { queryKey: queryKeys.feed.rootAll() },
-                    (data) => {
-                        if (!data?.entries) return data;
-                        return { ...data, entries: data.entries.map(flipItem) };
+                    (data: any) => {
+                        if (!data) return data;
+                        if (data.pages) {
+                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(flipItem) ?? p.rows })) };
+                        }
+                        if (data.entries) return { ...data, entries: data.entries.map(flipItem) };
+                        return data;
                     },
                 );
             }
 
             return { previous, feedSnapshots };
+          } catch (optimisticErr: any) {
+            // Non-fatal: the real reaction still toggles; caches resync on refetch.
+            console.warn('[post-interactions] reaction optimistic update skipped:', optimisticErr?.message);
+            return { previous: queryClient.getQueryData<PostInteractionsData>(key), feedSnapshots: [] };
+          }
         },
 
         onError: (_err, { targetType, targetId, scope }, context) => {
@@ -368,14 +380,18 @@ export function useToggleReaction() {
                     { queryKey: queryKeys.tables.activityAll() },
                     (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
                         if (!data?.pages) return data;
-                        return { ...data, pages: data.pages.map((page) => page.map(syncItem)) };
+                        return { ...data, pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(syncItem) })) };
                     },
                 );
-                queryClient.setQueriesData<{ entries: any[]; [k: string]: unknown }>(
+                queryClient.setQueriesData<any>(
                     { queryKey: queryKeys.feed.rootAll() },
-                    (data) => {
-                        if (!data?.entries) return data;
-                        return { ...data, entries: data.entries.map(syncItem) };
+                    (data: any) => {
+                        if (!data) return data;
+                        if (data.pages) {
+                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(syncItem) ?? p.rows })) };
+                        }
+                        if (data.entries) return { ...data, entries: data.entries.map(syncItem) };
+                        return data;
                     },
                 );
             }
@@ -416,7 +432,11 @@ export function useAddComment() {
         },
 
         onMutate: async ({ targetType, targetId, body, clientNonce, scope }) => {
-            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
+          const key = queryKeys.postInteractions.all(targetType, targetId, scope);
+          // Optimistic-update failures must NEVER abort the real post (if onMutate
+          // throws, TanStack aborts the mutation and the request never sends). Wrap
+          // the whole thing; on failure, log the stack and let mutationFn proceed.
+          try {
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
             const userId = (await supabase.auth.getUser()).data.user?.id;
@@ -465,7 +485,7 @@ export function useAddComment() {
                     { queryKey: queryKeys.tables.activityAll() },
                     (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
                         if (!data?.pages) return data;
-                        return { ...data, pages: data.pages.map((page) => page.map(incrementItem)) };
+                        return { ...data, pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(incrementItem) })) };
                     },
                 );
                 queryClient.setQueriesData<any>(
@@ -482,6 +502,11 @@ export function useAddComment() {
             }
 
             return { previous, feedSnapshots };
+          } catch (optimisticErr: any) {
+            // Non-fatal: the real comment still posts; caches resync on refetch.
+            console.warn('[post-interactions] comment optimistic update skipped:', optimisticErr?.message);
+            return { previous: queryClient.getQueryData<PostInteractionsData>(key), feedSnapshots: [] };
+          }
         },
 
         onError: (_err, { targetType, targetId, clientNonce, scope }, context) => {
@@ -630,7 +655,7 @@ export function useDeleteComment() {
                     { queryKey: queryKeys.tables.activityAll() },
                     (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
                         if (!data?.pages) return data;
-                        return { ...data, pages: data.pages.map((page) => page.map(decrementItem)) };
+                        return { ...data, pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(decrementItem) })) };
                     },
                 );
                 queryClient.setQueriesData<any>(

@@ -2,7 +2,7 @@
  * SearchResultRow — single result in the tiered search list.
  *
  * TICKET-069 canvas restyle (Kit 07 · The Restaurant Row):
- *   [52px monogram tile or photo]  italic serif 17 name
+ *   [52px photo thumb — only if present]  italic serif 17 name
  *                                  sans 12 muted  neighborhood · cuisine
  *                                  [right-edge] your-signal slot:
  *                                    • amber italic 18 rating  (if visited + rating)
@@ -24,13 +24,8 @@ interface Props {
 }
 
 function buildPhotoUrl(_photoReference: string | null): string | null {
-    // No Places photo proxy in v1 — ghosts fall back to the monogram tile.
+    // No Places photo proxy in v1 — ghosts render text-only (no thumb).
     return null;
-}
-
-/** Derive a single initial letter for the monogram tile. */
-function getInitial(name: string): string {
-    return name.trim().charAt(0).toUpperCase();
 }
 
 export function SearchResultRow({ item, onPress }: Props) {
@@ -39,7 +34,7 @@ export function SearchResultRow({ item, onPress }: Props) {
     const [imgError, setImgError] = useState(false);
 
     const thumbUrl = item.photoUrl ?? buildPhotoUrl(item.photoReference);
-    const showGlyph = !thumbUrl || imgError;
+    const hasPhoto = !!thumbUrl && !imgError;
 
     // Meta line: neighborhood · cuisine (prefer city over address for canvas grammar)
     const metaParts: string[] = [];
@@ -65,25 +60,15 @@ export function SearchResultRow({ item, onPress }: Props) {
             accessibilityRole="button"
             accessibilityLabel={item.name}
         >
-            {/* Monogram tile / photo thumb — 52px, r12 */}
-            <View
-                style={[
-                    styles.tile,
-                    { backgroundColor: palette.surfaceJournalHi },
-                ]}
-            >
-                {showGlyph ? (
-                    <Text style={[styles.initial, { color: palette.textMuted }]}>
-                        {getInitial(item.name)}
-                    </Text>
-                ) : (
-                    <Image
-                        source={{ uri: thumbUrl! }}
-                        style={styles.tileImage}
-                        onError={() => setImgError(true)}
-                    />
-                )}
-            </View>
+            {/* Photo thumb — only when a real photo exists. No monogram
+                placeholder: photoless results read as a clean text list. */}
+            {hasPhoto ? (
+                <Image
+                    source={{ uri: thumbUrl! }}
+                    style={styles.thumb}
+                    onError={() => setImgError(true)}
+                />
+            ) : null}
 
             {/* Text block */}
             <View style={styles.textBlock}>
@@ -126,22 +111,11 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.sm + 3,
         gap: 14,
     },
-    tile: {
+    thumb: {
         width: 52,
         height: 52,
         borderRadius: Radius.md,
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
         flexShrink: 0,
-    },
-    tileImage: {
-        width: 52,
-        height: 52,
-    },
-    initial: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 21,
     },
     textBlock: {
         flex: 1,

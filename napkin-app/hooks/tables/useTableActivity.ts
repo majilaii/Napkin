@@ -14,6 +14,20 @@ export interface CompanionProfile {
     display_name: string;
 }
 
+/** TICKET-082 Wave 2c: the supper "gathering" summary attached to a feed entry that
+ *  anchors a Supper — only present for viewers who are supper members. */
+export interface SupperSummary {
+    head_count: number;
+    group_avg: number | null;
+    photos: string[];
+    takers: Array<{
+        user_id: string;
+        display_name: string | null;
+        avatar_url: string | null;
+        rating: number | null;
+    }>;
+}
+
 export interface SoloShareActivity {
     type: 'solo_share';
     id: string;
@@ -24,6 +38,11 @@ export interface SoloShareActivity {
     dish_description: string | null;
     /** TICKET-075: author's Letterboxd-style like. Read-only on feed/journal rows. */
     liked?: boolean;
+    /** true when this entry is attached to a Table or Round (journal badge, 20260616000100). */
+    is_shared?: boolean;
+    /** Supper gathering summary (Wave 2c) — present only when this entry anchors a
+     *  Supper AND the viewer is a member. Renders pooled photos + headcount + avg. */
+    supper?: SupperSummary | null;
     visited_at: string;
     created_at: string;
     sort_date: string;

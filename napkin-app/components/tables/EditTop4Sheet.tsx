@@ -91,11 +91,7 @@ function DraftTile({ position, slot, tileWidth, isFocused, palette, onClear, onF
                     ]}
                 >
                     {showGhost ? (
-                        <View style={[styles.ghostTile, { backgroundColor: palette.surfaceJournalHi }]}>
-                            <Text style={[styles.ghostInitial, { color: palette.textMuted }]}>
-                                {photo.kind === 'ghost' ? photo.initial : '?'}
-                            </Text>
-                        </View>
+                        <View style={[styles.ghostTile, { backgroundColor: palette.surfaceJournalHi }]} />
                     ) : (
                         <Image
                             source={{ uri: (photo as any).url }}
@@ -648,11 +644,6 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    ghostInitial: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontStyle: 'italic',
-        fontSize: 20,
     },
     tileOverlay: {
         position: 'absolute',
