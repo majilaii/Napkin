@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Spacing, Type } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { ListEntry } from '@/hooks/lists/useList';
 
@@ -83,7 +83,7 @@ export function ListEntryRow({
     };
 
     return (
-        <View style={[styles.row, { backgroundColor: palette.card }]}>
+        <View style={[styles.row, { backgroundColor: palette.card }, Shadow.subtle]}>
             {/* Rank number */}
             {isRanked && rank !== undefined && (
                 <Text style={[styles.rank, Type.headlineItalic, { color: palette.textMuted }]}>
@@ -100,7 +100,7 @@ export function ListEntryRow({
                 ]}
             >
                 <Text
-                    style={[Type.titleSmall, { color: palette.text }]}
+                    style={[styles.name, { color: palette.text }]}
                     numberOfLines={1}
                 >
                     {r.name}
@@ -143,29 +143,33 @@ export function ListEntryRow({
                             returnKeyType="done"
                             onSubmitEditing={handleNoteBlur}
                         />
+                    ) : entry.note ? (
+                        <Pressable onPress={() => setEditingNote(true)}>
+                            <Text
+                                style={[styles.noteQuote, { color: palette.textSecondary }]}
+                                numberOfLines={3}
+                            >
+                                {`— ${entry.note}`}
+                            </Text>
+                        </Pressable>
                     ) : (
                         <Pressable onPress={() => setEditingNote(true)}>
                             <Text
                                 style={[
                                     Type.bodySmall,
-                                    {
-                                        color: entry.note ? palette.textSecondary : palette.textMuted,
-                                        marginTop: 2,
-                                        fontStyle: entry.note ? 'normal' : 'italic',
-                                    },
+                                    { color: palette.textMuted, marginTop: 4, fontStyle: 'italic' },
                                 ]}
-                                numberOfLines={2}
                             >
-                                {entry.note ?? 'Add a note…'}
+                                add a note…
                             </Text>
                         </Pressable>
                     )
                 ) : entry.note ? (
                     <Text
-                        style={[Type.bodySmall, { color: palette.textSecondary, marginTop: 2 }]}
-                        numberOfLines={2}
+                        style={[styles.noteQuote, { color: palette.textSecondary }]}
+                        numberOfLines={3}
                     >
-                        {entry.note}
+                        {`— ${entry.note}`}
                     </Text>
                 ) : null}
             </Pressable>
@@ -210,6 +214,17 @@ const styles = StyleSheet.create({
     },
     body: {
         flex: 1,
+    },
+    name: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 17,
+        lineHeight: 21,
+    },
+    noteQuote: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        lineHeight: 19,
+        marginTop: 5,
     },
     noteInput: {
         marginTop: 4,

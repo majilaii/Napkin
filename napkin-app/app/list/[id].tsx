@@ -32,7 +32,7 @@ import { useReorderListEntry } from '@/hooks/lists/useReorderListEntry';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { useToast } from '@/providers/ToastProvider';
-import { ListDetailHeader, ListEntryRow } from '@/components/lists';
+import { ListDetailHeader, ListEntryRow, ImportToListSheet } from '@/components/lists';
 import { derivePinnedIds } from '@/components/lists/pinnedLookupUtils';
 import { HandoffSheet } from '@/components/wishlist';
 import type { ListEntry } from '@/hooks/lists/useList';
@@ -57,6 +57,8 @@ export default function ListDetailScreen() {
     const [dragDisabled, setDragDisabled] = useState(false);
     // TICKET-074: per-list handoff share sheet
     const [shareVisible, setShareVisible] = useState(false);
+    // Fast "add spots" import sheet (multi-select from saved sources)
+    const [importVisible, setImportVisible] = useState(false);
     // Fix-pass: restaurant ids pinned from THIS screen, flipped optimistically
     // on tap (reverted on error) so the row reads `pinned` immediately —
     // mirrors the old useIsWishlisted onMutate behavior without per-row calls.
@@ -68,6 +70,10 @@ export default function ListDetailScreen() {
     const ownerProfile = result?.data?.owner_profile ?? null;
     const isNotFound = result?.isNotFound ?? false;
     const isOwner = !!user && !!list && list.owner_id === user.id;
+    const existingRestaurantIds = React.useMemo(
+        () => entries.map((e) => e.restaurant_id),
+        [entries],
+    );
 
     // Fix-pass (Claude nit): ONE pinned lookup for the whole list, derived from
     // the personal wishlist query (already cached for the wishlist tab) instead
@@ -239,6 +245,7 @@ export default function ListDetailScreen() {
                                             })
                                         }
                                         onShare={verifiedCount > 0 ? () => setShareVisible(true) : undefined}
+                                        onAddSpots={isOwner ? () => setImportVisible(true) : undefined}
                                     />
                                 }
                                 renderItem={({ item, getIndex, drag }: RenderItemParams<ListEntry>) =>
@@ -248,7 +255,19 @@ export default function ListDetailScreen() {
                                     styles.listContent,
                                     { paddingBottom: insets.bottom + Spacing.xxl },
                                 ]}
-                                ItemSeparatorComponent={() => <View style={{ height: Spacing.xs }} />}
+                                ListEmptyComponent={
+                                    <View style={styles.emptyState}>
+                                        <Text style={[Type.headlineItalic, { color: palette.textMuted, textAlign: 'center' }]}>
+                                            — no spots yet
+                                        </Text>
+                                        {isOwner ? (
+                                            <Text style={[Type.bodySmall, { color: palette.textMuted, textAlign: 'center', marginTop: Spacing.sm }]}>
+                                                tap add spots to fill it from your saves
+                                            </Text>
+                                        ) : null}
+                                    </View>
+                                }
+                                ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
                             />
                         ) : (
                             <FlatList
@@ -267,6 +286,7 @@ export default function ListDetailScreen() {
                                             })
                                         }
                                         onShare={verifiedCount > 0 ? () => setShareVisible(true) : undefined}
+                                        onAddSpots={isOwner ? () => setImportVisible(true) : undefined}
                                     />
                                 }
                                 renderItem={({ item, index }) => renderEntry(item, index)}
@@ -274,7 +294,19 @@ export default function ListDetailScreen() {
                                     styles.listContent,
                                     { paddingBottom: insets.bottom + Spacing.xxl },
                                 ]}
-                                ItemSeparatorComponent={() => <View style={{ height: Spacing.xs }} />}
+                                ListEmptyComponent={
+                                    <View style={styles.emptyState}>
+                                        <Text style={[Type.headlineItalic, { color: palette.textMuted, textAlign: 'center' }]}>
+                                            — no spots yet
+                                        </Text>
+                                        {isOwner ? (
+                                            <Text style={[Type.bodySmall, { color: palette.textMuted, textAlign: 'center', marginTop: Spacing.sm }]}>
+                                                tap add spots to fill it from your saves
+                                            </Text>
+                                        ) : null}
+                                    </View>
+                                }
+                                ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
                             />
                         )}
 
@@ -287,6 +319,16 @@ export default function ListDetailScreen() {
                             pinnedCount={verifiedCount}
                             listId={list.id}
                             listName={list.title}
+                        />
+
+                        {/* Fast import — multi-select from saved sources (wishlist) */}
+                        <ImportToListSheet
+                            visible={importVisible}
+                            onClose={() => setImportVisible(false)}
+                            userId={user?.id}
+                            listId={list.id}
+                            listTitle={list.title}
+                            existingRestaurantIds={existingRestaurantIds}
                         />
                     </>
                 )}
@@ -311,5 +353,10 @@ const styles = StyleSheet.create({
     },
     listContent: {
         paddingHorizontal: Spacing.lg,
+    },
+    emptyState: {
+        paddingTop: Spacing.xxl,
+        paddingHorizontal: Spacing.lg,
+        alignItems: 'center',
     },
 });

@@ -17,7 +17,6 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
     View,
     Text,
-    Image,
     Pressable,
     StyleSheet,
     Modal,
@@ -34,7 +33,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { ImportLinkSheet, PendingSaveCard, HandoffSheet } from '@/components/wishlist';
+import { ImportLinkSheet, PendingSaveCard, HandoffSheet, ListsRail } from '@/components/wishlist';
 import { buildListsSectionRows } from '@/components/wishlist/listsSectionUtils';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
@@ -434,6 +433,16 @@ export default function WishlistScreen() {
                     </View>
                 ) : null}
 
+                {/* YOUR LISTS rail — saves stay the hero; lists sit up top as a
+                    visible shelf (not buried at the bottom), with + new list
+                    always one tap away. */}
+                <ListsRail
+                    rows={listRows}
+                    onOpenList={(id) => router.push(`/list/${id}` as any)}
+                    onNewList={() => router.push('/list/new' as any)}
+                />
+                <View style={[styles.railDivider, { backgroundColor: palette.outlineVariant }]} />
+
                 {/* Pinned section */}
                 {isLoading && allItems.length === 0 ? (
                     <View style={styles.loadingCenter}>
@@ -543,68 +552,6 @@ export default function WishlistScreen() {
                     </View>
                 ) : null}
 
-                {/* YOUR LISTS — TICKET-074 lists area. Curated, themed lists: stories
-                    you share. They never feed Table overlap (wishlist-only doctrine). */}
-                <View style={styles.listsSection}>
-                    <Text style={[styles.kicker, { color: palette.textSecondary }]}>
-                        YOUR LISTS
-                    </Text>
-
-                    {listRows.map((row) => (
-                        <View key={row.id} style={styles.listRow}>
-                            <Pressable
-                                onPress={() => router.push(`/list/${row.id}` as any)}
-                                style={({ pressed }) => [
-                                    styles.listRowBody,
-                                    { opacity: pressed ? 0.75 : 1 },
-                                ]}
-                                accessibilityLabel={`Open list ${row.name}`}
-                            >
-                                <Text
-                                    style={[styles.listName, { color: palette.text }]}
-                                    numberOfLines={1}
-                                >
-                                    {row.name}
-                                </Text>
-                                <Text style={[styles.listMeta, { color: palette.textMuted }]}>
-                                    {row.metaLabel}
-                                </Text>
-                            </Pressable>
-                            {row.canShare ? (
-                                <Pressable
-                                    onPress={() =>
-                                        setShareTarget({
-                                            listId: row.id,
-                                            listName: row.name,
-                                            count: row.spotCount,
-                                        })
-                                    }
-                                    hitSlop={10}
-                                    accessibilityLabel={`share ${row.name}`}
-                                >
-                                    <Text style={[styles.headerActionLabel, { color: palette.primary }]}>
-                                        share
-                                    </Text>
-                                </Pressable>
-                            ) : null}
-                        </View>
-                    ))}
-
-                    {/* + new list murmur → existing create-list flow */}
-                    <Pressable
-                        onPress={() => router.push('/list/new' as any)}
-                        hitSlop={8}
-                        style={({ pressed }) => [
-                            styles.newListRow,
-                            { opacity: pressed ? 0.65 : 1 },
-                        ]}
-                        accessibilityLabel="new list"
-                    >
-                        <Text style={[styles.newListLabel, { color: palette.textMuted }]}>
-                            + new list
-                        </Text>
-                    </Pressable>
-                </View>
             </ScrollView>
 
             <ImportLinkSheet
@@ -760,40 +707,13 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_500Medium',
         fontSize: 13,
     },
-    // YOUR LISTS section (TICKET-074)
-    listsSection: {
-        paddingHorizontal: 22,
-        paddingTop: Spacing.xl,
-    },
-    listRow: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 12,
-        paddingVertical: 12,
-    },
-    listRowBody: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 8,
-    },
-    listName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 20,
-        flexShrink: 1,
-    },
-    listMeta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-    },
-    newListRow: {
-        paddingVertical: 12,
-    },
-    newListLabel: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 15,
-        lineHeight: 20,
+    // YOUR LISTS rail divider
+    railDivider: {
+        height: 1,
+        marginHorizontal: 22,
+        marginTop: Spacing.lg,
+        marginBottom: Spacing.sm,
+        opacity: 0.45,
     },
     // Empty slab
     emptySlab: {

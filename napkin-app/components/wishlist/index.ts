@@ -15,3 +15,5 @@ export { RowToggle, type RowToggleProps } from './RowToggle';
 export { CandidatePickerPanel } from './CandidatePickerPanel';
 // TICKET-072: wishlist handoff share/revoke sheet
 export { HandoffSheet } from './HandoffSheet';
+// Lists shelf at the top of the Wishlist tab
+export { ListsRail } from './ListsRail';
