@@ -32,6 +32,11 @@ class ShareViewController: UIViewController {
     private var selectedListIds = Set<String>()
     private var selectedTableId: String?
     private var newListTitles: [String] = []
+    private var autoSaveOn = true // toggle off → mode "review" (confirm in-app)
+
+    // Header (hero) labels — updated as the share resolves
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
 
     // Snapshot data
     private var lists: [(id: String, title: String)] = []
@@ -43,7 +48,6 @@ class ShareViewController: UIViewController {
 
     // UI
     private let contentContainer = UIView()
-    private let statusLabel = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let doneButton = UIButton(type: .system)
 
@@ -86,67 +90,106 @@ class ShareViewController: UIViewController {
     // MARK: - Chrome (card + header + swappable content + pinned Done)
 
     private func buildChrome() {
+        // Bottom-anchored sheet — larger, more breathable, hero header up top.
         let card = UIView()
         card.backgroundColor = note
-        card.layer.cornerRadius = 20
+        card.layer.cornerRadius = 28
+        card.layer.shadowColor = UIColor.black.cgColor
+        card.layer.shadowOpacity = 0.10
+        card.layer.shadowRadius = 30
+        card.layer.shadowOffset = CGSize(width: 0, height: 8)
         card.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(card)
 
         let grabber = UIView()
         grabber.backgroundColor = UIColor(red: 0.867, green: 0.753, blue: 0.729, alpha: 1)
-        grabber.layer.cornerRadius = 2
+        grabber.layer.cornerRadius = 2.5
         grabber.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = UILabel()
-        title.text = "save to napkin"
-        title.font = UIFont.systemFont(ofSize: 21, weight: .semibold)
-        title.textColor = ink
+        // Hero header — big serif-italic title + subtitle (resolve status).
+        titleLabel.text = "save to napkin"
+        titleLabel.font = UIFont(name: "Georgia-Italic", size: 31) ?? UIFont.italicSystemFont(ofSize: 31)
+        titleLabel.textColor = ink
+        titleLabel.numberOfLines = 1
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.7
 
-        statusLabel.text = "reading the share…"
-        statusLabel.font = UIFont.systemFont(ofSize: 12)
-        statusLabel.textColor = taupe
+        subtitleLabel.text = "reading the share…"
+        subtitleLabel.font = UIFont.systemFont(ofSize: 14)
+        subtitleLabel.textColor = taupe
+        subtitleLabel.numberOfLines = 2
         spinner.color = terracotta
         spinner.startAnimating()
-        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel, UIView()])
-        statusRow.axis = .horizontal
-        statusRow.spacing = 6
-        statusRow.alignment = .center
+        spinner.setContentHuggingPriority(.required, for: .horizontal)
+        let subRow = UIStackView(arrangedSubviews: [spinner, subtitleLabel])
+        subRow.axis = .horizontal
+        subRow.spacing = 8
+        subRow.alignment = .center
 
+        let header = UIStackView(arrangedSubviews: [titleLabel, subRow])
+        header.axis = .vertical
+        header.spacing = 7
+
+        // Swappable content lives in a height-capped scroll so the sheet never
+        // overruns the screen — it hugs short content, scrolls when tall.
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
+        let contentScroll = UIScrollView()
+        contentScroll.translatesAutoresizingMaskIntoConstraints = false
+        contentScroll.showsVerticalScrollIndicator = false
+        contentScroll.addSubview(contentContainer)
 
         doneButton.setTitle("done", for: .normal)
-        doneButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        doneButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
         doneButton.setTitleColor(.white, for: .normal)
         doneButton.setTitleColor(taupe, for: .disabled)
         doneButton.backgroundColor = terracotta
-        doneButton.layer.cornerRadius = 13
+        doneButton.layer.cornerRadius = 15
         doneButton.isEnabled = false
         doneButton.addAction(UIAction { [weak self] _ in self?.onDone() }, for: .touchUpInside)
 
-        let stack = UIStackView(arrangedSubviews: [title, statusRow, contentContainer, doneButton])
+        let stack = UIStackView(arrangedSubviews: [header, rule(), contentScroll, doneButton])
         stack.axis = .vertical
-        stack.spacing = 12
-        stack.setCustomSpacing(4, after: title)
+        stack.spacing = 14
+        stack.setCustomSpacing(16, after: header)
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(grabber)
         card.addSubview(stack)
 
+        // Hug content when short; cap (and scroll) when tall.
+        let scrollHug = contentScroll.heightAnchor.constraint(equalTo: contentContainer.heightAnchor)
+        scrollHug.priority = .defaultLow
+        let scrollCap = contentScroll.heightAnchor.constraint(
+            lessThanOrEqualTo: view.heightAnchor, multiplier: 0.55)
+        // On the smallest screens, keep the card (hero title) below the status bar.
+        let topGuard = card.topAnchor.constraint(
+            greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 8)
+        topGuard.priority = .defaultHigh
+
         NSLayoutConstraint.activate([
-            card.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            card.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            card.widthAnchor.constraint(equalToConstant: 320),
+            card.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            card.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            card.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
 
             grabber.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
             grabber.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            grabber.widthAnchor.constraint(equalToConstant: 36),
-            grabber.heightAnchor.constraint(equalToConstant: 4),
+            grabber.widthAnchor.constraint(equalToConstant: 40),
+            grabber.heightAnchor.constraint(equalToConstant: 5),
 
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 30),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 22),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -22),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -22),
 
-            doneButton.heightAnchor.constraint(equalToConstant: 48),
+            contentContainer.topAnchor.constraint(equalTo: contentScroll.contentLayoutGuide.topAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: contentScroll.contentLayoutGuide.bottomAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: contentScroll.contentLayoutGuide.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: contentScroll.contentLayoutGuide.trailingAnchor),
+            contentContainer.widthAnchor.constraint(equalTo: contentScroll.frameLayoutGuide.widthAnchor),
+
+            scrollHug,
+            scrollCap,
+            topGuard,
+            doneButton.heightAnchor.constraint(equalToConstant: 52),
         ])
     }
 
@@ -185,6 +228,15 @@ class ShareViewController: UIViewController {
 
         s.addArrangedSubview(rule())
         s.addArrangedSubview(makeRow(text: "Wishlist", checked: true, serif: true, onTap: nil))
+
+        // Auto-save toggle — on (default) saves silently in-app; off holds the
+        // import for you to confirm the spots on next open (mode "review").
+        s.addArrangedSubview(makeToggleRow(
+            text: "auto-save",
+            sub: autoSaveOn ? "we'll add the spots for you" : "you'll confirm them in the app",
+            isOn: autoSaveOn,
+            onToggle: { [weak self] on in self?.autoSaveOn = on; self?.render() }
+        ))
 
         // Lists: max 3 + show all
         s.addArrangedSubview(kicker("your lists", count: lists.count, showAll: lists.count > 3, onShowAll: { [weak self] in
@@ -235,38 +287,21 @@ class ShareViewController: UIViewController {
         header.textColor = ink
         outer.addArrangedSubview(header)
 
-        let inner = UIStackView()
-        inner.axis = .vertical
-        inner.spacing = 2
-        inner.translatesAutoresizingMaskIntoConstraints = false
-
+        // Rows go straight into the stack — the card's content scroll (buildChrome)
+        // handles overflow, so no nested scroll here.
         if isLists {
             for l in lists {
-                inner.addArrangedSubview(makeRow(text: l.title, checked: selectedListIds.contains(l.id), serif: true, onTap: { [weak self] in
+                outer.addArrangedSubview(makeRow(text: l.title, checked: selectedListIds.contains(l.id), serif: true, onTap: { [weak self] in
                     self?.toggleList(l.id)
                 }))
             }
         } else {
             for t in tables {
-                inner.addArrangedSubview(makeRow(text: t.name, checked: selectedTableId == t.id, serif: true, onTap: { [weak self] in
+                outer.addArrangedSubview(makeRow(text: t.name, checked: selectedTableId == t.id, serif: true, onTap: { [weak self] in
                     self?.toggleTable(t.id)
                 }))
             }
         }
-
-        let scroll = UIScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.showsVerticalScrollIndicator = true
-        scroll.addSubview(inner)
-        NSLayoutConstraint.activate([
-            scroll.heightAnchor.constraint(equalToConstant: 320),
-            inner.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            inner.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            inner.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
-            inner.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            inner.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
-        ])
-        outer.addArrangedSubview(scroll)
         return outer
     }
 
@@ -362,6 +397,45 @@ class ShareViewController: UIViewController {
                 btn.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
             ])
         }
+        return wrap
+    }
+
+    private func makeToggleRow(text: String, sub: String, isOn: Bool, onToggle: @escaping (Bool) -> Void) -> UIView {
+        let label = UILabel()
+        label.text = text
+        label.font = UIFont.systemFont(ofSize: 16)
+        label.textColor = ink
+
+        let subLabel = UILabel()
+        subLabel.text = sub
+        subLabel.font = UIFont.systemFont(ofSize: 12)
+        subLabel.textColor = taupe
+        subLabel.numberOfLines = 1
+
+        let texts = UIStackView(arrangedSubviews: [label, subLabel])
+        texts.axis = .vertical
+        texts.spacing = 1
+
+        let toggle = UISwitch()
+        toggle.isOn = isOn
+        toggle.onTintColor = terracotta
+        toggle.setContentHuggingPriority(.required, for: .horizontal)
+        toggle.addAction(UIAction { [weak toggle] _ in onToggle(toggle?.isOn ?? false) }, for: .valueChanged)
+
+        let row = UIStackView(arrangedSubviews: [texts, UIView(), toggle])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+
+        let wrap = UIView()
+        wrap.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: wrap.topAnchor),
+            row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+        ])
         return wrap
     }
 
@@ -468,14 +542,16 @@ class ShareViewController: UIViewController {
         captureReady = true
         spinner.stopAnimating()
         spinner.isHidden = true
-        statusLabel.text = kind == "video" ? "ready" : "got the link — save the video for the full list"
+        subtitleLabel.text = kind == "video"
+            ? "pick where it lands — we'll pull the spots in the app"
+            : "got the link — save the video for the full list"
         doneButton.isEnabled = true
     }
 
     private func markFailed() {
         spinner.stopAnimating()
         spinner.isHidden = true
-        statusLabel.text = "couldn't read that — try again"
+        subtitleLabel.text = "couldn't read that — try again"
         doneButton.setTitle("close", for: .normal)
         doneButton.backgroundColor = UIColor.systemGray4
         doneButton.isEnabled = true
@@ -519,7 +595,7 @@ class ShareViewController: UIViewController {
             "createdAt": Date().timeIntervalSince1970 * 1000,
             "attempts": 0,
             "status": "pending",
-            "mode": "auto",
+            "mode": autoSaveOn ? "auto" : "review",
             "userId": jsonOrNull(snapshotUserId),
             "destinations": destinations,
         ]

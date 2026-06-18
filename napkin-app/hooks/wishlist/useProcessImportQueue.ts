@@ -42,6 +42,7 @@ import {
     acquireDrainLock,
     releaseDrainLock,
     onImportEnqueued,
+    pokeImportQueue,
     type ImportManifest,
     type PersistedImportSpot,
 } from '@/lib/importQueue';
@@ -137,10 +138,12 @@ export function useProcessImportQueue() {
     const processOne = useCallback(
         async (m: ImportManifest) => {
             let spots: PersistedImportSpot[] | undefined = m.spots;
+            let freshlyResolved = false;
 
             // First process: acquire candidates (OCR for video / caption for url),
             // build + PERSIST spots (frozen nonces) before the save.
             if (!spots || spots.length === 0) {
+                freshlyResolved = true;
                 let candidates: ResolvedCandidate[] = [];
 
                 if (m.kind === 'url') {
@@ -201,6 +204,25 @@ export function useProcessImportQueue() {
                 setImportSpots(m.jobId, spots);
             }
 
+            // Review mode: resolved → HOLD for in-app confirmation. The review
+            // screen prunes the spots, flips mode to 'auto', and re-pokes the
+            // drain, which re-enters here and saves (spots already persisted).
+            if (m.mode === 'review') {
+                if (freshlyResolved) {
+                    const n = spots.length;
+                    toast.show(`${n} ${n === 1 ? 'spot' : 'spots'} ready to review`);
+                    if (userId) {
+                        queryClient.invalidateQueries({
+                            queryKey: queryKeys.importJobs.all(userId),
+                        });
+                    }
+                    // Refresh the wishlist "to review" band live (safe — the drain's
+                    // own listener no-ops behind the held lock).
+                    pokeImportQueue();
+                }
+                return;
+            }
+
             // Save (idempotent on import_nonce + per-spot client_nonce). Wishlist is
             // the base destination; per-spot table_id fans out to the Table.
             // Provenance: a tiktok link gets a 'tiktok' source so the restaurant
@@ -247,10 +269,13 @@ export function useProcessImportQueue() {
 
             const saved = result?.summary?.saved ?? 0;
             const already = result?.summary?.already_pinned ?? 0;
+            // On a retry/re-drain the save may have landed on the prior pass and now
+            // come back as already_pinned — still a success, count both.
+            const done = saved + already;
             toast.show(
                 saved > 0
                     ? `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
-                    : already > 0
+                    : done > 0
                       ? 'already in your wishlist'
                       : "couldn't import that",
             );
@@ -281,12 +306,11 @@ export function useProcessImportQueue() {
 
         try {
             const pending = listPendingImports().filter(
-                (m) =>
-                    // review-mode VIDEOS are handled by the picker on app-open, not here.
-                    !(m.mode === 'review' && m.kind === 'video') &&
-                    // skip a manifest created under a DIFFERENT account (cross-account
-                    // safety — its destinations belong to the other user).
-                    !(m.userId && m.userId !== userId),
+                // Review-mode manifests ARE drained — they get resolved (OCR/caption)
+                // and persisted, then HELD (processOne returns before save) until the
+                // user confirms in the review screen. Only cross-account manifests are
+                // skipped (their destinations belong to the other user).
+                (m) => !(m.userId && m.userId !== userId),
             );
             for (const m of pending) {
                 if (!session) break;

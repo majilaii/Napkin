@@ -33,12 +33,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { ImportLinkSheet, PendingSaveCard, HandoffSheet, ListsRail, RecentlyImportedBand } from '@/components/wishlist';
+import { ImportLinkSheet, PendingSaveCard, HandoffSheet, ListsRail, RecentlyImportedBand, WishlistMapView, type WishlistMapItem, CuisineFilterSheet } from '@/components/wishlist';
 import { buildListsSectionRows } from '@/components/wishlist/listsSectionUtils';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useImportHistory } from '@/hooks/wishlist/useImportHistory';
+import { usePendingReviewImports } from '@/hooks/wishlist/usePendingReviewImports';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { haversineMiles, formatDistance } from '@/lib/geo';
 import { callEdgeFn } from '@/lib/edgeInvoke';
@@ -263,6 +264,13 @@ export default function WishlistScreen() {
     // Recently-imported batches (async import history) — conditional band.
     const { data: importBatches = [] } = useImportHistory(user?.id);
 
+    // Review-mode imports awaiting confirmation (auto-save toggled off on share).
+    const reviewImports = usePendingReviewImports();
+    const reviewSpotCount = useMemo(
+        () => reviewImports.reduce((sum, m) => sum + (m.spots?.length ?? 0), 0),
+        [reviewImports],
+    );
+
     const allItems = useMemo(
         () => (wishlistPages?.pages ?? []).flatMap((p) => p.data ?? []),
         [wishlistPages],
@@ -286,20 +294,39 @@ export default function WishlistScreen() {
         [allItems],
     );
 
-    // ── "where do I go" — near-me sort + cuisine filter (TICKET-08x) ──────────
+    // ── "where do I go" — near-me sort + cuisine filter + list/map (TICKET-08x) ──
     const [sortMode, setSortMode] = useState<'recent' | 'near'>('recent');
     const [cuisineFilter, setCuisineFilter] = useState<string | null>(null);
-    const { coords, request: requestLocation } = useNearbyLocation();
+    const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+    const { coords, status: locationStatus, request: requestLocation } = useNearbyLocation();
 
-    // Chip options derived from what's actually saved.
-    const cuisineOptions = useMemo(() => {
-        const set = new Set<string>();
+    // Cuisine chips, frequency-ranked: most-saved cuisines lead. The inline row
+    // caps to the top few (below) — the rest live in the overflow sheet so the
+    // chip strip never becomes an endless horizontal scroll.
+    const cuisineCounts = useMemo(() => {
+        const counts = new Map<string, number>();
         for (const i of pinnedRows) {
             const c = i.restaurant?.cuisine?.trim();
-            if (c) set.add(c);
+            if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
         }
-        return [...set].sort((a, b) => a.localeCompare(b));
+        return [...counts.entries()]
+            .map(([cuisine, count]) => ({ cuisine, count }))
+            .sort((a, b) => (b.count !== a.count ? b.count - a.count : a.cuisine.localeCompare(b.cuisine)));
     }, [pinnedRows]);
+
+    // Max cuisine chips shown inline before the "more" affordance takes over.
+    const MAX_INLINE_CUISINES = 4;
+    const [cuisineSheetVisible, setCuisineSheetVisible] = useState(false);
+
+    // Inline set = top-N by frequency, plus the active filter if it fell outside
+    // the top-N (so the current selection is always visible in the row).
+    const inlineCuisines = useMemo(() => {
+        const top = cuisineCounts.slice(0, MAX_INLINE_CUISINES).map((c) => c.cuisine);
+        if (cuisineFilter && !top.includes(cuisineFilter)) top.push(cuisineFilter);
+        return top;
+    }, [cuisineCounts, cuisineFilter]);
+
+    const overflowCount = Math.max(0, cuisineCounts.length - MAX_INLINE_CUISINES);
 
     const toggleNearMe = useCallback(() => {
         setSortMode((m) => {
@@ -330,6 +357,74 @@ export default function WishlistScreen() {
         }
         return decorated;
     }, [pinnedRows, cuisineFilter, sortMode, coords]);
+
+    // Map view: cuisine-filtered saved spots, split by whether they carry coords.
+    // Sort is irrelevant on a map (position is the signal), so this reads from
+    // pinnedRows directly rather than the distance-decorated displayedRows.
+    const { mapItems, unmappableCount } = useMemo(() => {
+        let rows = pinnedRows;
+        if (cuisineFilter) {
+            rows = rows.filter((i) => i.restaurant?.cuisine?.trim() === cuisineFilter);
+        }
+        const mappable: WishlistMapItem[] = [];
+        let missing = 0;
+        for (const i of rows) {
+            const r = i.restaurant;
+            if (r && r.lat != null && r.lng != null) {
+                mappable.push({ id: r.id, name: r.name, city: r.city, cuisine: r.cuisine, lat: r.lat, lng: r.lng });
+            } else {
+                missing += 1;
+            }
+        }
+        return { mapItems: mappable, unmappableCount: missing };
+    }, [pinnedRows, cuisineFilter]);
+
+    // Switching to map opts into location lazily (same idiom as near-me sort).
+    const handleSelectView = useCallback((mode: 'list' | 'map') => {
+        setViewMode(mode);
+        if (mode === 'map') requestLocation();
+    }, [requestLocation]);
+
+    // Cuisine chips are shared between list + map modes (near-me chip is list-only).
+    // Capped to the top few; everything else is one tap away in the overflow sheet.
+    const renderCuisineChips = useCallback(() => (
+        <>
+            {inlineCuisines.map((c) => {
+                const active = cuisineFilter === c;
+                return (
+                    <Pressable
+                        key={c}
+                        onPress={() => setCuisineFilter(active ? null : c)}
+                        style={[
+                            styles.chip,
+                            active
+                                ? { backgroundColor: palette.primary }
+                                : { backgroundColor: palette.surfaceJournalLow },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                    >
+                        <Text style={[styles.chipLabel, { color: active ? '#fffdf8' : palette.textMuted }]}>
+                            {c.toLowerCase()}
+                        </Text>
+                    </Pressable>
+                );
+            })}
+            {overflowCount > 0 ? (
+                <Pressable
+                    onPress={() => setCuisineSheetVisible(true)}
+                    style={[styles.chip, { backgroundColor: palette.surfaceJournalLow }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="more cuisines"
+                >
+                    <Text style={[styles.chipLabel, { color: palette.textMuted }]}>
+                        {`more · ${overflowCount}`}
+                    </Text>
+                    <Ionicons name="chevron-down" size={11} color={palette.textMuted} />
+                </Pressable>
+            ) : null}
+        </>
+    ), [inlineCuisines, overflowCount, cuisineFilter, palette]);
 
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);
@@ -412,10 +507,81 @@ export default function WishlistScreen() {
                 </View>
             </View>
 
+            {/* List / map view toggle — only when there are saved spots to show.
+                Map mode is a focused "where are my saves" surface (lists/imports
+                hidden); flip back to list for the full shelf. */}
+            {pinnedRows.length > 0 ? (
+                <View style={styles.viewToggleBar}>
+                    <View style={[styles.viewToggle, { backgroundColor: palette.surfaceJournalLow }]}>
+                        {(['list', 'map'] as const).map((mode) => {
+                            const active = viewMode === mode;
+                            return (
+                                <Pressable
+                                    key={mode}
+                                    onPress={() => handleSelectView(mode)}
+                                    style={[
+                                        styles.viewBtn,
+                                        active && [styles.viewBtnActive, { backgroundColor: palette.background }],
+                                    ]}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ selected: active }}
+                                    accessibilityLabel={mode === 'list' ? 'list view' : 'map view'}
+                                >
+                                    <Ionicons
+                                        name={mode === 'list' ? 'list-outline' : 'map-outline'}
+                                        size={18}
+                                        color={active ? palette.primary : palette.textMuted}
+                                    />
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+                </View>
+            ) : null}
+
+            {viewMode === 'map' && pinnedRows.length > 0 ? (
+                <View style={styles.mapMode}>
+                    {cuisineCounts.length > 0 ? (
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.mapFilterBar}
+                            keyboardShouldPersistTaps="handled"
+                            style={styles.mapChipScroll}
+                        >
+                            {renderCuisineChips()}
+                        </ScrollView>
+                    ) : null}
+                    <WishlistMapView
+                        items={mapItems}
+                        unmappableCount={unmappableCount}
+                        userCoords={coords}
+                        locationStatus={locationStatus}
+                        onRequestLocation={requestLocation}
+                        onOpenRestaurant={(id) => router.push(('/restaurant/' + id) as any)}
+                        palette={palette}
+                    />
+                </View>
+            ) : (
             <ScrollView
                 contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
                 showsVerticalScrollIndicator={false}
             >
+                {/* Review band — resolved imports you chose to confirm (auto-save off) */}
+                {reviewSpotCount > 0 ? (
+                    <Pressable
+                        onPress={() => router.push(`/import-review?jobId=${reviewImports[0].jobId}` as any)}
+                        style={[styles.reviewBand, { backgroundColor: palette.surfaceJournalLow }]}
+                        accessibilityRole="button"
+                    >
+                        <Ionicons name="sparkles-outline" size={16} color={palette.primary} />
+                        <Text style={[styles.reviewBandText, { color: palette.text }]} numberOfLines={1}>
+                            {`${reviewSpotCount} ${reviewSpotCount === 1 ? 'spot' : 'spots'} ready to review`}
+                        </Text>
+                        <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
+                    </Pressable>
+                ) : null}
+
                 {/* Imports / pending section */}
                 {pendingRows.length > 0 ? (
                     <View style={styles.pendingSection}>
@@ -496,27 +662,7 @@ export default function WishlistScreen() {
                                 </Text>
                             </Pressable>
 
-                            {cuisineOptions.map((c) => {
-                                const active = cuisineFilter === c;
-                                return (
-                                    <Pressable
-                                        key={c}
-                                        onPress={() => setCuisineFilter(active ? null : c)}
-                                        style={[
-                                            styles.chip,
-                                            active
-                                                ? { backgroundColor: palette.primary }
-                                                : { backgroundColor: palette.surfaceJournalLow },
-                                        ]}
-                                        accessibilityRole="button"
-                                        accessibilityState={{ selected: active }}
-                                    >
-                                        <Text style={[styles.chipLabel, { color: active ? '#fffdf8' : palette.textMuted }]}>
-                                            {c.toLowerCase()}
-                                        </Text>
-                                    </Pressable>
-                                );
-                            })}
+                            {renderCuisineChips()}
                         </ScrollView>
 
                         {displayedRows.length === 0 ? (
@@ -566,6 +712,7 @@ export default function WishlistScreen() {
                 ) : null}
 
             </ScrollView>
+            )}
 
             <ImportLinkSheet
                 visible={importSheetVisible}
@@ -589,6 +736,18 @@ export default function WishlistScreen() {
                     palette={palette}
                 />
             ) : null}
+
+            <CuisineFilterSheet
+                visible={cuisineSheetVisible}
+                cuisines={cuisineCounts}
+                selected={cuisineFilter}
+                onSelect={(c) => {
+                    setCuisineFilter(c);
+                    setCuisineSheetVisible(false);
+                }}
+                onDismiss={() => setCuisineSheetVisible(false)}
+                palette={palette}
+            />
         </View>
     );
 }
@@ -631,6 +790,49 @@ const styles = StyleSheet.create({
     headerActionDot: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 11,
+    },
+    // List / map view toggle (under the header)
+    viewToggleBar: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        paddingHorizontal: 22,
+        paddingBottom: Spacing.sm,
+    },
+    viewToggle: {
+        flexDirection: 'row',
+        gap: 2,
+        borderRadius: 10,
+        padding: 3,
+    },
+    viewBtn: {
+        width: 40,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 7,
+    },
+    viewBtnActive: {
+        shadowColor: '#1c1c19',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 3,
+        elevation: 2,
+    },
+    // Map mode container — flex so the map fills below the (optional) chip bar.
+    // No vertical ScrollView ancestor: native pan/zoom must not fight a parent.
+    mapMode: {
+        flex: 1,
+    },
+    mapChipScroll: {
+        flexGrow: 0,
+        flexShrink: 0,
+    },
+    mapFilterBar: {
+        flexDirection: 'row',
+        gap: 7,
+        paddingHorizontal: 22,
+        paddingBottom: 12,
+        paddingRight: 30,
     },
     // Scroll
     scrollContent: {
@@ -719,6 +921,23 @@ const styles = StyleSheet.create({
     loadMoreLabel: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 13,
+    },
+    // Review band
+    reviewBand: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginHorizontal: 22,
+        marginTop: Spacing.sm,
+        marginBottom: Spacing.xs,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderRadius: 14,
+    },
+    reviewBandText: {
+        flex: 1,
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13.5,
     },
     // YOUR LISTS rail divider
     railDivider: {

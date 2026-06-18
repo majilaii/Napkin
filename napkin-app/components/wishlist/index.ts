@@ -19,3 +19,7 @@ export { HandoffSheet } from './HandoffSheet';
 export { ListsRail } from './ListsRail';
 // "Recently imported" band — async import batch history
 export { RecentlyImportedBand } from './RecentlyImportedBand';
+// Map of saved spots near you (list/map toggle on the Wishlist tab)
+export { WishlistMapView, type WishlistMapItem } from './WishlistMapView';
+// b47: cuisine-filter overflow sheet (chip row caps to the top few)
+export { CuisineFilterSheet, type CuisineCount } from './CuisineFilterSheet';

@@ -91,6 +91,8 @@ export type PublicReviewCard = {
     public_reaction_count: number;
     public_reply_count: number;
     calibration: Calibration | null;
+    /** Letterboxd "from people you follow" — viewer follows this author. */
+    is_followee?: boolean;
 };
 
 export type PhotoItem = {

@@ -209,6 +209,50 @@ export function removeImport(jobId: string): void {
     }
 }
 
+/** A single manifest by id (for the review screen). */
+export function getImport(jobId: string): ImportManifest | null {
+    return readAll().find((m) => m.jobId === jobId) ?? null;
+}
+
+/** Flip auto↔review (the review screen flips to 'auto' on confirm, then pokes). */
+export function setImportMode(jobId: string, mode: 'auto' | 'review'): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return;
+    writeManifest({ ...m, mode });
+}
+
+/**
+ * Review-mode imports that are RESOLVED (spots persisted) and awaiting in-app
+ * confirmation — the wishlist "to review" band reads this. Cross-account
+ * manifests are excluded.
+ */
+export function listReviewPendingImports(userId?: string | null): ImportManifest[] {
+    // No viewer yet (auth-loading / signed-out) → show nothing, so another
+    // account's held imports never surface in the band.
+    if (!userId) return [];
+    return readAll()
+        .filter(
+            (m) =>
+                m.status === 'pending' &&
+                m.mode === 'review' &&
+                Array.isArray(m.spots) &&
+                m.spots.length > 0,
+        )
+        .filter((m) => !(m.userId && m.userId !== userId))
+        .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** Kick the drain without enqueueing (e.g. after a review confirm). */
+export function pokeImportQueue(): void {
+    enqueueListeners.forEach((l) => {
+        try {
+            l();
+        } catch {
+            /* a bad listener must not break the poke */
+        }
+    });
+}
+
 /** Persist resolved spots (checkpoint after first resolve) so re-drains reuse them. */
 export function setImportSpots(jobId: string, spots: PersistedImportSpot[]): void {
     const m = readAll().find((x) => x.jobId === jobId);

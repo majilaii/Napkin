@@ -597,6 +597,39 @@ export default function RestaurantScreen() {
                         />
                     ) : null}
 
+                    {/* Cold restaurant — Google sibling signal + "be the first"
+                        invitation card (canvas take-B letterpress empty state). Anchors
+                        the page in place of the lonely murmur-over-a-void it replaces.
+                        The FROM YOUR TABLE / YOUR HISTORY ledger sections below still
+                        render their murmurs, keeping the editorial skeleton intact. */}
+                    {isColdRestaurant ? (
+                        <View style={styles.beFirstWrap}>
+                            <View style={[styles.beFirstCard, { backgroundColor: palette.surfaceJournalLow }]}>
+                                {googleCell.hasData ? (
+                                    <>
+                                        <View style={styles.beFirstGoogle}>
+                                            <Text style={[styles.beFirstGoogleLabel, { color: palette.textMuted }]}>
+                                                GOOGLE
+                                            </Text>
+                                            <Text style={[styles.beFirstGoogleValue, { color: palette.tertiary }]}>
+                                                {googleCell.value}
+                                            </Text>
+                                            {googleCell.sub ? (
+                                                <Text style={[styles.beFirstGoogleCount, { color: palette.textMuted }]}>
+                                                    {googleCell.sub}
+                                                </Text>
+                                            ) : null}
+                                        </View>
+                                        <View style={[styles.beFirstDivider, { backgroundColor: palette.dividerSoft }]} />
+                                    </>
+                                ) : null}
+                                <Text style={[styles.beFirstInvite, { color: palette.textMuted }]}>
+                                    — no one you know has been. be the first.
+                                </Text>
+                            </View>
+                        </View>
+                    ) : null}
+
                     {/* CTA row: LOG THIS MEAL (full width — pin lives top-right now) */}
                     {restaurant ? (
                         <View style={styles.ctaRow}>
@@ -614,26 +647,9 @@ export default function RestaurantScreen() {
                         </View>
                     ) : null}
 
-                    {/* Cold restaurant — one warm "be the first" block instead of a
-                        lonely strip + two empty section headers. */}
-                    {isColdRestaurant ? (
-                        <View style={styles.coldState}>
-                            <Text style={[styles.coldHeadline, { color: palette.text }]}>
-                                no one&apos;s logged this yet.
-                            </Text>
-                            <Text style={[styles.coldSub, { color: palette.textMuted }]}>
-                                be the first to write it down.
-                            </Text>
-                            {googleCell.hasData ? (
-                                <Text style={[styles.coldGoogle, { color: palette.textMuted }]}>
-                                    {`google · ${googleCell.value}${googleCell.sub ? ' · ' + googleCell.sub : ''}`}
-                                </Text>
-                            ) : null}
-                        </View>
-                    ) : null}
-
-                    {/* FROM YOUR TABLE */}
-                    {restaurant && !isColdRestaurant ? (
+                    {/* FROM YOUR TABLE — renders in cold state too (murmur fallback) so
+                        the page keeps its ledger skeleton instead of trailing into a void. */}
+                    {restaurant ? (
                         <View style={styles.section}>
                             <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
                                 FROM YOUR TABLE
@@ -682,7 +698,7 @@ export default function RestaurantScreen() {
                     ) : null}
 
                     {/* YOUR HISTORY */}
-                    {restaurant && !isColdRestaurant ? (
+                    {restaurant ? (
                         <View style={styles.section}>
                             <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
                                 YOUR HISTORY
@@ -860,29 +876,46 @@ const styles = StyleSheet.create({
         fontSize: 12,
         textAlign: 'left',
     },
-    // Cold restaurant empty state
-    coldState: {
+    // Cold restaurant — Google sibling + "be the first" invitation card
+    beFirstWrap: {
+        paddingHorizontal: 24,
+    },
+    beFirstCard: {
+        flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 28,
-        paddingTop: 28,
-        paddingBottom: 12,
-        gap: 6,
+        borderRadius: 16,
+        paddingHorizontal: 18,
+        paddingVertical: 14,
+        gap: 16,
     },
-    coldHeadline: {
+    beFirstGoogle: {
+        alignItems: 'center',
+        gap: 3,
+        flexShrink: 0,
+    },
+    beFirstGoogleLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+    },
+    beFirstGoogleValue: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 21,
-        lineHeight: 27,
-        textAlign: 'center',
+        fontSize: 22,
     },
-    coldSub: {
+    beFirstGoogleCount: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 13,
-        textAlign: 'center',
+        fontSize: 10,
     },
-    coldGoogle: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        marginTop: 8,
+    beFirstDivider: {
+        width: 1,
+        alignSelf: 'stretch',
+    },
+    beFirstInvite: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        lineHeight: 21,
+        flex: 1,
     },
     // CTA row
     ctaRow: {
