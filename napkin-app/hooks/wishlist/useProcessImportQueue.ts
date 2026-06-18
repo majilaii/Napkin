@@ -168,8 +168,15 @@ export function useProcessImportQueue() {
 
             // Save (idempotent on import_nonce + per-spot client_nonce). Wishlist is
             // the base destination; per-spot table_id fans out to the Table.
-            const source =
-                m.kind === 'url' ? { type: 'web', url: m.url ?? '' } : { type: 'video' };
+            // Provenance: a tiktok link gets a 'tiktok' source so the restaurant
+            // page shows "saved from tiktok" + taps out to that exact video; other
+            // links → 'web'; a shared file → 'video' (no URL to deep-link).
+            const source: Record<string, string> =
+                m.kind === 'url' && m.url
+                    ? /tiktok\.com/i.test(m.url)
+                        ? { type: 'tiktok', url: m.url }
+                        : { type: 'web', url: m.url }
+                    : { type: 'video' };
             const result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                 action: 'save_spots',
                 body: {

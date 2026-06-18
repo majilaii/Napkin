@@ -1,75 +1,85 @@
 /**
- * SavedFromTikTokPanel — quiet provenance line for a wishlist entry saved via a
- * TikTok video (TICKET-054; redesigned 2026-06-17).
+ * SavedFromTikTokPanel — quiet provenance line for a wishlist spot, showing WHERE
+ * you saved it from (TICKET-054; generalized TICKET-083 polish).
  *
- * Earlier this was a tall 9:16 thumbnail card with a serif headline parked right
- * under the primary CTA — it read as a hero content section ("too tacky / front
- * and center"). It is now a single muted meta line that lives with the other
- * restaurant metadata (phone · directions · website · hours): a small TikTok
- * glyph + lowercase Manrope "saved from tiktok · @handle" in textMuted. The
- * provenance is preserved (and still taps through to the video) — it just no
- * longer competes with the Table voices.
+ * Now handles every import source, not just TikTok:
+ *   • tiktok → "saved from tiktok · @handle"  → taps out to the video
+ *   • web    → "saved from a link"            → taps out to the link
+ *   • video  → "saved from a video"           → no link (you shared the file)
  *
- * Heirloom: lowercase verb, middle-dot metadata separator, Ionicons outline,
- * muted Manrope (no italic serif — that's reserved for brand names/numerals),
- * no card background, no shadow, no thumbnail.
+ * Heirloom: lowercase verb, middle-dot separator, Ionicons outline, muted Manrope,
+ * no card / shadow / thumbnail. Lives with the restaurant metadata row.
  */
 import React from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
+import type { WishlistSource } from '@/lib/types/wishlistSource';
 
-interface SavedFromTikTokPanelProps {
-    source: WishlistSourceTikTok;
+interface SavedFromSourcePanelProps {
+    source: WishlistSource;
 }
 
-export function SavedFromTikTokPanel({ source }: SavedFromTikTokPanelProps) {
+type Glyph = React.ComponentProps<typeof Ionicons>['name'];
+
+function describe(source: WishlistSource): { glyph: Glyph; label: string; url: string | null } | null {
+    switch (source.type) {
+        case 'tiktok': {
+            const handle = source.author_handle ?? source.author_name ?? null;
+            return {
+                glyph: 'logo-tiktok',
+                label: `saved from tiktok${handle ? ` · @${handle}` : ''}`,
+                url: source.url ?? null,
+            };
+        }
+        case 'web':
+            return { glyph: 'link-outline', label: 'saved from a link', url: source.url ?? null };
+        case 'video':
+            return { glyph: 'videocam-outline', label: 'saved from a video', url: null };
+        default:
+            return null;
+    }
+}
+
+export function SavedFromTikTokPanel({ source }: SavedFromSourcePanelProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
-    const handle = source.author_handle ?? source.author_name ?? null;
-    const hasUrl = !!source.url;
+    const d = describe(source);
+    if (!d) return null;
+
+    const line = (
+        <View style={styles.row}>
+            <Ionicons name={d.glyph} size={14} color={palette.textMuted} style={styles.glyph} />
+            <Text style={[styles.label, { color: palette.textMuted }]} numberOfLines={1}>
+                {d.label}
+            </Text>
+        </View>
+    );
+
+    if (!d.url) {
+        return (
+            <View style={styles.wrap} accessible accessibilityLabel={d.label}>
+                {line}
+            </View>
+        );
+    }
 
     const handlePress = async () => {
-        if (!source.url) return;
         try {
-            await Linking.openURL(source.url);
+            await Linking.openURL(d.url as string);
         } catch (err) {
             console.error('[SavedFromTikTokPanel] Linking.openURL failed', err);
             Alert.alert("Couldn't open this link", 'Try again later.');
         }
     };
 
-    const line = (
-        <View style={styles.row}>
-            <Ionicons name="logo-tiktok" size={14} color={palette.textMuted} style={styles.glyph} />
-            <Text style={[styles.label, { color: palette.textMuted }]} numberOfLines={1}>
-                saved from tiktok{handle ? ` · @${handle}` : ''}
-            </Text>
-        </View>
-    );
-
-    if (!hasUrl) {
-        return (
-            <View
-                style={styles.wrap}
-                accessible
-                accessibilityLabel={handle ? `saved from tiktok by @${handle}` : 'saved from tiktok'}
-            >
-                {line}
-            </View>
-        );
-    }
-
     return (
         <Pressable
             onPress={handlePress}
             accessibilityRole="link"
-            accessibilityLabel={
-                handle ? `saved from tiktok by @${handle}, opens on tiktok` : 'saved from tiktok, opens on tiktok'
-            }
+            accessibilityLabel={`${d.label}, opens the source`}
             style={({ pressed }) => [styles.wrap, { opacity: pressed ? 0.6 : 1 }]}
             hitSlop={8}
         >

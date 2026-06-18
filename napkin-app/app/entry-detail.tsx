@@ -47,6 +47,7 @@ import { PreviouslyHereBanner } from '@/components/restaurants';
 // (PullQuote / GiantRatingNumeral retired here — the writing is now rendered
 //  inline as the hero and the rating as a small amber chip.)
 import { useAuth } from '@/providers/AuthProvider';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
 import { CommentRow } from '@/components/posts/CommentRow';
 import { useUpdateEntry } from '@/hooks/entries/useUpdateEntry';
@@ -355,7 +356,7 @@ function useEntryPhotos(entryId?: string) {
 
 // ── Screen ─────────────────────────────────────────────────────────────────────
 
-export default function EntryDetailScreen() {
+function EntryDetailScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
@@ -2862,3 +2863,13 @@ const styles = StyleSheet.create({
         minHeight: 44,
     },
 });
+
+// Wrap the screen so a bad entry's render error shows a graceful fallback
+// instead of crashing the whole app (TICKET-083 polish).
+export default function EntryDetailScreenWithBoundary() {
+    return (
+        <ErrorBoundary screen="entry-detail">
+            <EntryDetailScreen />
+        </ErrorBoundary>
+    );
+}
