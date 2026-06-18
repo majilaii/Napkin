@@ -62,7 +62,8 @@ export default function ImportReviewScreen() {
             const n = (d.listIds?.length ?? 0) + (d.newListTitles?.length ?? 0);
             parts.push(`${n} ${n === 1 ? 'list' : 'lists'}`);
         }
-        if (d?.tableId) parts.push('a table');
+        const tableCount = d?.tableIds?.length ?? 0;
+        if (tableCount > 0) parts.push(tableCount === 1 ? 'a table' : `${tableCount} tables`);
         return parts.join(' · ');
     }, [manifest]);
 

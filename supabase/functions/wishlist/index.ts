@@ -108,12 +108,23 @@ serve(async (req) => {
             // Idempotent: if a row already exists, return it untouched (do not overwrite note).
             const { data: existing, error: existingErr } = await supabase
                 .from('wishlist_items')
-                .select('id, user_id, restaurant_id, note, source, created_at')
+                .select('id, user_id, restaurant_id, note, source, created_at, job_id')
                 .eq('user_id', user.id)
                 .eq('restaurant_id', restaurantId)
                 .maybeSingle();
             if (existingErr) throw existingErr;
             if (existing) {
+                // b48 amend: sparse back-fill — if this add is tagging the spot into
+                // an import batch and the existing row has no job_id, link it so it
+                // shows up in that batch's detail. Never overwrite a non-null job_id.
+                if (typeof body.job_id === 'string' && existing.job_id == null) {
+                    await supabase
+                        .from('wishlist_items')
+                        .update({ job_id: body.job_id })
+                        .eq('id', existing.id)
+                        .eq('user_id', user.id);
+                    return jsonResponse({ data: { ...existing, job_id: body.job_id } });
+                }
                 return jsonResponse({ data: existing });
             }
 
@@ -124,8 +135,11 @@ serve(async (req) => {
                     restaurant_id: restaurantId,
                     note: body.note ?? null,
                     source: validatedSource ?? null,
+                    // b48 amend: tag this save to an import batch so an added-by-hand
+                    // spot shows up in that import's detail (list_import_items).
+                    job_id: typeof body.job_id === 'string' ? body.job_id : null,
                 })
-                .select('id, user_id, restaurant_id, note, source, created_at')
+                .select('id, user_id, restaurant_id, note, source, created_at, job_id')
                 .single();
 
             if (error) throw error;
@@ -440,6 +454,75 @@ serve(async (req) => {
             if (itemsErr) throw itemsErr;
 
             return jsonResponse({ data: { job, items: items ?? [] } });
+        }
+
+        // ── repoint ────────────────────────────────────────────────────────
+        // b48 amend: re-point ONE wishlist item to a different restaurant (fix a
+        // mis-resolved import spot). Per-item (item_id), unlike table-shares
+        // `correct` which re-points a whole job. Service-role → explicit user_id.
+        if (action === 'repoint') {
+            const item_id = body.item_id as string | undefined;
+            const restaurant_id = body.restaurant_id as string | undefined;
+            if (!item_id || !restaurant_id) {
+                return jsonResponse({ error: 'item_id and restaurant_id are required' }, 400);
+            }
+
+            const { data: item, error: itemErr } = await supabase
+                .from('wishlist_items')
+                .select('id, restaurant_id, job_id, note')
+                .eq('id', item_id)
+                .eq('user_id', user.id)
+                .maybeSingle();
+            if (itemErr) throw itemErr;
+            if (!item) return jsonResponse({ error: 'Not found' }, 404);
+            if (item.restaurant_id === restaurant_id) {
+                return jsonResponse({ data: { id: item_id, restaurant_id } });
+            }
+
+            // UNIQUE(user_id, restaurant_id) is NON-partial — a row (even
+            // soft-deleted) for the target restaurant blocks a straight update.
+            // If one exists, merge: resurrect/keep it and drop the mis-resolved item.
+            const { data: dup, error: dupErr } = await supabase
+                .from('wishlist_items')
+                .select('id, deleted_at, job_id, note')
+                .eq('user_id', user.id)
+                .eq('restaurant_id', restaurant_id)
+                .neq('id', item_id)
+                .maybeSingle();
+            if (dupErr) throw dupErr;
+
+            if (dup) {
+                // Carry the mis-resolved item's batch linkage (job_id) + note onto
+                // the surviving row so it stays in this import's detail after the fix
+                // (don't clobber a job_id/note the dup already has). Resurrect if
+                // soft-deleted; mark resolved like the plain-update path.
+                await supabase
+                    .from('wishlist_items')
+                    .update({
+                        deleted_at: null,
+                        job_id: dup.job_id ?? item.job_id ?? null,
+                        note: dup.note ?? item.note ?? null,
+                        extraction_status: 'resolved',
+                    })
+                    .eq('id', dup.id)
+                    .eq('user_id', user.id);
+                await supabase
+                    .from('wishlist_items')
+                    .delete()
+                    .eq('id', item_id)
+                    .eq('user_id', user.id);
+                return jsonResponse({ data: { id: dup.id, restaurant_id, merged: true } });
+            }
+
+            const { data: updated, error: updErr } = await supabase
+                .from('wishlist_items')
+                .update({ restaurant_id, extraction_status: 'resolved' })
+                .eq('id', item_id)
+                .eq('user_id', user.id)
+                .select('id, restaurant_id')
+                .single();
+            if (updErr) throw updErr;
+            return jsonResponse({ data: updated });
         }
 
         return jsonResponse({ error: 'Unknown action' }, 400);

@@ -187,20 +187,26 @@ export function useProcessImportQueue() {
                     return;
                 }
 
-                const tableId = m.destinations.tableId;
-                spots = candidates.map((c) => ({
-                    candidate_id: c.candidate_id ?? safeRandomUUID(),
-                    client_nonce: safeRandomUUID(),
-                    restaurant_id: c.restaurant_id ?? null,
-                    external_id: c.restaurant_id ? null : (c.restaurant.external_id ?? null),
-                    restaurant_name: c.restaurant.name ?? null,
-                    restaurant_city: c.restaurant.city ?? null,
-                    // Per-spot Table share — fn_save_import_spot ghost-quarantines so
-                    // only VERIFIED spots actually reach the Table.
-                    table_id: tableId,
-                    table_client_nonce: tableId ? safeRandomUUID() : null,
-                    place: buildPlace(c),
-                }));
+                const tableIds = m.destinations.tableIds;
+                spots = candidates.map((c) => {
+                    // Per-(spot, table) share nonce, minted ONCE + persisted, so a
+                    // re-drain reuses them (table_shares dedup). Multi-select tables.
+                    const tableShares: Record<string, string> = {};
+                    for (const t of tableIds) tableShares[t] = safeRandomUUID();
+                    return {
+                        candidate_id: c.candidate_id ?? safeRandomUUID(),
+                        client_nonce: safeRandomUUID(),
+                        restaurant_id: c.restaurant_id ?? null,
+                        external_id: c.restaurant_id ? null : (c.restaurant.external_id ?? null),
+                        restaurant_name: c.restaurant.name ?? null,
+                        restaurant_city: c.restaurant.city ?? null,
+                        // Legacy single-table fields kept for back-compat readers.
+                        table_id: tableIds[0] ?? null,
+                        table_client_nonce: tableIds[0] ? tableShares[tableIds[0]] : null,
+                        table_shares: tableShares,
+                        place: buildPlace(c),
+                    };
+                });
                 setImportSpots(m.jobId, spots);
             }
 
@@ -234,14 +240,37 @@ export function useProcessImportQueue() {
                         ? { type: 'tiktok', url: m.url }
                         : { type: 'web', url: m.url }
                     : { type: 'video' };
-            const result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
-                action: 'save_spots',
-                body: {
-                    import_nonce: m.importNonce,
-                    spots,
-                    source,
-                },
-            });
+
+            // Multi-table fan-out: one save_spots call per destination table (same
+            // per-spot wishlist client_nonce → wishlist dedups; per-table nonce →
+            // each table gets its own share). The RPC (mig 20260618000100) keeps
+            // sharing even when the wishlist row already exists, so tables 2..N
+            // aren't dropped. Calls are SEQUENTIAL so the first call's wishlist
+            // insert lands before the already-pinned table calls. No tables → one
+            // wishlist-only call.
+            const tableIds = m.destinations.tableIds;
+            const spotsForTable = (t: string): PersistedImportSpot[] =>
+                spots!.map((s) => ({
+                    ...s,
+                    table_id: t,
+                    table_client_nonce:
+                        s.table_shares?.[t] ?? (s.table_id === t ? s.table_client_nonce : null),
+                }));
+            let result: SaveImportSpotsResult | undefined;
+            if (tableIds.length === 0) {
+                result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
+                    action: 'save_spots',
+                    body: { import_nonce: m.importNonce, spots, source },
+                });
+            } else {
+                for (let i = 0; i < tableIds.length; i++) {
+                    const r = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
+                        action: 'save_spots',
+                        body: { import_nonce: m.importNonce, spots: spotsForTable(tableIds[i]), source },
+                    });
+                    if (i === 0) result = r; // first call pinned the wishlist + did routing
+                }
+            }
 
             // Route saved spots into the chosen lists (idempotent bulk add).
             const restaurantIds = (result?.results ?? [])
@@ -290,9 +319,9 @@ export function useProcessImportQueue() {
                     }
                 }
             }
-            if (m.destinations.tableId) {
+            for (const tableId of m.destinations.tableIds) {
                 queryClient.invalidateQueries({
-                    queryKey: queryKeys.tables.activityForTable(m.destinations.tableId),
+                    queryKey: queryKeys.tables.activityForTable(tableId),
                 });
             }
         },
@@ -321,7 +350,9 @@ export function useProcessImportQueue() {
                     const updated = bumpImportAttempt(m.jobId);
                     if (updated?.status === 'failed') {
                         toast.show("couldn't import that");
-                        safeDeleteMov(m.videoPath);
+                        // Keep the .mov: a poisoned manifest stays for "try again" in
+                        // the progress hub (re-OCR needs the source). The .mov is
+                        // deleted on success (processOne) or when the user discards.
                     }
                 }
             }

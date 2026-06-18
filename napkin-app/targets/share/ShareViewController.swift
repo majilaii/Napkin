@@ -30,7 +30,7 @@ class ShareViewController: UIViewController {
 
     // Selections
     private var selectedListIds = Set<String>()
-    private var selectedTableId: String?
+    private var selectedTableIds = Set<String>()
     private var newListTitles: [String] = []
     private var autoSaveOn = true // toggle off → mode "review" (confirm in-app)
 
@@ -194,7 +194,7 @@ class ShareViewController: UIViewController {
     }
 
     private func updateDoneTitle() {
-        let n = selectedListIds.count + newListTitles.count + (selectedTableId != nil ? 1 : 0)
+        let n = selectedListIds.count + newListTitles.count + selectedTableIds.count
         doneButton.setTitle(n > 0 ? "done · \(n)" : "done", for: .normal)
     }
 
@@ -256,11 +256,11 @@ class ShareViewController: UIViewController {
 
         // Tables: max 3 + show all (single-select for now)
         if !tables.isEmpty {
-            s.addArrangedSubview(kicker("share to a table", count: tables.count, showAll: tables.count > 3, onShowAll: { [weak self] in
+            s.addArrangedSubview(kicker("share to tables", count: tables.count, showAll: tables.count > 3, onShowAll: { [weak self] in
                 self?.screen = .allTables; self?.render()
             }))
             for t in tables.prefix(3) {
-                s.addArrangedSubview(makeRow(text: t.name, checked: selectedTableId == t.id, serif: true, onTap: { [weak self] in
+                s.addArrangedSubview(makeRow(text: t.name, checked: selectedTableIds.contains(t.id), serif: true, onTap: { [weak self] in
                     self?.toggleTable(t.id)
                 }))
             }
@@ -297,7 +297,7 @@ class ShareViewController: UIViewController {
             }
         } else {
             for t in tables {
-                outer.addArrangedSubview(makeRow(text: t.name, checked: selectedTableId == t.id, serif: true, onTap: { [weak self] in
+                outer.addArrangedSubview(makeRow(text: t.name, checked: selectedTableIds.contains(t.id), serif: true, onTap: { [weak self] in
                     self?.toggleTable(t.id)
                 }))
             }
@@ -481,7 +481,7 @@ class ShareViewController: UIViewController {
     }
 
     private func toggleTable(_ id: String) {
-        selectedTableId = (selectedTableId == id) ? nil : id // single-select for now
+        if selectedTableIds.contains(id) { selectedTableIds.remove(id) } else { selectedTableIds.insert(id) }
         render()
     }
 
@@ -586,7 +586,9 @@ class ShareViewController: UIViewController {
             "wishlist": true,
             "listIds": Array(selectedListIds),
             "newListTitles": newListTitles,
-            "tableId": jsonOrNull(selectedTableId),
+            // b48 multi-table; tableId kept (first) for any older reader.
+            "tableIds": Array(selectedTableIds),
+            "tableId": jsonOrNull(selectedTableIds.first),
         ]
         var manifest: [String: Any] = [
             "jobId": jobId,

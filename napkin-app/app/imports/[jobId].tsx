@@ -17,8 +17,11 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useImportBatch, type ImportBatchItem } from '@/hooks/wishlist/useImportBatch';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
+import { useRepointWishlistItem } from '@/hooks/wishlist/useRepointWishlistItem';
+import { useAddSpotToBatch } from '@/hooks/wishlist/useAddSpotToBatch';
 import { useToast } from '@/providers/ToastProvider';
 import { AddToListSheet } from '@/components/lists';
+import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
 import { queryKeys } from '@/lib/queryKeys';
 import {
     importSourceLabel,
@@ -39,9 +42,39 @@ export default function ImportBatchScreen() {
     const { data, isLoading } = useImportBatch(jobId);
 
     const remove = useWishlistRemove(user?.id);
+    const repoint = useRepointWishlistItem(user?.id, jobId);
+    const addSpot = useAddSpotToBatch(user?.id, jobId);
     // Optimistically pruned restaurant_ids (instant row removal).
     const [removed, setRemoved] = useState<Set<string>>(() => new Set());
     const [addTarget, setAddTarget] = useState<{ id: string; name: string } | null>(null);
+    // Amend (b48): fix a mis-resolved spot, or add a missed one.
+    const [picker, setPicker] = useState<{ kind: 'fix'; item: ImportBatchItem } | { kind: 'add' } | null>(null);
+
+    const handlePick = useCallback(
+        (r: PlacePickerResult) => {
+            const p = picker;
+            setPicker(null);
+            if (!p) return;
+            if (p.kind === 'fix') {
+                repoint.mutate(
+                    { item_id: p.item.id, restaurant_id: r.id },
+                    {
+                        onSuccess: () => toast.show(`fixed → ${r.name}`),
+                        onError: () => toast.show("couldn't fix — try again"),
+                    },
+                );
+            } else {
+                addSpot.mutate(
+                    { restaurant_id: r.id },
+                    {
+                        onSuccess: () => toast.show(`added ${r.name}`),
+                        onError: () => toast.show("couldn't add — try again"),
+                    },
+                );
+            }
+        },
+        [picker, repoint, addSpot, toast],
+    );
 
     const job = data?.job ?? null;
     const allItems = data?.items ?? [];
@@ -109,6 +142,15 @@ export default function ImportBatchScreen() {
                         <View style={styles.header}>
                             <Text style={[styles.title, { color: palette.text }]}>this import</Text>
                             <Text style={[styles.subtitle, { color: palette.textMuted }]}>{subtitle}</Text>
+                            <Pressable
+                                onPress={() => setPicker({ kind: 'add' })}
+                                hitSlop={8}
+                                style={styles.addRow}
+                                accessibilityLabel="add a missing spot"
+                            >
+                                <Ionicons name="add" size={18} color={palette.primary} />
+                                <Text style={[styles.addLabel, { color: palette.primary }]}>add a spot</Text>
+                            </Pressable>
                         </View>
                     }
                     ListEmptyComponent={
@@ -140,6 +182,13 @@ export default function ImportBatchScreen() {
 
                                 <View style={styles.actions}>
                                     <Pressable
+                                        onPress={() => setPicker({ kind: 'fix', item: it })}
+                                        hitSlop={8}
+                                        accessibilityLabel={`fix ${r.name}`}
+                                    >
+                                        <Ionicons name="swap-horizontal-outline" size={20} color={palette.textMuted} />
+                                    </Pressable>
+                                    <Pressable
                                         onPress={() => setAddTarget({ id: r.id, name: r.name })}
                                         hitSlop={8}
                                         accessibilityLabel={`add ${r.name} to a list`}
@@ -169,6 +218,20 @@ export default function ImportBatchScreen() {
                     restaurantName={addTarget?.name}
                 />
             ) : null}
+
+            <PlacePickerModal
+                visible={picker !== null}
+                title={picker?.kind === 'fix' ? 'fix this spot' : 'add a spot'}
+                subtitle={
+                    picker?.kind === 'fix'
+                        ? `replace ${picker.item.restaurant?.name ?? 'this spot'}`
+                        : 'search and add it to this import'
+                }
+                busy={repoint.isPending || addSpot.isPending}
+                onSelect={handlePick}
+                onDismiss={() => setPicker(null)}
+                palette={palette}
+            />
         </View>
     );
 }
@@ -180,6 +243,8 @@ const styles = StyleSheet.create({
     header: { paddingTop: Spacing.sm, paddingBottom: Spacing.md },
     title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 26, lineHeight: 30 },
     subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 13, marginTop: 6 },
+    addRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: Spacing.md },
+    addLabel: { fontFamily: 'Manrope_700Bold', fontSize: 13, letterSpacing: 0.3 },
     listContent: { paddingHorizontal: 22 },
     row: {
         flexDirection: 'row',

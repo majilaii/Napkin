@@ -23,3 +23,5 @@ export { RecentlyImportedBand } from './RecentlyImportedBand';
 export { WishlistMapView, type WishlistMapItem } from './WishlistMapView';
 // b47: cuisine-filter overflow sheet (chip row caps to the top few)
 export { CuisineFilterSheet, type CuisineCount } from './CuisineFilterSheet';
+// b48: place picker for amending an import (fix / add a spot)
+export { PlacePickerModal, type PlacePickerResult } from './PlacePickerModal';

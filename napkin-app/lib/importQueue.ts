@@ -38,8 +38,15 @@ export interface PersistedImportSpot {
     external_id: string | null;
     restaurant_name: string | null;
     restaurant_city: string | null;
+    /** Legacy single-table nonce (b47 and earlier manifests). */
     table_id: string | null;
     table_client_nonce: string | null;
+    /**
+     * b48 multi-table: per-table share client_nonce, keyed by tableId. Minted once
+     * + persisted so a re-drain reuses them (table_shares dedup on
+     * (author_id, table_id, client_nonce)). Replaces the single legacy pair.
+     */
+    table_shares?: Record<string, string>;
     place: unknown;
 }
 
@@ -51,8 +58,10 @@ export interface ImportDestinations {
     listIds: string[];
     /** New lists to CREATE on the fly, then file the spots into. */
     newListTitles: string[];
-    /** One Table to share to — only VERIFIED spots reach it (RPC ghost quarantine). */
+    /** Legacy single-table field (b47 and earlier manifests / Swift). */
     tableId: string | null;
+    /** b48: Tables to share to (multi-select) — only VERIFIED spots reach them. */
+    tableIds: string[];
 }
 
 export interface ImportManifest {
@@ -83,10 +92,21 @@ const DEFAULT_DESTINATIONS: ImportDestinations = {
     listIds: [],
     newListTitles: [],
     tableId: null,
+    tableIds: [],
 };
 
 function normalizeDestinations(d: unknown): ImportDestinations {
     const o = (d ?? {}) as Partial<ImportDestinations>;
+    // Back-compat: read both the new tableIds[] (b48 Swift) and the legacy single
+    // tableId (b47 manifests), de-duped. tableId is preserved so any old reader
+    // still sees the first table.
+    const tableIds: string[] = [];
+    if (Array.isArray(o.tableIds)) {
+        for (const x of o.tableIds) if (typeof x === 'string') tableIds.push(x);
+    }
+    if (typeof o.tableId === 'string' && o.tableId.length > 0 && !tableIds.includes(o.tableId)) {
+        tableIds.push(o.tableId);
+    }
     return {
         wishlist: o.wishlist !== false, // default true
         listIds: Array.isArray(o.listIds)
@@ -95,7 +115,8 @@ function normalizeDestinations(d: unknown): ImportDestinations {
         newListTitles: Array.isArray(o.newListTitles)
             ? o.newListTitles.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
             : [],
-        tableId: typeof o.tableId === 'string' ? o.tableId : null,
+        tableId: tableIds.length > 0 ? tableIds[0] : null,
+        tableIds,
     };
 }
 
@@ -221,25 +242,24 @@ export function setImportMode(jobId: string, mode: 'auto' | 'review'): void {
     writeManifest({ ...m, mode });
 }
 
+/** Un-poison a failed import — reset attempts + status, then poke the drain. */
+export function retryImport(jobId: string): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return;
+    writeManifest({ ...m, attempts: 0, status: 'pending' });
+    pokeImportQueue();
+}
+
 /**
- * Review-mode imports that are RESOLVED (spots persisted) and awaiting in-app
- * confirmation — the wishlist "to review" band reads this. Cross-account
- * manifests are excluded.
+ * All in-flight imports for the viewer (pending OR failed) — backs the live
+ * "in progress" surface. Cross-account manifests excluded; unknown viewer → [].
  */
-export function listReviewPendingImports(userId?: string | null): ImportManifest[] {
-    // No viewer yet (auth-loading / signed-out) → show nothing, so another
-    // account's held imports never surface in the band.
+export function listActiveManifests(userId?: string | null): ImportManifest[] {
     if (!userId) return [];
     return readAll()
-        .filter(
-            (m) =>
-                m.status === 'pending' &&
-                m.mode === 'review' &&
-                Array.isArray(m.spots) &&
-                m.spots.length > 0,
-        )
+        .filter((m) => m.status === 'pending' || m.status === 'failed')
         .filter((m) => !(m.userId && m.userId !== userId))
-        .sort((a, b) => a.createdAt - b.createdAt);
+        .sort((a, b) => b.createdAt - a.createdAt); // newest first
 }
 
 /** Kick the drain without enqueueing (e.g. after a review confirm). */

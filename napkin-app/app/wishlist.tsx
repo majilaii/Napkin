@@ -39,7 +39,7 @@ import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMy
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useImportHistory } from '@/hooks/wishlist/useImportHistory';
-import { usePendingReviewImports } from '@/hooks/wishlist/usePendingReviewImports';
+import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { haversineMiles, formatDistance } from '@/lib/geo';
 import { callEdgeFn } from '@/lib/edgeInvoke';
@@ -264,12 +264,25 @@ export default function WishlistScreen() {
     // Recently-imported batches (async import history) — conditional band.
     const { data: importBatches = [] } = useImportHistory(user?.id);
 
-    // Review-mode imports awaiting confirmation (auto-save toggled off on share).
-    const reviewImports = usePendingReviewImports();
-    const reviewSpotCount = useMemo(
-        () => reviewImports.reduce((sum, m) => sum + (m.spots?.length ?? 0), 0),
-        [reviewImports],
-    );
+    // In-flight imports (reading / saving / review / failed) → the progress band.
+    const activeImports = useActiveImports();
+    const importBand = useMemo(() => {
+        if (activeImports.length === 0) return null;
+        const review = activeImports.filter((m) => m.phase === 'review');
+        const failed = activeImports.filter((m) => m.phase === 'failed');
+        const working = activeImports.filter((m) => m.phase === 'reading' || m.phase === 'saving');
+        if (review.length > 0) {
+            const n = review.reduce((sum, m) => sum + m.spotCount, 0);
+            return { icon: 'sparkles-outline' as const, text: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review` };
+        }
+        if (working.length > 0) {
+            return { icon: 'sync-outline' as const, text: working.length === 1 ? 'importing…' : `importing ${working.length}…` };
+        }
+        if (failed.length > 0) {
+            return { icon: 'alert-circle-outline' as const, text: 'an import needs attention' };
+        }
+        return null;
+    }, [activeImports]);
 
     const allItems = useMemo(
         () => (wishlistPages?.pages ?? []).flatMap((p) => p.data ?? []),
@@ -567,16 +580,17 @@ export default function WishlistScreen() {
                 contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
                 showsVerticalScrollIndicator={false}
             >
-                {/* Review band — resolved imports you chose to confirm (auto-save off) */}
-                {reviewSpotCount > 0 ? (
+                {/* Imports-in-progress band — reading / saving / review / failed.
+                    Taps into the progress hub to see how it's going + what's saving. */}
+                {importBand ? (
                     <Pressable
-                        onPress={() => router.push(`/import-review?jobId=${reviewImports[0].jobId}` as any)}
+                        onPress={() => router.push('/import-progress' as any)}
                         style={[styles.reviewBand, { backgroundColor: palette.surfaceJournalLow }]}
                         accessibilityRole="button"
                     >
-                        <Ionicons name="sparkles-outline" size={16} color={palette.primary} />
+                        <Ionicons name={importBand.icon} size={16} color={palette.primary} />
                         <Text style={[styles.reviewBandText, { color: palette.text }]} numberOfLines={1}>
-                            {`${reviewSpotCount} ${reviewSpotCount === 1 ? 'spot' : 'spots'} ready to review`}
+                            {importBand.text}
                         </Text>
                         <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
                     </Pressable>
