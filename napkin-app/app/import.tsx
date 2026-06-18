@@ -29,7 +29,7 @@ import * as pendingImport from '@/lib/pendingImport';
 import { ImportLinkSheet } from '@/components/wishlist';
 
 export default function ImportScreen() {
-    const { url, nonce } = useLocalSearchParams<{ url?: string; nonce?: string }>();
+    const { url, video, nonce } = useLocalSearchParams<{ url?: string; video?: string; nonce?: string }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -41,6 +41,18 @@ export default function ImportScreen() {
 
     useEffect(() => {
         if (didRoute) return;
+
+        // TICKET-082: a shared VIDEO (from the share extension) → on-device OCR.
+        // Signed-in only for v1 (the file lives in the App Group container; a
+        // signed-out resume queue is a follow-up).
+        const rawVideoParam = Array.isArray(video) ? video[0] : video;
+        if (rawVideoParam) {
+            setDidRoute(true);
+            if (!session) { router.replace('/auth'); return; }
+            pendingImport.consume().catch(() => {/* ignore */});
+            setSheetVisible(true);
+            return;
+        }
 
         const rawUrl = Array.isArray(url) ? url[0] : url;
 
@@ -84,6 +96,7 @@ export default function ImportScreen() {
     }, [session]);
 
     const rawUrl = Array.isArray(url) ? url[0] : url;
+    const rawVideo = Array.isArray(video) ? video[0] : video;
     const urlIsInvalid = rawUrl
         ? !validateUrl(rawUrl.trim()).ok
         : true;
@@ -113,7 +126,7 @@ export default function ImportScreen() {
                 ]}
             >
                 {/* Error state — invalid or missing URL */}
-                {(!rawUrl || urlIsInvalid) && !sheetVisible && (
+                {!rawVideo && (!rawUrl || urlIsInvalid) && !sheetVisible && (
                     <Pressable onPress={handleErrorTap} style={styles.errorContainer}>
                         <Text
                             style={[
@@ -135,14 +148,14 @@ export default function ImportScreen() {
                 )}
 
                 {/* Loading placeholder — visible while the sheet mounts */}
-                {rawUrl && !urlIsInvalid && (
+                {(rawVideo || (rawUrl && !urlIsInvalid)) && (
                     <Text
                         style={[
                             Type.headlineItalic,
                             { color: palette.textMuted, textAlign: 'center' },
                         ]}
                     >
-                        opening link...
+                        {rawVideo ? 'opening video...' : 'opening link...'}
                     </Text>
                 )}
             </View>
@@ -151,14 +164,20 @@ export default function ImportScreen() {
                 fires immediately, skipping the paste step.
                 Fix 9: also passes initialImportNonce from the stash so the sheet
                 seeds its importNonceRef from the pre-auth nonce. */}
-            {rawUrl && !urlIsInvalid && (
+            {rawVideo ? (
+                <ImportLinkSheet
+                    visible={sheetVisible}
+                    initialVideoPath={rawVideo}
+                    onDismiss={handleDismiss}
+                />
+            ) : rawUrl && !urlIsInvalid ? (
                 <ImportLinkSheet
                     visible={sheetVisible}
                     initialUrl={rawUrl}
                     initialImportNonce={typeof nonce === 'string' ? nonce : undefined}
                     onDismiss={handleDismiss}
                 />
-            )}
+            ) : null}
         </>
     );
 }

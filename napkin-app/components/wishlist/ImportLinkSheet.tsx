@@ -125,6 +125,11 @@ export interface ImportLinkSheetProps {
      * uses the same job-level idempotency key as the original share.
      */
     initialImportNonce?: string;
+    /**
+     * TICKET-082: absolute path to a shared video (App Group container) from the
+     * share extension. When set, the sheet opens straight into on-device OCR.
+     */
+    initialVideoPath?: string;
 }
 
 type Palette = typeof Colors.light;
@@ -142,7 +147,7 @@ function truncateHost(url: string): string {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportNonce }: ImportLinkSheetProps) {
+export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportNonce, initialVideoPath }: ImportLinkSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const insets = useSafeAreaInsets();
@@ -617,6 +622,17 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         lastVideoUriRef.current = asset.uri;
         runVideoExtraction(asset.uri);
     }, [runVideoExtraction]);
+
+    // TICKET-082: share-extension video path → kick off extraction once on open.
+    const videoStartedRef = useRef(false);
+    useEffect(() => {
+        if (visible && initialVideoPath && !videoStartedRef.current) {
+            videoStartedRef.current = true;
+            lastVideoUriRef.current = initialVideoPath;
+            runVideoExtraction(initialVideoPath);
+        }
+        if (!visible) videoStartedRef.current = false;
+    }, [visible, initialVideoPath, runVideoExtraction]);
 
     // TICKET-060: handle destination confirm (async capture fan-out)
     const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
