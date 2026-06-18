@@ -28,6 +28,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
+import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
 import { Colors } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 
@@ -166,6 +167,11 @@ function RootLayoutNav() {
   const { session, isLoading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  // TICKET-083 Part B: drain the async video-import queue in the background
+  // (launch + every foreground). Self-gated on session; safe no-op when signed
+  // out or when the native OCR module is absent.
+  useProcessImportQueue();
 
   useEffect(() => {
     if (isLoading) return;

@@ -26,6 +26,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { validateUrl } from '@/lib/urlValidation';
 import * as pendingImport from '@/lib/pendingImport';
+import { enqueueVideoImport } from '@/lib/importQueue';
+import { useToast } from '@/providers/ToastProvider';
 import { ImportLinkSheet } from '@/components/wishlist';
 
 export default function ImportScreen() {
@@ -35,6 +37,7 @@ export default function ImportScreen() {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const { session } = useAuth();
+    const toast = useToast();
 
     const [sheetVisible, setSheetVisible] = useState(false);
     // TICKET-083 stuck-state fix: process per DISTINCT import, keyed on the param
@@ -55,12 +58,19 @@ export default function ImportScreen() {
         // A new import supersedes any stale sheet; the keyed sheet remounts fresh.
         setSheetVisible(false);
 
-        // ── Shared VIDEO (share extension) → on-device OCR. Signed-in only for v1
-        // (the file lives in the App Group container; signed-out resume is TICKET-083). ──
+        // ── Shared VIDEO → enqueue for async background OCR + auto-save
+        // (TICKET-083 Part B). No blocking sheet; the processor mounted in
+        // _layout drains it. Works signed-out — the manifest is durable and
+        // drains on sign-in (single buffer; no pendingImport double-fire). ──
         if (rawVideoParam) {
-            if (!session) { router.replace('/auth'); return; }
-            pendingImport.consume().catch(() => {/* ignore */});
-            setSheetVisible(true);
+            const signedIn = !!session;
+            enqueueVideoImport(rawVideoParam)
+                .then(() => {
+                    // Only claim "importing…" once the manifest is actually queued.
+                    if (signedIn) toast.show('importing — your spots will appear in a moment');
+                })
+                .catch(() => {/* enqueue failed — no false toast */});
+            router.replace(signedIn ? ('/wishlist' as any) : '/auth');
             return;
         }
 
@@ -81,7 +91,7 @@ export default function ImportScreen() {
         // Valid URL + signed in → open the sheet (defensive consume clears any stash).
         pendingImport.consume().catch(() => {/* ignore */});
         setSheetVisible(true);
-    }, [video, url, session, nonce, router]);
+    }, [video, url, session, nonce, router, toast]);
 
     const rawUrl = Array.isArray(url) ? url[0] : url;
     const rawVideo = Array.isArray(video) ? video[0] : video;
@@ -155,14 +165,9 @@ export default function ImportScreen() {
                 fires immediately, skipping the paste step.
                 Fix 9: also passes initialImportNonce from the stash so the sheet
                 seeds its importNonceRef from the pre-auth nonce. */}
-            {rawVideo ? (
-                <ImportLinkSheet
-                    key={importKey}
-                    visible={sheetVisible}
-                    initialVideoPath={rawVideo}
-                    onDismiss={handleDismiss}
-                />
-            ) : rawUrl && !urlIsInvalid ? (
+            {/* VIDEO shares no longer open a sheet — they enqueue + drain in the
+                background (see the effect). Only the URL-paste path uses the sheet. */}
+            {rawUrl && !urlIsInvalid ? (
                 <ImportLinkSheet
                     key={importKey}
                     visible={sheetVisible}
