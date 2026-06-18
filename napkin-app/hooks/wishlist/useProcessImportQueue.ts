@@ -1,15 +1,14 @@
 /**
  * useProcessImportQueue — drains the durable video-import queue in the background
- * (TICKET-083 Part B inc2). Mounted once in RootLayoutNav.
+ * (TICKET-083 Part B). Mounted once in RootLayoutNav.
  *
- * Replaces the ~30s BLOCKING candidate sheet: a shared video is enqueued by
- * app/import.tsx, then processed here on launch + every foreground + on enqueue —
+ * inc3: the queue lives in the App-Group container (written by the iOS share
+ * EXTENSION with no app-switch). This drains it on launch + every foreground —
  * OCR → resolve → auto-save ALL spots — with a non-blocking toast. Spots land in
- * the wishlist + "recently imported" band while the user browses.
+ * the wishlist + "recently imported" band when the user next opens the app.
  *
  * Replay-safety: spots (with their nonces) are PERSISTED on the manifest after
- * the first resolve. A re-drain reuses them and re-runs only the idempotent save
- * (no re-OCR, identical nonces) → no double-save.
+ * the first resolve; a re-drain reuses them and re-runs only the idempotent save.
  *
  * Error policy:
  *   - auth / expired session            → stop the round, NO poison (retry after sign-in)
@@ -18,7 +17,6 @@
  */
 import { useCallback, useEffect } from 'react';
 import { AppState } from 'react-native';
-import * as FileSystem from 'expo-file-system';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { callEdgeFn, isAuthFailure, SessionExpiredError } from '@/lib/edgeInvoke';
@@ -26,7 +24,12 @@ import { queryKeys } from '@/lib/queryKeys';
 import { safeRandomUUID } from '@/lib/uuid';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
-import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
+import {
+    extractFromVideo,
+    isVideoImportAvailable,
+    appGroupFileInfo,
+    deleteAppGroupFile,
+} from '@/modules/media-extract';
 import {
     listPendingImports,
     removeImport,
@@ -82,11 +85,12 @@ function buildPlace(c: ResolvedCandidate): unknown {
     };
 }
 
-async function safeDeleteMov(path: string): Promise<void> {
+/** Delete the App-Group .mov (native; expo-file-system can't reach that path). */
+function safeDeleteMov(path: string): void {
     try {
-        await FileSystem.deleteAsync(path, { idempotent: true });
+        deleteAppGroupFile(path);
     } catch {
-        // best-effort — orphan .mov reaping is hardened in inc3's startup sweep.
+        /* best-effort */
     }
 }
 
@@ -100,12 +104,16 @@ export function useProcessImportQueue() {
         async (m: ImportManifest) => {
             let spots: PersistedImportSpot[] | undefined = m.spots;
 
-            // First process (no persisted spots yet): verify file → OCR → resolve →
-            // build + PERSIST spots (frozen nonces) before the save.
+            // First process: verify file → OCR → resolve → build + PERSIST spots.
             if (!spots || spots.length === 0) {
-                const info = await FileSystem.getInfoAsync(m.videoPath);
-                if (!info.exists || (info as { size?: number }).size === 0) {
-                    await removeImport(m.jobId); // file gone — fail fast, don't retry
+                let info = { exists: true, size: 1 };
+                try {
+                    info = appGroupFileInfo(m.videoPath);
+                } catch {
+                    /* native absent — let extractFromVideo surface the failure */
+                }
+                if (!info.exists || info.size === 0) {
+                    removeImport(m.jobId); // file gone — fail fast, don't retry
                     toast.show("couldn't read that video");
                     return;
                 }
@@ -116,8 +124,8 @@ export function useProcessImportQueue() {
                     .join('\n')
                     .trim();
                 if (!extractedText) {
-                    await removeImport(m.jobId);
-                    await safeDeleteMov(m.videoPath);
+                    removeImport(m.jobId);
+                    safeDeleteMov(m.videoPath);
                     toast.show("couldn't read spots from that video");
                     return;
                 }
@@ -127,8 +135,8 @@ export function useProcessImportQueue() {
                 });
                 const candidates = resolved?.candidates ?? [];
                 if (candidates.length === 0) {
-                    await removeImport(m.jobId);
-                    await safeDeleteMov(m.videoPath);
+                    removeImport(m.jobId);
+                    safeDeleteMov(m.videoPath);
                     toast.show("couldn't find spots in that video");
                     return;
                 }
@@ -145,7 +153,7 @@ export function useProcessImportQueue() {
                     table_client_nonce: null,
                     place: buildPlace(c),
                 }));
-                await setImportSpots(m.jobId, spots);
+                setImportSpots(m.jobId, spots);
             }
 
             // Save (idempotent on import_nonce + per-spot client_nonce).
@@ -158,8 +166,8 @@ export function useProcessImportQueue() {
                 },
             });
 
-            await removeImport(m.jobId);
-            await safeDeleteMov(m.videoPath);
+            removeImport(m.jobId);
+            safeDeleteMov(m.videoPath);
 
             const saved = result?.summary?.saved ?? 0;
             const already = result?.summary?.already_pinned ?? 0;
@@ -181,11 +189,11 @@ export function useProcessImportQueue() {
 
     const drain = useCallback(async () => {
         if (!userId) return;                      // session-gated
-        if (!isVideoImportAvailable()) return;    // native OCR module absent → skip
+        if (!isVideoImportAvailable()) return;    // native module absent → skip
         if (!acquireDrainLock()) return;          // process-wide re-entrancy guard
 
         try {
-            const pending = await listPendingImports();
+            const pending = listPendingImports();
             for (const m of pending) {
                 if (!session) break;               // session dropped → stop
                 try {
@@ -194,10 +202,10 @@ export function useProcessImportQueue() {
                     // Transient (auth/expired/429/5xx) → stop the round, retry later,
                     // DON'T burn an attempt (else a rate-limit / outage poisons a valid import).
                     if (isSessionError(err) || isTransientError(err)) break;
-                    const updated = await bumpImportAttempt(m.jobId);
+                    const updated = bumpImportAttempt(m.jobId);
                     if (updated?.status === 'failed') {
                         toast.show("couldn't import that video");
-                        await safeDeleteMov(m.videoPath); // poison → drop the file
+                        safeDeleteMov(m.videoPath); // poison → drop the file
                     }
                 }
             }
@@ -211,7 +219,6 @@ export function useProcessImportQueue() {
         const sub = AppState.addEventListener('change', (s) => {
             if (s === 'active') drain();
         });
-        // Drain right after a share enqueues (covers share-while-foregrounded).
         const unsub = onImportEnqueued(() => drain());
         return () => {
             sub.remove();

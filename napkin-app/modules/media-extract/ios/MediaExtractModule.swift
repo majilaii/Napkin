@@ -38,6 +38,76 @@ public class MediaExtractModule: Module {
         "durationSec": durationSec.isFinite ? durationSec : 0,
       ]
     }
+
+    // ── App-Group import queue (TICKET-083 Part B inc3) ──────────────────────
+    // The share extension writes pending-import manifests into the shared App
+    // Group container (it CANNOT call JS); the main app reads/updates/removes
+    // them here. expo-file-system can't reach the App-Group path, so these native
+    // file ops are the only way the JS queue can touch it. All synchronous + fast.
+
+    // All manifest JSON strings currently in the queue dir.
+    Function("listImportManifests") { () -> [String] in
+      guard let dir = Self.queueDir() else { return [] }
+      let files = (try? FileManager.default.contentsOfDirectory(
+        at: dir, includingPropertiesForKeys: nil)) ?? []
+      var out: [String] = []
+      for f in files where f.pathExtension == "json" {
+        if let data = try? Data(contentsOf: f),
+           let s = String(data: data, encoding: .utf8) {
+          out.append(s)
+        }
+      }
+      return out
+    }
+
+    // Write/overwrite a manifest atomically (.tmp → rename).
+    Function("writeImportManifest") { (jobId: String, json: String) -> Bool in
+      guard let dir = Self.queueDir(), let data = json.data(using: .utf8) else { return false }
+      let final = dir.appendingPathComponent(jobId + ".json")
+      let tmp = dir.appendingPathComponent(jobId + ".json.tmp")
+      do {
+        try data.write(to: tmp)
+        if FileManager.default.fileExists(atPath: final.path) {
+          try? FileManager.default.removeItem(at: final)
+        }
+        try FileManager.default.moveItem(at: tmp, to: final)
+        return true
+      } catch {
+        try? FileManager.default.removeItem(at: tmp)
+        return false
+      }
+    }
+
+    Function("removeImportManifest") { (jobId: String) -> Bool in
+      guard let dir = Self.queueDir() else { return false }
+      try? FileManager.default.removeItem(at: dir.appendingPathComponent(jobId + ".json"))
+      return true
+    }
+
+    // { exists: Bool, size: Int } for an absolute App-Group file path.
+    Function("appGroupFileInfo") { (path: String) -> [String: Any] in
+      let exists = FileManager.default.fileExists(atPath: path)
+      let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+      let size = (attrs?[.size] as? NSNumber)?.intValue ?? 0
+      return ["exists": exists, "size": size]
+    }
+
+    Function("deleteAppGroupFile") { (path: String) -> Bool in
+      try? FileManager.default.removeItem(atPath: path)
+      return true
+    }
+  }
+
+  // MARK: - App Group queue dir
+
+  private static let appGroup = "group.com.majilaii.napkin.shared"
+
+  private static func queueDir() -> URL? {
+    guard let container = FileManager.default
+      .containerURL(forSecurityApplicationGroupIdentifier: appGroup) else { return nil }
+    let dir = container.appendingPathComponent("import-queue", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
   }
 
   // MARK: - URL resolution
