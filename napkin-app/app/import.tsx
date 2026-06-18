@@ -16,7 +16,7 @@
  * 'transparentModal' — cold-start with this as first screen would paint
  * over a black void with a transparent modal.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,66 +37,57 @@ export default function ImportScreen() {
     const { session } = useAuth();
 
     const [sheetVisible, setSheetVisible] = useState(false);
-    const [didRoute, setDidRoute] = useState(false);
+    // TICKET-083 stuck-state fix: process per DISTINCT import, keyed on the param
+    // value — NOT a one-shot guard. If a user shares a video, leaves the sheet
+    // open, backgrounds to TikTok, then shares ANOTHER video, the new param must
+    // supersede the stale one (the old one-shot `didRoute` silently ignored it).
+    const processedKeyRef = useRef<string | null>(null);
 
     useEffect(() => {
-        if (didRoute) return;
-
-        // TICKET-082: a shared VIDEO (from the share extension) → on-device OCR.
-        // Signed-in only for v1 (the file lives in the App Group container; a
-        // signed-out resume queue is a follow-up).
         const rawVideoParam = Array.isArray(video) ? video[0] : video;
+        const rawUrlParam = Array.isArray(url) ? url[0] : url;
+        const key = rawVideoParam ? `v:${rawVideoParam}` : rawUrlParam ? `u:${rawUrlParam}` : '';
+
+        // Same import as last processed → ignore Expo Router re-emitting the param.
+        if (key === processedKeyRef.current) return;
+        processedKeyRef.current = key;
+
+        // A new import supersedes any stale sheet; the keyed sheet remounts fresh.
+        setSheetVisible(false);
+
+        // ── Shared VIDEO (share extension) → on-device OCR. Signed-in only for v1
+        // (the file lives in the App Group container; signed-out resume is TICKET-083). ──
         if (rawVideoParam) {
-            setDidRoute(true);
             if (!session) { router.replace('/auth'); return; }
             pendingImport.consume().catch(() => {/* ignore */});
             setSheetVisible(true);
             return;
         }
 
-        const rawUrl = Array.isArray(url) ? url[0] : url;
+        // No URL → error state rendered inline.
+        if (!rawUrlParam) return;
 
-        // No URL provided — show error.
-        if (!rawUrl) {
-            setDidRoute(true);
-            return;
-        }
-
-        // Signed out — stash and redirect to auth.
-        // ARCH-REVIEW-4: do NOT consume() here.
-        // Fix-pass-2 item 4: pass the `nonce` route param through to stash so a
-        // transient-null-session render cannot rotate the import_nonce, and the
-        // signed-out → resume flow reuses the same job-level idempotency key.
+        // Signed out — stash + auth (ARCH-REVIEW-4: do NOT consume here). The nonce
+        // keeps job-level idempotency stable across the signed-out → resume flow.
         if (!session) {
-            setDidRoute(true);
             const rawNonce = typeof nonce === 'string' ? nonce : undefined;
-            pendingImport.stash(rawUrl, rawNonce).then(() => {
-                router.replace('/auth');
-            });
+            pendingImport.stash(rawUrlParam, rawNonce).then(() => router.replace('/auth'));
             return;
         }
 
-        // Signed in — validate the URL.
-        const validation = validateUrl(rawUrl.trim());
-        if (!validation.ok) {
-            setDidRoute(true);
-            // Error state is rendered inline; user taps to go back.
-            return;
-        }
+        // Invalid URL → error state rendered inline.
+        if (!validateUrl(rawUrlParam.trim()).ok) return;
 
-        // Valid URL + signed in → open the sheet.
-        // Defensive consume: clear any lingering stash (covers the race where
-        // the user signed in elsewhere and re-launched via a share).
+        // Valid URL + signed in → open the sheet (defensive consume clears any stash).
         pendingImport.consume().catch(() => {/* ignore */});
         setSheetVisible(true);
-        setDidRoute(true);
-    // url is intentionally read once on first session check; the didRoute guard
-    // prevents re-entry if Expo Router re-emits the param.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [session]);
+    }, [video, url, session, nonce, router]);
 
     const rawUrl = Array.isArray(url) ? url[0] : url;
     const rawVideo = Array.isArray(video) ? video[0] : video;
+    // Distinct per import → forces the sheet to remount fresh when a new share
+    // arrives (clears any stale half-finished sheet from a prior share).
+    const importKey = rawVideo ? `v:${rawVideo}` : rawUrl ? `u:${rawUrl}` : 'none';
     const urlIsInvalid = rawUrl
         ? !validateUrl(rawUrl.trim()).ok
         : true;
@@ -166,12 +157,14 @@ export default function ImportScreen() {
                 seeds its importNonceRef from the pre-auth nonce. */}
             {rawVideo ? (
                 <ImportLinkSheet
+                    key={importKey}
                     visible={sheetVisible}
                     initialVideoPath={rawVideo}
                     onDismiss={handleDismiss}
                 />
             ) : rawUrl && !urlIsInvalid ? (
                 <ImportLinkSheet
+                    key={importKey}
                     visible={sheetVisible}
                     initialUrl={rawUrl}
                     initialImportNonce={typeof nonce === 'string' ? nonce : undefined}
