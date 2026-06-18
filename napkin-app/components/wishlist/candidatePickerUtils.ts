@@ -34,22 +34,19 @@ export function keyFor(
 }
 
 /**
- * Builds the initial ticked set from a candidate list.
- *   N=1: always pre-tick the single candidate regardless of confidence.
- *   N>1: pre-tick high/exact; leave low un-ticked.
+ * Builds the initial ticked set from a candidate list — pre-ticks ALL candidates.
+ *
+ * The user imported this list to save it; a confidence-gated default (pre-tick
+ * only high/exact) silently dropped low-confidence spots — e.g. 5 of an 11-spot
+ * listicle — unless the user noticed and ticked them (TICKET-082 partial-save).
+ * Save-all + let them untick the duds matches the import intent.
  */
 export function buildInitialTicked(
     candidates: Array<Pick<ResolvedCandidate, 'candidate_id' | 'google_place_id' | 'restaurant' | 'confidence'>>,
 ): Set<string> {
     const ticked = new Set<string>();
-    if (candidates.length === 1) {
-        ticked.add(keyFor(candidates[0]));
-    } else {
-        for (const c of candidates) {
-            if (c.confidence === 'high' || c.confidence === 'exact') {
-                ticked.add(keyFor(c));
-            }
-        }
+    for (const c of candidates) {
+        ticked.add(keyFor(c));
     }
     return ticked;
 }

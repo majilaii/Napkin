@@ -1319,8 +1319,10 @@ async function handleSaveSpots(
         return errorResponse('INVALID_BODY', 'import_nonce and spots[] are required', 400);
     }
 
-    // Cap at 6 per spec
-    const capped = spots.slice(0, 6);
+    // Per-request cap — generous enough for video listicles (extraction caps at
+    // 12) with abuse headroom. Was 6 (the old text-only spec), which silently
+    // dropped spots 7+ of an 11-spot import → only 6 of 11 saved (TICKET-082).
+    const capped = spots.slice(0, 20);
 
     // ── TICKET-072 ARCH-REVIEW-2 #1/#4 + TICKET-077: handoff_token gate ──────
     // When handoff_token is present, the server authorizes the pin against the
