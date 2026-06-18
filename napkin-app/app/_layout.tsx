@@ -29,6 +29,7 @@ import { queryClient } from '@/lib/queryClient';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
 import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
+import { usePublishCollectionsSnapshot } from '@/hooks/wishlist/usePublishCollectionsSnapshot';
 import { Colors } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 
@@ -172,6 +173,10 @@ function RootLayoutNav() {
   // (launch + every foreground). Self-gated on session; safe no-op when signed
   // out or when the native OCR module is absent.
   useProcessImportQueue();
+
+  // Publish lists + tables to the App Group so the share extension's destination
+  // picker can render them (separate process — can't read the app's cache).
+  usePublishCollectionsSnapshot();
 
   useEffect(() => {
     if (isLoading) return;

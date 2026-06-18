@@ -43,16 +43,50 @@ export interface PersistedImportSpot {
     place: unknown;
 }
 
+/** Where the import's spots should land. Chosen on the in-extension card. */
+export interface ImportDestinations {
+    /** Always true today (wishlist is the base destination). */
+    wishlist: boolean;
+    /** Lists to also file every saved spot into (multi-select). */
+    listIds: string[];
+    /** One Table to share to — only VERIFIED spots reach it (RPC ghost quarantine). */
+    tableId: string | null;
+}
+
 export interface ImportManifest {
     jobId: string;
-    kind: 'video';
-    videoPath: string;
+    /** 'video' = saved file → OCR; 'url' = shared link → caption resolve. */
+    kind: 'video' | 'url';
+    /** Present for kind 'video'. */
+    videoPath?: string;
+    /** Present for kind 'url'. */
+    url?: string;
     importNonce: string;
     createdAt: number;
     attempts: number;
+    /** Account that created the import (from the snapshot). The drain skips a
+     *  manifest belonging to a different signed-in user (cross-account safety). */
+    userId?: string | null;
+    /** 'review' (toggle off) holds the batch for the candidate picker on next open. */
     status: ImportManifestStatus;
+    /** 'auto' (default) saves silently; 'review' defers to the picker on app open. */
+    mode: 'auto' | 'review';
+    destinations: ImportDestinations;
     /** Set after the FIRST successful resolve → re-drain skips OCR/resolve. */
     spots?: PersistedImportSpot[];
+}
+
+const DEFAULT_DESTINATIONS: ImportDestinations = { wishlist: true, listIds: [], tableId: null };
+
+function normalizeDestinations(d: unknown): ImportDestinations {
+    const o = (d ?? {}) as Partial<ImportDestinations>;
+    return {
+        wishlist: o.wishlist !== false, // default true
+        listIds: Array.isArray(o.listIds)
+            ? o.listIds.filter((x): x is string => typeof x === 'string')
+            : [],
+        tableId: typeof o.tableId === 'string' ? o.tableId : null,
+    };
 }
 
 function readAll(): ImportManifest[] {
@@ -62,18 +96,27 @@ function readAll(): ImportManifest[] {
         for (const s of raw) {
             try {
                 const p = JSON.parse(s) as Partial<ImportManifest> & Record<string, unknown>;
-                if (typeof p.jobId !== 'string' || typeof p.videoPath !== 'string' || p.kind !== 'video') {
-                    continue;
-                }
+                if (typeof p.jobId !== 'string') continue;
+                const kind: 'video' | 'url' = p.kind === 'url' ? 'url' : 'video';
+                const videoPath = typeof p.videoPath === 'string' ? p.videoPath : undefined;
+                const url = typeof p.url === 'string' ? p.url : undefined;
+                // Must carry a source for its kind.
+                if (kind === 'video' && !videoPath) continue;
+                if (kind === 'url' && !url) continue;
                 // Build explicitly — the extension-written JSON is untrusted input.
+                // Missing mode/destinations default to auto/wishlist (b43 manifests).
                 out.push({
                     jobId: p.jobId,
-                    kind: 'video',
-                    videoPath: p.videoPath,
+                    kind,
+                    videoPath,
+                    url,
                     importNonce: typeof p.importNonce === 'string' ? p.importNonce : safeRandomUUID(),
                     createdAt: typeof p.createdAt === 'number' ? p.createdAt : 0,
                     attempts: typeof p.attempts === 'number' ? p.attempts : 0,
+                    userId: typeof p.userId === 'string' ? p.userId : null,
                     status: p.status === 'failed' ? 'failed' : 'pending',
+                    mode: p.mode === 'review' ? 'review' : 'auto',
+                    destinations: normalizeDestinations(p.destinations),
                     spots: Array.isArray(p.spots) ? (p.spots as PersistedImportSpot[]) : undefined,
                 });
             } catch {
@@ -127,6 +170,8 @@ async function doEnqueue(videoPath: string): Promise<ImportManifest> {
         createdAt: Date.now(),
         attempts: 0,
         status: 'pending',
+        mode: 'auto',
+        destinations: { ...DEFAULT_DESTINATIONS },
     };
     writeManifest(manifest);
     enqueueListeners.forEach((l) => {

@@ -96,6 +96,24 @@ public class MediaExtractModule: Module {
       try? FileManager.default.removeItem(atPath: path)
       return true
     }
+
+    // The main app publishes a snapshot of the user's collections (lists + tables)
+    // so the share EXTENSION can render the destination picker (it can't read the
+    // app's cache). Written atomically; the extension reads it directly.
+    Function("writeAppGroupSnapshot") { (json: String) -> Bool in
+      guard
+        let container = FileManager.default
+          .containerURL(forSecurityApplicationGroupIdentifier: Self.appGroup),
+        let data = json.data(using: .utf8)
+      else { return false }
+      let url = container.appendingPathComponent("collections-snapshot.json")
+      do {
+        try data.write(to: url, options: .atomic)
+        return true
+      } catch {
+        return false
+      }
+    }
   }
 
   // MARK: - App Group queue dir

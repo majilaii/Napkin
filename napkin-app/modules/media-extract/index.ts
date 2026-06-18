@@ -22,6 +22,7 @@ type NativeMediaExtract = {
     removeImportManifest(jobId: string): boolean;
     appGroupFileInfo(path: string): { exists: boolean; size: number };
     deleteAppGroupFile(path: string): boolean;
+    writeAppGroupSnapshot(json: string): boolean;
 };
 
 let cached: NativeMediaExtract | null = null;
@@ -91,4 +92,9 @@ export function appGroupFileInfo(path: string): { exists: boolean; size: number 
 
 export function deleteAppGroupFile(path: string): boolean {
     return getNative().deleteAppGroupFile(path);
+}
+
+/** Publish the user's collections (lists + tables) for the share extension's picker. */
+export function writeAppGroupSnapshot(json: string): boolean {
+    return getNative().writeAppGroupSnapshot(json);
 }
