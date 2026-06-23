@@ -48,6 +48,30 @@ export function CommentThread({
     const discardFailed = useDiscardFailedComment();
     const [body, setBody] = useState('');
     const inputRef = useRef<TextInput>(null);
+    // TICKET-085: reply target (parentCommentId = thread root; name = person replied to).
+    const [replyingTo, setReplyingTo] = useState<{ id: string; name: string } | null>(null);
+
+    // Group into one level of nesting — roots + replies-by-root (orphans → roots).
+    const rootComments = comments.filter((c) => !c.parent_id);
+    const rootIdSet = new Set(rootComments.map((c) => c.id));
+    const repliesByRoot = new Map<string, Comment[]>();
+    const orphanReplies: Comment[] = [];
+    for (const c of comments) {
+        if (!c.parent_id) continue;
+        if (rootIdSet.has(c.parent_id)) {
+            const arr = repliesByRoot.get(c.parent_id) ?? [];
+            arr.push(c);
+            repliesByRoot.set(c.parent_id, arr);
+        } else {
+            orphanReplies.push(c);
+        }
+    }
+    const threadRoots = [...rootComments, ...orphanReplies];
+
+    const startReply = (rootId: string, name: string) => {
+        setReplyingTo({ id: rootId, name });
+        setTimeout(() => inputRef.current?.focus(), 50);
+    };
 
     const handleRetry = (failed: Comment) => {
         const nonce = failed.client_nonce;
@@ -59,6 +83,8 @@ export function CommentThread({
             body: failed.body,
             clientNonce: nonce,
             scope,
+            // Preserve threading on retry — else a failed reply would re-post top-level.
+            parentCommentId: failed.parent_id ?? undefined,
         });
     };
 
@@ -89,10 +115,11 @@ export function CommentThread({
             .toString(36)
             .slice(2)}`;
         addComment.mutate(
-            { targetType, targetId, body: trimmed, clientNonce: nonce, scope },
+            { targetType, targetId, body: trimmed, clientNonce: nonce, scope, parentCommentId: replyingTo?.id },
             { onSuccess: () => setBody('') },
         );
         setBody('');
+        setReplyingTo(null);
     };
 
     return (
@@ -103,9 +130,9 @@ export function CommentThread({
                 </Text>
             ) : (
                 <View>
-                    {comments.map((comment, idx) => (
+                    {threadRoots.map((root, idx) => (
                         <View
-                            key={comment.id}
+                            key={root.id}
                             style={
                                 idx > 0
                                     ? {
@@ -117,21 +144,29 @@ export function CommentThread({
                             }
                         >
                             <CommentRow
-                                comment={comment}
+                                comment={root}
                                 targetType={targetType}
                                 targetId={targetId}
                                 scope={scope}
-                                onRetry={
-                                    comment.failed
-                                        ? () => handleRetry(comment)
-                                        : undefined
-                                }
-                                onDiscard={
-                                    comment.failed
-                                        ? () => handleDiscard(comment)
-                                        : undefined
-                                }
+                                canReply={!repliesDisabled}
+                                onReply={() => startReply(root.id, root.profiles?.display_name ?? 'Someone')}
+                                onRetry={root.failed ? () => handleRetry(root) : undefined}
+                                onDiscard={root.failed ? () => handleDiscard(root) : undefined}
                             />
+                            {(repliesByRoot.get(root.id) ?? []).map((reply) => (
+                                <CommentRow
+                                    key={reply.id}
+                                    comment={reply}
+                                    targetType={targetType}
+                                    targetId={targetId}
+                                    scope={scope}
+                                    isReply
+                                    canReply={!repliesDisabled}
+                                    onReply={() => startReply(root.id, reply.profiles?.display_name ?? 'Someone')}
+                                    onRetry={reply.failed ? () => handleRetry(reply) : undefined}
+                                    onDiscard={reply.failed ? () => handleDiscard(reply) : undefined}
+                                />
+                            ))}
                         </View>
                     ))}
                 </View>
@@ -142,6 +177,18 @@ export function CommentThread({
                     The author has replies turned off.
                 </Text>
             ) : (
+                <>
+                {replyingTo ? (
+                    <View style={styles.replyChip}>
+                        <Text style={[styles.replyChipText, { color: palette.textSecondary }]} numberOfLines={1}>
+                            {'Replying to '}
+                            <Text style={{ fontFamily: 'Manrope_700Bold', color: palette.text }}>{replyingTo.name}</Text>
+                        </Text>
+                        <Pressable onPress={() => setReplyingTo(null)} hitSlop={8} accessibilityLabel="Cancel reply">
+                            <Text style={{ color: palette.textMuted, fontSize: 14 }}>✕</Text>
+                        </Pressable>
+                    </View>
+                ) : null}
                 <View
                     style={[
                         styles.composer,
@@ -212,6 +259,7 @@ export function CommentThread({
                         </Text>
                     </Pressable>
                 </View>
+                </>
             )}
         </View>
     );
@@ -232,6 +280,20 @@ const styles = StyleSheet.create({
         fontSize: 13,
         textAlign: 'center',
         paddingVertical: Spacing.sm,
+    },
+    replyChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: Spacing.sm,
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: Spacing.xs,
+        marginTop: Spacing.xs,
+    },
+    replyChipText: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 12,
+        flex: 1,
     },
     composer: {
         flexDirection: 'row',

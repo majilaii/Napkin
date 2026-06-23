@@ -2,8 +2,12 @@
  * Post Interactions Edge Function
  * Handles reactions and comments on table_nights and entries.
  *
- * POST actions: react, comment, edit_comment, delete_comment
+ * POST actions: react, comment, edit_comment, delete_comment, like_comment
  * GET: ?target_type=X&target_id=Y&scope=table|public  →  { reactions, comments, counts }
+ *
+ * TICKET-085: comments support threading (parent_id, max depth 2 — replies attach
+ * to the thread root) and per-comment ❤️ likes (like_comment toggle; reads return
+ * parent_id, like_count, viewer_liked per comment).
  *
  * TICKET-021: scope is REQUIRED on GET and every mutation. Missing/invalid
  * scope returns 400. scope='public' validates entry eligibility via
@@ -313,10 +317,10 @@ serve(async (req) => {
 
             if (reactionsError) throw reactionsError;
 
-            // Fetch comments filtered by scope
+            // Fetch comments filtered by scope (TICKET-085: + parent_id, like_count)
             const { data: commentsRaw, error: commentsError } = await supabase
                 .from('post_comments')
-                .select('id, user_id, body, created_at, edited_at')
+                .select('id, user_id, body, created_at, edited_at, parent_id, like_count')
                 .eq('target_type', targetType)
                 .eq('target_id', targetId)
                 .eq('scope', scope)
@@ -350,8 +354,23 @@ serve(async (req) => {
                 ...r,
                 profiles: profileById.get(r.user_id) ?? null,
             }));
+            // TICKET-085: per-comment ❤️ — which of these comments the viewer liked.
+            const commentIds = (commentsRaw ?? []).map((c: any) => c.id as string);
+            const likedSet = new Set<string>();
+            if (commentIds.length > 0) {
+                const { data: myLikes, error: likesErr } = await supabase
+                    .from('post_comment_likes')
+                    .select('comment_id')
+                    .eq('user_id', user.id)
+                    .in('comment_id', commentIds);
+                if (likesErr) throw likesErr;
+                for (const l of (myLikes ?? []) as any[]) likedSet.add(l.comment_id as string);
+            }
             const commentsList = (commentsRaw ?? []).map((c: any) => ({
                 ...c,
+                parent_id: c.parent_id ?? null,
+                like_count: c.like_count ?? 0,
+                viewer_liked: likedSet.has(c.id),
                 profiles: profileById.get(c.user_id) ?? null,
             }));
 
@@ -476,7 +495,7 @@ serve(async (req) => {
 
             // ── COMMENT ────────────────────────────────────────────────────────
             if (action === 'comment') {
-                const { target_type, target_id, body: commentBody, client_nonce, scope } = body;
+                const { target_type, target_id, body: commentBody, client_nonce, scope, parent_id } = body;
 
                 if (!isValidTargetType(target_type)) return fail('target_type must be table_night, entry, or table_share');
                 if (!target_id) return fail('target_id is required');
@@ -509,6 +528,34 @@ serve(async (req) => {
                     }
                 }
 
+                // TICKET-085 threading: validate + normalize parent_id. A reply
+                // carries the same (target_type, target_id) as its thread root, and
+                // we collapse reply-to-reply up to the root (max depth 2).
+                let resolvedParentId: string | null = null;
+                if (parent_id) {
+                    const { data: parent } = await supabase
+                        .from('post_comments')
+                        .select('id, target_type, target_id, parent_id, scope, table_id')
+                        .eq('id', parent_id)
+                        .maybeSingle();
+                    if (!parent) return fail('parent comment not found', 404);
+                    if (parent.target_type !== target_type || parent.target_id !== target_id) {
+                        return fail('parent comment belongs to a different post', 400);
+                    }
+                    // SECURITY: the BEFORE-INSERT trigger inherits scope + table_id from
+                    // the parent. Without these checks a caller authorized for one
+                    // scope/table could supply a parent from another and land the reply
+                    // there — a cross-table write or a public-reply-gate bypass. Require
+                    // the parent to match the scope/table this request was validated for.
+                    if (parent.scope !== scope) {
+                        return fail('parent comment is in a different scope', 403);
+                    }
+                    if (scope === 'table' && parent.table_id !== insertTableId) {
+                        return fail('parent comment is in a different table', 403);
+                    }
+                    resolvedParentId = parent.parent_id ?? parent.id;
+                }
+
                 const insertPayload: any = {
                     target_type,
                     target_id,
@@ -517,11 +564,12 @@ serve(async (req) => {
                     scope,
                 };
                 if (insertTableId) insertPayload.table_id = insertTableId;
+                if (resolvedParentId) insertPayload.parent_id = resolvedParentId;
 
                 const { data: comment, error: commentError } = await supabase
                     .from('post_comments')
                     .insert(insertPayload)
-                    .select('id, user_id, body, created_at, edited_at')
+                    .select('id, user_id, body, created_at, edited_at, parent_id, like_count')
                     .single();
 
                 if (commentError) throw commentError;
@@ -534,6 +582,9 @@ serve(async (req) => {
 
                 return json({
                     ...comment,
+                    parent_id: (comment as any).parent_id ?? null,
+                    like_count: (comment as any).like_count ?? 0,
+                    viewer_liked: false,
                     profiles: authorProfile
                         ? {
                             display_name: authorProfile.display_name,
@@ -624,7 +675,68 @@ serve(async (req) => {
                 return json({ id: comment_id });
             }
 
-            return fail('Invalid action. Use: react, comment, edit_comment, delete_comment');
+            // ── LIKE_COMMENT (toggle ❤️ on a single comment — TICKET-085) ───────
+            if (action === 'like_comment') {
+                const { comment_id, scope } = body;
+                if (!comment_id) return fail('comment_id is required');
+                if (!isValidScope(scope)) return fail('scope must be table or public');
+
+                // Service role bypasses RLS — validate visibility manually using the
+                // comment's OWN scope/table_id (mirrors the comment read path).
+                const { data: comment, error: cErr } = await supabase
+                    .from('post_comments')
+                    .select('id, target_type, target_id, scope, table_id')
+                    .eq('id', comment_id)
+                    .maybeSingle();
+                if (cErr) throw cErr;
+                if (!comment) return fail('Comment not found', 404);
+
+                if (comment.scope === 'public') {
+                    if (comment.target_type !== 'entry') return fail('not_public', 403);
+                    const eligible = await checkPublicEligibility(comment.target_id);
+                    if (!eligible) return fail('not_public', 403);
+                } else {
+                    if (!comment.table_id || !(await validateTableMember(comment.table_id))) {
+                        return fail('Not a member of this table', 403);
+                    }
+                }
+
+                // Toggle the like.
+                const { data: existingLike } = await supabase
+                    .from('post_comment_likes')
+                    .select('comment_id')
+                    .eq('comment_id', comment_id)
+                    .eq('user_id', user.id)
+                    .maybeSingle();
+
+                if (existingLike) {
+                    await supabase
+                        .from('post_comment_likes')
+                        .delete()
+                        .eq('comment_id', comment_id)
+                        .eq('user_id', user.id);
+                } else {
+                    const { error: likeErr } = await supabase
+                        .from('post_comment_likes')
+                        .insert({ comment_id, user_id: user.id });
+                    if (likeErr) throw likeErr;
+                }
+
+                // Read back the trigger-maintained count.
+                const { data: fresh } = await supabase
+                    .from('post_comments')
+                    .select('like_count')
+                    .eq('id', comment_id)
+                    .maybeSingle();
+
+                return json({
+                    comment_id,
+                    liked: !existingLike,
+                    like_count: (fresh?.like_count as number) ?? 0,
+                });
+            }
+
+            return fail('Invalid action. Use: react, comment, edit_comment, delete_comment, like_comment');
         }
 
         return new Response(

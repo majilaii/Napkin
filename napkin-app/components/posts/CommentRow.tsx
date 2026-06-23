@@ -14,10 +14,11 @@ import {
     Platform,
     TextInput,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useEditComment, useDeleteComment } from '@/hooks/posts/usePostInteractions';
+import { useEditComment, useDeleteComment, useToggleCommentLike } from '@/hooks/posts/usePostInteractions';
 import type { Comment, TargetType, Scope } from '@/hooks/posts/usePostInteractions';
 
 interface CommentRowProps {
@@ -25,6 +26,10 @@ interface CommentRowProps {
     targetType: TargetType;
     targetId: string;
     scope?: Scope;
+    /** TICKET-085: one level of nesting + per-comment ❤️/Reply affordances. */
+    isReply?: boolean;
+    canReply?: boolean;
+    onReply?: () => void;
     onRetry?: () => void;
     onDiscard?: () => void;
 }
@@ -50,6 +55,9 @@ export function CommentRow({
     targetType,
     targetId,
     scope = 'table',
+    isReply = false,
+    canReply = true,
+    onReply,
     onRetry,
     onDiscard,
 }: CommentRowProps) {
@@ -58,6 +66,7 @@ export function CommentRow({
     const { user } = useAuth();
     const editComment = useEditComment();
     const deleteComment = useDeleteComment();
+    const toggleLike = useToggleCommentLike();
 
     const [isEditing, setIsEditing] = useState(false);
     const [editBody, setEditBody] = useState(comment.body);
@@ -66,6 +75,14 @@ export function CommentRow({
     const ageMs = Date.now() - new Date(comment.created_at).getTime();
     const canEdit = isAuthor && ageMs < 5 * 60 * 1000 && !comment.pending;
     const canDelete = isAuthor && !comment.pending;
+    const interactive = !comment.pending && !comment.failed;
+    const liked = !!comment.viewer_liked;
+    const likeCount = comment.like_count ?? 0;
+
+    const handleToggleLike = () => {
+        if (!interactive) return;
+        toggleLike.mutate({ targetType, targetId, commentId: comment.id, scope });
+    };
 
     const name = comment.profiles?.display_name ?? 'Someone';
     const initials = name
@@ -138,7 +155,7 @@ export function CommentRow({
     const muted = comment.pending || comment.failed;
 
     return (
-        <View style={[styles.row, { opacity: muted ? 0.7 : 1 }]}>
+        <View style={[styles.row, isReply && styles.replyRow, { opacity: muted ? 0.7 : 1 }]}>
             <View
                 style={[
                     styles.avatar,
@@ -239,6 +256,26 @@ export function CommentRow({
                         <Text style={[styles.body, { color: palette.text }]}>
                             {comment.body}
                         </Text>
+                        {interactive && (
+                            <View style={styles.actions}>
+                                <Pressable onPress={handleToggleLike} disabled={toggleLike.isPending} hitSlop={6} accessibilityLabel={liked ? 'Unlike' : 'Love'}>
+                                    <Text style={[styles.actionBtn, { color: liked ? palette.primary : palette.textMuted }]}>
+                                        {liked ? 'Loved' : 'Love'}
+                                    </Text>
+                                </Pressable>
+                                {canReply && onReply && (
+                                    <Pressable onPress={onReply} hitSlop={6} accessibilityLabel="Reply">
+                                        <Text style={[styles.actionBtn, { color: palette.textMuted }]}>Reply</Text>
+                                    </Pressable>
+                                )}
+                                {likeCount > 0 && (
+                                    <View style={styles.likeCount}>
+                                        <Ionicons name="heart" size={11} color={palette.primary} />
+                                        <Text style={[styles.actionBtn, { color: palette.textMuted }]}>{likeCount}</Text>
+                                    </View>
+                                )}
+                            </View>
+                        )}
                         {comment.failed && (
                             <View style={styles.failedActions}>
                                 {onRetry && (
@@ -370,4 +407,8 @@ const styles = StyleSheet.create({
         gap: Spacing.md,
         marginTop: Spacing.xs + 2,
     },
+    replyRow: { marginLeft: 28 },
+    actions: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 6 },
+    actionBtn: { fontFamily: 'Manrope_600SemiBold', fontSize: 11 },
+    likeCount: { flexDirection: 'row', alignItems: 'center', gap: 4 },
 });

@@ -10,7 +10,7 @@
  *
  * The author can retract the share here (useRemoveShare) — the orphan fix.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -79,6 +79,9 @@ export default function ShareDetailScreen() {
     const removeShare = useRemoveShare();
 
     const [body, setBody] = useState('');
+    // TICKET-085: reply target (parentCommentId = thread root; name for the chip).
+    const [replyingTo, setReplyingTo] = useState<{ id: string; name: string } | null>(null);
+    const inputRef = useRef<TextInput>(null);
 
     const myReactions = useMemo(
         () => new Set((interactions?.reactions ?? []).filter((r: any) => r.user_id === user?.id).map((r: any) => r.emoji)),
@@ -109,8 +112,10 @@ export default function ShareDetailScreen() {
             scope: 'table',
             tableId,
             clientNonce: safeRandomUUID(),
+            parentCommentId: replyingTo?.id,
         });
-    }, [body, addComment, shareId, tableId]);
+        setReplyingTo(null);
+    }, [body, addComment, shareId, tableId, replyingTo]);
 
     const handleRemove = useCallback(() => {
         if (!isOwn || !shareId) return;
@@ -137,6 +142,26 @@ export default function ShareDetailScreen() {
     }, [isOwn, shareId, removeShare, router]);
 
     const comments = interactions?.comments ?? [];
+    // TICKET-085: group into one level of nesting — roots + replies-by-root.
+    const rootComments = comments.filter((c: any) => !c.parent_id);
+    const rootIdSet = new Set(rootComments.map((c: any) => c.id));
+    const repliesByRoot = new Map<string, any[]>();
+    const orphanReplies: any[] = [];
+    for (const c of comments) {
+        if (!c.parent_id) continue;
+        if (rootIdSet.has(c.parent_id)) {
+            const arr = repliesByRoot.get(c.parent_id) ?? [];
+            arr.push(c);
+            repliesByRoot.set(c.parent_id, arr);
+        } else {
+            orphanReplies.push(c);
+        }
+    }
+    const threadRoots = [...rootComments, ...orphanReplies];
+    const startReply = (rootId: string, name: string) => {
+        setReplyingTo({ id: rootId, name });
+        setTimeout(() => inputRef.current?.focus(), 50);
+    };
     const cityLine = [share.restaurant?.city, share.restaurant?.cuisine].filter(Boolean).join(' · ');
 
     return (
@@ -223,8 +248,27 @@ export default function ShareDetailScreen() {
                             {'be the first to say something — “let’s go?”'}
                         </Text>
                     ) : (
-                        comments.map((c: any) => (
-                            <CommentRow key={c.id} comment={c} targetType="table_share" targetId={shareId!} scope="table" />
+                        threadRoots.map((root: any) => (
+                            <React.Fragment key={root.id}>
+                                <CommentRow
+                                    comment={root}
+                                    targetType="table_share"
+                                    targetId={shareId!}
+                                    scope="table"
+                                    onReply={() => startReply(root.id, root.profiles?.display_name ?? 'Someone')}
+                                />
+                                {(repliesByRoot.get(root.id) ?? []).map((reply: any) => (
+                                    <CommentRow
+                                        key={reply.id}
+                                        comment={reply}
+                                        targetType="table_share"
+                                        targetId={shareId!}
+                                        scope="table"
+                                        isReply
+                                        onReply={() => startReply(root.id, reply.profiles?.display_name ?? 'Someone')}
+                                    />
+                                ))}
+                            </React.Fragment>
                         ))
                     )}
                 </View>
@@ -251,6 +295,17 @@ export default function ShareDetailScreen() {
             </ScrollView>
 
             {/* Composer */}
+            {replyingTo ? (
+                <View style={[styles.replyChip, { backgroundColor: palette.surfaceJournalLow }]}>
+                    <Text style={[styles.replyChipText, { color: palette.textSecondary }]} numberOfLines={1}>
+                        {'Replying to '}
+                        <Text style={{ fontFamily: 'Manrope_700Bold', color: palette.text }}>{replyingTo.name}</Text>
+                    </Text>
+                    <Pressable onPress={() => setReplyingTo(null)} hitSlop={8} accessibilityLabel="Cancel reply">
+                        <Ionicons name="close" size={14} color={palette.textMuted} />
+                    </Pressable>
+                </View>
+            ) : null}
             <View
                 style={[
                     styles.composer,
@@ -258,6 +313,7 @@ export default function ShareDetailScreen() {
                 ]}
             >
                 <TextInput
+                    ref={inputRef}
                     style={[styles.input, { color: palette.text, backgroundColor: palette.surfaceJournalLow }]}
                     value={body}
                     onChangeText={setBody}
@@ -295,6 +351,8 @@ const styles = StyleSheet.create({
     commentsWrap: { borderTopWidth: 1, borderTopColor: 'rgba(28,28,25,0.06)', paddingTop: Spacing.sm },
     removeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: Spacing.lg, paddingVertical: Spacing.md },
     removeLabel: { fontFamily: 'Manrope_500Medium', fontSize: 13 },
+    replyChip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginHorizontal: 14, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.sm, marginBottom: 4 },
+    replyChipText: { fontFamily: 'Manrope_400Regular', fontSize: 12, flex: 1 },
     composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 14, paddingTop: Spacing.sm, borderTopWidth: 1 },
     input: { flex: 1, minHeight: 38, maxHeight: 120, borderRadius: 19, paddingHorizontal: 14, paddingTop: 9, paddingBottom: 9, fontFamily: 'Newsreader_400Regular_Italic', fontSize: 16 },
     send: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
