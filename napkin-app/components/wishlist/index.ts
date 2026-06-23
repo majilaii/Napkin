@@ -25,3 +25,10 @@ export { WishlistMapView, type WishlistMapItem } from './WishlistMapView';
 export { CuisineFilterSheet, type CuisineCount } from './CuisineFilterSheet';
 // b48: place picker for amending an import (fix / add a spot)
 export { PlacePickerModal, type PlacePickerResult } from './PlacePickerModal';
+// Wishlist Redesign (Pinned ↔ Lists segmented tab): numbered ledger rows, full
+// list cards, first-run empty state, generic filter action sheet, import inbox.
+export { WishlistSpotRow } from './WishlistSpotRow';
+export { WishlistListCardFull } from './WishlistListCardFull';
+export { WishlistEmptyState } from './WishlistEmptyState';
+export { FilterActionSheet, type FilterOption } from './FilterActionSheet';
+export { ImportInboxCard } from './ImportInboxCard';
