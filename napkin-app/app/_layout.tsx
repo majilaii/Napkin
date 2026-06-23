@@ -217,6 +217,10 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
+            name="supper/[id]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
             name="lists"
             options={{ headerShown: false }}
           />

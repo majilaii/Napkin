@@ -153,6 +153,12 @@ export function useAddSupperTake() {
             // Narrow refetch: the server take carries joined display data, the real
             // entry_id, and server-sorted photos the optimistic stub can't synthesise.
             qc.invalidateQueries({ queryKey: queryKeys.suppers.detail(input.supper_id) });
+            // Supper v2: the take also flips the feed SupperCard (viewer_filled /
+            // filled_count / seats) and dismisses the in-app nudge — both derived from
+            // the table-activity cache. viewer_filled etc. are server-shape the optimistic
+            // stub can't synthesise, so refetch the feed. activityAll() (the ['tableActivity']
+            // prefix) catches every table + filter variant; we don't carry table_id here.
+            qc.invalidateQueries({ queryKey: queryKeys.tables.activityAll() });
         },
     });
 }
