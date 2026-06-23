@@ -26,9 +26,13 @@ export const FRIEND_TEST = {
      *  Doctrine: search = restaurant-only; invite flows have their own picker.
      *  Flip false to restore people search. */
     hidePeopleSearch: true,
-    /** TICKET-082: Suppers — shared-table meal posts. Gates the logger "make this
-     *  a Supper" toggle + the SupperTable render on entry-detail. Default FALSE
-     *  (testable for the friend-test); flip TRUE to kill-switch the feature.
-     *  Gates JSX only — hooks/routes stay compiled & deep-linkable. */
+    /** TICKET-082: Suppers — "the empty table" (v2). Kill-switch for every supper
+     *  surface: the feed SupperCard + in-app nudge (tables.tsx, gated in BOTH the
+     *  timelineItems filter and the leaf render so no orphan date headers), the
+     *  restaurant-page "set a table here" entry + SetTableSheet, the supper/[id]
+     *  gathered view, and the SupperTable render on entry-detail. (The old logger
+     *  "make this a Supper" toggle was retired in v2 — suppers are now set as empty
+     *  tables, not opted into on a review.) Default FALSE (live for the friend-test);
+     *  flip TRUE to curtain. Gates JSX only — hooks/routes stay compiled & deep-linkable. */
     hideSuppers: false,
 } as const;

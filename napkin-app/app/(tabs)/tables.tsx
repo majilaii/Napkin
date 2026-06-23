@@ -42,6 +42,7 @@ import {
     type SharedSaveActivityItem,
     type ShareDigestActivityItem,
     type RestaurantFloatActivityItem,
+    type SupperCardActivity,
 } from '@/hooks/tables/useTableActivity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
@@ -70,6 +71,8 @@ import { ShareDigestCard } from '@/components/feed/ShareDigestCard';
 import { RestaurantFloatCard } from '@/components/feed/RestaurantFloatCard';
 // TICKET-069: canvas-faithful table entry card
 import { TableEntryCard } from '@/components/journal';
+// TICKET-082 v2: the empty-table supper card + in-app nudge
+import { SupperCard, SupperNudgeBanner } from '@/components/suppers';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -176,6 +179,19 @@ export default function TablesScreen() {
         [activityData],
     );
 
+    // Supper v2: the in-app nudge. Surface ONE gentle banner when the viewer has a
+    // pending seat in a supper (a supper card with viewer_filled === false). Dismissible
+    // per-supper for the session. Derived from the feed — no extra backend.
+    const [dismissedNudges, setDismissedNudges] = useState<Set<string>>(new Set());
+    const pendingSupper = useMemo(() => {
+        if (FRIEND_TEST.hideSuppers) return null;
+        return (
+            (items.find(
+                (i) => i.type === 'supper' && !i.viewer_filled && !dismissedNudges.has(i.id),
+            ) as SupperCardActivity | undefined) ?? null
+        );
+    }, [items, dismissedNudges]);
+
     // Table detail — includes caller_welcomed_at for the welcome banner (TICKET-029)
     const { data: tableDetail } = useTableDetail(activeTable?.id);
 
@@ -235,7 +251,11 @@ export default function TablesScreen() {
                     !(
                         i.type === 'table_night' &&
                         (i as TableNightActivity).status === 'rating'
-                    ),
+                    ) &&
+                    // Supper v2 kill-switch: drop supper cards from the DATA (not just the
+                    // leaf render) so a date whose only item is a supper never forms an
+                    // empty/orphan DateSectionHeader when the curtain is on.
+                    !(i.type === 'supper' && FRIEND_TEST.hideSuppers),
             ),
         [items],
     );
@@ -665,6 +685,48 @@ export default function TablesScreen() {
                                 )
                             )}
 
+                            {/* Supper v2 — in-app nudge: your turn at the table */}
+                            {pendingSupper ? (() => {
+                                const filledNames = pendingSupper.seats
+                                    .filter((s) => s.filled)
+                                    .map((s) => s.display_name)
+                                    .filter(Boolean) as string[];
+                                const othersLine =
+                                    filledNames.length === 0
+                                        ? null
+                                        : filledNames.length === 1
+                                          ? `${filledNames[0]} is in.`
+                                          : filledNames.length === 2
+                                            ? `${filledNames[0]} & ${filledNames[1]} are in.`
+                                            : `${filledNames[0]}, ${filledNames[1]} & ${filledNames.length - 2} more are in.`;
+                                return (
+                                    <View style={styles.feedList}>
+                                        <SupperNudgeBanner
+                                            restaurantName={pendingSupper.restaurant?.name ?? 'a spot'}
+                                            filledCount={pendingSupper.filled_count}
+                                            seatCount={pendingSupper.seat_count}
+                                            othersLine={othersLine}
+                                            palette={palette}
+                                            onDismiss={() =>
+                                                setDismissedNudges((prev) => new Set(prev).add(pendingSupper.id))
+                                            }
+                                            onPress={() =>
+                                                router.push({
+                                                    pathname: '/log-meal',
+                                                    params: {
+                                                        supperTakeId: pendingSupper.id,
+                                                        restaurant: JSON.stringify({
+                                                            id: pendingSupper.restaurant?.id,
+                                                            name: pendingSupper.restaurant?.name ?? 'Restaurant',
+                                                        }),
+                                                    },
+                                                })
+                                            }
+                                        />
+                                    </View>
+                                );
+                            })() : null}
+
                             {/* Date-grouped timeline */}
                             {feedSections.map((section) => (
                                       <View
@@ -836,6 +898,36 @@ export default function TablesScreen() {
                                                               restaurant={f.restaurant}
                                                               distinctCount={f.distinct_count ?? 0}
                                                               members={f.members ?? []}
+                                                          />
+                                                      );
+                                                  }
+                                                  // TICKET-082 v2: the empty-table supper card
+                                                  if (item.type === 'supper') {
+                                                      if (FRIEND_TEST.hideSuppers) return null;
+                                                      const sup = item as SupperCardActivity;
+                                                      return (
+                                                          <SupperCard
+                                                              key={`supper-${sup.id}`}
+                                                              supper={sup}
+                                                              viewerId={user?.id}
+                                                              onOpen={() =>
+                                                                  router.push({
+                                                                      pathname: '/supper/[id]',
+                                                                      params: { id: sup.id },
+                                                                  })
+                                                              }
+                                                              onAddTake={() =>
+                                                                  router.push({
+                                                                      pathname: '/log-meal',
+                                                                      params: {
+                                                                          supperTakeId: sup.id,
+                                                                          restaurant: JSON.stringify({
+                                                                              id: sup.restaurant?.id,
+                                                                              name: sup.restaurant?.name ?? 'Restaurant',
+                                                                          }),
+                                                                      },
+                                                                  })
+                                                              }
                                                           />
                                                       );
                                                   }

@@ -146,6 +146,10 @@ serve(async (req) => {
         // TICKET-060: new share/float kinds
         const shareRpcRows = keptRpc.filter((r) => r.kind === 'shared_save' || r.kind === 'share_digest');
         const floatRpcRows = keptRpc.filter((r) => r.kind === 'restaurant_float');
+        // Supper v2: the empty-table card. fn_table_activity_page already gated these
+        // to suppers the VIEWER is a member of (is_supper_member), so every row here is
+        // viewer-visible — but the TAKE read below is still author-membership scoped.
+        const supperRpcRows = keptRpc.filter((r) => r.kind === 'supper');
 
         const entryIds = entryRpcRows.map((r) => r.id);
         const nightIds = nightRpcRows.map((r) => r.id);
@@ -705,6 +709,141 @@ serve(async (req) => {
             }
         }
 
+        // ── Supper v2: hydrate the empty-table card ─────────────────────────────
+        // Restaurant-anchored card. Roster = supper_members (the seats); a seat is
+        // "filled" when its user has a take (an entries row with this supper_id).
+        // Everything is viewer-relative: viewer_filled drives the card's CTA.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let supperItems: any[] = [];
+        if (supperRpcRows.length > 0) {
+            const supperIds = supperRpcRows.map((r) => r.id);
+            // Anchor fields ride in the RPC payload (restaurant_id, host_user_id, table_id…).
+            const anchorById = new Map<string, any>(supperRpcRows.map((r) => [r.id, r.payload as any]));
+
+            // Roster (the seats) — supper_members is the trust anchor.
+            const { data: rosterRows } = await supabase
+                .from('supper_members')
+                .select('supper_id, user_id, created_at')
+                .in('supper_id', supperIds);
+            const rosterBySupper = new Map<string, any[]>();
+            const memberIdsBySupper = new Map<string, Set<string>>();
+            const allRosterUserIds = new Set<string>();
+            for (const m of (rosterRows ?? []) as any[]) {
+                const arr = rosterBySupper.get(m.supper_id) ?? [];
+                arr.push(m);
+                rosterBySupper.set(m.supper_id, arr);
+                const set = memberIdsBySupper.get(m.supper_id) ?? new Set<string>();
+                set.add(m.user_id);
+                memberIdsBySupper.set(m.supper_id, set);
+                allRosterUserIds.add(m.user_id);
+            }
+
+            // Takes = entries in these suppers AUTHORED BY A MEMBER. SECURITY (schema mig
+            // 20260615000200 lines 17-19): entries.supper_id is client-writable and this
+            // service-role read bypasses RLS, so authors MUST be scoped to the roster —
+            // else a stranger who set supper_id on their own entry injects a take/photos.
+            const { data: takeRows } = allRosterUserIds.size > 0
+                ? await supabase
+                    .from('entries')
+                    .select('id, user_id, supper_id, rating, content, photo_url, created_at')
+                    .in('supper_id', supperIds)
+                    .in('user_id', [...allRosterUserIds])
+                : { data: [] as any[] };
+            const takes = ((takeRows ?? []) as any[]).filter(
+                (t) => memberIdsBySupper.get(t.supper_id)?.has(t.user_id),
+            );
+            const takesBySupper = new Map<string, any[]>();
+            const takeByUserSupper = new Map<string, any>();
+            for (const t of takes) {
+                const arr = takesBySupper.get(t.supper_id) ?? [];
+                arr.push(t);
+                takesBySupper.set(t.supper_id, arr);
+                takeByUserSupper.set(`${t.supper_id}:${t.user_id}`, t);
+            }
+
+            // Pooled photos (hero per take first, then galleries) — the "on the table" strip.
+            const takeEntryIds = takes.map((t) => t.id);
+            const { data: takePhotoRows } = takeEntryIds.length > 0
+                ? await supabase
+                    .from('entry_photos')
+                    .select('entry_id, photo_url, sort_order')
+                    .in('entry_id', takeEntryIds)
+                    .order('sort_order', { ascending: true })
+                : { data: [] as any[] };
+            const entryToSupper = new Map(takes.map((t) => [t.id, t.supper_id]));
+            const photosBySupper = new Map<string, string[]>();
+            for (const t of takes) {
+                if (!t.photo_url) continue;
+                const arr = photosBySupper.get(t.supper_id) ?? [];
+                if (!arr.includes(t.photo_url)) arr.push(t.photo_url);
+                photosBySupper.set(t.supper_id, arr);
+            }
+            for (const ph of (takePhotoRows ?? []) as any[]) {
+                const supId = entryToSupper.get(ph.entry_id);
+                if (!supId || !ph.photo_url) continue;
+                const arr = photosBySupper.get(supId) ?? [];
+                if (!arr.includes(ph.photo_url)) arr.push(ph.photo_url);
+                photosBySupper.set(supId, arr);
+            }
+
+            // Roster profiles.
+            const { data: supperProfiles } = allRosterUserIds.size > 0
+                ? await supabase.from('profiles').select('user_id, display_name, avatar_url').in('user_id', [...allRosterUserIds])
+                : { data: [] as any[] };
+            const supperProfMap = new Map((supperProfiles ?? []).map((p: any) => [p.user_id, p]));
+
+            // Restaurants.
+            const restIds = [...new Set(supperIds.map((s) => anchorById.get(s)?.restaurant_id).filter(Boolean))] as string[];
+            const { data: supperRestaurants } = restIds.length > 0
+                ? await supabase.from('restaurants').select('id, name, city, photo_url').in('id', restIds)
+                : { data: [] as any[] };
+            const supperRestMap = new Map((supperRestaurants ?? []).map((r: any) => [r.id, r]));
+
+            for (const r of supperRpcRows) {
+                const sid = r.id;
+                const anchor = anchorById.get(sid);
+                const rosterArr = rosterBySupper.get(sid) ?? [];
+                // Seat objects with filled status; host first, then joined order.
+                const seats = rosterArr
+                    .map((m) => {
+                        const take = takeByUserSupper.get(`${sid}:${m.user_id}`) ?? null;
+                        const prof = supperProfMap.get(m.user_id);
+                        return {
+                            user_id: m.user_id,
+                            display_name: prof?.display_name ?? null,
+                            avatar_url: prof?.avatar_url ?? null,
+                            is_host: m.user_id === anchor?.host_user_id,
+                            filled: !!take,
+                            rating: take?.rating ?? null,
+                            joined_at: m.created_at,
+                        };
+                    })
+                    .sort((a, b) => (a.is_host === b.is_host ? 0 : a.is_host ? -1 : 1));
+                const tks = takesBySupper.get(sid) ?? [];
+                const ratings = tks.map((t) => t.rating).filter((x) => x !== null && x !== undefined) as number[];
+                const groupAvg = ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : null;
+                const viewerTake = takeByUserSupper.get(`${sid}:${user.id}`) ?? null;
+
+                supperItems.push({
+                    id: sid,
+                    type: 'supper' as const,
+                    sort_date: r.sort_date,
+                    table_id: tableId,
+                    restaurant: anchor?.restaurant_id ? (supperRestMap.get(anchor.restaurant_id) ?? null) : null,
+                    host_user_id: anchor?.host_user_id ?? null,
+                    host_name: supperProfMap.get(anchor?.host_user_id)?.display_name ?? null,
+                    seat_count: rosterArr.length,
+                    filled_count: tks.length,
+                    group_avg: groupAvg,
+                    viewer_filled: !!viewerTake,
+                    viewer_take: viewerTake ? { rating: viewerTake.rating ?? null, content: viewerTake.content ?? null } : null,
+                    seats,
+                    photos: (photosBySupper.get(sid) ?? []).slice(0, 8),
+                    created_at: anchor?.created_at ?? r.sort_date,
+                });
+            }
+        }
+
         // ── Reactions ────────────────────────────────────────────────────────
         const myReactionsByTarget = new Map<string, string[]>();
         const targetKey = (targetType: string, targetId: string) => `${targetType}:${targetId}`;
@@ -768,6 +907,8 @@ serve(async (req) => {
         // TICKET-060: maps for new kinds
         const sharedSaveById = new Map(sharedSaveItems.map((s: any) => [s.id, s]));
         const floatById = new Map(floatItems.map((f: any) => [f.id, f]));
+        // Supper v2: map for the empty-table card.
+        const supperById = new Map(supperItems.map((s: any) => [s.id, s]));
 
         const orderedItems = keptRpc
             .map((rpcRow) => {
@@ -791,6 +932,10 @@ serve(async (req) => {
                 } else if (rpcRow.kind === 'restaurant_float') {
                     item = floatById.get(rpcRow.id);
                     // floats don't have direct reactions
+                } else if (rpcRow.kind === 'supper') {
+                    item = supperById.get(rpcRow.id);
+                    // Supper-level reactions are not wired yet — engagement lives on each
+                    // take (tap a seat → entry-detail). Per-take reactions, not card-level.
                 }
                 if (!item) return null;
                 return {

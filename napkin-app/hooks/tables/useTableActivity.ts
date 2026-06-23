@@ -213,6 +213,44 @@ export interface RestaurantFloatActivityItem {
     first_crossed_at?: string;
 }
 
+/** Supper v2 "The Empty Table" — one seat in the roster. `filled` = this member has
+ *  logged their take; pending seats render ghosted. */
+export interface SupperSeat {
+    user_id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+    is_host: boolean;
+    filled: boolean;
+    rating: number | null;
+    joined_at: string;
+}
+
+/** Supper v2 feed card — restaurant-anchored, viewer-relative. The 4 visual states
+ *  (empty / filling-your-seat-empty / filling-your-seat-filled / gathered) are derived
+ *  client-side from filled_count, seat_count and viewer_filled. */
+export interface SupperCardActivity {
+    type: 'supper';
+    id: string;
+    sort_date: string;
+    table_id: string;
+    restaurant: { id: string; name: string; city: string | null; photo_url: string | null } | null;
+    host_user_id: string | null;
+    host_name: string | null;
+    /** Total seats (roster size). */
+    seat_count: number;
+    /** Seats that have a take (filled). */
+    filled_count: number;
+    /** Average of takes' overall ratings — a sibling signal, never cross-Table. */
+    group_avg: number | null;
+    /** The viewer has logged their own take. Drives the CTA (add-your-take vs see-the-table). */
+    viewer_filled: boolean;
+    viewer_take: { rating: number | null; content: string | null } | null;
+    seats: SupperSeat[];
+    /** Pooled photos from every take (hero-first), capped server-side. */
+    photos: string[];
+    created_at: string;
+}
+
 export type ActivityItem =
     | SoloShareActivity
     | TableNightActivity
@@ -220,7 +258,8 @@ export type ActivityItem =
     | TopFourEditedActivity
     | SharedSaveActivityItem
     | ShareDigestActivityItem
-    | RestaurantFloatActivityItem;
+    | RestaurantFloatActivityItem
+    | SupperCardActivity;
 
 export interface TableActivityFilters {
     filterType?: string;   // 'round' | 'solo_share'

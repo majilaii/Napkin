@@ -288,7 +288,7 @@ serve(async (req) => {
                 // Supper anchor.
                 const { data: supperRow, error: supperFetchErr } = await supabase
                     .from('suppers')
-                    .select('id, restaurant_id, host_user_id, created_at')
+                    .select('id, restaurant_id, host_user_id, table_id, created_at')
                     .eq('id', supperId)
                     .single();
                 if (supperFetchErr || !supperRow) {
@@ -377,10 +377,19 @@ serve(async (req) => {
                     };
                 });
 
+                // Restaurant — the supper is restaurant-anchored, so the gathered view
+                // needs name/city/photo (the supper anchor only carries restaurant_id).
+                const { data: supperRestaurant } = await supabase
+                    .from('restaurants')
+                    .select('id, name, city, photo_url')
+                    .eq('id', supperRow.restaurant_id)
+                    .maybeSingle();
+
                 return new Response(
                     JSON.stringify({
                         data: {
                             supper: supperRow,
+                            restaurant: supperRestaurant ?? null,
                             roster,
                             takes,
                         },
@@ -538,6 +547,116 @@ serve(async (req) => {
                     JSON.stringify({ data: { entry_id, companion_ids: sanitized } }),
                     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 );
+            }
+
+            // ── set-table action (Supper v2 — "the empty table") ───────────
+            // Create a supper WITHOUT any review: the anchor (restaurant + Table +
+            // host) + the roster of seats. Everyone, INCLUDING the host, starts as an
+            // empty seat; takes attach later via `add-take`. This is the v2 create
+            // path — it replaces the old "log a meal + make-this-a-Supper toggle"
+            // (which opened a supper on the host's review). No entry is created here.
+            // Receives: { action: 'set-table', table_id, restaurant_id, member_ids[] }
+            if (body.action === 'set-table') {
+                const { table_id: stTableId, restaurant_id: stRestaurantId } = body;
+                const rawMemberIds: string[] = Array.isArray(body.member_ids) ? body.member_ids : [];
+
+                const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                if (!stTableId || typeof stTableId !== 'string' || !stRestaurantId || typeof stRestaurantId !== 'string') {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'table_id and restaurant_id are required' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+                // Validate UUID shape up front (mirrors supper-detail/add-take) so a
+                // malformed id returns a clean 400 instead of masquerading as a 403.
+                if (!UUID_RE.test(stTableId) || !UUID_RE.test(stRestaurantId)) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'table_id or restaurant_id is malformed' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Caller must be a member of the Table (member_id doctrine, NOT user_id).
+                // Destructure `error` and 500 on a real DB failure — a swallowed error here
+                // would masquerade as a 403 "not a member" (see table-activity gate doctrine).
+                const { data: stMembership, error: stMembershipErr } = await supabase
+                    .from('table_members')
+                    .select('member_id')
+                    .eq('table_id', stTableId)
+                    .eq('member_id', user.id)
+                    .maybeSingle();
+                if (stMembershipErr) throw stMembershipErr;
+                if (!stMembership) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'FORBIDDEN', message: 'Not a member of this table' } }),
+                        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // The supper is restaurant-anchored — the restaurant must already exist
+                // (the client persists a ghost via upsert_restaurant before setting a table).
+                const { data: stRestaurant, error: stRestaurantErr } = await supabase
+                    .from('restaurants')
+                    .select('id')
+                    .eq('id', stRestaurantId)
+                    .maybeSingle();
+                if (stRestaurantErr) throw stRestaurantErr;
+                if (!stRestaurant) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'restaurant not found' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Crew = caller + picked member_ids, all of whom MUST be members of this
+                // Table (a supper's roster is drawn from its Table). Exclude self, then
+                // validate against table_members and drop non-members. CRITICAL: throw on a
+                // DB error here — swallowing it would fail OPEN (empty validSet → all crew
+                // dropped → a host-only supper created on a transient blip, reporting 200).
+                let crew = [...new Set(rawMemberIds.filter((id: string) => id && id !== user.id))];
+                if (crew.length > 0) {
+                    const { data: crewMembers, error: crewErr } = await supabase
+                        .from('table_members')
+                        .select('member_id')
+                        .eq('table_id', stTableId)
+                        .in('member_id', crew);
+                    if (crewErr) throw crewErr;
+                    const validSet = new Set((crewMembers ?? []).map((m: { member_id: string }) => m.member_id));
+                    crew = crew.filter((id) => validSet.has(id));
+                }
+                const roster = [user.id, ...crew];
+
+                // Insert the anchor (table-scoped), then seed supper_members. On any
+                // failure, roll back so no partial supper survives (delete cascades members).
+                let stSupperId: string | null = null;
+                try {
+                    const { data: stSupperRow, error: stSupperErr } = await supabase
+                        .from('suppers')
+                        .insert({ restaurant_id: stRestaurantId, host_user_id: user.id, table_id: stTableId })
+                        .select('id, restaurant_id, host_user_id, table_id, created_at')
+                        .single();
+                    if (stSupperErr) throw stSupperErr;
+                    stSupperId = stSupperRow.id;
+
+                    const { error: stMembersErr } = await supabase
+                        .from('supper_members')
+                        .insert(roster.map((uid) => ({ supper_id: stSupperId, user_id: uid })));
+                    if (stMembersErr) throw stMembersErr;
+
+                    return new Response(
+                        JSON.stringify({ data: { ...stSupperRow, member_count: roster.length } }),
+                        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                } catch (setTableErr) {
+                    console.error('[entry] set-table failed, rolling back:', setTableErr);
+                    if (stSupperId) {
+                        await supabase.from('suppers').delete().eq('id', stSupperId);
+                    }
+                    return new Response(
+                        JSON.stringify({ error: { code: 'set_table_failed', message: 'Could not set the table' } }),
+                        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
             }
 
             // ── merge_with action ──────────────────────────────────────────

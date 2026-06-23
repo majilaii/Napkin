@@ -8,3 +8,6 @@ export type {
 
 export { useAddSupperTake } from './useAddSupperTake';
 export type { AddSupperTakeInput } from './useAddSupperTake';
+
+export { useSetTable } from './useSetTable';
+export type { SetTableInput, SetTableResult } from './useSetTable';

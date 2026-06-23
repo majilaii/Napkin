@@ -23,6 +23,8 @@ export interface SupperAnchor {
     id: string;
     restaurant_id: string;
     host_user_id: string;
+    /** Supper v2: the Table this supper belongs to. Null for legacy v1 suppers. */
+    table_id: string | null;
     created_at: string;
 }
 
@@ -54,8 +56,17 @@ export interface SupperTake {
     avatar_url: string | null;
 }
 
+export interface SupperRestaurant {
+    id: string;
+    name: string;
+    city: string | null;
+    photo_url: string | null;
+}
+
 export interface SupperDetail {
     supper: SupperAnchor;
+    /** Restaurant the supper is anchored to (null only if the row was deleted). */
+    restaurant: SupperRestaurant | null;
     roster: SupperRosterMember[];
     takes: SupperTake[];
 }

@@ -77,6 +77,7 @@ import {
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { AddToListSheet } from '@/components/lists';
+import { SetTableSheet } from '@/components/suppers';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
 type Palette = typeof Colors.light;
@@ -371,6 +372,9 @@ export default function RestaurantScreen() {
     // Pin reads "saved" when the restaurant is wishlisted OR in any curated list.
     const isSaved = bookmarked || containingListIds.length > 0;
     const [saveSheetOpen, setSaveSheetOpen] = useState(false);
+    // Supper v2: "set a table" here (restaurant-anchored). Needs a persisted restaurant
+    // + at least one Table.
+    const [setTableSheetOpen, setSetTableSheetOpen] = useState(false);
 
     // Payload used for BOTH the wishlist toggle and list adds (ghost-safe: a
     // not-yet-persisted restaurant carries its Places payload so the server upserts).
@@ -630,7 +634,7 @@ export default function RestaurantScreen() {
                         </View>
                     ) : null}
 
-                    {/* CTA row: LOG THIS MEAL (full width — pin lives top-right now) */}
+                    {/* CTA row: LOG THIS MEAL + (supper v2) set a table */}
                     {restaurant ? (
                         <View style={styles.ctaRow}>
                             <Pressable
@@ -645,6 +649,24 @@ export default function RestaurantScreen() {
                                 <Text style={styles.logBtnLabel}>LOG THIS MEAL</Text>
                             </Pressable>
                         </View>
+                    ) : null}
+
+                    {/* Supper v2: set a table here. Restaurant-anchored — needs the
+                        restaurant persisted (so the supper has a real restaurant_id) and at
+                        least one Table to draw the crew from. Quiet secondary under the log CTA. */}
+                    {restaurant && !FRIEND_TEST.hideSuppers && hasAnyTable && persistedRestaurantId ? (
+                        <Pressable
+                            onPress={() => setSetTableSheetOpen(true)}
+                            style={({ pressed }) => [
+                                styles.setTableBtn,
+                                { borderColor: palette.terracottaBorder, opacity: pressed ? 0.7 : 1 },
+                            ]}
+                            accessibilityLabel="Set a table here"
+                            accessibilityRole="button"
+                        >
+                            <Ionicons name="people-outline" size={17} color={palette.primary} />
+                            <Text style={[styles.setTableLabel, { color: palette.primary }]}>set a table here</Text>
+                        </Pressable>
                     ) : null}
 
                     {/* FROM YOUR TABLE — renders in cold state too (murmur fallback) so
@@ -817,6 +839,21 @@ export default function RestaurantScreen() {
                     onToggleWishlist={handleBookmarkPress}
                 />
             ) : null}
+
+            {/* Supper v2: set a table here (restaurant-anchored creation) */}
+            {restaurant && persistedRestaurantId && !FRIEND_TEST.hideSuppers ? (
+                <SetTableSheet
+                    visible={setTableSheetOpen}
+                    onClose={() => setSetTableSheetOpen(false)}
+                    restaurant={{
+                        id: persistedRestaurantId,
+                        name: restaurant.name,
+                        city: restaurant.city ?? null,
+                        photo_url: restaurant.photo_url ?? null,
+                    }}
+                    tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
+                />
+            ) : null}
         </>
     );
 }
@@ -937,6 +974,21 @@ const styles = StyleSheet.create({
         letterSpacing: 1.6,
         textTransform: 'uppercase',
         color: '#fffdf8',
+    },
+    setTableBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginHorizontal: 24,
+        marginTop: 10,
+        paddingVertical: 12,
+        borderRadius: Radius.full,
+        borderWidth: 1,
+    },
+    setTableLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
     },
     // FROM YOUR TABLE + YOUR HISTORY
     section: {
