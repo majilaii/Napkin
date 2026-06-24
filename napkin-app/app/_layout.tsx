@@ -8,6 +8,7 @@ import { useFonts } from 'expo-font';
 import {
   Newsreader_400Regular,
   Newsreader_400Regular_Italic,
+  Newsreader_500Medium_Italic,
   Newsreader_600SemiBold,
   Newsreader_700Bold,
   Newsreader_800ExtraBold,
@@ -314,6 +315,7 @@ export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     Newsreader_400Regular,
     Newsreader_400Regular_Italic,
+    Newsreader_500Medium_Italic,
     Newsreader_600SemiBold,
     Newsreader_700Bold,
     Newsreader_800ExtraBold,

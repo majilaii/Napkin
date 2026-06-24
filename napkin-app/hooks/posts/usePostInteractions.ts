@@ -46,6 +46,11 @@ export interface Comment {
     created_at: string;
     edited_at: string | null;
     profiles: CommentProfile | null;
+    /** TICKET-085: thread root id (one level of nesting). null/undefined = top-level. */
+    parent_id?: string | null;
+    /** TICKET-085: per-comment ❤️ count + whether the viewer has liked it. */
+    like_count?: number;
+    viewer_liked?: boolean;
     /** Present on optimistic rows only — removed once the server row lands */
     pending?: boolean;
     /** Set on optimistic rows whose send failed — UI shows retry/discard */
@@ -411,13 +416,16 @@ interface AddCommentInput {
     scope: Scope;
     /** TICKET-043: optional Table context for multi-Table entries. */
     tableId?: string;
+    /** TICKET-085: thread root id when this comment is a reply. The server
+     * normalizes reply-to-reply up to the root (max depth 2). */
+    parentCommentId?: string;
 }
 
 export function useAddComment() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ targetType, targetId, body, clientNonce, scope, tableId }: AddCommentInput) => {
+        mutationFn: async ({ targetType, targetId, body, clientNonce, scope, tableId, parentCommentId }: AddCommentInput) => {
             return callEdgeFn<Comment & { client_nonce?: string }>('post-interactions', {
                 action: 'comment',
                 body: {
@@ -427,11 +435,12 @@ export function useAddComment() {
                     scope,
                     ...(clientNonce ? { client_nonce: clientNonce } : {}),
                     ...(tableId ? { table_id: tableId } : {}),
+                    ...(parentCommentId ? { parent_id: parentCommentId } : {}),
                 },
             });
         },
 
-        onMutate: async ({ targetType, targetId, body, clientNonce, scope }) => {
+        onMutate: async ({ targetType, targetId, body, clientNonce, scope, parentCommentId }) => {
           const key = queryKeys.postInteractions.all(targetType, targetId, scope);
           // Optimistic-update failures must NEVER abort the real post (if onMutate
           // throws, TanStack aborts the mutation and the request never sends). Wrap
@@ -463,6 +472,9 @@ export function useAddComment() {
                     body,
                     created_at: new Date().toISOString(),
                     edited_at: null,
+                    parent_id: parentCommentId ?? null,
+                    like_count: 0,
+                    viewer_liked: false,
                     profiles: null,
                     pending: true,
                     client_nonce: clientNonce,
@@ -567,6 +579,82 @@ export function useAddComment() {
     });
 }
 
+// ── Mutation: toggle ❤️ on a single comment (TICKET-085) ──────────────────────
+
+interface ToggleCommentLikeInput {
+    targetType: TargetType;
+    targetId: string;
+    commentId: string;
+    scope: Scope;
+}
+
+export function useToggleCommentLike() {
+    const queryClient = useQueryClient();
+    const toast = useToast();
+
+    return useMutation({
+        mutationFn: async ({ commentId, scope }: ToggleCommentLikeInput) => {
+            return callEdgeFn<{ comment_id: string; liked: boolean; like_count: number }>(
+                'post-interactions',
+                { action: 'like_comment', body: { comment_id: commentId, scope } },
+            );
+        },
+
+        onMutate: async ({ targetType, targetId, commentId, scope }) => {
+            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
+            // Optimistic-update failures must never abort the real toggle.
+            try {
+                await queryClient.cancelQueries({ queryKey: key });
+                const previous = queryClient.getQueryData<PostInteractionsData>(key);
+                if (previous) {
+                    queryClient.setQueryData<PostInteractionsData>(key, {
+                        ...previous,
+                        comments: previous.comments.map((c) => {
+                            if (c.id !== commentId) return c;
+                            const liked = !c.viewer_liked;
+                            return {
+                                ...c,
+                                viewer_liked: liked,
+                                like_count: Math.max(0, (c.like_count ?? 0) + (liked ? 1 : -1)),
+                            };
+                        }),
+                    });
+                }
+                return { previous };
+            } catch (e: any) {
+                console.warn('[post-interactions] comment-like optimistic update skipped:', e?.message);
+                return { previous: queryClient.getQueryData<PostInteractionsData>(key) };
+            }
+        },
+
+        onError: (_err, { targetType, targetId, scope }, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(
+                    queryKeys.postInteractions.all(targetType, targetId, scope),
+                    context.previous,
+                );
+            }
+            toast.show("Couldn't like that. Try again.");
+        },
+
+        onSuccess: (result, { targetType, targetId, scope }) => {
+            // Reconcile from the server's authoritative count (no blanket invalidate).
+            const key = queryKeys.postInteractions.all(targetType, targetId, scope);
+            const current = queryClient.getQueryData<PostInteractionsData>(key);
+            if (current) {
+                queryClient.setQueryData<PostInteractionsData>(key, {
+                    ...current,
+                    comments: current.comments.map((c) =>
+                        c.id === result.comment_id
+                            ? { ...c, viewer_liked: result.liked, like_count: result.like_count }
+                            : c,
+                    ),
+                });
+            }
+        },
+    });
+}
+
 // ── Mutation: edit comment ───────────────────────────────────────────────────
 
 interface EditCommentInput {
@@ -621,6 +709,17 @@ export function useDeleteComment() {
             await queryClient.cancelQueries({ queryKey: key });
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
 
+            // TICKET-085: deleting a root cascades its replies in the DB. Mirror that
+            // in the cache (remove the whole subtree) and decrement the feed count by
+            // the subtree size, so the pill doesn't drift and no orphaned replies flash.
+            const removedIds = new Set<string>([commentId]);
+            if (previous) {
+                for (const c of previous.comments) {
+                    if (c.parent_id === commentId) removedIds.add(c.id);
+                }
+            }
+            const removedCount = removedIds.size;
+
             // TICKET-036 P1-10: snapshot feed-side caches too so we can
             // decrement comment_count on the matching card and roll back.
             const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
@@ -638,7 +737,7 @@ export function useDeleteComment() {
             if (previous) {
                 queryClient.setQueryData<PostInteractionsData>(key, {
                     ...previous,
-                    comments: previous.comments.filter((c) => c.id !== commentId),
+                    comments: previous.comments.filter((c) => !removedIds.has(c.id)),
                     // P1-4: derived via effectiveCommentCount(data); no manual
                     // counts.comments touch needed.
                 });
@@ -649,7 +748,7 @@ export function useDeleteComment() {
             if (scope === 'table') {
                 const decrementItem = (item: any) => {
                     if (item?.id !== targetId) return item;
-                    return { ...item, comment_count: Math.max(0, (item.comment_count ?? 0) - 1) };
+                    return { ...item, comment_count: Math.max(0, (item.comment_count ?? 0) - removedCount) };
                 };
                 queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
                     { queryKey: queryKeys.tables.activityAll() },
