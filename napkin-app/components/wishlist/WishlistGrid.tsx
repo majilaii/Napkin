@@ -18,12 +18,14 @@ import {
     ActivityIndicator,
     StyleSheet,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useTableWishlist, type TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
 import { WishlistCard } from './WishlistCard';
+import { TableWishlistRow } from './TableWishlistRow';
 
 // ── Empty States ──────────────────────────────────────────────────────────────
 
@@ -149,20 +151,26 @@ interface TableGridProps {
 function TableGrid({ tableId }: TableGridProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const router = useRouter();
 
     const { data, isLoading, refetch, isRefetching } = useTableWishlist(tableId);
     const items: TableWishlistItem[] = data ?? [];
 
-    const renderItem = useCallback(({ item }: { item: TableWishlistItem }) => (
-        <View style={styles.itemWrapper}>
-            <WishlistCard
-                mode="table"
-                restaurant={item.restaurant}
-                count={item.count}
-                members={item.members}
+    const renderItem = useCallback(
+        ({ item, index }: { item: TableWishlistItem; index: number }) => (
+            <TableWishlistRow
+                index={index + 1}
+                item={item}
+                palette={palette}
+                onPress={() => {
+                    if (item.restaurant.id) {
+                        router.push(`/restaurant/${item.restaurant.id}`);
+                    }
+                }}
             />
-        </View>
-    ), []);
+        ),
+        [palette, router],
+    );
 
     const keyExtractor = useCallback((item: TableWishlistItem) => item.restaurant.id, []);
 
@@ -183,9 +191,7 @@ function TableGrid({ tableId }: TableGridProps) {
             data={items}
             renderItem={renderItem}
             keyExtractor={keyExtractor}
-            numColumns={2}
-            columnWrapperStyle={styles.row}
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={styles.ledgerContent}
             refreshControl={
                 <RefreshControl
                     refreshing={isRefetching}
@@ -228,6 +234,11 @@ const styles = StyleSheet.create({
     listContent: {
         paddingHorizontal: Spacing.md,
         paddingTop: Spacing.md,
+        paddingBottom: 100,
+    },
+    ledgerContent: {
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.xs,
         paddingBottom: 100,
     },
     row: {

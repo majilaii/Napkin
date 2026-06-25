@@ -28,6 +28,8 @@ export { PlacePickerModal, type PlacePickerResult } from './PlacePickerModal';
 // Wishlist Redesign (Pinned ↔ Lists segmented tab): numbered ledger rows, full
 // list cards, first-run empty state, generic filter action sheet, import inbox.
 export { WishlistSpotRow } from './WishlistSpotRow';
+// Table wishlist ledger row (typographic, no photo) — mirrors WishlistSpotRow.
+export { TableWishlistRow } from './TableWishlistRow';
 export { WishlistListCardFull } from './WishlistListCardFull';
 export { WishlistEmptyState } from './WishlistEmptyState';
 export { FilterActionSheet, type FilterOption } from './FilterActionSheet';

@@ -9,13 +9,19 @@
  * prompt on mount). Returns the coords + status; safe to call request() repeatedly
  * (it no-ops once resolved or in-flight).
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import type { LatLng } from '@/lib/geo';
 
 type Status = 'idle' | 'pending' | 'granted' | 'denied';
 
-export function useNearbyLocation() {
+/**
+ * @param options.watch when true (and permission granted), subscribes to live
+ *   position updates so distances refresh as the user moves — no app restart.
+ *   Pass `watch: sortMode === 'near' || mapOpen` and it only runs while relevant.
+ */
+export function useNearbyLocation(options?: { watch?: boolean }) {
+    const watch = options?.watch ?? false;
     const [coords, setCoords] = useState<LatLng | null>(null);
     const [status, setStatus] = useState<Status>('idle');
     const inFlight = useRef(false);
@@ -43,6 +49,36 @@ export function useNearbyLocation() {
             inFlight.current = false;
         }
     }, [coords]);
+
+    // Live updates while `watch` is active (the "nearest" sort or the map view), so
+    // distances re-rank as the user walks instead of staying frozen until restart.
+    // Only after permission is granted; torn down when watch turns off / on unmount.
+    useEffect(() => {
+        if (!watch || status !== 'granted') return;
+        let sub: Location.LocationSubscription | null = null;
+        let cancelled = false;
+        (async () => {
+            try {
+                sub = await Location.watchPositionAsync(
+                    {
+                        accuracy: Location.Accuracy.Balanced,
+                        distanceInterval: 25, // metres moved before an update
+                        timeInterval: 12000,  // …or every 12s, whichever first
+                    },
+                    (loc) => {
+                        if (cancelled) return;
+                        setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+                    },
+                );
+            } catch {
+                // Non-fatal — keep the last-known coords.
+            }
+        })();
+        return () => {
+            cancelled = true;
+            sub?.remove();
+        };
+    }, [watch, status]);
 
     return { coords, status, request };
 }
