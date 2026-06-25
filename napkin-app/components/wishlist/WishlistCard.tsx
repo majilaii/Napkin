@@ -1,12 +1,11 @@
 /**
- * WishlistCard — single card in the Pinterest-style wishlist grid.
+ * WishlistCard — single card in the personal Pinterest-style wishlist grid.
  *
- * Two modes:
- *   personal — long-press opens RemoveConfirmationSheet; tap → restaurant page
- *   table    — read-only; shows overlap chip + avatar stack; long-press is a no-op
+ * Long-press opens RemoveConfirmationSheet; tap → restaurant page. Variable card
+ * heights driven by image aspect ratio (default 4:3 while loading; updates once
+ * the image reports its dimensions).
  *
- * Variable card heights driven by image aspect ratio.
- * Default aspect ratio 4:3 while loading; updates once the image reports its dimensions.
+ * The Table wishlist no longer uses this card — it renders TableWishlistRow.
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
@@ -16,14 +15,11 @@ import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
-import { OverlapChip } from './OverlapChip';
-import { AvatarStack } from './AvatarStack';
 import { RemoveConfirmationSheet } from './RemoveConfirmationSheet';
 import type { WishlistRestaurant } from '@/hooks/wishlist/useMyWishlist';
-import type { TableWishlistMember } from '@/hooks/wishlist/useTableWishlist';
 import type { WishlistSource } from '@/lib/types/wishlistSource';
 
-interface PersonalCardProps {
+interface WishlistCardProps {
     mode: 'personal';
     id: string;
     note: string | null;
@@ -32,15 +28,6 @@ interface PersonalCardProps {
     /** TikTok / google_maps / web source captured at save time (TICKET-053). */
     source?: WishlistSource | null;
 }
-
-interface TableCardProps {
-    mode: 'table';
-    restaurant: WishlistRestaurant;
-    count: number;
-    members: TableWishlistMember[];
-}
-
-type WishlistCardProps = PersonalCardProps | TableCardProps;
 
 export function WishlistCard(props: WishlistCardProps) {
     const scheme = useColorScheme() ?? 'light';
@@ -57,9 +44,8 @@ export function WishlistCard(props: WishlistCardProps) {
     const photoUrl = restaurant.photo_url;
     const secondaryLine = restaurant.city ?? restaurant.cuisine ?? null;
 
-    // TICKET-054: "tiktok" tag — personal mode only; never shown in table mode
-    const isTikTokSourced =
-        props.mode === 'personal' && props.source?.type === 'tiktok';
+    // TICKET-054: "tiktok" source tag (bottom-right of the photo).
+    const isTikTokSourced = props.source?.type === 'tiktok';
 
     const handleTap = () => {
         if (restaurant.id) {
@@ -68,10 +54,7 @@ export function WishlistCard(props: WishlistCardProps) {
     };
 
     const handleLongPress = () => {
-        if (props.mode === 'personal') {
-            setShowRemoveSheet(true);
-        }
-        // Table mode: no-op
+        setShowRemoveSheet(true);
     };
 
     const handleRemoveConfirm = () => {
@@ -156,26 +139,15 @@ export function WishlistCard(props: WishlistCardProps) {
                             {secondaryLine}
                         </Text>
                     )}
-
-                    {/* Table mode: overlap chip + avatar stack */}
-                    {props.mode === 'table' && (
-                        <View style={styles.overlapRow}>
-                            <OverlapChip count={props.count} />
-                            <AvatarStack members={props.members} />
-                        </View>
-                    )}
                 </View>
             </Pressable>
 
-            {/* Personal mode: removal sheet */}
-            {props.mode === 'personal' && (
-                <RemoveConfirmationSheet
-                    visible={showRemoveSheet}
-                    restaurantName={restaurant.name}
-                    onConfirm={handleRemoveConfirm}
-                    onCancel={() => setShowRemoveSheet(false)}
-                />
-            )}
+            <RemoveConfirmationSheet
+                visible={showRemoveSheet}
+                restaurantName={restaurant.name}
+                onConfirm={handleRemoveConfirm}
+                onCancel={() => setShowRemoveSheet(false)}
+            />
         </>
     );
 }
@@ -210,12 +182,5 @@ const styles = StyleSheet.create({
         padding: Spacing.sm,
         paddingBottom: Spacing.md,
         gap: 2,
-    },
-    overlapRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.xs,
-        marginTop: Spacing.xs,
-        flexWrap: 'wrap',
     },
 });
