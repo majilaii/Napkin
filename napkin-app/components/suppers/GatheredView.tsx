@@ -9,10 +9,11 @@
  *
  * Per-take detail = the take's own entry → tap a filled row to open entry-detail.
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, Image, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
+import { PhotoLightbox } from '@/components/photos';
 import { InitialsAvatar } from './InitialsAvatar';
 import type { SupperDetail, SupperTake } from '@/hooks/suppers';
 
@@ -83,6 +84,10 @@ export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, on
 
     const viewerPending = roster.some((r) => r.user_id === viewerId) && !takeByUser.has(viewerId);
 
+    // Tap any pooled photo → full-screen pager opened at that index.
+    const photoUris = useMemo(() => photos.map((p) => p.uri), [photos]);
+    const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
     return (
         <View style={[styles.screen, { backgroundColor: palette.surface }]}>
             {/* Top bar */}
@@ -121,8 +126,8 @@ export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, on
                             <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>the night</Text>
                             <Text style={[styles.sectionMeta, { color: palette.textMuted }]}>{photos.length} {photos.length === 1 ? 'photo' : 'photos'} · everyone&rsquo;s</Text>
                         </View>
-                        {/* Hero + 3-col grid */}
-                        <View style={styles.heroWrap}>
+                        {/* Hero + 3-col grid — tap any tile to open the full-screen pager */}
+                        <Pressable style={styles.heroWrap} onPress={() => setLightboxIndex(0)} accessibilityRole="button" accessibilityLabel="open photo">
                             <Image source={{ uri: photos[0].uri }} style={styles.hero} resizeMode="cover" />
                             {photos[0].name ? (
                                 <View style={[styles.attrib, { backgroundColor: palette.placesOverlayTint + 'd9' }]}>
@@ -130,12 +135,30 @@ export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, on
                                     <Text style={[styles.attribName, { color: palette.text }]}>{photos[0].name}</Text>
                                 </View>
                             ) : null}
-                        </View>
+                        </Pressable>
                         {photos.length > 1 ? (
                             <View style={styles.grid}>
-                                {photos.slice(1, 7).map((p, i) => (
-                                    <Image key={`${p.uri}-${i}`} source={{ uri: p.uri }} style={styles.gridTile} resizeMode="cover" />
-                                ))}
+                                {photos.slice(1, 7).map((p, i) => {
+                                    const idx = i + 1;
+                                    const remaining = photos.length - 7;
+                                    const isLastTile = i === 5 && remaining > 0;
+                                    return (
+                                        <Pressable
+                                            key={`${p.uri}-${i}`}
+                                            style={styles.gridTile}
+                                            onPress={() => setLightboxIndex(idx)}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="open photo"
+                                        >
+                                            <Image source={{ uri: p.uri }} style={styles.gridTileImg} resizeMode="cover" />
+                                            {isLastTile ? (
+                                                <View style={styles.gridMore}>
+                                                    <Text style={styles.gridMoreText}>+{remaining}</Text>
+                                                </View>
+                                            ) : null}
+                                        </Pressable>
+                                    );
+                                })}
                             </View>
                         ) : null}
                     </View>
@@ -213,6 +236,13 @@ export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, on
                     </Pressable>
                 ) : null}
             </ScrollView>
+
+            <PhotoLightbox
+                visible={lightboxIndex != null}
+                photos={photoUris}
+                initialIndex={lightboxIndex ?? 0}
+                onClose={() => setLightboxIndex(null)}
+            />
         </View>
     );
 }
@@ -237,7 +267,10 @@ const styles = StyleSheet.create({
     attrib: { position: 'absolute', left: 8, bottom: 8, flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 3, paddingRight: 9, paddingVertical: 3, borderRadius: 9999 },
     attribName: { fontFamily: 'Manrope_600SemiBold', fontSize: 10 },
     grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-    gridTile: { width: '31.6%', aspectRatio: 1, borderRadius: 10 },
+    gridTile: { width: '31.6%', aspectRatio: 1, borderRadius: 10, overflow: 'hidden', position: 'relative' },
+    gridTileImg: { width: '100%', height: '100%' },
+    gridMore: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(28,28,25,0.5)', alignItems: 'center', justifyContent: 'center' },
+    gridMoreText: { fontFamily: 'Manrope_700Bold', fontSize: 18, color: '#fff' },
     saidCard: { marginHorizontal: Spacing.lg, marginTop: 20, borderRadius: 16, padding: 15 },
     saidKicker: { fontFamily: 'Manrope_700Bold', fontSize: 10, letterSpacing: 1.8, textTransform: 'uppercase' },
     saidLine: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 15, lineHeight: 22, marginTop: 9 },
