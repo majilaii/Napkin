@@ -288,7 +288,11 @@ export default function WishlistScreen() {
     const [priceFilter, setPriceFilter] = useState<string | null>(null); // "1".."4"
     const [openSheet, setOpenSheet] = useState<'cuisine' | 'price' | 'sort' | null>(null);
     const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
-    const { coords, status: locationStatus, request: requestLocation } = useNearbyLocation();
+    // Watch position live while sorting by nearest or viewing the map, so distances
+    // re-rank as you walk (Amsterdam-stroll fix) instead of freezing until restart.
+    const { coords, status: locationStatus, request: requestLocation } = useNearbyLocation({
+        watch: sortMode === 'near' || viewMode === 'map',
+    });
 
     // Cuisine chips, frequency-ranked: most-saved cuisines lead. The inline row
     // caps to the top few (below) — the rest live in the overflow sheet so the
@@ -635,7 +639,7 @@ export default function WishlistScreen() {
                         {mapItems.length > 0 ? (
                             <Pressable
                                 onPress={() => handleSelectView('map')}
-                                style={[styles.rMapFab, { backgroundColor: palette.primary, bottom: insets.bottom + 18 }]}
+                                style={[styles.rMapFab, { backgroundColor: palette.primary, bottom: insets.bottom + 76 }]}
                                 accessibilityLabel="map view"
                             >
                                 <Ionicons name="map-outline" size={16} color="#fff" />

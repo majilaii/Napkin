@@ -954,9 +954,10 @@ function EntryDetailScreen() {
     // solo feed-only entry has no reactions/replies). Mirrors the old pill gate.
     const hasEngagement = !!entry.id && (isPublicView || !!entry.table_id);
 
-    // Photos can be added by the owner until MAX_PHOTOS (never in public view).
+    // Add-a-photo is an EDIT affordance — only in edit mode (⋯ → edit review), never
+    // on the read surface. Capped at MAX_PHOTOS; never in public view.
     const canAddPhotos =
-        isOwnEntry && !isPublicView && allPhotos.length + newPhotoSlots.length < MAX_PHOTOS;
+        ownerEditing && !isPublicView && allPhotos.length + newPhotoSlots.length < MAX_PHOTOS;
 
     // Unique reactors for the "Loved by …" row.
     const reactorList = (() => {
@@ -1156,20 +1157,6 @@ function EntryDetailScreen() {
                                 <Text style={[styles.lovedItText, { color: palette.textMuted }]}>loved it</Text>
                             </View>
                         ) : null}
-
-                        {/* prior-visit metadata — own entries, hidden for first visit & public */}
-                        {!isPublicView && isOwnEntry && userHistory && userHistory.visit_count > 0 ? (() => {
-                            const ordinals: Record<number, string> = { 2: '2nd', 3: '3rd', 4: '4th', 5: '5th' };
-                            const visitNum = userHistory.visit_count + 1;
-                            const ordinal = ordinals[visitNum] ?? `${visitNum}th`;
-                            const lastRating = userHistory.last_visit?.rating;
-                            const lastRatingStr = lastRating != null ? String(lastRating) : null;
-                            return (
-                                <Text style={[styles.priorVisitLine, { color: palette.textMuted }]}>
-                                    {`your ${ordinal} visit${lastRatingStr ? ' · last time ' + lastRatingStr : ''}`}
-                                </Text>
-                            );
-                        })() : null}
 
                         {/* Rating editor (inline, edit mode) */}
                         {isEditingRating ? (
@@ -1476,7 +1463,7 @@ function EntryDetailScreen() {
                                     <Text style={[styles.companionsEdit, { color: palette.primary }]}>+ tag</Text>
                                 ) : null}
                             </Pressable>
-                        ) : isOwnEntry && !isPublicView ? (
+                        ) : ownerEditing ? (
                             <Pressable
                                 onPress={handleCompanionEditStart}
                                 style={styles.companionsEmpty}
@@ -2403,7 +2390,6 @@ const styles = StyleSheet.create({
     lovedItRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8 },
     lovedItText: { fontFamily: 'Manrope_600SemiBold', fontSize: 11 },
 
-    priorVisitLine: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 13, marginTop: 8 },
 
     // rating editor
     ratingEditor: { marginTop: Spacing.md, alignItems: 'flex-start', gap: Spacing.sm },

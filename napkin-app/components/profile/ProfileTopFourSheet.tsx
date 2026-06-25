@@ -1,7 +1,9 @@
 /**
  * ProfileTopFourSheet — editor for the curated profile Top 4.
  *
- * Global (not city-scoped). Up to 4 ordered slots (chevron reorder, × to remove).
+ * Global (not city-scoped). Up to 4 ordered slots — drag-and-drop to reorder
+ * (long-press a row and drag), × to remove. During editing it's words-only: a
+ * numbered list of spot names, no thumbnails.
  * "+ add a spot" opens TopFourSearchModal — a full-screen Google Places search;
  * any restaurant is featurable, logged or not (a ghost is upserted to mint an
  * id first). Save → useSetProfileTopFour. Saving with 0 picks clears the override
@@ -18,7 +20,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Image as ExpoImage } from 'expo-image';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 
@@ -52,19 +54,20 @@ interface Props {
 interface SlotItemProps {
     item: DraftItem;
     index: number;
-    total: number;
+    drag: () => void;
     isActive: boolean;
     palette: typeof Colors.light;
     onRemove: (id: string) => void;
-    onMove: (index: number, dir: -1 | 1) => void;
 }
 
-function SlotItem({ item, index, total, isActive, palette, onRemove, onMove }: SlotItemProps) {
-    const atTop = index === 0;
-    const atBottom = index === total - 1;
+function SlotItem({ item, index, drag, isActive, palette, onRemove }: SlotItemProps) {
     return (
         <ScaleDecorator>
-            <View
+            {/* Whole row is the drag handle — long-press and drag to reorder. */}
+            <Pressable
+                onLongPress={drag}
+                delayLongPress={150}
+                disabled={isActive}
                 style={[
                     styles.slotRow,
                     {
@@ -72,60 +75,36 @@ function SlotItem({ item, index, total, isActive, palette, onRemove, onMove }: S
                         borderColor: palette.dividerSoft,
                     },
                 ]}
+                accessibilityLabel={`${item.name}, position ${index + 1}. Long-press and drag to reorder.`}
             >
-                <Text style={[Type.rating, { fontSize: 18, color: palette.textMuted, width: 20, textAlign: 'center' }]}>
+                <Text
+                    style={[
+                        Type.rating,
+                        { fontFamily: 'Manrope_700Bold', fontSize: 18, color: palette.textMuted, width: 24, textAlign: 'center' },
+                    ]}
+                >
                     {index + 1}
                 </Text>
-
-                {/* Thumb — photo when present, else blank warm tile (no letter) */}
-                <View style={[styles.slotThumb, { backgroundColor: palette.surfaceJournalHi, borderRadius: Radius.sm }]}>
-                    {item.photo_url ? (
-                        <ExpoImage
-                            source={{ uri: item.photo_url }}
-                            style={StyleSheet.absoluteFill}
-                            contentFit="cover"
-                        />
-                    ) : null}
-                </View>
 
                 <Text
                     style={[
                         Type.headlineItalic,
-                        { fontFamily: 'Newsreader_400Regular_Italic', fontStyle: 'italic', fontSize: 15, color: palette.text, flex: 1 },
+                        { fontFamily: 'Newsreader_400Regular_Italic', fontStyle: 'italic', fontSize: 17, color: palette.text, flex: 1 },
                     ]}
                     numberOfLines={1}
                 >
                     {item.name}
                 </Text>
 
-                {/* Reorder — explicit up/down (drag on mobile was unhittable). 44px targets. */}
-                <Pressable
-                    onPress={() => onMove(index, -1)}
-                    disabled={atTop}
-                    hitSlop={6}
-                    style={styles.slotCtl}
-                    accessibilityLabel={`Move ${item.name} up`}
-                >
-                    <Ionicons name="chevron-up" size={22} color={atTop ? palette.dividerSoft : palette.textSecondary} />
-                </Pressable>
-                <Pressable
-                    onPress={() => onMove(index, 1)}
-                    disabled={atBottom}
-                    hitSlop={6}
-                    style={styles.slotCtl}
-                    accessibilityLabel={`Move ${item.name} down`}
-                >
-                    <Ionicons name="chevron-down" size={22} color={atBottom ? palette.dividerSoft : palette.textSecondary} />
-                </Pressable>
                 <Pressable
                     onPress={() => onRemove(item.restaurant_id)}
-                    hitSlop={6}
+                    hitSlop={8}
                     style={styles.slotCtl}
                     accessibilityLabel={`Remove ${item.name}`}
                 >
                     <Ionicons name="close" size={20} color={palette.textMuted} />
                 </Pressable>
-            </View>
+            </Pressable>
         </ScaleDecorator>
     );
 }
@@ -184,17 +163,6 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
 
     const handleRemove = useCallback((id: string) => {
         setDraft((prev) => prev.filter((d) => d.restaurant_id !== id));
-    }, []);
-
-    // Explicit reorder (arrows) — same array-swap shape onDragEnd produces.
-    const handleMove = useCallback((index: number, dir: -1 | 1) => {
-        setDraft((prev) => {
-            const j = index + dir;
-            if (j < 0 || j >= prev.length) return prev;
-            const next = [...prev];
-            [next[index], next[j]] = [next[j], next[index]];
-            return next;
-        });
     }, []);
 
     const handleSave = useCallback(() => {
@@ -282,7 +250,7 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                         },
                     ]}
                 >
-                    Pick up to 4 and use the arrows to reorder. Leave it empty to go back to automatic.
+                    Pick up to 4 and long-press a row to drag it into order. Leave it empty to go back to automatic.
                 </Text>
 
                 {/* Draft slots */}
@@ -294,24 +262,27 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                             </Text>
                         </View>
                     ) : (
-                        <DraggableFlatList
-                            data={draft}
-                            onDragEnd={({ data }) => setDraft(data)}
-                            keyExtractor={(item) => item.key}
-                            renderItem={({ item, isActive, getIndex }) => (
-                                <SlotItem
-                                    item={item}
-                                    index={getIndex() ?? 0}
-                                    total={draft.length}
-                                    isActive={isActive}
-                                    palette={palette}
-                                    onRemove={handleRemove}
-                                    onMove={handleMove}
-                                />
-                            )}
-                            scrollEnabled={false}
-                            containerStyle={{ maxHeight: 4 * 68 }}
-                        />
+                        // Own GestureHandlerRootView — draggable-flatlist needs one
+                        // INSIDE the Modal (the app-root one doesn't reach here).
+                        <GestureHandlerRootView>
+                            <DraggableFlatList
+                                data={draft}
+                                onDragEnd={({ data }) => setDraft(data)}
+                                keyExtractor={(item) => item.key}
+                                renderItem={({ item, drag, isActive, getIndex }) => (
+                                    <SlotItem
+                                        item={item}
+                                        index={getIndex() ?? 0}
+                                        drag={drag}
+                                        isActive={isActive}
+                                        palette={palette}
+                                        onRemove={handleRemove}
+                                    />
+                                )}
+                                scrollEnabled={false}
+                                containerStyle={{ maxHeight: 4 * 64 }}
+                            />
+                        </GestureHandlerRootView>
                     )}
 
                     <Text
@@ -364,13 +335,13 @@ const styles = StyleSheet.create({
     slotRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: Spacing.xs,
-        paddingLeft: Spacing.sm,
+        paddingVertical: Spacing.sm,
+        paddingLeft: Spacing.md,
         paddingRight: Spacing.xs,
         minHeight: 56,
         borderRadius: Radius.sm,
         borderBottomWidth: StyleSheet.hairlineWidth,
-        gap: 4,
+        gap: Spacing.sm,
         marginBottom: 4,
         ...Shadow.clip,
     },
@@ -379,14 +350,6 @@ const styles = StyleSheet.create({
         height: 44,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    slotThumb: {
-        width: 40,
-        height: 40,
-        overflow: 'hidden',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
     },
     emptyDraft: {
         paddingVertical: Spacing.md,
