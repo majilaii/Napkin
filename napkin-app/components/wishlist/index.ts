@@ -2,8 +2,6 @@ export { WishlistHeartButton } from './WishlistHeartButton';
 export { WishlistGrid } from './WishlistGrid';
 export { WishlistByCity } from './WishlistByCity';
 export { WishlistCard } from './WishlistCard';
-export { OverlapChip } from './OverlapChip';
-export { AvatarStack } from './AvatarStack';
 export { RemoveConfirmationSheet } from './RemoveConfirmationSheet';
 export { WishlistEmpty } from './WishlistEmpty';
 export { ImportLinkSheet } from './ImportLinkSheet';
