@@ -140,17 +140,6 @@ export interface ImportLinkSheetProps {
 
 type Palette = typeof Colors.light;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function truncateHost(url: string): string {
-    try {
-        const host = new URL(url).hostname.replace(/^www\./, '');
-        return host.length > 30 ? host.slice(0, 27) + '...' : host;
-    } catch {
-        return url.slice(0, 30);
-    }
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportNonce, initialVideoPath }: ImportLinkSheetProps) {
@@ -166,7 +155,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     const [sheetState, setSheetState] = useState<SheetState>('menu');
     const [inputValue, setInputValue] = useState('');
     const [touched, setTouched] = useState(false);
-    const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);
+    // Whether the clipboard holds *some* text — probed with hasStringAsync, which
+    // (unlike getStringAsync) does NOT trigger iOS's "Napkin would like to paste"
+    // prompt. The actual contents are only read when the user taps the paste chip.
+    const [clipboardHasText, setClipboardHasText] = useState(false);
     const [resolvedData, setResolvedData] = useState<ResolveUrlData | null>(null);
     const [noteText, setNoteText] = useState('');
     const [lastUrl, setLastUrl] = useState('');
@@ -232,16 +224,16 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     const noun = sourceNoun(resolvedData?.source_type, lastUrl || inputValue);
 
     // ── Clipboard probe on mount ───────────────────────────────────────
+    // hasStringAsync is a lightweight presence check — it does NOT read the
+    // contents and does NOT raise the iOS paste-permission prompt. We only learn
+    // whether to offer the chip; the contents are read on tap (a clear user
+    // gesture), where one prompt is expected and acceptable.
     useEffect(() => {
         if (!visible) return;
         if (initialUrl) return;
-        Clipboard.getStringAsync().then((str) => {
-            if (str && /^https?:\/\/\S+$/.test(str.trim())) {
-                setClipboardUrl(str.trim());
-            } else {
-                setClipboardUrl(null);
-            }
-        }).catch(() => setClipboardUrl(null));
+        Clipboard.hasStringAsync()
+            .then(setClipboardHasText)
+            .catch(() => setClipboardHasText(false));
     }, [visible, initialUrl]);
 
     // ── initialUrl (share extension deep-link) effect ─────────────────
@@ -366,7 +358,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         setSheetState('menu');
         setInputValue('');
         setTouched(false);
-        setClipboardUrl(null);
+        setClipboardHasText(false);
         setResolvedData(null);
         setPatchedCandidates(null);
         setNoteText('');
@@ -386,12 +378,19 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         onDismiss();
     }, [cancel, onDismiss]);
 
-    const handleClipboardChip = useCallback(() => {
-        if (clipboardUrl) {
-            setInputValue(clipboardUrl);
-            setTouched(false);
+    // Reads the clipboard only now — on an explicit tap. This is the single point
+    // where iOS may show the paste prompt, and it's user-initiated by design.
+    const handleClipboardChip = useCallback(async () => {
+        try {
+            const str = (await Clipboard.getStringAsync())?.trim() ?? '';
+            if (str) {
+                setInputValue(str);
+                setTouched(false);
+            }
+        } catch {
+            // User dismissed the paste prompt — leave the field as-is.
         }
-    }, [clipboardUrl]);
+    }, []);
 
     // TICKET-063: save N ticked spots via useSaveImportSpots.
     // Fix 7: stable nonces — use spotNonceMapRef to get/mint nonces per candidate_id.
@@ -833,7 +832,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 validationMessage={validationMessage}
                                 inputOk={inputOk}
                                 onFindIt={handleFindIt}
-                                clipboardUrl={clipboardUrl}
+                                clipboardHasText={clipboardHasText}
                                 onClipboardChip={handleClipboardChip}
                                 inputRef={inputRef}
                                 onBack={() => setSheetState('menu')}
@@ -1083,7 +1082,7 @@ interface IdlePanelProps {
     validationMessage: string | null;
     inputOk: boolean;
     onFindIt: () => void;
-    clipboardUrl: string | null;
+    clipboardHasText: boolean;
     onClipboardChip: () => void;
     inputRef: React.RefObject<TextInput | null>;
     /** Returns to the source menu (first step). */
@@ -1097,7 +1096,7 @@ function IdlePanel({
     validationMessage,
     inputOk,
     onFindIt,
-    clipboardUrl,
+    clipboardHasText,
     onClipboardChip,
     inputRef,
     onBack,
@@ -1117,7 +1116,7 @@ function IdlePanel({
 
             <Text style={[styles.sheetTitle, { color: palette.text }]}>paste a link</Text>
 
-            {clipboardUrl ? (
+            {clipboardHasText ? (
                 <Pressable
                     onPress={onClipboardChip}
                     style={({ pressed }) => [
@@ -1127,10 +1126,10 @@ function IdlePanel({
                             opacity: pressed ? 0.8 : 1,
                         },
                     ]}
-                    accessibilityLabel={`Paste ${truncateHost(clipboardUrl)}`}
+                    accessibilityLabel="Paste copied link"
                 >
                     <Text style={[Type.caption, { color: palette.textSecondary }]}>
-                        {`paste ${truncateHost(clipboardUrl)}`}
+                        paste copied link
                     </Text>
                 </Pressable>
             ) : null}

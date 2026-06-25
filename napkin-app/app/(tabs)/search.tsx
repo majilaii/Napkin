@@ -27,7 +27,7 @@ import {
     ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Location from 'expo-location';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -54,8 +54,6 @@ import type { SearchMode } from '@/components/search';
 type Palette = typeof Colors.light;
 
 // ── Module-scope state — preserved across tab mounts within the session ──────
-// Tracks whether the tab has been mounted at least once (for autofocus gate)
-let hasAutoFocused = false;
 // Last query string — survives tab unmount so query is restored
 let lastQuery = '';
 // Last scroll offset — survives tab unmount so scroll position is restored
@@ -176,18 +174,8 @@ export default function SearchScreen() {
         [],
     );
 
-    // Autofocus on first mount only
-    useFocusEffect(
-        useCallback(() => {
-            if (!hasAutoFocused) {
-                hasAutoFocused = true;
-                // Use requestAnimationFrame to avoid racing the tab transition animation
-                requestAnimationFrame(() => {
-                    inputRef.current?.focus();
-                });
-            }
-        }, []),
-    );
+    // No autofocus: opening the Search tab should NOT raise the keyboard. The
+    // user taps the field when they're ready to type (tester feedback).
 
     const { results, isLoading, isPlacesError, refetch } = useRestaurantSearch(
         debouncedQuery,
