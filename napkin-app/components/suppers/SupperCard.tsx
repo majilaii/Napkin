@@ -77,6 +77,42 @@ function SeatAvatar({
     );
 }
 
+/** Hero collage of the night's pooled take-photos. Restaurants rarely carry a
+ *  photo, so the night's own photos become the establishing image and fill what
+ *  used to be dead space. 1 → full bleed, 2 → split, 3+ → big + stacked pair
+ *  with a +N overlay. Visual only — tapping the card opens the gathered view,
+ *  where each photo is individually tappable. */
+function PhotoCollage({ photos }: { photos: string[] }) {
+    if (photos.length === 1) {
+        return <Image source={{ uri: photos[0] }} style={styles.banner} resizeMode="cover" />;
+    }
+    if (photos.length === 2) {
+        return (
+            <View style={styles.collageRow}>
+                <Image source={{ uri: photos[0] }} style={styles.collageHalf} resizeMode="cover" />
+                <Image source={{ uri: photos[1] }} style={styles.collageHalf} resizeMode="cover" />
+            </View>
+        );
+    }
+    const extra = photos.length - 3;
+    return (
+        <View style={styles.collageRow}>
+            <Image source={{ uri: photos[0] }} style={styles.collageBig} resizeMode="cover" />
+            <View style={styles.collageCol}>
+                <Image source={{ uri: photos[1] }} style={styles.collageSmall} resizeMode="cover" />
+                <View style={styles.collageSmall}>
+                    <Image source={{ uri: photos[2] }} style={styles.collageSmallImg} resizeMode="cover" />
+                    {extra > 0 ? (
+                        <View style={styles.collageMore}>
+                            <Text style={styles.collageMoreText}>+{extra}</Text>
+                        </View>
+                    ) : null}
+                </View>
+            </View>
+        </View>
+    );
+}
+
 export function SupperCard({ supper, viewerId, onOpen, onAddTake }: SupperCardProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -125,6 +161,14 @@ export function SupperCard({ supper, viewerId, onOpen, onAddTake }: SupperCardPr
         ? "everyone's in"
         : `${filled_count} of ${seat_count} gathered`;
 
+    // Hero priority: the night's pooled photos (richest, what the table actually
+    // ate) → the restaurant's own photo → nothing (a small "supper" kicker fills
+    // in). The pooled photos used to render as a small strip in the body; they're
+    // promoted to the hero so the card never opens with dead space.
+    const showCollage = photos.length > 0;
+    const showRestaurantPhoto = !showCollage && !!restaurant?.photo_url;
+    const showBanner = showCollage || showRestaurantPhoto;
+
     return (
         <Pressable
             onPress={onOpen}
@@ -133,13 +177,16 @@ export function SupperCard({ supper, viewerId, onOpen, onAddTake }: SupperCardPr
             accessibilityLabel={`supper at ${restaurantName}, ${progressText}`}
         >
             <View style={[styles.card, { backgroundColor: palette.surfaceJournalLow }, Shadow.note]}>
-                {/* Restaurant photo banner — only when we actually have a photo.
-                    Restaurants have no reliable photo source, so rather than a big empty
-                    grey box we skip the banner and lead the body with a small "supper"
-                    kicker. The pooled "night" photos still show in the strip/mosaic below. */}
-                {restaurant?.photo_url ? (
+                {/* Hero — the night's pooled photos as a collage, else the restaurant's
+                    own photo. When there's neither, we skip the banner entirely and lead
+                    the body with a small "supper" kicker rather than show an empty box. */}
+                {showBanner ? (
                     <View style={styles.bannerWrap}>
-                        <Image source={{ uri: restaurant.photo_url }} style={styles.banner} resizeMode="cover" />
+                        {showCollage ? (
+                            <PhotoCollage photos={photos} />
+                        ) : (
+                            <Image source={{ uri: restaurant!.photo_url! }} style={styles.banner} resizeMode="cover" />
+                        )}
                         <View style={[styles.pill, { backgroundColor: palette.placesOverlayTint + 'd9' }]}>
                             <Text style={[styles.pillText, { color: palette.text }]}>supper</Text>
                         </View>
@@ -147,7 +194,7 @@ export function SupperCard({ supper, viewerId, onOpen, onAddTake }: SupperCardPr
                 ) : null}
 
                 <View style={styles.body}>
-                    {!restaurant?.photo_url ? (
+                    {!showBanner ? (
                         <Text style={[styles.supperKicker, { color: palette.primary }]}>supper</Text>
                     ) : null}
                     {/* Restaurant + state badge */}
@@ -221,38 +268,6 @@ export function SupperCard({ supper, viewerId, onOpen, onAddTake }: SupperCardPr
                                 </Text>
                             ) : null}
                         </View>
-                    ) : null}
-
-                    {/* Pooled photos — strip while filling, mosaic when gathered */}
-                    {photos.length > 0 && (isGathered || (isFilling && !viewer_filled)) ? (
-                        isGathered ? (
-                            <View style={styles.mosaic}>
-                                {Array.from({ length: 4 }).map((_, i) =>
-                                    photos[i] ? (
-                                        <Image key={i} source={{ uri: photos[i] }} style={styles.mosaicTile} resizeMode="cover" />
-                                    ) : (
-                                        <View
-                                            key={i}
-                                            style={[styles.mosaicTile, { backgroundColor: palette.surfaceContainerHigh }]}
-                                        />
-                                    ),
-                                )}
-                            </View>
-                        ) : (
-                            <>
-                                <Text style={[styles.stripKicker, { color: palette.textMuted }]}>on the table so far</Text>
-                                <View style={styles.strip}>
-                                    {photos.slice(0, 3).map((uri, i) => (
-                                        <Image key={`${uri}-${i}`} source={{ uri }} style={styles.stripTile} resizeMode="cover" />
-                                    ))}
-                                    {photos.length > 3 ? (
-                                        <View style={[styles.stripTile, styles.stripMore, { backgroundColor: palette.surfaceContainerHigh }]}>
-                                            <Text style={[styles.stripMoreText, { color: palette.textMuted }]}>+{photos.length - 3}</Text>
-                                        </View>
-                                    ) : null}
-                                </View>
-                            </>
-                        )
                     ) : null}
 
                     {/* Action row ──────────────────────────────────────────────── */}
@@ -419,38 +434,46 @@ const styles = StyleSheet.create({
         fontSize: 15,
         lineHeight: 21,
     },
-    stripKicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.4,
-        textTransform: 'uppercase',
-    },
-    strip: {
+    // Hero collage — thin warm gutters (gap shows the card paper through).
+    collageRow: {
         flexDirection: 'row',
-        gap: 6,
-        marginTop: -4,
+        width: '100%',
+        height: '100%',
+        gap: 2,
     },
-    stripTile: {
-        width: 64,
-        height: 64,
-        borderRadius: 10,
+    collageHalf: {
+        flex: 1,
+        height: '100%',
     },
-    stripMore: {
+    collageBig: {
+        flex: 1.7,
+        height: '100%',
+    },
+    collageCol: {
+        flex: 1,
+        height: '100%',
+        gap: 2,
+    },
+    collageSmall: {
+        flex: 1,
+        width: '100%',
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    collageSmallImg: {
+        width: '100%',
+        height: '100%',
+    },
+    collageMore: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(28,28,25,0.5)',
         alignItems: 'center',
         justifyContent: 'center',
     },
-    stripMoreText: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
-    },
-    mosaic: {
-        flexDirection: 'row',
-        gap: 6,
-    },
-    mosaicTile: {
-        flex: 1,
-        aspectRatio: 1,
-        borderRadius: 9,
+    collageMoreText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 18,
+        color: '#fff',
     },
     actionRow: {
         flexDirection: 'row',
