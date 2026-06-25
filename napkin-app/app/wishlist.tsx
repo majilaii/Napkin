@@ -30,7 +30,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Type, Radius, Shadow } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import {
@@ -523,16 +523,9 @@ export default function WishlistScreen() {
                             locationStatus={locationStatus}
                             onRequestLocation={requestLocation}
                             onOpenRestaurant={(id) => router.push(('/restaurant/' + id) as any)}
+                            onSwitchToList={() => handleSelectView('list')}
                             palette={palette}
                         />
-                        <Pressable
-                            onPress={() => handleSelectView('list')}
-                            style={[styles.rMapToggle, { backgroundColor: palette.surfaceNote }, Shadow.note]}
-                            accessibilityLabel="list view"
-                        >
-                            <Ionicons name="list" size={15} color={palette.primary} />
-                            <Text style={[styles.rMapToggleText, { color: palette.primary }]}>List</Text>
-                        </Pressable>
                     </View>
                 ) : (
                     <View style={{ flex: 1 }}>
@@ -858,21 +851,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         letterSpacing: 0.4,
         color: '#fff',
-    },
-    rMapToggle: {
-        position: 'absolute',
-        top: 14,
-        right: 20,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 7,
-        borderRadius: 999,
-        paddingHorizontal: 15,
-        paddingVertical: 9,
-    },
-    rMapToggleText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
     },
     rNewList: {
         flexDirection: 'row',

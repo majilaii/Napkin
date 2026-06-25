@@ -61,12 +61,13 @@ interface Props {
     locationStatus: LocationStatus;
     onRequestLocation: () => void;
     onOpenRestaurant: (restaurantId: string) => void;
+    /** Switch back to the list view (toggle lives bottom-right, like the Map button). */
+    onSwitchToList: () => void;
     palette: typeof Colors.light;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const FIT_PADDING = { top: 80, right: 60, bottom: 220, left: 60 };
 const CREAM = '#fdf6ec';
 /** Clearance so the FAB / peek card sit above the floating bottom nav. */
 const NAV_CLEARANCE = 64;
@@ -187,19 +188,12 @@ export function WishlistMapView({
     locationStatus,
     onRequestLocation,
     onOpenRestaurant,
+    onSwitchToList,
     palette,
 }: Props) {
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapViewType>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
-
-    // Stable key for the pin set — drives the camera re-fit when the set changes.
-    // (Per-marker tracksViewChanges lives in WishlistMarker, mirroring AtlasMapView,
-    // so snapshot churn is scoped to the one pin that actually changed.)
-    const pinKey = useMemo(
-        () => items.map((i) => i.id).sort().join(','),
-        [items],
-    );
 
     // Selection survives only while its restaurant is still on the map.
     useEffect(() => {
@@ -208,27 +202,33 @@ export function WishlistMapView({
         }
     }, [items, selectedId]);
 
-    // Frame the pin set whenever it changes. ≥2 → fit bounds; exactly 1 → recenter
-    // on it. initialRegion is honoured only at mount, so a cuisine filter that
-    // narrows to a single match must move the camera explicitly or the lone pin
-    // can sit off-screen ("filtered to thai, map looks empty").
+    // Frame the map ONCE per open. This is a "near me" map, so prefer centering on
+    // the user at city zoom — fitting ALL pins zooms way out for a globally-spread
+    // wishlist ("why is it so zoomed out every time I switch to map"). Falls back to
+    // the first saved spot when there's no location. Re-frames only on the next OPEN
+    // (the component remounts when you toggle back to map), never on the live location
+    // updates you get while walking — so the camera doesn't yank around under you.
+    const framedRef = useRef(false);
     useEffect(() => {
-        if (items.length === 0) return;
+        if (items.length === 0 || framedRef.current) return;
         const timer = setTimeout(() => {
-            if (items.length === 1) {
+            if (framedRef.current) return;
+            if (locationStatus === 'granted' && userCoords) {
                 mapRef.current?.animateCamera(
-                    { center: { latitude: items[0].lat, longitude: items[0].lng }, zoom: 14 },
-                    { duration: 350 },
+                    { center: { latitude: userCoords.latitude, longitude: userCoords.longitude }, zoom: 13 },
+                    { duration: 300 },
                 );
-            } else {
-                mapRef.current?.fitToCoordinates(
-                    items.map((i) => ({ latitude: i.lat, longitude: i.lng })),
-                    { edgePadding: FIT_PADDING, animated: false },
+                framedRef.current = true;
+            } else if (locationStatus !== 'pending') {
+                mapRef.current?.animateCamera(
+                    { center: { latitude: items[0].lat, longitude: items[0].lng }, zoom: 13 },
+                    { duration: 300 },
                 );
+                framedRef.current = true;
             }
         }, 300);
         return () => clearTimeout(timer);
-    }, [pinKey, items]);
+    }, [items, locationStatus, userCoords]);
 
     const initialRegion: Region | undefined = useMemo(() => {
         if (items.length === 0) return undefined;
@@ -334,6 +334,20 @@ export function WishlistMapView({
                             color={locationStatus === 'granted' ? palette.primary : palette.textSecondary}
                         />
                     )}
+                </Pressable>
+            ) : null}
+
+            {/* List toggle — bottom-RIGHT, the same corner as the list view's Map
+                button, so the view toggle stays put. Hidden while a peek card is up. */}
+            {!selected ? (
+                <Pressable
+                    onPress={onSwitchToList}
+                    style={[styles.listToggle, { backgroundColor: palette.surfaceNote, bottom: insets.bottom + 76 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="list view"
+                >
+                    <Ionicons name="list" size={15} color={palette.primary} />
+                    <Text style={[styles.listToggleText, { color: palette.primary }]}>List</Text>
                 </Pressable>
             ) : null}
 
@@ -467,10 +481,10 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_500Medium',
         fontSize: 11,
     },
-    // Recenter FAB
+    // Recenter FAB — bottom-LEFT, so it doesn't collide with the bottom-right List toggle.
     fab: {
         position: 'absolute',
-        right: 18,
+        left: 18,
         width: 46,
         height: 46,
         borderRadius: 23,
@@ -481,6 +495,27 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.12,
         shadowRadius: 12,
         elevation: 5,
+    },
+    // List toggle (map → list)
+    listToggle: {
+        position: 'absolute',
+        right: 18,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        borderRadius: 999,
+        paddingHorizontal: 16,
+        paddingVertical: 11,
+        shadowColor: '#1c1c19',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.14,
+        shadowRadius: 14,
+        elevation: 6,
+    },
+    listToggleText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 12,
+        letterSpacing: 0.4,
     },
     // Peek card
     peekCard: {

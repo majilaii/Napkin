@@ -263,8 +263,12 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                         </View>
                     ) : (
                         // Own GestureHandlerRootView — draggable-flatlist needs one
-                        // INSIDE the Modal (the app-root one doesn't reach here).
-                        <GestureHandlerRootView>
+                        // INSIDE the Modal (the app-root one doesn't reach here). It
+                        // MUST have an explicit height: a draggable FlatList in an
+                        // auto-height parent collapses to 0 and renders NOTHING — that
+                        // was the "4 selected but no rows / can't delete" bug. Bound it
+                        // to the row count (each SlotItem ≈ 64px tall).
+                        <GestureHandlerRootView style={{ height: draft.length * 64 }}>
                             <DraggableFlatList
                                 data={draft}
                                 onDragEnd={({ data }) => setDraft(data)}
@@ -280,7 +284,7 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                                     />
                                 )}
                                 scrollEnabled={false}
-                                containerStyle={{ maxHeight: 4 * 64 }}
+                                activationDistance={12}
                             />
                         </GestureHandlerRootView>
                     )}
