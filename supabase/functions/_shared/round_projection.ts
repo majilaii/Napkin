@@ -73,7 +73,10 @@ export async function projectRound(
             };
         });
     } else {
-        // ── Merged path: round_entries → entries → profiles ─────────────────
+        // ── Merged path: round_entries → entries (profiles batch-fetched) ──────
+        // entries has NO foreign key to profiles, so PostgREST 400s on a
+        // `profiles:user_id` embed off entries. Fetch the entry authors, then
+        // batch-load their profiles separately.
         const { data: bindings, error: bindErr } = await supabase
             .from('round_entries')
             .select(`
@@ -81,11 +84,7 @@ export async function projectRound(
                 entries:entry_id (
                     user_id,
                     rating,
-                    content,
-                    profiles:user_id (
-                        display_name,
-                        avatar_url
-                    )
+                    content
                 )
             `)
             .eq('round_id', roundId);
@@ -93,11 +92,27 @@ export async function projectRound(
         if (bindErr) throw bindErr;
 
         // deno-lint-ignore no-explicit-any
-        participants = (bindings ?? []).map((b: any) => {
-            const entry = Array.isArray(b.entries) ? b.entries[0] : b.entries;
-            const profile = entry
-                ? (Array.isArray(entry.profiles) ? entry.profiles[0] : entry.profiles)
-                : null;
+        const entryRows = (bindings ?? []).map((b: any) =>
+            Array.isArray(b.entries) ? b.entries[0] : b.entries,
+        );
+        const authorIds = Array.from(
+            // deno-lint-ignore no-explicit-any
+            new Set(entryRows.filter((e: any) => e?.user_id).map((e: any) => e.user_id as string)),
+        );
+        // deno-lint-ignore no-explicit-any
+        const profileByUserId = new Map<string, any>();
+        if (authorIds.length > 0) {
+            const { data: profs } = await supabase
+                .from('profiles')
+                .select('user_id, display_name, avatar_url')
+                .in('user_id', authorIds);
+            // deno-lint-ignore no-explicit-any
+            for (const p of (profs ?? []) as any[]) profileByUserId.set(p.user_id, p);
+        }
+
+        // deno-lint-ignore no-explicit-any
+        participants = entryRows.map((entry: any) => {
+            const profile = entry ? profileByUserId.get(entry.user_id) : null;
             return {
                 user_id: entry?.user_id ?? '',
                 display_name: profile?.display_name ?? 'User',
