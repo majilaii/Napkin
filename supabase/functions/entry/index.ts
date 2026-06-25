@@ -124,11 +124,7 @@ serve(async (req) => {
                             restaurant_id,
                             visited_at,
                             created_at,
-                            table_night_id,
-                            profiles:user_id (
-                                display_name,
-                                avatar_url
-                            )
+                            table_night_id
                         )
                     `)
                     .eq('table_id', tableId)
@@ -160,15 +156,16 @@ serve(async (req) => {
                     const entryDate = new Date(entry.visited_at ?? entry.created_at).getTime();
                     if (Math.abs(composerDate - entryDate) > windowMs) continue;
 
-                    const profile = Array.isArray(entry.profiles) ? entry.profiles[0] : entry.profiles;
                     filtered.push({
                         id: entry.id,
                         user_id: entry.user_id,
                         rating: entry.rating ?? null,
                         visited_at: entry.visited_at ?? entry.created_at,
                         created_at: entry.created_at,
-                        display_name: profile?.display_name ?? 'User',
-                        avatar_url: profile?.avatar_url ?? null,
+                        // Author profile filled in below (entries has no FK to profiles
+                        // to embed, so we batch-fetch the chosen candidate's profile).
+                        display_name: 'User',
+                        avatar_url: null,
                     });
                 }
 
@@ -204,6 +201,14 @@ serve(async (req) => {
                     );
                 }
 
+                // entries has no FK to profiles, so the author's profile can't be
+                // embedded (it 400s). Fetch the chosen candidate's profile directly.
+                const { data: topProfile } = await supabase
+                    .from('profiles')
+                    .select('display_name, avatar_url')
+                    .eq('user_id', top.user_id)
+                    .maybeSingle();
+
                 return new Response(
                     JSON.stringify({
                         data: {
@@ -211,8 +216,8 @@ serve(async (req) => {
                             user_id: top.user_id,
                             rating: top.rating,
                             visited_at: top.visited_at,
-                            display_name: top.display_name,
-                            avatar_url: top.avatar_url,
+                            display_name: topProfile?.display_name ?? 'User',
+                            avatar_url: topProfile?.avatar_url ?? null,
                         }
                     }),
                     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -321,10 +326,6 @@ serve(async (req) => {
                             value_rating,
                             liked,
                             photo_url,
-                            profiles:user_id (
-                                display_name,
-                                avatar_url
-                            ),
                             entry_photos (
                                 photo_url,
                                 sort_order
@@ -348,8 +349,14 @@ serve(async (req) => {
                     };
                 });
 
+                // entries has NO foreign key to profiles (only entries.user_id ->
+                // auth.users), so PostgREST cannot embed `profiles:user_id` off entries
+                // — it 400s, which is what 500'd this whole action. Every taker is a
+                // supper member, so source their profile from the roster we already
+                // fetched (no extra round-trip).
+                const profileByUserId = new Map(roster.map((r) => [r.user_id, r]));
                 const takes = (takeRows as any[]).map((t) => {
-                    const p = Array.isArray(t.profiles) ? t.profiles[0] : t.profiles;
+                    const p = profileByUserId.get(t.user_id);
                     const photos = Array.isArray(t.entry_photos)
                         ? [...t.entry_photos].sort(
                             (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order,
