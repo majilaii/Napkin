@@ -1,13 +1,13 @@
 /**
  * ProfileTopFourSheet — editor for the curated profile Top 4.
  *
- * Global (not city-scoped). Up to 4 ordered slots — drag-and-drop to reorder
- * (long-press a row and drag), × to remove. During editing it's words-only: a
- * numbered list of spot names, no thumbnails.
- * "+ add a spot" opens TopFourSearchModal — a full-screen Google Places search;
- * any restaurant is featurable, logged or not (a ghost is upserted to mint an
- * id first). Save → useSetProfileTopFour. Saving with 0 picks clears the override
- * and the profile reverts to the auto-derived list.
+ * Letterboxd-style FIXED SLOTS: four numbered squares (a 2×2 grid). Each square is
+ * a position — tap an empty one to set that spot, tap a filled one to swap it for
+ * another, × to clear it. Words only, no thumbnails. Picking opens
+ * TopFourSearchScreen (Google Places; any restaurant, logged or not — a ghost is
+ * upserted to mint an id). Save → useSetProfileTopFour; the saved order is the
+ * filled slots in slot order. Saving with 0 picks clears the override and the
+ * profile reverts to the auto-derived list.
  */
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
@@ -20,9 +20,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
-import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -35,8 +33,7 @@ export interface ProfileTopFourPick {
     photo_url: string | null;
 }
 
-interface DraftItem {
-    key: string;
+interface SlotData {
     restaurant_id: string;
     name: string;
     photo_url: string | null;
@@ -49,63 +46,66 @@ interface Props {
     currentPicks: ProfileTopFourPick[];
 }
 
-// ── Draggable slot ───────────────────────────────────────────────────────────
+const SLOT_COUNT = 4;
 
-interface SlotItemProps {
-    item: DraftItem;
+// ── A single fixed slot (square) ────────────────────────────────────────────────
+
+function SlotCard({
+    index,
+    slot,
+    palette,
+    onPress,
+    onClear,
+}: {
     index: number;
-    drag: () => void;
-    isActive: boolean;
+    slot: SlotData | null;
     palette: typeof Colors.light;
-    onRemove: (id: string) => void;
-}
-
-function SlotItem({ item, index, drag, isActive, palette, onRemove }: SlotItemProps) {
+    onPress: () => void;
+    onClear: () => void;
+}) {
+    const filled = !!slot;
     return (
-        <ScaleDecorator>
-            {/* Whole row is the drag handle — long-press and drag to reorder. */}
-            <Pressable
-                onLongPress={drag}
-                delayLongPress={150}
-                disabled={isActive}
-                style={[
-                    styles.slotRow,
-                    {
-                        backgroundColor: isActive ? palette.surfaceContainerLow : palette.card,
-                        borderColor: palette.dividerSoft,
-                    },
-                ]}
-                accessibilityLabel={`${item.name}, position ${index + 1}. Long-press and drag to reorder.`}
-            >
-                <Text
-                    style={[
-                        Type.rating,
-                        { fontFamily: 'Manrope_700Bold', fontSize: 18, color: palette.textMuted, width: 24, textAlign: 'center' },
-                    ]}
-                >
-                    {index + 1}
-                </Text>
+        <Pressable
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.card,
+                filled
+                    ? { backgroundColor: palette.card, ...Shadow.clip }
+                    : {
+                          borderWidth: 1.5,
+                          borderStyle: 'dashed',
+                          borderColor: 'rgba(160,63,40,0.35)',
+                          backgroundColor: 'rgba(160,63,40,0.03)',
+                      },
+                pressed ? { opacity: 0.85 } : null,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={
+                filled
+                    ? `Slot ${index + 1}: ${slot!.name}. Tap to swap it.`
+                    : `Empty slot ${index + 1}. Tap to add a spot.`
+            }
+        >
+            <Text style={[styles.cardNum, { color: palette.textMuted }]}>{index + 1}</Text>
 
-                <Text
-                    style={[
-                        Type.headlineItalic,
-                        { fontFamily: 'Newsreader_400Regular_Italic', fontStyle: 'italic', fontSize: 17, color: palette.text, flex: 1 },
-                    ]}
-                    numberOfLines={1}
-                >
-                    {item.name}
-                </Text>
-
-                <Pressable
-                    onPress={() => onRemove(item.restaurant_id)}
-                    hitSlop={8}
-                    style={styles.slotCtl}
-                    accessibilityLabel={`Remove ${item.name}`}
-                >
-                    <Ionicons name="close" size={20} color={palette.textMuted} />
-                </Pressable>
-            </Pressable>
-        </ScaleDecorator>
+            {filled ? (
+                <>
+                    <Text style={[styles.cardName, { color: palette.text }]} numberOfLines={2}>
+                        {slot!.name}
+                    </Text>
+                    <Pressable
+                        onPress={onClear}
+                        hitSlop={10}
+                        style={styles.cardRemove}
+                        accessibilityLabel={`Remove ${slot!.name}`}
+                    >
+                        <Ionicons name="close" size={15} color={palette.textMuted} />
+                    </Pressable>
+                </>
+            ) : (
+                <Ionicons name="add" size={24} color={palette.primary} />
+            )}
+        </Pressable>
     );
 }
 
@@ -118,56 +118,73 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
 
     const setPicks = useSetProfileTopFour();
 
-    const [draft, setDraft] = useState<DraftItem[]>([]);
-    const [searchVisible, setSearchVisible] = useState(false);
+    // Fixed 4 slots; null = empty. Position = slot index + 1.
+    const [slots, setSlots] = useState<(SlotData | null)[]>([null, null, null, null]);
+    // Which slot the search is filling (null = search closed).
+    const [addingSlot, setAddingSlot] = useState<number | null>(null);
 
-    // Reset the draft only on the closed→open transition, so a profile refetch
-    // (new currentPicks identity) can't clobber an in-progress edit.
+    // Seed from currentPicks only on the closed→open transition, so a profile
+    // refetch (new currentPicks identity) can't clobber an in-progress edit.
     const wasVisible = useRef(false);
     useEffect(() => {
         if (visible && !wasVisible.current) {
-            setDraft(
-                currentPicks.map((p) => ({
-                    key: p.restaurant_id,
-                    restaurant_id: p.restaurant_id,
-                    name: p.name,
-                    photo_url: p.photo_url,
-                })),
-            );
+            const next: (SlotData | null)[] = [null, null, null, null];
+            currentPicks.slice(0, SLOT_COUNT).forEach((p, i) => {
+                next[i] = { restaurant_id: p.restaurant_id, name: p.name, photo_url: p.photo_url };
+            });
+            setSlots(next);
+            setAddingSlot(null);
         }
         wasVisible.current = visible;
     }, [visible, currentPicks]);
 
-    const pickedIds = useMemo(() => new Set(draft.map((d) => d.restaurant_id)), [draft]);
+    // Filled slots compacted in slot order — the saved + compared order.
+    const filled = useMemo(() => slots.filter((s): s is SlotData => !!s), [slots]);
+
+    // Ids already used (so the search greys out dupes). Excludes the slot being
+    // edited, so re-opening a filled slot doesn't grey out its own occupant.
+    const pickedIds = useMemo(
+        () => new Set(slots.filter((s, i) => s && i !== addingSlot).map((s) => s!.restaurant_id)),
+        [slots, addingSlot],
+    );
 
     const hasDiff = useMemo(() => {
-        if (draft.length !== currentPicks.length) return true;
-        return draft.some((d, i) => d.restaurant_id !== currentPicks[i]?.restaurant_id);
-    }, [draft, currentPicks]);
+        if (filled.length !== currentPicks.length) return true;
+        return filled.some((d, i) => d.restaurant_id !== currentPicks[i]?.restaurant_id);
+    }, [filled, currentPicks]);
 
-    const handleAdd = useCallback((pick: TopFourSearchPick) => {
-        setDraft((prev) => {
-            if (prev.length >= 4) return prev;
-            if (prev.some((d) => d.restaurant_id === pick.restaurant_id)) return prev;
-            return [
-                ...prev,
-                {
-                    key: pick.restaurant_id,
+    const handlePick = useCallback(
+        (pick: TopFourSearchPick) => {
+            setSlots((prev) => {
+                if (addingSlot == null) return prev;
+                // Ignore a dupe already held by ANOTHER slot.
+                if (prev.some((s, i) => s?.restaurant_id === pick.restaurant_id && i !== addingSlot)) {
+                    return prev;
+                }
+                const next = [...prev];
+                next[addingSlot] = {
                     restaurant_id: pick.restaurant_id,
                     name: pick.name,
                     photo_url: pick.photo_url,
-                },
-            ];
-        });
-    }, []);
+                };
+                return next;
+            });
+            setAddingSlot(null);
+        },
+        [addingSlot],
+    );
 
-    const handleRemove = useCallback((id: string) => {
-        setDraft((prev) => prev.filter((d) => d.restaurant_id !== id));
+    const clearSlot = useCallback((i: number) => {
+        setSlots((prev) => {
+            const next = [...prev];
+            next[i] = null;
+            return next;
+        });
     }, []);
 
     const handleSave = useCallback(() => {
         if (!hasDiff) return;
-        const picks = draft.map((d, i) => ({
+        const picks = filled.map((d, i) => ({
             position: (i + 1) as 1 | 2 | 3 | 4,
             restaurant_id: d.restaurant_id,
         }));
@@ -175,7 +192,7 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
             onSuccess: onClose,
             onError: () => Alert.alert('Could not save', 'Please try again.'),
         });
-    }, [hasDiff, draft, setPicks, onClose]);
+    }, [hasDiff, filled, setPicks, onClose]);
 
     const handleCancel = useCallback(() => {
         if (hasDiff) {
@@ -189,132 +206,81 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
     }, [hasDiff, onClose]);
 
     const isPending = setPicks.isPending;
-    const atCapacity = draft.length >= 4;
 
     return (
         <Modal
             visible={visible}
             animationType="slide"
             presentationStyle="pageSheet"
-            onRequestClose={searchVisible ? () => setSearchVisible(false) : handleCancel}
+            onRequestClose={addingSlot != null ? () => setAddingSlot(null) : handleCancel}
         >
-            {searchVisible ? (
+            {addingSlot != null ? (
                 <TopFourSearchScreen
-                    onClose={() => setSearchVisible(false)}
-                    onPick={handleAdd}
+                    onClose={() => setAddingSlot(null)}
+                    onPick={handlePick}
                     userId={userId}
                     pickedIds={pickedIds}
-                    atCapacity={atCapacity}
+                    atCapacity={false}
                 />
             ) : (
-            <View style={[styles.container, { backgroundColor: palette.background }]}>
-                {/* Header */}
-                <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
-                    <Pressable onPress={handleCancel} hitSlop={8}>
-                        <Text style={[Type.body, { color: palette.textMuted }]}>Cancel</Text>
-                    </Pressable>
+                <View style={[styles.container, { backgroundColor: palette.background }]}>
+                    {/* Header */}
+                    <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
+                        <Pressable onPress={handleCancel} hitSlop={8}>
+                            <Text style={[Type.body, { color: palette.textMuted }]}>Cancel</Text>
+                        </Pressable>
+                        <Text
+                            style={[
+                                Type.headlineItalic,
+                                { fontFamily: 'Newsreader_400Regular_Italic', fontStyle: 'italic', fontSize: 18, color: palette.text },
+                            ]}
+                        >
+                            Top 4
+                        </Text>
+                        <Pressable onPress={handleSave} hitSlop={8} disabled={!hasDiff || isPending}>
+                            {isPending ? (
+                                <ActivityIndicator color={palette.primary} size="small" />
+                            ) : (
+                                <Text
+                                    style={[
+                                        Type.body,
+                                        { color: hasDiff ? palette.primary : palette.textMuted, fontFamily: 'Manrope_700Bold' },
+                                    ]}
+                                >
+                                    Save
+                                </Text>
+                            )}
+                        </Pressable>
+                    </View>
+
+                    {/* Subtitle */}
                     <Text
                         style={[
-                            Type.headlineItalic,
-                            { fontFamily: 'Newsreader_400Regular_Italic', fontStyle: 'italic', fontSize: 18, color: palette.text },
+                            Type.bodySmall,
+                            {
+                                color: palette.textMuted,
+                                fontFamily: 'Newsreader_400Regular_Italic',
+                                fontStyle: 'italic',
+                                marginHorizontal: 22,
+                                marginBottom: Spacing.lg,
+                            },
                         ]}
                     >
-                        Top 4
+                        Tap a square to set that spot, tap a filled one to swap it, × to clear. Empty = back to automatic.
                     </Text>
-                    <Pressable onPress={handleSave} hitSlop={8} disabled={!hasDiff || isPending}>
-                        {isPending ? (
-                            <ActivityIndicator color={palette.primary} size="small" />
-                        ) : (
-                            <Text
-                                style={[
-                                    Type.body,
-                                    { color: hasDiff ? palette.primary : palette.textMuted, fontFamily: 'Manrope_700Bold' },
-                                ]}
-                            >
-                                Save
-                            </Text>
-                        )}
-                    </Pressable>
-                </View>
 
-                {/* Subtitle */}
-                <Text
-                    style={[
-                        Type.bodySmall,
-                        {
-                            color: palette.textMuted,
-                            fontFamily: 'Newsreader_400Regular_Italic',
-                            fontStyle: 'italic',
-                            marginHorizontal: 22,
-                            marginBottom: Spacing.sm,
-                        },
-                    ]}
-                >
-                    Pick up to 4 and long-press a row to drag it into order. Leave it empty to go back to automatic.
-                </Text>
-
-                {/* Draft slots */}
-                <View style={[styles.slotsSection, { borderBottomColor: palette.dividerSoft }]}>
-                    {draft.length === 0 ? (
-                        <View style={styles.emptyDraft}>
-                            <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
-                                Add up to four favourites below
-                            </Text>
+                    {/* 2×2 fixed slots */}
+                    <View style={styles.grid}>
+                        <View style={styles.gridRow}>
+                            <SlotCard index={0} slot={slots[0]} palette={palette} onPress={() => setAddingSlot(0)} onClear={() => clearSlot(0)} />
+                            <SlotCard index={1} slot={slots[1]} palette={palette} onPress={() => setAddingSlot(1)} onClear={() => clearSlot(1)} />
                         </View>
-                    ) : (
-                        // Own GestureHandlerRootView — draggable-flatlist needs one
-                        // INSIDE the Modal (the app-root one doesn't reach here). It
-                        // MUST have an explicit height: a draggable FlatList in an
-                        // auto-height parent collapses to 0 and renders NOTHING — that
-                        // was the "4 selected but no rows / can't delete" bug. Bound it
-                        // to the row count (each SlotItem ≈ 64px tall).
-                        <GestureHandlerRootView style={{ height: draft.length * 64 }}>
-                            <DraggableFlatList
-                                data={draft}
-                                onDragEnd={({ data }) => setDraft(data)}
-                                keyExtractor={(item) => item.key}
-                                renderItem={({ item, drag, isActive, getIndex }) => (
-                                    <SlotItem
-                                        item={item}
-                                        index={getIndex() ?? 0}
-                                        drag={drag}
-                                        isActive={isActive}
-                                        palette={palette}
-                                        onRemove={handleRemove}
-                                    />
-                                )}
-                                scrollEnabled={false}
-                                activationDistance={12}
-                            />
-                        </GestureHandlerRootView>
-                    )}
-
-                    <Text
-                        style={[Type.labelSmall, { color: palette.textMuted, margin: Spacing.sm, textAlign: 'center' }]}
-                    >
-                        {draft.length} / 4 selected
-                    </Text>
+                        <View style={styles.gridRow}>
+                            <SlotCard index={2} slot={slots[2]} palette={palette} onPress={() => setAddingSlot(2)} onClear={() => clearSlot(2)} />
+                            <SlotCard index={3} slot={slots[3]} palette={palette} onPress={() => setAddingSlot(3)} onClear={() => clearSlot(3)} />
+                        </View>
+                    </View>
                 </View>
-
-                {/* Add a spot — opens the full-screen Places search */}
-                <Pressable
-                    onPress={() => setSearchVisible(true)}
-                    style={({ pressed }) => [
-                        styles.addBtn,
-                        {
-                            borderColor: 'rgba(160,63,40,0.35)',
-                            backgroundColor: pressed ? palette.primaryMuted : 'transparent',
-                        },
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Add a spot to your Top 4"
-                >
-                    <Ionicons name="search" size={18} color={palette.primary} />
-                    <Text style={[styles.addBtnLabel, { color: palette.primary }]}>
-                        {atCapacity ? 'swap a spot' : 'add a spot'}
-                    </Text>
-                </Pressable>
-            </View>
             )}
         </Modal>
     );
@@ -331,48 +297,44 @@ const styles = StyleSheet.create({
         paddingHorizontal: 22,
         paddingBottom: Spacing.sm,
     },
-    slotsSection: {
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        marginHorizontal: 22,
-        paddingBottom: Spacing.xs,
+    grid: {
+        paddingHorizontal: 22,
+        gap: 12,
     },
-    slotRow: {
+    gridRow: {
         flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: Spacing.sm,
-        paddingLeft: Spacing.md,
-        paddingRight: Spacing.xs,
-        minHeight: 56,
-        borderRadius: Radius.sm,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        gap: Spacing.sm,
-        marginBottom: 4,
-        ...Shadow.clip,
+        gap: 12,
     },
-    slotCtl: {
-        width: 40,
-        height: 44,
+    card: {
+        flex: 1,
+        height: 100,
+        borderRadius: Radius.md,
         alignItems: 'center',
         justifyContent: 'center',
+        paddingHorizontal: Spacing.md,
+        overflow: 'hidden',
     },
-    emptyDraft: {
-        paddingVertical: Spacing.md,
-        alignItems: 'center',
+    cardNum: {
+        position: 'absolute',
+        top: 8,
+        left: 11,
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
     },
-    addBtn: {
-        flexDirection: 'row',
+    cardName: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontStyle: 'italic',
+        fontSize: 17,
+        lineHeight: 21,
+        textAlign: 'center',
+    },
+    cardRemove: {
+        position: 'absolute',
+        top: 5,
+        right: 5,
+        width: 28,
+        height: 28,
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 8,
-        marginHorizontal: 22,
-        marginTop: Spacing.lg,
-        height: 48,
-        borderRadius: Radius.full,
-        borderWidth: 1,
-    },
-    addBtnLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 14,
-        letterSpacing: 0.3,
     },
 });
