@@ -1128,6 +1128,15 @@ function EntryDetailScreen() {
                                             {entry.rating.toFixed(1)}
                                         </Text>
                                         <Text style={styles.ratingDenom}>/5</Text>
+                                        {entry.liked ? (
+                                            <Ionicons
+                                                name="heart"
+                                                size={15}
+                                                color={palette.primary}
+                                                style={styles.ratingHeart}
+                                                accessibilityLabel="loved"
+                                            />
+                                        ) : null}
                                     </Pressable>
                                 ) : entry.liked ? (
                                     <Pressable
@@ -1149,14 +1158,6 @@ function EntryDetailScreen() {
                                 ) : null
                             ) : null}
                         </View>
-
-                        {/* loved-it whisper (rated + hearted) */}
-                        {!isEditingRating && entry.rating != null && entry.rating > 0 && entry.liked ? (
-                            <View style={styles.lovedItRow}>
-                                <Ionicons name="heart" size={12} color={palette.primary} />
-                                <Text style={[styles.lovedItText, { color: palette.textMuted }]}>loved it</Text>
-                            </View>
-                        ) : null}
 
                         {/* Rating editor (inline, edit mode) */}
                         {isEditingRating ? (
@@ -2387,8 +2388,7 @@ const styles = StyleSheet.create({
     ratePrompt: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full },
     ratePromptText: { fontFamily: 'Manrope_500Medium', fontSize: 11, letterSpacing: 0.4 },
 
-    lovedItRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8 },
-    lovedItText: { fontFamily: 'Manrope_600SemiBold', fontSize: 11 },
+    ratingHeart: { marginLeft: 3, alignSelf: 'center' },
 
 
     // rating editor
