@@ -133,19 +133,23 @@ export function SupperCard({ supper, viewerId, onOpen, onAddTake }: SupperCardPr
             accessibilityLabel={`supper at ${restaurantName}, ${progressText}`}
         >
             <View style={[styles.card, { backgroundColor: palette.surfaceJournalLow }, Shadow.note]}>
-                {/* Photo banner + "supper" pill */}
-                <View style={styles.bannerWrap}>
-                    {restaurant?.photo_url ? (
+                {/* Restaurant photo banner — only when we actually have a photo.
+                    Restaurants have no reliable photo source, so rather than a big empty
+                    grey box we skip the banner and lead the body with a small "supper"
+                    kicker. The pooled "night" photos still show in the strip/mosaic below. */}
+                {restaurant?.photo_url ? (
+                    <View style={styles.bannerWrap}>
                         <Image source={{ uri: restaurant.photo_url }} style={styles.banner} resizeMode="cover" />
-                    ) : (
-                        <View style={[styles.banner, { backgroundColor: palette.surfaceContainerHigh }]} />
-                    )}
-                    <View style={[styles.pill, { backgroundColor: palette.placesOverlayTint + 'd9' }]}>
-                        <Text style={[styles.pillText, { color: palette.text }]}>supper</Text>
+                        <View style={[styles.pill, { backgroundColor: palette.placesOverlayTint + 'd9' }]}>
+                            <Text style={[styles.pillText, { color: palette.text }]}>supper</Text>
+                        </View>
                     </View>
-                </View>
+                ) : null}
 
                 <View style={styles.body}>
+                    {!restaurant?.photo_url ? (
+                        <Text style={[styles.supperKicker, { color: palette.primary }]}>supper</Text>
+                    ) : null}
                     {/* Restaurant + state badge */}
                     <View style={styles.titleRow}>
                         <View style={{ flex: 1 }}>
@@ -318,6 +322,13 @@ const styles = StyleSheet.create({
         fontSize: 10,
         letterSpacing: 1.2,
         textTransform: 'uppercase',
+    },
+    supperKicker: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10,
+        letterSpacing: 1.4,
+        textTransform: 'uppercase',
+        marginBottom: -4,
     },
     body: {
         padding: Spacing.md,

@@ -6,7 +6,11 @@
  * (single-ticked-only), and the save_spots action via useSaveImportSpots.
  *
  * State machine:
- *   'idle'                → user types / clipboard chip / tap "find it"
+ *   'menu'                → import-source picker (paste · screenshot · video).
+ *                           First step; deep-link entries skip it. A clearer IA
+ *                           than mixing the link field with vague text-links.
+ *   'idle'                → paste-a-link field (reached from 'menu' or a deep link);
+ *                           user types / clipboard chip / tap "find it"
  *   'loading'             → resolver in-flight; cancel button aborts
  *   'picking'             → CandidatePickerPanel (1–N candidates, multi-select)
  *   'editing-match'       → wrong restaurant? — inline Places search, per-row
@@ -49,6 +53,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -80,7 +85,8 @@ import { CandidatePickerPanel, buildInitialTicked, keyFor, isResolved } from './
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type SheetState =
-    | 'idle'
+    | 'menu'                   // TICKET: import-source menu (first step) — paste / screenshot / video
+    | 'idle'                   // paste-a-link text field (reached from the menu)
     | 'loading'
     | 'picking'               // TICKET-063: replaces picking + confirming
     | 'editing-match'
@@ -155,7 +161,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     const { user } = useAuth();
 
     // ── State ──────────────────────────────────────────────────────────
-    const [sheetState, setSheetState] = useState<SheetState>('idle');
+    // The sheet opens on the import-source menu (paste · screenshot · video).
+    // Deep-link entries (initialUrl / initialVideoPath) bypass it immediately.
+    const [sheetState, setSheetState] = useState<SheetState>('menu');
     const [inputValue, setInputValue] = useState('');
     const [touched, setTouched] = useState(false);
     const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);
@@ -237,8 +245,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     }, [visible, initialUrl]);
 
     // ── initialUrl (share extension deep-link) effect ─────────────────
+    // Fires from the freshly-opened menu state — a deep-linked URL skips the
+    // import-source menu and resolves immediately.
     useEffect(() => {
-        if (!visible || !initialUrl || sheetState !== 'idle') return;
+        if (!visible || !initialUrl || (sheetState !== 'menu' && sheetState !== 'idle')) return;
         const trimmed = initialUrl.trim();
         const validation = validateUrl(trimmed);
         if (validation.ok) {
@@ -344,13 +354,16 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     const handleCancel = useCallback(() => {
         videoReqRef.current++;
         cancel();
-        setSheetState('idle');
+        // Cancelling an in-flight resolve drops the user back to the source menu
+        // (the top of the flow) rather than the bare paste field.
+        setSheetState('menu');
     }, [cancel]);
 
     const handleDismiss = useCallback(() => {
         videoReqRef.current++;
         cancel();
-        setSheetState('idle');
+        // Reset to the source menu so the next open starts at step one.
+        setSheetState('menu');
         setInputValue('');
         setTouched(false);
         setClipboardUrl(null);
@@ -800,7 +813,17 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                     >
                         <View style={[styles.handle, { backgroundColor: palette.outlineVariant }]} />
 
-                        {/* ── IDLE ──────────────────────────────────── */}
+                        {/* ── MENU (import-source picker — first step) ── */}
+                        {sheetState === 'menu' && (
+                            <SourceMenuPanel
+                                palette={palette}
+                                onPasteLink={() => setSheetState('idle')}
+                                onPickScreenshot={handlePickScreenshot}
+                                onPickVideo={VIDEO_IMPORT_AVAILABLE ? handlePickVideo : undefined}
+                            />
+                        )}
+
+                        {/* ── IDLE (paste a link — second step) ──────── */}
                         {sheetState === 'idle' && (
                             <IdlePanel
                                 palette={palette}
@@ -813,8 +836,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 clipboardUrl={clipboardUrl}
                                 onClipboardChip={handleClipboardChip}
                                 inputRef={inputRef}
-                                onPickScreenshot={handlePickScreenshot}
-                                onPickVideo={VIDEO_IMPORT_AVAILABLE ? handlePickVideo : undefined}
+                                onBack={() => setSheetState('menu')}
                             />
                         )}
 
@@ -925,7 +947,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                         {sheetState === 'destination' && (
                             <DestinationPicker
                                 onConfirm={handleDestinationConfirm}
-                                onCancel={() => setSheetState('idle')}
+                                onCancel={() => setSheetState('menu')}
                                 isSaving={createImport.isPending}
                             />
                         )}
@@ -946,7 +968,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                             <IgNudgePanel
                                 palette={palette}
                                 onPickScreenshot={handlePickScreenshot}
-                                onDismiss={() => setSheetState('idle')}
+                                onDismiss={() => setSheetState('menu')}
                             />
                         )}
                     </View>
@@ -958,7 +980,101 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
 
 // ── Panel sub-components ─────────────────────────────────────────────────────
 
-// Idle
+// Source menu — the first step. Distinct, icon-led rows for each import path.
+interface SourceMenuRow {
+    key: string;
+    icon: React.ComponentProps<typeof Ionicons>['name'];
+    title: string;
+    subtitle: string;
+    onPress: () => void;
+}
+
+interface SourceMenuPanelProps {
+    palette: Palette;
+    onPasteLink: () => void;
+    onPickScreenshot: () => void;
+    /** Undefined until the native video-import module is linked. */
+    onPickVideo?: () => void;
+}
+
+function SourceMenuPanel({
+    palette,
+    onPasteLink,
+    onPickScreenshot,
+    onPickVideo,
+}: SourceMenuPanelProps) {
+    const rows: SourceMenuRow[] = [
+        {
+            key: 'link',
+            icon: 'link-outline',
+            title: 'paste a link',
+            subtitle: 'tiktok, google maps, or a website',
+            onPress: onPasteLink,
+        },
+        {
+            key: 'screenshot',
+            icon: 'image-outline',
+            title: 'from a screenshot',
+            subtitle: 'a saved photo of a list or a map',
+            onPress: onPickScreenshot,
+        },
+        ...(onPickVideo
+            ? [{
+                key: 'video',
+                icon: 'film-outline' as const,
+                title: 'from a video',
+                subtitle: 'a saved clip — gets every spot',
+                onPress: onPickVideo,
+            }]
+            : []),
+    ];
+
+    return (
+        <View>
+            <Text style={[styles.sheetTitle, { color: palette.text }]}>import spots</Text>
+            <Text style={[Type.bodySmall, styles.menuLede, { color: palette.textMuted }]}>
+                where are they coming from?
+            </Text>
+
+            <View style={styles.menuList}>
+                {rows.map((row) => (
+                    <Pressable
+                        key={row.key}
+                        onPress={row.onPress}
+                        accessibilityRole="button"
+                        accessibilityLabel={row.title}
+                        style={({ pressed }) => [
+                            styles.menuRow,
+                            {
+                                backgroundColor: palette.surfaceJournalLow,
+                                opacity: pressed ? 0.85 : 1,
+                            },
+                            Shadow.clip,
+                        ]}
+                    >
+                        <View style={[styles.menuIconWrap, { backgroundColor: palette.surfaceContainerHigh }]}>
+                            <Ionicons name={row.icon} size={22} color={palette.primary} />
+                        </View>
+                        <View style={styles.menuRowText}>
+                            <Text style={[styles.menuRowTitle, { color: palette.text }]}>
+                                {row.title}
+                            </Text>
+                            <Text
+                                style={[Type.bodySmall, { color: palette.textMuted }]}
+                                numberOfLines={1}
+                            >
+                                {row.subtitle}
+                            </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
+                    </Pressable>
+                ))}
+            </View>
+        </View>
+    );
+}
+
+// Idle — the paste-a-link sub-step (reached from the source menu).
 interface IdlePanelProps {
     palette: Palette;
     inputValue: string;
@@ -970,8 +1086,8 @@ interface IdlePanelProps {
     clipboardUrl: string | null;
     onClipboardChip: () => void;
     inputRef: React.RefObject<TextInput | null>;
-    onPickScreenshot?: () => void;
-    onPickVideo?: () => void;
+    /** Returns to the source menu (first step). */
+    onBack: () => void;
 }
 
 function IdlePanel({
@@ -984,12 +1100,22 @@ function IdlePanel({
     clipboardUrl,
     onClipboardChip,
     inputRef,
-    onPickScreenshot,
-    onPickVideo,
+    onBack,
 }: IdlePanelProps) {
     return (
         <View>
-            <Text style={[styles.sheetTitle, { color: palette.text }]}>add from link</Text>
+            <Pressable
+                onPress={onBack}
+                hitSlop={8}
+                style={styles.backRow}
+                accessibilityRole="button"
+                accessibilityLabel="back to import options"
+            >
+                <Ionicons name="chevron-back" size={18} color={palette.textMuted} />
+                <Text style={[Type.bodySmall, { color: palette.textMuted }]}>back</Text>
+            </Pressable>
+
+            <Text style={[styles.sheetTitle, { color: palette.text }]}>paste a link</Text>
 
             {clipboardUrl ? (
                 <Pressable
@@ -1063,32 +1189,6 @@ function IdlePanel({
                     find it
                 </Text>
             </Pressable>
-
-            {onPickScreenshot && (
-                <Pressable
-                    onPress={onPickScreenshot}
-                    hitSlop={8}
-                    style={styles.textLinkRow}
-                    accessibilityLabel="add a screenshot instead"
-                >
-                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
-                        or add a screenshot
-                    </Text>
-                </Pressable>
-            )}
-
-            {onPickVideo && (
-                <Pressable
-                    onPress={onPickVideo}
-                    hitSlop={8}
-                    style={styles.textLinkRow}
-                    accessibilityLabel="import a video"
-                >
-                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
-                        or import a video — gets every spot
-                    </Text>
-                </Pressable>
-            )}
         </View>
     );
 }
@@ -1372,6 +1472,45 @@ const styles = StyleSheet.create({
     sheetTitle: {
         ...Type.headlineItalic,
         marginBottom: Spacing.md,
+    },
+    menuLede: {
+        marginTop: -Spacing.xs,
+        marginBottom: Spacing.md,
+    },
+    menuList: {
+        gap: Spacing.sm,
+    },
+    menuRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: Spacing.md,
+        borderRadius: Radius.md,
+        minHeight: 64,
+        gap: Spacing.md,
+    },
+    menuIconWrap: {
+        width: 44,
+        height: 44,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    menuRowText: {
+        flex: 1,
+        gap: 2,
+    },
+    menuRowTitle: {
+        ...Type.headlineItalic,
+        fontSize: 17,
+    },
+    backRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+        alignSelf: 'flex-start',
+        paddingVertical: Spacing.xs,
+        marginBottom: Spacing.xs,
+        minHeight: 32,
     },
     clipChip: {
         alignSelf: 'flex-start',
