@@ -490,16 +490,12 @@ export default function TablesScreen() {
                     {headerAndControl}
 
                     {/* Empty-chair invitation — users with a single table, dismissable.
-                        Hidden during friend-test because its CTA lands on seed-from-solo. */}
+                        Curtained during friend-test as part of the emergence-arc nudge;
+                        its CTA opens the /create-table flow. */}
                     {!FRIEND_TEST.hideEmergenceArc && (tables?.length ?? 0) <= 1 && !invitationDismissed && (
                         <EmptyChairInvitation
                             palette={palette}
-                            onGatherPress={() =>
-                                router.push({
-                                    pathname: '/seed-from-solo',
-                                    params: { tableName: 'Your new table' },
-                                })
-                            }
+                            onGatherPress={() => router.push('/create-table')}
                             onDismiss={() => setInvitationDismissed(true)}
                         />
                     )}
@@ -1007,10 +1003,7 @@ export default function TablesScreen() {
                     // friend test (it is the ONLY creation entry point in the
                     // UI). Only unsolicited emergence NUDGES are curtained.
                     setShowTablePicker(false);
-                    router.push({
-                        pathname: '/seed-from-solo',
-                        params: { tableName: 'Your new table' },
-                    });
+                    router.push('/create-table');
                 }}
             />
         </View>

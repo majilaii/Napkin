@@ -156,7 +156,7 @@ export function TableSwitcherSheet({
                     <View style={[styles.handle, { backgroundColor: palette.outlineVariant }]} />
                 </View>
 
-                {/* Sheet title + "Gather new" CTA */}
+                {/* Sheet title + "Create new" CTA */}
                 <View style={styles.titleRow}>
                     <Text style={[styles.sheetTitle, { color: palette.text }]}>
                         Your tables
@@ -166,10 +166,10 @@ export function TableSwitcherSheet({
                             onPress={onGatherNew}
                             hitSlop={8}
                             accessibilityRole="button"
-                            accessibilityLabel="Gather a new table"
+                            accessibilityLabel="Create a new table"
                         >
                             <Text style={[styles.gatherCta, { color: palette.primary }]}>
-                                + GATHER NEW
+                                + CREATE NEW
                             </Text>
                         </Pressable>
                     )}
