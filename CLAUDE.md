@@ -97,6 +97,7 @@ Emergent overlap, not declared nomination.
 
 - **Bottom nav stays Ionicons + labels.** Do NOT swap for the canvas text-only uppercase variant from `feed-canvas` / `profile-canvas`. 52×52 floating terracotta `+` with negative margin. User rejected text-only nav; icons are non-negotiable. When doing canvas-faithful passes, skip the bottom nav — leave `app/_layout.tsx::BottomNavBar` and `navStyles` alone. If asked to redesign nav later, confirm before replacing icons.
 - **Terse responses.** Don't narrate. Short updates, direct answers.
+- **On-screen copy economy — cut hard.** Claude Design canvases over-explain; their prose is a *maximum to cut from*, not a spec to reproduce. Prefer a succinct label ("Name", or none + a placeholder) over a full-sentence prompt — never ship "what should we call this table?". Never stack multiple explanatory sentences on one screen (reads as cluttered garbage). If a field is self-evident, don't narrate it — let the placeholder/structure carry it; one entry box per intent. Empty states get at most one short line. **The goal is instant comprehension** — the user should "get it" at a glance, which is as much about type hierarchy and contrast as word count: put functional text and field labels in Manrope (sans) with real contrast, and reserve Newsreader *italic serif* for content and brand moments (names, quotes, ratings) — NEVER for prompts, instructions, or labels (a prompt in decorative italic reads as atmosphere, not instruction). This applies to all UI agents (builder, designer, reviewer).
 
 ## Terminology
 

@@ -270,6 +270,10 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
+            name="create-table"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
             name="diary"
             options={{ headerShown: false }}
           />

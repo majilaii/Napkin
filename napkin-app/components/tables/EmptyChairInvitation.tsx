@@ -62,10 +62,10 @@ export function EmptyChairInvitation({
                         { backgroundColor: palette.primary, opacity: pressed ? 0.88 : 1 },
                     ]}
                     accessibilityRole="button"
-                    accessibilityLabel="Gather a table"
+                    accessibilityLabel="Create a table"
                 >
                     <Text style={[Type.label, styles.primaryCtaText]}>
-                        Gather a table
+                        Create a table
                     </Text>
                 </Pressable>
 
