@@ -1,12 +1,14 @@
 /**
- * BottomActionBar — sticky action strip for the restaurant page.
+ * BottomActionBar — the restaurant page's action dock.
  *
- * Primary pill: terracotta "+ Log a visit" (or "Log again" once the user has
- * logged at least once). Secondary pill: outline "Pin" with location-pin glyph
- * that flips to terracotta fill when saved to the wishlist.
+ * One home for everything you can DO to a restaurant:
+ *   LOG THIS MEAL (sole terracotta primary — the app's one write path)
+ *   · save (bookmark → AddToListSheet)
+ *   · directions
+ *   · set a table (when the viewer has a Table and the restaurant is persisted)
  *
- * The bar pins to the bottom and fades upward into the page background so the
- * scroll content doesn't butt against a hard edge.
+ * The bar pins to the bottom and fades upward into the page background —
+ * structure by background shift, not a hard border (Heirloom rule).
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -20,11 +22,13 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 type Palette = typeof Colors.light;
 
 interface Props {
-    loggedBefore: boolean;
     onLogPress: () => void;
-    pinned: boolean;
-    onPinPress: () => void;
-    pinDisabled?: boolean;
+    saved: boolean;
+    onSavePress: () => void;
+    saveDisabled?: boolean;
+    onDirectionsPress: () => void;
+    showSetTable?: boolean;
+    onSetTablePress?: () => void;
 }
 
 function withAlpha(hex: string, alpha: number): string {
@@ -34,18 +38,47 @@ function withAlpha(hex: string, alpha: number): string {
     return `${hex}${aa}`;
 }
 
+interface DockIconProps {
+    icon: keyof typeof Ionicons.glyphMap;
+    label: string;
+    onPress?: () => void;
+    disabled?: boolean;
+    palette: Palette;
+    active?: boolean;
+}
+
+function DockIcon({ icon, label, onPress, disabled, palette, active }: DockIconProps) {
+    return (
+        <Pressable
+            onPress={onPress}
+            disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            style={({ pressed }) => [
+                styles.iconBtn,
+                {
+                    backgroundColor: active ? palette.primaryMuted : palette.card,
+                    opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
+                },
+            ]}
+        >
+            <Ionicons name={icon} size={18} color={palette.primary} />
+        </Pressable>
+    );
+}
+
 export function BottomActionBar({
-    loggedBefore,
     onLogPress,
-    pinned,
-    onPinPress,
-    pinDisabled,
+    saved,
+    onSavePress,
+    saveDisabled,
+    onDirectionsPress,
+    showSetTable,
+    onSetTablePress,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const insets = useSafeAreaInsets();
-
-    const cream = palette.cream;
     const bg = palette.background;
 
     return (
@@ -64,6 +97,8 @@ export function BottomActionBar({
             <View style={styles.row}>
                 <Pressable
                     onPress={onLogPress}
+                    accessibilityRole="button"
+                    accessibilityLabel="Log this meal"
                     style={({ pressed }) => [
                         styles.primaryBtn,
                         {
@@ -73,38 +108,31 @@ export function BottomActionBar({
                         },
                     ]}
                 >
-                    <Text style={[styles.plusGlyph, { color: cream }]}>+</Text>
-                    <Text style={[styles.primaryLabel, { color: cream }]}>
-                        {loggedBefore ? 'Log again' : 'Log a visit'}
-                    </Text>
+                    <Text style={styles.primaryLabel}>LOG THIS MEAL</Text>
                 </Pressable>
 
-                <Pressable
-                    onPress={onPinPress}
-                    disabled={pinDisabled}
-                    style={({ pressed }) => [
-                        styles.pinBtn,
-                        {
-                            backgroundColor: palette.card,
-                            borderColor: 'rgba(28,28,25,0.1)',
-                            opacity: pinDisabled ? 0.5 : pressed ? 0.85 : 1,
-                        },
-                    ]}
-                >
-                    <Ionicons
-                        name={pinned ? 'location' : 'location-outline'}
-                        size={13}
-                        color={pinned ? palette.primary : palette.text}
+                <DockIcon
+                    icon={saved ? 'bookmark' : 'bookmark-outline'}
+                    label={saved ? 'Saved — change where this is saved' : 'Save restaurant'}
+                    onPress={onSavePress}
+                    disabled={saveDisabled}
+                    active={saved}
+                    palette={palette}
+                />
+                <DockIcon
+                    icon="navigate-outline"
+                    label="directions"
+                    onPress={onDirectionsPress}
+                    palette={palette}
+                />
+                {showSetTable ? (
+                    <DockIcon
+                        icon="people-outline"
+                        label="set a table here"
+                        onPress={onSetTablePress}
+                        palette={palette}
                     />
-                    <Text
-                        style={[
-                            styles.pinLabel,
-                            { color: pinned ? palette.primary : palette.text },
-                        ]}
-                    >
-                        {pinned ? 'Pinned' : 'Pin'}
-                    </Text>
-                </Pressable>
+                ) : null}
             </View>
         </View>
     );
@@ -128,41 +156,32 @@ const styles = StyleSheet.create({
     },
     row: {
         flexDirection: 'row',
+        alignItems: 'center',
         gap: 8,
     },
     primaryBtn: {
         flex: 1,
-        paddingVertical: 13,
+        height: 44,
         borderRadius: 999,
-        flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 8,
-    },
-    plusGlyph: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 16,
-        lineHeight: 18,
     },
     primaryLabel: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 11,
-        letterSpacing: 0.8,
-        textTransform: 'uppercase',
+        letterSpacing: 1.6,
+        color: '#fffdf8',
     },
-    pinBtn: {
-        paddingVertical: 13,
-        paddingHorizontal: 16,
-        borderRadius: 999,
-        borderWidth: StyleSheet.hairlineWidth,
-        flexDirection: 'row',
+    iconBtn: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: 'center',
-        gap: 6,
-    },
-    pinLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
-        letterSpacing: 0.4,
-        textTransform: 'uppercase',
+        justifyContent: 'center',
+        shadowColor: '#1c1c19',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.06,
+        shadowRadius: 12,
+        elevation: 2,
     },
 });

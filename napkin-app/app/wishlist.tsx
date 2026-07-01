@@ -286,7 +286,8 @@ export default function WishlistScreen() {
     const [sortMode, setSortMode] = useState<'recent' | 'near'>('recent');
     const [cuisineFilter, setCuisineFilter] = useState<string | null>(null);
     const [priceFilter, setPriceFilter] = useState<string | null>(null); // "1".."4"
-    const [openSheet, setOpenSheet] = useState<'cuisine' | 'price' | 'sort' | null>(null);
+    const [cityFilter, setCityFilter] = useState<string | null>(null);
+    const [openSheet, setOpenSheet] = useState<'cuisine' | 'price' | 'sort' | 'city' | null>(null);
     const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
     // Watch position live while sorting by nearest or viewing the map, so distances
     // re-rank as you walk (Amsterdam-stroll fix) instead of freezing until restart.
@@ -321,6 +322,21 @@ export default function WishlistScreen() {
             .sort((a, b) => a.level - b.level);
     }, [pinnedRows]);
 
+    // Cities present in the saved set ("London", "Lisbon"…), frequency-ranked, for
+    // the City filter — answers "show me only my London spots." Sourced from the
+    // restaurant's Places locality (restaurants.city). Pill only appears below when
+    // ≥2 cities exist (a single-city wishlist needs no city filter).
+    const cityCounts = useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const i of pinnedRows) {
+            const c = i.restaurant?.city?.trim();
+            if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
+        }
+        return [...counts.entries()]
+            .map(([city, count]) => ({ city, count }))
+            .sort((a, b) => (b.count !== a.count ? b.count - a.count : a.city.localeCompare(b.city)));
+    }, [pinnedRows]);
+
     // ── Filter-sheet option lists + current-value labels (Cuisine · Price · Sort) ──
     const cuisineOptions = useMemo<FilterOption[]>(
         () => [
@@ -336,6 +352,13 @@ export default function WishlistScreen() {
         ],
         [priceCounts],
     );
+    const cityOptions = useMemo<FilterOption[]>(
+        () => [
+            { value: null, label: 'All cities' },
+            ...cityCounts.map((c) => ({ value: c.city, label: c.city, count: c.count })),
+        ],
+        [cityCounts],
+    );
     const sortOptions: FilterOption[] = useMemo(
         () => [
             { value: 'recent', label: 'Recently saved' },
@@ -346,6 +369,19 @@ export default function WishlistScreen() {
     const cuisineLabel = cuisineFilter ?? 'Cuisine';
     const priceLabel = priceFilter ? priceTierLabel(Number(priceFilter)) : 'Price';
     const sortLabel = sortMode === 'near' ? 'Nearest' : 'Sort';
+    const cityLabel = cityFilter ?? 'City';
+
+    // The filter pill strip. City leads ("where") when the wishlist spans ≥2 cities;
+    // otherwise it's hidden so a single-city list isn't cluttered. Sort·Nearest still
+    // handles "near me" ordering — City answers "only show me London."
+    const filterPills = [
+        ...(cityCounts.length > 1
+            ? [{ key: 'city' as const, label: cityLabel, active: !!cityFilter }]
+            : []),
+        { key: 'cuisine' as const, label: cuisineLabel, active: !!cuisineFilter },
+        { key: 'price' as const, label: priceLabel, active: !!priceFilter },
+        { key: 'sort' as const, label: sortLabel, active: sortMode === 'near' },
+    ];
 
     // Sort selection: "Nearest" opts into location lazily (same idiom as the map).
     const handleSelectSort = useCallback((value: string | null) => {
@@ -358,14 +394,18 @@ export default function WishlistScreen() {
     const clearFilters = useCallback(() => {
         setCuisineFilter(null);
         setPriceFilter(null);
+        setCityFilter(null);
     }, []);
 
-    const hasActiveFilters = !!cuisineFilter || !!priceFilter;
+    const hasActiveFilters = !!cuisineFilter || !!priceFilter || !!cityFilter;
 
     // Filter (cuisine + price) → (optional) distance-decorate → sort. Distance label
     // rides along so the row can show it without recomputing.
     const displayedRows = useMemo(() => {
         let rows = pinnedRows;
+        if (cityFilter) {
+            rows = rows.filter((i) => i.restaurant?.city?.trim() === cityFilter);
+        }
         if (cuisineFilter) {
             rows = rows.filter((i) => i.restaurant?.cuisine?.trim() === cuisineFilter);
         }
@@ -385,13 +425,16 @@ export default function WishlistScreen() {
             decorated.sort((a, b) => a.dist - b.dist); // nearest first; no-coord items (Infinity) sink
         }
         return decorated;
-    }, [pinnedRows, cuisineFilter, priceFilter, sortMode, coords]);
+    }, [pinnedRows, cityFilter, cuisineFilter, priceFilter, sortMode, coords]);
 
     // Map view: cuisine-filtered saved spots, split by whether they carry coords.
     // Sort is irrelevant on a map (position is the signal), so this reads from
     // pinnedRows directly rather than the distance-decorated displayedRows.
     const { mapItems, unmappableCount } = useMemo(() => {
         let rows = pinnedRows;
+        if (cityFilter) {
+            rows = rows.filter((i) => i.restaurant?.city?.trim() === cityFilter);
+        }
         if (cuisineFilter) {
             rows = rows.filter((i) => i.restaurant?.cuisine?.trim() === cuisineFilter);
         }
@@ -406,7 +449,7 @@ export default function WishlistScreen() {
             }
         }
         return { mapItems: mappable, unmappableCount: missing };
-    }, [pinnedRows, cuisineFilter]);
+    }, [pinnedRows, cityFilter, cuisineFilter]);
 
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);
@@ -430,14 +473,18 @@ export default function WishlistScreen() {
     // "{N} spots · italian · $$" — the active filters spelled out after the count.
     const filterSuffix = useMemo(() => {
         const parts: string[] = [];
+        if (cityFilter) parts.push(cityFilter.toLowerCase());
         if (cuisineFilter) parts.push(cuisineFilter.toLowerCase());
         if (priceFilter) parts.push(priceTierLabel(Number(priceFilter)));
         return parts.length ? ` · ${parts.join(' · ')}` : '';
-    }, [cuisineFilter, priceFilter]);
+    }, [cityFilter, cuisineFilter, priceFilter]);
 
     // One sheet, three menus.
     const sheetProps =
-        openSheet === 'cuisine'
+        openSheet === 'city'
+            ? { title: 'City', options: cityOptions, selected: cityFilter,
+                onSelect: (v: string | null) => { setCityFilter(v); setOpenSheet(null); } }
+            : openSheet === 'cuisine'
             ? { title: 'Cuisine', options: cuisineOptions, selected: cuisineFilter,
                 onSelect: (v: string | null) => { setCuisineFilter(v); setOpenSheet(null); } }
             : openSheet === 'price'
@@ -536,11 +583,7 @@ export default function WishlistScreen() {
                             contentContainerStyle={styles.rFilterBar}
                             keyboardShouldPersistTaps="handled"
                         >
-                            {([
-                                { key: 'cuisine' as const, label: cuisineLabel, active: !!cuisineFilter },
-                                { key: 'price' as const, label: priceLabel, active: !!priceFilter },
-                                { key: 'sort' as const, label: sortLabel, active: sortMode === 'near' },
-                            ]).map((pill) => (
+                            {filterPills.map((pill) => (
                                 <Pressable
                                     key={pill.key}
                                     onPress={() => setOpenSheet(pill.key)}

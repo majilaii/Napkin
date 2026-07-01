@@ -32,6 +32,7 @@ import {
     ActivityIndicator,
     Alert,
     Image,
+    Linking,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -43,7 +44,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing, Radius } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { pickDefaultTier, populatedTiers } from '@/lib/restaurantSignal';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -74,6 +75,9 @@ import {
     ProfessionalTakesBand,
     SavedFromTikTokPanel,
     MetaActions,
+    RatingPlate,
+    BottomActionBar,
+    resolveDirectionsUrl,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { AddToListSheet } from '@/components/lists';
@@ -410,6 +414,39 @@ export default function RestaurantScreen() {
         }
     }, [bookmarkDisabled, bookmarked, persistedRestaurantId, wishlistAdd, wishlistRemove, savePayload, restaurant]);
 
+    // ── Relationship line — "pinned · been twice · last june" ────────────
+    const relationshipLine = useMemo(() => {
+        const parts: string[] = [];
+        if (isSaved) parts.push('pinned');
+        if (personalCount > 0) {
+            parts.push(
+                personalCount === 1
+                    ? 'been once'
+                    : personalCount === 2
+                        ? 'been twice'
+                        : `been ${personalCount} times`,
+            );
+            const latest = selfVisits.reduce<string | null>(
+                (max, v) => (max == null || v.date > max ? v.date : max),
+                null,
+            );
+            if (latest) {
+                const mon = new Date(latest)
+                    .toLocaleDateString('en-US', { month: 'long' })
+                    .toLowerCase();
+                parts.push(`last ${mon}`);
+            }
+        }
+        return parts.length > 0 ? parts.join(' · ') : null;
+    }, [isSaved, personalCount, selfVisits]);
+
+    const handleDirections = useCallback(() => {
+        if (!restaurant) return;
+        Linking.openURL(
+            resolveDirectionsUrl(restaurant.google_maps_uri ?? null, restaurant.name, restaurant.city ?? null),
+        ).catch(() => {});
+    }, [restaurant]);
+
     // ── Signal strip collapse ─────────────────────────────────────────────
     const tiersWithData = [
         youCell.hasData,
@@ -514,8 +551,7 @@ export default function RestaurantScreen() {
                         </View>
                     ) : null}
 
-                    {/* Top bar: ‹ search breadcrumb + pin (save) top-right.
-                        Pin is a fixed-size icon → no PIN↔PINNED width jump. */}
+                    {/* Top bar: ‹ search breadcrumb only — save lives in the dock now */}
                     {restaurant ? (
                         <View style={styles.topBar}>
                             <Pressable
@@ -530,39 +566,30 @@ export default function RestaurantScreen() {
                                     search
                                 </Text>
                             </Pressable>
-                            <Pressable
-                                onPress={bookmarkDisabled ? undefined : () => setSaveSheetOpen(true)}
-                                style={({ pressed }) => [
-                                    styles.pinTop,
-                                    {
-                                        backgroundColor: isSaved ? palette.primaryMuted : 'transparent',
-                                        opacity: pressed ? 0.7 : 1,
-                                    },
-                                ]}
-                                hitSlop={8}
-                                accessibilityLabel={isSaved ? 'Saved — change where this is saved' : 'Save restaurant'}
-                                accessibilityRole="button"
-                            >
-                                <Ionicons
-                                    name={isSaved ? 'bookmark' : 'bookmark-outline'}
-                                    size={20}
-                                    color={palette.primary}
-                                />
-                            </Pressable>
                         </View>
                     ) : null}
 
-                    {/* Masthead — left-aligned editorial (no hairlines, no centred slab) */}
+                    {/* Masthead — name + meta left, the plate (your number) right.
+                        The plate is the page's anchor object: rated = terracotta
+                        numeral on a warm plate; unrated = dashed waiting plate. */}
                     {restaurant ? (
-                        <View style={styles.masthead}>
-                            <Text style={[styles.mastheadName, { color: palette.text }]} numberOfLines={2}>
-                                {restaurant.name}
-                            </Text>
-                            {buildMeta(restaurant) ? (
-                                <Text style={[styles.mastheadMeta, { color: palette.textMuted }]}>
-                                    {buildMeta(restaurant)}
+                        <View style={styles.mastheadRow}>
+                            <View style={styles.mastheadText}>
+                                <Text style={[styles.mastheadName, { color: palette.text }]} numberOfLines={3}>
+                                    {restaurant.name}
                                 </Text>
-                            ) : null}
+                                {buildMeta(restaurant) ? (
+                                    <Text style={[styles.mastheadMeta, { color: palette.textMuted }]}>
+                                        {buildMeta(restaurant)}
+                                    </Text>
+                                ) : null}
+                                {relationshipLine ? (
+                                    <Text style={[styles.relationshipLine, { color: palette.textSecondary }]}>
+                                        {relationshipLine}
+                                    </Text>
+                                ) : null}
+                            </View>
+                            <RatingPlate rating={pageData?.personal?.average ?? null} palette={palette} />
                         </View>
                     ) : null}
 
@@ -577,6 +604,7 @@ export default function RestaurantScreen() {
                             hours={restaurant.hours}
                             name={restaurant.name}
                             city={restaurant.city}
+                            showDirections={false}
                         />
                     ) : null}
 
@@ -601,83 +629,30 @@ export default function RestaurantScreen() {
                         />
                     ) : null}
 
-                    {/* Cold restaurant — Google sibling signal + "be the first"
-                        invitation card (canvas take-B letterpress empty state). Anchors
-                        the page in place of the lonely murmur-over-a-void it replaces.
-                        The FROM YOUR TABLE / YOUR HISTORY ledger sections below still
-                        render their murmurs, keeping the editorial skeleton intact. */}
+                    {/* Cold restaurant — one confident line + the external number,
+                        set quietly. The waiting plate above already carries the
+                        invitation; no mournful murmurs, no Google-as-hero card. */}
                     {isColdRestaurant ? (
-                        <View style={styles.beFirstWrap}>
-                            <View style={[styles.beFirstCard, { backgroundColor: palette.surfaceJournalLow }]}>
-                                {googleCell.hasData ? (
-                                    <>
-                                        <View style={styles.beFirstGoogle}>
-                                            <Text style={[styles.beFirstGoogleLabel, { color: palette.textMuted }]}>
-                                                GOOGLE
-                                            </Text>
-                                            <Text style={[styles.beFirstGoogleValue, { color: palette.tertiary }]}>
-                                                {googleCell.value}
-                                            </Text>
-                                            {googleCell.sub ? (
-                                                <Text style={[styles.beFirstGoogleCount, { color: palette.textMuted }]}>
-                                                    {googleCell.sub}
-                                                </Text>
-                                            ) : null}
-                                        </View>
-                                        <View style={[styles.beFirstDivider, { backgroundColor: palette.dividerSoft }]} />
-                                    </>
-                                ) : null}
-                                <Text style={[styles.beFirstInvite, { color: palette.textMuted }]}>
-                                    — no one you know has been. be the first.
+                        <View style={styles.coldBlock}>
+                            <Text style={[styles.coldHeadline, { color: palette.text }]}>
+                                No one you know has been.
+                            </Text>
+                            {googleCell.hasData ? (
+                                <Text style={[styles.coldGoogle, { color: palette.textMuted }]}>
+                                    {`Google · ${googleCell.value}${googleCell.sub ? ` (${googleCell.sub})` : ''}`}
                                 </Text>
-                            </View>
+                            ) : null}
                         </View>
                     ) : null}
 
-                    {/* CTA row: LOG THIS MEAL + (supper v2) set a table */}
-                    {restaurant ? (
-                        <View style={styles.ctaRow}>
-                            <Pressable
-                                onPress={handleLogPress}
-                                style={({ pressed }) => [
-                                    styles.logBtn,
-                                    { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 },
-                                ]}
-                                accessibilityLabel="Log this meal"
-                                accessibilityRole="button"
-                            >
-                                <Text style={styles.logBtnLabel}>LOG THIS MEAL</Text>
-                            </Pressable>
-                        </View>
-                    ) : null}
-
-                    {/* Supper v2: set a table here. Restaurant-anchored — needs the
-                        restaurant persisted (so the supper has a real restaurant_id) and at
-                        least one Table to draw the crew from. Quiet secondary under the log CTA. */}
-                    {restaurant && !FRIEND_TEST.hideSuppers && hasAnyTable && persistedRestaurantId ? (
-                        <Pressable
-                            onPress={() => setSetTableSheetOpen(true)}
-                            style={({ pressed }) => [
-                                styles.setTableBtn,
-                                { borderColor: palette.terracottaBorder, opacity: pressed ? 0.7 : 1 },
-                            ]}
-                            accessibilityLabel="Set a table here"
-                            accessibilityRole="button"
-                        >
-                            <Ionicons name="people-outline" size={17} color={palette.primary} />
-                            <Text style={[styles.setTableLabel, { color: palette.primary }]}>set a table here</Text>
-                        </Pressable>
-                    ) : null}
-
-                    {/* FROM YOUR TABLE — renders in cold state too (murmur fallback) so
-                        the page keeps its ledger skeleton instead of trailing into a void. */}
-                    {restaurant ? (
+                    {/* FROM YOUR TABLE — only when there are real quotes. Absence is
+                        stated once by the cold block, not per-section. */}
+                    {restaurant && tablemateVisits.some(v => v.note) ? (
                         <View style={styles.section}>
                             <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
                                 FROM YOUR TABLE
                             </Text>
-                            {tablemateVisits.filter(v => v.note).slice(0, 3).length > 0 ? (
-                                tablemateVisits.filter(v => v.note).slice(0, 3).map((v) => (
+                            {tablemateVisits.filter(v => v.note).slice(0, 3).map((v) => (
                                     <View key={v.id} style={styles.voiceRow}>
                                         <Text
                                             style={[styles.voiceQuote, { color: palette.text }]}
@@ -710,12 +685,7 @@ export default function RestaurantScreen() {
                                             </Text>
                                         </View>
                                     </View>
-                                ))
-                            ) : (
-                                <Text style={[styles.murmur, { color: palette.textMuted }]}>
-                                    — nothing from your table yet.
-                                </Text>
-                            )}
+                                ))}
                         </View>
                     ) : null}
 
@@ -754,9 +724,12 @@ export default function RestaurantScreen() {
                                     </Pressable>
                                 ))
                             ) : (
-                                <Text style={[styles.murmur, { color: palette.textMuted }]}>
-                                    {"— you haven’t been. or you haven’t said."}
-                                </Text>
+                                /* Not been yet — hold the ledger's space with two
+                                   ghosted rules instead of narrating the absence. */
+                                <View style={styles.ghostRules}>
+                                    <View style={[styles.ghostRule, { backgroundColor: palette.ruleWarmNib }]} />
+                                    <View style={[styles.ghostRule, { backgroundColor: palette.ruleWarmNib }]} />
+                                </View>
                             )}
                         </View>
                     ) : null}
@@ -823,6 +796,18 @@ export default function RestaurantScreen() {
                     ) : null}
                 </ScrollView>
 
+                {/* Action dock — log (sole primary) · save · directions · set a table */}
+                {restaurant ? (
+                    <BottomActionBar
+                        onLogPress={handleLogPress}
+                        saved={isSaved}
+                        onSavePress={() => setSaveSheetOpen(true)}
+                        saveDisabled={bookmarkDisabled}
+                        onDirectionsPress={handleDirections}
+                        showSetTable={!FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId}
+                        onSetTablePress={() => setSetTableSheetOpen(true)}
+                    />
+                ) : null}
             </View>
 
             {/* Save sheet — pin opens this: Wishlist + curated lists + new list */}
@@ -863,7 +848,7 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     scrollContent: {
-        paddingBottom: 120,
+        paddingBottom: 150, // clears the action dock + its fade
         gap: 18,
     },
     loadingCenter: {
@@ -883,29 +868,28 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 6,
     },
-    pinTop: {
-        width: 34,
-        height: 34,
-        borderRadius: Radius.full,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
     breadcrumbLabel: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
     },
-    // Masthead — left-aligned editorial
-    masthead: {
+    // Masthead — name/meta/relationship left, the plate right
+    mastheadRow: {
+        flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 6,
+        gap: 16,
         paddingHorizontal: 24,
         paddingTop: 4,
         paddingBottom: 2,
     },
+    mastheadText: {
+        flex: 1,
+        alignItems: 'flex-start',
+        gap: 6,
+    },
     mastheadName: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 34,
-        lineHeight: 38,
+        fontSize: 30,
+        lineHeight: 34,
         textAlign: 'left',
     },
     mastheadMeta: {
@@ -913,82 +897,24 @@ const styles = StyleSheet.create({
         fontSize: 12,
         textAlign: 'left',
     },
-    // Cold restaurant — Google sibling + "be the first" invitation card
-    beFirstWrap: {
-        paddingHorizontal: 24,
-    },
-    beFirstCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: 16,
-        paddingHorizontal: 18,
-        paddingVertical: 14,
-        gap: 16,
-    },
-    beFirstGoogle: {
-        alignItems: 'center',
-        gap: 3,
-        flexShrink: 0,
-    },
-    beFirstGoogleLabel: {
+    relationshipLine: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1.2,
-        textTransform: 'uppercase',
+        fontSize: 12,
+        marginTop: 4,
     },
-    beFirstGoogleValue: {
+    // Cold restaurant — one confident line + the external number, quiet
+    coldBlock: {
+        paddingHorizontal: 24,
+        gap: 6,
+    },
+    coldHeadline: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
+        fontSize: 17,
+        lineHeight: 24,
     },
-    beFirstGoogleCount: {
+    coldGoogle: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 10,
-    },
-    beFirstDivider: {
-        width: 1,
-        alignSelf: 'stretch',
-    },
-    beFirstInvite: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
-        lineHeight: 21,
-        flex: 1,
-    },
-    // CTA row
-    ctaRow: {
-        flexDirection: 'row',
-        gap: 10,
-        paddingHorizontal: 24,
-        alignItems: 'stretch',
-    },
-    logBtn: {
-        flex: 1,
-        borderRadius: Radius.full,
-        paddingVertical: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    logBtnLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        letterSpacing: 1.6,
-        textTransform: 'uppercase',
-        color: '#fffdf8',
-    },
-    setTableBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        marginHorizontal: 24,
-        marginTop: 10,
-        paddingVertical: 12,
-        borderRadius: Radius.full,
-        borderWidth: 1,
-    },
-    setTableLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
+        fontSize: 12,
     },
     // FROM YOUR TABLE + YOUR HISTORY
     section: {
@@ -1052,6 +978,16 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 15,
         lineHeight: 22,
+    },
+    // Ghosted ledger rules — hold YOUR HISTORY's space before the first entry
+    ghostRules: {
+        gap: 16,
+        paddingTop: 10,
+        paddingBottom: 4,
+        opacity: 0.5,
+    },
+    ghostRule: {
+        height: 1,
     },
     // Below-canvas sections
     belowSection: {

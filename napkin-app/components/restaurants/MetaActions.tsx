@@ -37,6 +37,8 @@ interface MetaActionsProps {
     /** Used to build a maps-search fallback URL when there's no googleMapsUri. */
     name: string;
     city: string | null;
+    /** False when the page's action dock owns directions (avoids a double affordance). */
+    showDirections?: boolean;
 }
 
 function openUrl(url: string) {
@@ -49,6 +51,17 @@ function openUrl(url: string) {
 function mapsSearchUrl(name: string, city: string | null): string {
     const q = encodeURIComponent([name, city].filter(Boolean).join(' '));
     return `https://www.google.com/maps/search/?api=1&query=${q}`;
+}
+
+/** One canonical directions URL — the dock and this row must agree. */
+export function resolveDirectionsUrl(
+    googleMapsUri: string | null,
+    name: string,
+    city: string | null,
+): string {
+    return googleMapsUri && googleMapsUri.trim() !== ''
+        ? googleMapsUri
+        : mapsSearchUrl(name, city);
 }
 
 interface ActionProps {
@@ -92,7 +105,7 @@ function Action({ icon, label, onPress, palette, variant }: ActionProps) {
     );
 }
 
-export function MetaActions({ phone, website, googleMapsUri, hours, name, city }: MetaActionsProps) {
+export function MetaActions({ phone, website, googleMapsUri, hours, name, city, showDirections = true }: MetaActionsProps) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
     const [expanded, setExpanded] = useState(false);
@@ -100,7 +113,8 @@ export function MetaActions({ phone, website, googleMapsUri, hours, name, city }
     const hasCall = !!phone && phone.trim() !== '';
     // Directions always resolvable to a maps search; but only show it when we have
     // either a canonical uri OR something to search for (a name — always true).
-    const hasDirections = (!!googleMapsUri && googleMapsUri.trim() !== '') || !!name?.trim();
+    const hasDirections = showDirections
+        && ((!!googleMapsUri && googleMapsUri.trim() !== '') || !!name?.trim());
     const hasWebsite = !!website && website.trim() !== '';
     const showHours = hasHours(hours);
 
@@ -121,13 +135,7 @@ export function MetaActions({ phone, website, googleMapsUri, hours, name, city }
                             variant="pill"
                             icon="navigate-outline"
                             label="directions"
-                            onPress={() =>
-                                openUrl(
-                                    googleMapsUri && googleMapsUri.trim() !== ''
-                                        ? googleMapsUri
-                                        : mapsSearchUrl(name, city),
-                                )
-                            }
+                            onPress={() => openUrl(resolveDirectionsUrl(googleMapsUri, name, city))}
                             palette={palette}
                         />
                     ) : null}
