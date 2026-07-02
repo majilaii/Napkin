@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { WishlistSource } from '@/lib/types/wishlistSource';
-import type { ImportJobStatus } from './useImportHistory';
+export type ImportJobStatus = 'pending' | 'resolved' | 'needs_confirm' | 'failed';
 
 export interface ImportBatchRestaurant {
     id: string;

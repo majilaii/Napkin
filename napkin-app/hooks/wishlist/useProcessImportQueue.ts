@@ -356,11 +356,11 @@ export function useProcessImportQueue() {
             // come back as already_pinned — still a success, count both.
             const done = saved + already;
             // Extraction is fallible by nature — the toast carries a "review"
-            // action into the batch screen (fix/remove/add) so a wrong pin is
-            // two taps from corrected, not buried in the wishlist.
-            const batchJobId = result?.job_id ?? null;
-            const reviewAction = batchJobId && done > 0
-                ? { label: 'review', onPress: () => router.push(`/imports/${batchJobId}` as any) }
+            // action so a wrong pin is taps away from corrected. Routes via the
+            // imports HUB (hierarchical back-nav is sacred — never deep-link
+            // past the intermediate screen; the fresh batch is its top row).
+            const reviewAction = done > 0
+                ? { label: 'review', onPress: () => router.push('/import-progress' as any) }
                 : undefined;
             toast.show(
                 saved > 0
