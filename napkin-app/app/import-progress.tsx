@@ -79,62 +79,68 @@ export default function ImportProgressScreen() {
                         </Text>
                     </View>
                 ) : (
+                    // One row grammar for everything — same as EARLIER below.
                     active.map((m) => {
                         const spotNames = (m.manifest.spots ?? [])
                             .map((s) => s.restaurant_name)
                             .filter(Boolean)
-                            .slice(0, 4) as string[];
-                        const extra = m.spotCount - spotNames.length;
+                            .slice(0, 3) as string[];
+                        const isWorking = m.phase === 'reading' || m.phase === 'saving';
+                        const isReview = m.phase === 'review';
                         return (
-                            <View
+                            <Pressable
                                 key={m.jobId}
-                                style={[styles.card, { backgroundColor: palette.surfaceJournalLow }]}
+                                disabled={!isReview}
+                                onPress={
+                                    isReview
+                                        ? () => router.push(`/import-review?jobId=${m.jobId}` as any)
+                                        : undefined
+                                }
+                                style={({ pressed }) => [
+                                    styles.recentRow,
+                                    { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.7 : 1 },
+                                ]}
+                                accessibilityRole={isReview ? 'button' : undefined}
+                                accessibilityLabel={
+                                    isReview ? `review ${m.spotCount} spots` : PHASE_COPY[m.phase]
+                                }
                             >
-                                <View style={styles.cardTop}>
-                                    {m.phase === 'reading' || m.phase === 'saving' ? (
-                                        <ActivityIndicator size="small" color={palette.primary} />
-                                    ) : (
-                                        <Ionicons
-                                            name={m.phase === 'review' ? 'sparkles-outline' : 'alert-circle-outline'}
-                                            size={18}
-                                            color={m.phase === 'failed' ? palette.textMuted : palette.primary}
-                                        />
-                                    )}
-                                    <Text style={[styles.cardPhase, { color: palette.text }]}>
-                                        {m.phase === 'review' || m.phase === 'saving'
+                                {isWorking ? (
+                                    <ActivityIndicator size="small" color={palette.primary} />
+                                ) : (
+                                    <Ionicons
+                                        name={isReview ? 'sparkles-outline' : 'alert-circle-outline'}
+                                        size={16}
+                                        color={isReview ? palette.primary : palette.textMuted}
+                                    />
+                                )}
+                                <View style={styles.recentBody}>
+                                    <Text style={[styles.recentTitle, { color: palette.text }]} numberOfLines={1}>
+                                        {isReview || m.phase === 'saving'
                                             ? `${m.spotCount} ${m.spotCount === 1 ? 'spot' : 'spots'} · ${PHASE_COPY[m.phase]}`
                                             : PHASE_COPY[m.phase]}
                                     </Text>
+                                    {spotNames.length > 0 ? (
+                                        <Text style={[styles.recentNames, { color: palette.textMuted }]} numberOfLines={1}>
+                                            {spotNames.join(' · ')}
+                                        </Text>
+                                    ) : null}
+                                    {m.phase === 'failed' ? (
+                                        <View style={styles.failRow}>
+                                            <Pressable onPress={() => retryImport(m.jobId)} hitSlop={6}>
+                                                <Text style={[styles.failAction, { color: palette.primary }]}>try again</Text>
+                                            </Pressable>
+                                            <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
+                                            <Pressable onPress={() => discard(m)} hitSlop={6}>
+                                                <Text style={[styles.failAction, { color: palette.textMuted }]}>discard</Text>
+                                            </Pressable>
+                                        </View>
+                                    ) : null}
                                 </View>
-
-                                {spotNames.length > 0 ? (
-                                    <Text style={[styles.cardSpots, { color: palette.textMuted }]} numberOfLines={2}>
-                                        {spotNames.join(' · ')}
-                                        {extra > 0 ? ` · +${extra} more` : ''}
-                                    </Text>
+                                {isReview ? (
+                                    <Ionicons name="chevron-forward" size={14} color={palette.textMuted} />
                                 ) : null}
-
-                                {m.phase === 'review' ? (
-                                    <Pressable
-                                        onPress={() => router.push(`/import-review?jobId=${m.jobId}` as any)}
-                                        style={[styles.cta, { backgroundColor: palette.primary }]}
-                                    >
-                                        <Text style={[styles.ctaLabel, { color: '#fffdf8' }]}>review spots</Text>
-                                    </Pressable>
-                                ) : null}
-
-                                {m.phase === 'failed' ? (
-                                    <View style={styles.failRow}>
-                                        <Pressable onPress={() => retryImport(m.jobId)} hitSlop={6}>
-                                            <Text style={[styles.failAction, { color: palette.primary }]}>try again</Text>
-                                        </Pressable>
-                                        <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
-                                        <Pressable onPress={() => discard(m)} hitSlop={6}>
-                                            <Text style={[styles.failAction, { color: palette.textMuted }]}>discard</Text>
-                                        </Pressable>
-                                    </View>
-                                ) : null}
-                            </View>
+                            </Pressable>
                         );
                     })
                 )}
@@ -199,24 +205,7 @@ const styles = StyleSheet.create({
     emptyWrap: { paddingTop: 80, alignItems: 'center', gap: 8 },
     emptyText: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 18 },
     emptyHint: { fontFamily: 'Manrope_500Medium', fontSize: 13, textAlign: 'center', paddingHorizontal: 30 },
-    card: {
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: Spacing.sm,
-        gap: 10,
-    },
-    cardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    cardPhase: { flex: 1, fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
-    cardSpots: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 14, lineHeight: 20 },
-    cta: {
-        height: 44,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 2,
-    },
-    ctaLabel: { fontFamily: 'Manrope_700Bold', fontSize: 14 },
-    failRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    failRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
     failAction: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
     failDot: { fontFamily: 'Manrope_400Regular', fontSize: 12 },
     sectionKicker: {

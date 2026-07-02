@@ -81,7 +81,9 @@ function BottomNavBar() {
       style={[
         navStyles.bar,
         {
-          backgroundColor: 'rgba(255,253,248,0.85)',
+          // Opaque — content scrolling under a see-through bar read as a bug
+          // (founder, 2026-07-02). Warm note-white, matches the card surface.
+          backgroundColor: '#fffdf8',
           paddingBottom: insets.bottom > 0 ? insets.bottom : 12,
         },
       ]}
