@@ -281,8 +281,11 @@ export default function WishlistScreen() {
             return {
                 icon: latest.source?.type === 'tiktok' ? ('logo-tiktok' as const) : ('download-outline' as const),
                 title: `${latest.item_count} ${latest.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(latest.source)}`,
-                sublabel: `${relativeTime(latest.created_at)} · tap to fix or prune`,
-                route: `/imports/${latest.job_id}`,
+                sublabel: `${relativeTime(latest.created_at)} · fix or prune in imports`,
+                // Hierarchical back-nav is sacred: EVERY state of this card goes
+                // via the imports hub — never deep-link past the intermediate
+                // screen (founder rule, 2026-07-02, twice).
+                route: '/import-progress',
             };
         }
         return null;
