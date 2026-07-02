@@ -251,10 +251,10 @@ export default function WishlistScreen() {
                 icon: 'sparkles-outline' as const,
                 title: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review`,
                 sublabel: 'review and pin',
-                // One held batch → straight into it; several → the hub lists them.
-                route: review.length === 1
-                    ? `/import-review?jobId=${review[0].jobId}`
-                    : '/import-progress',
+                // ALWAYS via the hub — deep-linking straight into the review
+                // screen broke back-navigation (review → back should land on
+                // the hub, not the wishlist; founder 2026-07-02).
+                route: '/import-progress',
             };
         }
         if (working.length > 0) {
