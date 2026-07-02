@@ -46,7 +46,12 @@ import {
     type ImportManifest,
     type PersistedImportSpot,
 } from '@/lib/importQueue';
-import { fetchTikTokPerception, isTikTokUrl } from '@/lib/tiktokPerception';
+import {
+    fetchTikTokPerception,
+    isTikTokUrl,
+    downloadTikTokVideo,
+    deleteCachedTikTokVideo,
+} from '@/lib/tiktokPerception';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
 import type { SaveImportSpotsResult } from './useSaveImportSpots';
 
@@ -148,34 +153,44 @@ export function useProcessImportQueue() {
                 let candidates: ResolvedCandidate[] = [];
 
                 if (m.kind === 'url') {
-                    // TICKET-086 extraction ladder for TikTok links. Listicle
-                    // captions carry no restaurant names — the names live in the
-                    // voiceover. Tier 1: TikTok's own ASR transcript, fetched
-                    // on-device from the share URL. Tier 2 (best-effort): the
-                    // signed playAddr video through the existing media-extract
-                    // OCR+speech. Tier 3: the server caption resolve (previous
-                    // behavior — also the fallback whenever 1/2 yield nothing).
+                    // TICKET-086/086b extraction for TikTok links — FUSE both
+                    // channels. Creators PRINT exact names on-screen (OCR) and
+                    // SPEAK context (ASR transcript); each channel alone misses
+                    // ~30% of spots, the union covers them all (TOPJAW E2E,
+                    // 2026-07-02). Ladder: transcript (TikTok's own ASR, fetched
+                    // on-device) + playAddr download → media-extract OCR →
+                    // fused extracted_text → server caption resolve as fallback.
                     let extractedText: string | null = null;
                     if (isTikTokUrl(m.url)) {
                         const perception = await fetchTikTokPerception(m.url as string);
-                        if (perception?.hasTranscript) {
-                            extractedText = perception.text;
-                        } else if (perception?.playAddr) {
-                            try {
-                                const { ocr, transcript } = await extractFromVideo(
-                                    perception.playAddr,
-                                    { maxFrames: 45 },
-                                );
-                                extractedText =
-                                    [...(ocr ?? []), transcript ?? '']
-                                        .filter(Boolean)
-                                        .join('\n')
-                                        .trim() || null;
-                            } catch {
-                                // Signed URL refused / native can't stream it —
-                                // tier 2 is best-effort by contract.
+                        const transcript = perception?.hasTranscript ? perception.text : null;
+                        let ocrText: string | null = null;
+                        if (perception?.playAddr) {
+                            const fileUri = await downloadTikTokVideo(
+                                perception.playAddr,
+                                m.url as string,
+                            );
+                            if (fileUri) {
+                                try {
+                                    const { ocr, transcript: spoken } = await extractFromVideo(
+                                        fileUri,
+                                        // TikTok's ASR already covers speech when
+                                        // present — only transcribe as a fallback.
+                                        { maxFrames: 60, transcribe: !transcript },
+                                    );
+                                    ocrText =
+                                        [...(ocr ?? []), transcript ? '' : (spoken ?? '')]
+                                            .filter(Boolean)
+                                            .join('\n')
+                                            .trim() || null;
+                                } catch {
+                                    // OCR channel is best-effort by contract.
+                                }
+                                deleteCachedTikTokVideo(fileUri);
                             }
                         }
+                        extractedText =
+                            [ocrText, transcript].filter(Boolean).join('\n').trim() || null;
                     }
                     // Same proven contract as the video path: extracted_text
                     // rides alone (never alongside url).

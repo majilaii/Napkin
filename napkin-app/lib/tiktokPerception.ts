@@ -121,3 +121,52 @@ export async function fetchTikTokPerception(url: string): Promise<TikTokPercepti
         return null;
     }
 }
+
+/**
+ * Download the playAddr mp4 to the app cache for on-device OCR (TICKET-086b).
+ *
+ * The CDN binds the signed URL to the page-session cookies — iOS shares the
+ * native cookie store across fetches, so call this AFTER fetchTikTokPerception
+ * (which seeds the session). Returns a file:// URI the caller MUST delete
+ * (deleteCachedTikTokVideo) after extraction; null on any failure.
+ */
+export async function downloadTikTokVideo(playAddr: string, pageUrl: string): Promise<string | null> {
+    try {
+        const FileSystem = await import('expo-file-system/legacy');
+        const dir = FileSystem.cacheDirectory;
+        if (!dir) return null;
+        const res = await fetch(playAddr, {
+            headers: { 'User-Agent': MOBILE_UA, Referer: pageUrl },
+        });
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        // ~12MB videos → ~17MB base64 string; acceptable for a background import.
+        const base64 = await new Promise<string | null>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const s = typeof reader.result === 'string' ? reader.result : null;
+                resolve(s ? s.slice(s.indexOf(',') + 1) : null);
+            };
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+        });
+        if (!base64) return null;
+        const uri = `${dir}tiktok-import-${Date.now()}.mp4`;
+        await FileSystem.writeAsStringAsync(uri, base64, {
+            encoding: FileSystem.EncodingType.Base64,
+        });
+        return uri;
+    } catch {
+        return null;
+    }
+}
+
+/** Best-effort cleanup of a downloadTikTokVideo file. */
+export async function deleteCachedTikTokVideo(uri: string): Promise<void> {
+    try {
+        const FileSystem = await import('expo-file-system/legacy');
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+    } catch {
+        /* best-effort */
+    }
+}

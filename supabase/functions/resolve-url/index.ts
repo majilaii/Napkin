@@ -741,8 +741,12 @@ async function resolveCandidateToPlace(
         }
     }
 
-    // No google_place_id → text search by name + city (candidates without a known place_id)
-    const query = [candidate.name, candidate.city].filter(Boolean).join(', ');
+    // No google_place_id → text search by name + area + city. The area
+    // ("Belsize Park", "Dalston", "E11") disambiguates same-name places and
+    // rescues ASR-denoised names (TICKET-086b).
+    const query = [candidate.name, (candidate as { area?: string | null }).area ?? null, candidate.city]
+        .filter(Boolean)
+        .join(', ');
     try {
         const results = await callPlacesSearch(
             query, authHeader, supabaseUrl, supabaseAnonKey, signal,
