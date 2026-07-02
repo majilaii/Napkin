@@ -198,13 +198,14 @@ export default function SearchScreen() {
     const handleResultPress = useCallback(
         (item: SearchResultRowType) => {
             if (item.tier === 'morePlaces' && item.placeId) {
-                // Ghost: navigate with placeId param and full payload for instant hero render
+                // Ghost: pass the FULL Places object (item.place) — the trimmed row
+                // starves the page of coords/price/rating/hours (Ritz empty-page bug).
                 router.push({
                     pathname: '/restaurant/[id]',
                     params: {
                         id: item.placeId,
                         placeId: item.placeId,
-                        placePayload: JSON.stringify(item),
+                        placePayload: JSON.stringify(item.place ?? item),
                     },
                 });
             } else if (item.id) {

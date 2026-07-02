@@ -48,6 +48,12 @@ export interface SearchResultRow {
     tier: SearchTier;
     /** Tier 1 only: "visited by [Table]" */
     socialTag?: string;
+    /**
+     * Ghost rows: the FULL sanitized Places object from the server (coords,
+     * price, rating, categories, phone, hours…). Navigation must pass THIS as
+     * placePayload — the trimmed row starves the restaurant page.
+     */
+    place?: PlacesResult;
 }
 
 export interface SearchResults {
@@ -135,6 +141,7 @@ function mergeResults(
             photoReference: p.photoReference,
             photoAttributionHtml: p.photoAttributionHtml,
             tier: 'morePlaces',
+            place: p,
         }));
 
     return { visited, onNapkin, morePlaces };

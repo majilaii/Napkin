@@ -26,7 +26,6 @@ interface Props {
     saved: boolean;
     onSavePress: () => void;
     saveDisabled?: boolean;
-    onDirectionsPress: () => void;
     showSetTable?: boolean;
     onSetTablePress?: () => void;
 }
@@ -57,12 +56,13 @@ function DockIcon({ icon, label, onPress, disabled, palette, active }: DockIconP
             style={({ pressed }) => [
                 styles.iconBtn,
                 {
-                    backgroundColor: active ? palette.primaryMuted : palette.card,
+                    backgroundColor: active ? palette.primaryMuted : palette.surfaceNote,
+                    borderColor: 'rgba(28,28,25,0.10)',
                     opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
                 },
             ]}
         >
-            <Ionicons name={icon} size={18} color={palette.primary} />
+            <Ionicons name={icon} size={17} color={palette.primary} />
         </Pressable>
     );
 }
@@ -72,7 +72,6 @@ export function BottomActionBar({
     saved,
     onSavePress,
     saveDisabled,
-    onDirectionsPress,
     showSetTable,
     onSetTablePress,
 }: Props) {
@@ -108,6 +107,7 @@ export function BottomActionBar({
                         },
                     ]}
                 >
+                    <Text style={styles.primaryPlus}>+</Text>
                     <Text style={styles.primaryLabel}>LOG THIS MEAL</Text>
                 </Pressable>
 
@@ -117,12 +117,6 @@ export function BottomActionBar({
                     onPress={onSavePress}
                     disabled={saveDisabled}
                     active={saved}
-                    palette={palette}
-                />
-                <DockIcon
-                    icon="navigate-outline"
-                    label="directions"
-                    onPress={onDirectionsPress}
                     palette={palette}
                 />
                 {showSetTable ? (
@@ -163,25 +157,29 @@ const styles = StyleSheet.create({
         flex: 1,
         height: 44,
         borderRadius: 999,
+        flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 7,
+    },
+    primaryPlus: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 15,
+        lineHeight: 17,
+        color: '#f6ecd9',
     },
     primaryLabel: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 11,
-        letterSpacing: 1.6,
-        color: '#fffdf8',
+        letterSpacing: 1.2,
+        color: '#f6ecd9',
     },
     iconBtn: {
         width: 44,
         height: 44,
         borderRadius: 22,
+        borderWidth: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#1c1c19',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-        elevation: 2,
     },
 });

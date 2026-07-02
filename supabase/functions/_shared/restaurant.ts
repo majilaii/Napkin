@@ -96,6 +96,12 @@ export async function upsertRestaurant(
     if (country) upsertRow.country = country;
     if (input.latitude !== undefined && input.latitude !== null) upsertRow.lat = input.latitude;
     if (input.longitude !== undefined && input.longitude !== null) upsertRow.lng = input.longitude;
+    // Google place types → restaurant-page tag chips. Sparse-write: only when
+    // the payload actually carries types, so a metadata-less upsert (entry
+    // create with name+external_id only) can't wipe an earlier write.
+    if (Array.isArray(input.types) && input.types.length > 0) {
+        upsertRow.place_types = input.types;
+    }
     // TICKET-081: metadata columns — same sparse-write discipline as city/country
     // above. A sparse upsert that omits these leaves the existing values intact.
     const phone = input.phone?.trim();

@@ -10,12 +10,27 @@
  * hours client-side); distance is miles (no walk-time source).
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Colors } from '@/constants/theme';
 import { priceTierLabel } from '@/lib/priceLevel';
 import type { PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import type { WishlistSourceHandoff } from '@/lib/types/wishlistSource';
+
+/** Tappable origin of a save: the TikTok you saved it from (or maps/web link). */
+function sourceLink(
+    source: PersonalWishlistItem['source'],
+): { url: string; icon: keyof typeof Ionicons.glyphMap; label: string } | null {
+    if (!source) return null;
+    if (source.type === 'tiktok' && source.url) {
+        return { url: source.url, icon: 'logo-tiktok', label: 'open the TikTok this came from' };
+    }
+    if (source.type === 'web' && source.url) {
+        return { url: source.url, icon: 'link-outline', label: 'open the page this came from' };
+    }
+    return null;
+}
 
 interface Props {
     /** 1-based ledger ordinal. */
@@ -38,6 +53,7 @@ export function WishlistSpotRow({ index, item, distanceLabel, palette, onPress }
             : null;
     const meta = [r.cuisine, r.city, price || null, provenance].filter(Boolean).join(' · ');
     const rating = r.google_rating != null ? r.google_rating.toFixed(1) : null;
+    const link = sourceLink(item.source);
 
     return (
         <Pressable
@@ -60,6 +76,21 @@ export function WishlistSpotRow({ index, item, distanceLabel, palette, onPress }
                     </Text>
                 ) : null}
             </View>
+
+            {link ? (
+                <Pressable
+                    onPress={() => Linking.openURL(link.url).catch(() => {})}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={link.label}
+                    style={({ pressed }) => [
+                        styles.sourceBtn,
+                        { backgroundColor: palette.surfaceJournalHi, opacity: pressed ? 0.6 : 1 },
+                    ]}
+                >
+                    <Ionicons name={link.icon} size={15} color={palette.textSecondary} />
+                </Pressable>
+            ) : null}
 
             {rating || distanceLabel ? (
                 <View style={styles.rightCol}>
@@ -108,6 +139,15 @@ const styles = StyleSheet.create({
     },
     rightCol: {
         alignItems: 'flex-end',
+        flexShrink: 0,
+    },
+    sourceBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        alignSelf: 'center',
         flexShrink: 0,
     },
     rating: {

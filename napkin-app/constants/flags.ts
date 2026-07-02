@@ -23,9 +23,9 @@ export const FRIEND_TEST = {
      *  Flip false to restore round UX. */
     hideRounds: true,
     /** TICKET-069 phase 2: Hide the People search mode tab.
-     *  Doctrine: search = restaurant-only; invite flows have their own picker.
-     *  Flip false to restore people search. */
-    hidePeopleSearch: true,
+     *  Restored 2026-07-02 (founder request): search = Restaurants ↔ People,
+     *  Beli-style — the "add friends" path is search → profile → follow. */
+    hidePeopleSearch: false,
     /** TICKET-082: Suppers — "the empty table" (v2). Kill-switch for every supper
      *  surface: the feed SupperCard + in-app nudge (tables.tsx, gated in BOTH the
      *  timelineItems filter and the leaf render so no orphan date headers), the

@@ -9,6 +9,7 @@
  */
 import { useRef, useCallback, useState } from 'react';
 import { callEdgeFn } from '@/lib/edgeInvoke';
+import { fetchTikTokPerception, isTikTokUrl } from '@/lib/tiktokPerception';
 import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -116,18 +117,48 @@ export function useResolveUrl() {
         setError(null);
 
         try {
+            // TICKET-086: TikTok links first try on-device perception — TikTok's
+            // own ASR transcript of the voiceover (listicle captions carry no
+            // names). Failure of any kind falls through to the caption resolve.
+            let tierText = extractedText;
+            if (!tierText && !imagePath && url && isTikTokUrl(url)) {
+                const perception = await fetchTikTokPerception(url);
+                if (myId !== currentRequestIdRef.current) return;
+                if (perception?.hasTranscript) tierText = perception.text;
+            }
+
+            // Proven contract (video path): extracted_text rides alone.
             const result = await callEdgeFn<ResolveUrlData>('resolve-url', {
                 body: {
-                    url: url || undefined,
+                    url: tierText ? undefined : url || undefined,
                     ...(imagePath ? { image_path: imagePath } : {}),
                     ...(caption ? { caption } : {}),
-                    ...(extractedText ? { extracted_text: extractedText } : {}),
+                    ...(tierText ? { extracted_text: tierText } : {}),
                 },
                 signal: controller.signal,
             });
 
             // Only write state if this is still the current request
             if (myId !== currentRequestIdRef.current) return;
+
+            // Transcript tier produced nothing actionable → retry the plain
+            // caption tier (never worse than the pre-086 behavior).
+            if (
+                tierText &&
+                !extractedText &&
+                url &&
+                (result?.candidates?.length ?? 0) === 0
+            ) {
+                const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
+                    body: { url },
+                    signal: controller.signal,
+                });
+                if (myId !== currentRequestIdRef.current) return;
+                setData(fallback);
+                setState('success');
+                return;
+            }
+
             setData(result);
             setState('success');
         } catch (err) {

@@ -46,6 +46,7 @@ import {
     type ImportManifest,
     type PersistedImportSpot,
 } from '@/lib/importQueue';
+import { fetchTikTokPerception, isTikTokUrl } from '@/lib/tiktokPerception';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
 import type { SaveImportSpotsResult } from './useSaveImportSpots';
 
@@ -147,10 +148,47 @@ export function useProcessImportQueue() {
                 let candidates: ResolvedCandidate[] = [];
 
                 if (m.kind === 'url') {
+                    // TICKET-086 extraction ladder for TikTok links. Listicle
+                    // captions carry no restaurant names — the names live in the
+                    // voiceover. Tier 1: TikTok's own ASR transcript, fetched
+                    // on-device from the share URL. Tier 2 (best-effort): the
+                    // signed playAddr video through the existing media-extract
+                    // OCR+speech. Tier 3: the server caption resolve (previous
+                    // behavior — also the fallback whenever 1/2 yield nothing).
+                    let extractedText: string | null = null;
+                    if (isTikTokUrl(m.url)) {
+                        const perception = await fetchTikTokPerception(m.url as string);
+                        if (perception?.hasTranscript) {
+                            extractedText = perception.text;
+                        } else if (perception?.playAddr) {
+                            try {
+                                const { ocr, transcript } = await extractFromVideo(
+                                    perception.playAddr,
+                                    { maxFrames: 45 },
+                                );
+                                extractedText =
+                                    [...(ocr ?? []), transcript ?? '']
+                                        .filter(Boolean)
+                                        .join('\n')
+                                        .trim() || null;
+                            } catch {
+                                // Signed URL refused / native can't stream it —
+                                // tier 2 is best-effort by contract.
+                            }
+                        }
+                    }
+                    // Same proven contract as the video path: extracted_text
+                    // rides alone (never alongside url).
                     const resolved = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                        body: { url: m.url },
+                        body: extractedText ? { extracted_text: extractedText } : { url: m.url },
                     });
                     candidates = resolved?.candidates ?? [];
+                    if (candidates.length === 0 && extractedText) {
+                        const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
+                            body: { url: m.url },
+                        });
+                        candidates = fallback?.candidates ?? [];
+                    }
                 } else {
                     let info = { exists: true, size: 1 };
                     try {
