@@ -10,7 +10,7 @@
  * Heirloom Journal: warm paper, italic serif names, terracotta CTA, no hard borders.
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { Alert, View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,10 +18,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { useToast } from '@/providers/ToastProvider';
 import { useActiveImports, type ActiveImport } from '@/hooks/wishlist/useActiveImports';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
-import { retryImport, removeImport } from '@/lib/importQueue';
+import { retryImport, removeImport, setImportMode, pokeImportQueue } from '@/lib/importQueue';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 
 const PHASE_COPY: Record<ActiveImport['phase'], string> = {
@@ -42,6 +43,8 @@ export default function ImportProgressScreen() {
     const { data: recent } = useRecentImports(user?.id, 10);
     const recentBatches = recent ?? [];
 
+    const toast = useToast();
+
     const discard = (m: ActiveImport) => {
         removeImport(m.jobId);
         if (m.manifest.videoPath) {
@@ -51,6 +54,36 @@ export default function ImportProgressScreen() {
                 /* best-effort */
             }
         }
+    };
+
+    // Bulk actions across every batch awaiting review (founder: entering each
+    // batch to save it is busywork when several pile up).
+    const reviewBatches = active.filter((m) => m.phase === 'review');
+    const reviewSpotTotal = reviewBatches.reduce((sum, m) => sum + m.spotCount, 0);
+
+    const approveAll = () => {
+        for (const m of reviewBatches) {
+            setImportMode(m.jobId, 'auto'); // release; spots already persisted
+        }
+        pokeImportQueue();
+        toast.show(`saving ${reviewSpotTotal} ${reviewSpotTotal === 1 ? 'spot' : 'spots'}…`);
+    };
+
+    const discardAll = () => {
+        Alert.alert(
+            `discard ${reviewBatches.length} imports?`,
+            `${reviewSpotTotal} unsaved ${reviewSpotTotal === 1 ? 'spot' : 'spots'} — this can't be undone.`,
+            [
+                { text: 'keep them', style: 'cancel' },
+                {
+                    text: 'discard all',
+                    style: 'destructive',
+                    onPress: () => {
+                        for (const m of reviewBatches) discard(m);
+                    },
+                },
+            ],
+        );
     };
 
     return (
@@ -145,6 +178,21 @@ export default function ImportProgressScreen() {
                     })
                 )}
 
+                {/* Bulk actions — only when several batches await review */}
+                {reviewBatches.length >= 2 ? (
+                    <View style={styles.bulkRow}>
+                        <Pressable onPress={approveAll} hitSlop={8} accessibilityRole="button">
+                            <Text style={[styles.bulkAction, { color: palette.primary }]}>
+                                {`approve all ${reviewSpotTotal}`}
+                            </Text>
+                        </Pressable>
+                        <Text style={[styles.bulkDot, { color: palette.textMuted }]}>·</Text>
+                        <Pressable onPress={discardAll} hitSlop={8} accessibilityRole="button">
+                            <Text style={[styles.bulkAction, { color: palette.textMuted }]}>discard all</Text>
+                        </Pressable>
+                    </View>
+                ) : null}
+
                 {/* Earlier — completed batches; tap in to fix a wrong pin or prune */}
                 {recentBatches.length > 0 ? (
                     <>
@@ -208,6 +256,22 @@ const styles = StyleSheet.create({
     failRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
     failAction: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
     failDot: { fontFamily: 'Manrope_400Regular', fontSize: 12 },
+    bulkRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        paddingVertical: 10,
+    },
+    bulkAction: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+        letterSpacing: 0.2,
+    },
+    bulkDot: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 12,
+    },
     sectionKicker: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 9.5,

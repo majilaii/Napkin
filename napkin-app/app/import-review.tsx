@@ -172,9 +172,26 @@ export default function ImportReviewScreen() {
                 <Text style={[styles.title, { color: palette.text }]}>
                     {`${spots.length} ${spots.length === 1 ? 'spot' : 'spots'} ${sourceLabelFor(manifest.kind, manifest.url)}`}
                 </Text>
-                <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-                    fix or untick, then save
-                </Text>
+                <View style={styles.subtitleRow}>
+                    <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+                        fix or untick, then save
+                    </Text>
+                    <Pressable
+                        onPress={() =>
+                            setTicked(
+                                keptCount === spots.length
+                                    ? new Set()
+                                    : new Set(spots.map((s) => s.candidate_id)),
+                            )
+                        }
+                        hitSlop={8}
+                        accessibilityRole="button"
+                    >
+                        <Text style={[styles.tickAll, { color: palette.primary }]}>
+                            {keptCount === spots.length ? 'untick all' : 'tick all'}
+                        </Text>
+                    </Pressable>
+                </View>
             </View>
 
             <ScrollView
@@ -281,7 +298,14 @@ const styles = StyleSheet.create({
     },
     header: { paddingHorizontal: 22, paddingBottom: Spacing.md },
     title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 26, lineHeight: 30 },
-    subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 13, marginTop: 6 },
+    subtitleRow: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        marginTop: 6,
+    },
+    subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 13 },
+    tickAll: { fontFamily: 'Manrope_700Bold', fontSize: 12.5, letterSpacing: 0.2 },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
