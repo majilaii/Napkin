@@ -236,36 +236,57 @@ export default function WishlistScreen() {
     // as TopFour on the profile tab.
     const { data: myLists } = useMyLists(user?.id);
 
-    // Recently completed batches (server-side) — the correction on-ramp: a
-    // fresh import stays reachable for fix/remove instead of dissolving into
-    // the pinned ledger. Shows for 48h, max 2 rows; the hub lists the rest.
+    // ── The import slot — ONE card, ever (review > running > failed > recent).
+    // Active states route to the imports hub; a recently-saved batch (48h,
+    // latest only) routes straight into its fix/prune screen. Never stacks.
     const { data: recentImports } = useRecentImports(user?.id, 4);
-    const recentBatches = useMemo(() => {
-        const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-        return (recentImports ?? [])
-            .filter((b) => new Date(b.created_at).getTime() > cutoff)
-            .slice(0, 2);
-    }, [recentImports]);
-
-    // In-flight imports (reading / saving / review / failed) → the progress band.
     const activeImports = useActiveImports();
-    const importBand = useMemo(() => {
-        if (activeImports.length === 0) return null;
+    const importSlot = useMemo(() => {
         const review = activeImports.filter((m) => m.phase === 'review');
-        const failed = activeImports.filter((m) => m.phase === 'failed');
         const working = activeImports.filter((m) => m.phase === 'reading' || m.phase === 'saving');
+        const failed = activeImports.filter((m) => m.phase === 'failed');
         if (review.length > 0) {
             const n = review.reduce((sum, m) => sum + m.spotCount, 0);
-            return { icon: 'sparkles-outline' as const, text: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review` };
+            return {
+                icon: 'sparkles-outline' as const,
+                title: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review`,
+                sublabel: 'review and pin',
+                // One held batch → straight into it; several → the hub lists them.
+                route: review.length === 1
+                    ? `/import-review?jobId=${review[0].jobId}`
+                    : '/import-progress',
+            };
         }
         if (working.length > 0) {
-            return { icon: 'sync-outline' as const, text: working.length === 1 ? 'importing…' : `importing ${working.length}…` };
+            return {
+                icon: 'sync-outline' as const,
+                title: working.length === 1 ? 'importing…' : `importing ${working.length}…`,
+                sublabel: 'spots land here when done',
+                route: '/import-progress',
+            };
         }
         if (failed.length > 0) {
-            return { icon: 'alert-circle-outline' as const, text: 'an import needs attention' };
+            return {
+                icon: 'alert-circle-outline' as const,
+                title: 'an import needs attention',
+                sublabel: 'try again or discard',
+                route: '/import-progress',
+            };
+        }
+        const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+        const latest = (recentImports ?? []).find(
+            (b) => new Date(b.created_at).getTime() > cutoff,
+        );
+        if (latest) {
+            return {
+                icon: latest.source?.type === 'tiktok' ? ('logo-tiktok' as const) : ('download-outline' as const),
+                title: `${latest.item_count} ${latest.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(latest.source)}`,
+                sublabel: `${relativeTime(latest.created_at)} · tap to fix or prune`,
+                route: `/imports/${latest.job_id}`,
+            };
         }
         return null;
-    }, [activeImports]);
+    }, [activeImports, recentImports]);
 
     const allItems = useMemo(
         () => (wishlistPages?.pages ?? []).flatMap((p) => p.data ?? []),
@@ -618,29 +639,16 @@ export default function WishlistScreen() {
                             contentContainerStyle={[styles.rListContent, { paddingBottom: insets.bottom + 110 }]}
                             showsVerticalScrollIndicator={false}
                         >
-                            {/* Import inbox — one quiet card → the import progress hub */}
-                            {importBand ? (
+                            {/* The import slot — one card, one state, one destination */}
+                            {importSlot ? (
                                 <ImportInboxCard
-                                    title={importBand.text}
-                                    sublabel="review and pin"
-                                    iconName={importBand.icon}
+                                    title={importSlot.title}
+                                    sublabel={importSlot.sublabel}
+                                    iconName={importSlot.icon}
                                     palette={palette}
-                                    onPress={() => router.push('/import-progress' as any)}
+                                    onPress={() => router.push(importSlot.route as any)}
                                 />
                             ) : null}
-
-                            {/* Recently imported — the road back into a batch to fix
-                                a wrong pin or prune a miss (48h window). */}
-                            {recentBatches.map((b) => (
-                                <ImportInboxCard
-                                    key={b.job_id}
-                                    title={`${b.item_count} ${b.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(b.source)}`}
-                                    sublabel={`${relativeTime(b.created_at)} · tap to fix or prune`}
-                                    iconName={b.source?.type === 'tiktok' ? 'logo-tiktok' : 'download-outline'}
-                                    palette={palette}
-                                    onPress={() => router.push(`/imports/${b.job_id}` as any)}
-                                />
-                            ))}
 
                             {/* needs-confirm captures — the existing correction flow */}
                             {pendingRows.map((item) => (
