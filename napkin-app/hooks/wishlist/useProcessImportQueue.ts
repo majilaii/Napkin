@@ -21,6 +21,7 @@
  */
 import { useCallback, useEffect } from 'react';
 import { AppState } from 'react-native';
+import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { callEdgeFn, isAuthFailure, SessionExpiredError } from '@/lib/edgeInvoke';
@@ -354,12 +355,20 @@ export function useProcessImportQueue() {
             // On a retry/re-drain the save may have landed on the prior pass and now
             // come back as already_pinned — still a success, count both.
             const done = saved + already;
+            // Extraction is fallible by nature — the toast carries a "review"
+            // action into the batch screen (fix/remove/add) so a wrong pin is
+            // two taps from corrected, not buried in the wishlist.
+            const batchJobId = result?.job_id ?? null;
+            const reviewAction = batchJobId && done > 0
+                ? { label: 'review', onPress: () => router.push(`/imports/${batchJobId}` as any) }
+                : undefined;
             toast.show(
                 saved > 0
                     ? `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
                     : done > 0
                       ? 'already in your wishlist'
                       : "couldn't import that",
+                reviewAction,
             );
 
             if (userId) {

@@ -227,6 +227,7 @@ export default function ImportBatchScreen() {
                         ? `replace ${picker.item.restaurant?.name ?? 'this spot'}`
                         : 'search and add it to this import'
                 }
+                initialQuery={picker?.kind === 'fix' ? (picker.item.restaurant?.name ?? '') : ''}
                 busy={repoint.isPending || addSpot.isPending}
                 onSelect={handlePick}
                 onDismiss={() => setPicker(null)}

@@ -49,6 +49,8 @@ import {
 } from '@/components/wishlist';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
+import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
+import { importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
@@ -233,6 +235,17 @@ export default function WishlistScreen() {
     // entry points (settings row, ProfileScreenBody palate section). Same pattern
     // as TopFour on the profile tab.
     const { data: myLists } = useMyLists(user?.id);
+
+    // Recently completed batches (server-side) — the correction on-ramp: a
+    // fresh import stays reachable for fix/remove instead of dissolving into
+    // the pinned ledger. Shows for 48h, max 2 rows; the hub lists the rest.
+    const { data: recentImports } = useRecentImports(user?.id, 4);
+    const recentBatches = useMemo(() => {
+        const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+        return (recentImports ?? [])
+            .filter((b) => new Date(b.created_at).getTime() > cutoff)
+            .slice(0, 2);
+    }, [recentImports]);
 
     // In-flight imports (reading / saving / review / failed) → the progress band.
     const activeImports = useActiveImports();
@@ -615,6 +628,19 @@ export default function WishlistScreen() {
                                     onPress={() => router.push('/import-progress' as any)}
                                 />
                             ) : null}
+
+                            {/* Recently imported — the road back into a batch to fix
+                                a wrong pin or prune a miss (48h window). */}
+                            {recentBatches.map((b) => (
+                                <ImportInboxCard
+                                    key={b.job_id}
+                                    title={`${b.item_count} ${b.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(b.source)}`}
+                                    sublabel={`${relativeTime(b.created_at)} · tap to fix or prune`}
+                                    iconName={b.source?.type === 'tiktok' ? 'logo-tiktok' : 'download-outline'}
+                                    palette={palette}
+                                    onPress={() => router.push(`/imports/${b.job_id}` as any)}
+                                />
+                            ))}
 
                             {/* needs-confirm captures — the existing correction flow */}
                             {pendingRows.map((item) => (
