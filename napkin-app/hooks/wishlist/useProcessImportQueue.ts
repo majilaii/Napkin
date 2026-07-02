@@ -21,6 +21,7 @@
  */
 import { useCallback, useEffect } from 'react';
 import { AppState } from 'react-native';
+import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { callEdgeFn, isAuthFailure, SessionExpiredError } from '@/lib/edgeInvoke';
@@ -46,6 +47,12 @@ import {
     type ImportManifest,
     type PersistedImportSpot,
 } from '@/lib/importQueue';
+import {
+    fetchTikTokPerception,
+    isTikTokUrl,
+    downloadTikTokVideo,
+    deleteCachedTikTokVideo,
+} from '@/lib/tiktokPerception';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
 import type { SaveImportSpotsResult } from './useSaveImportSpots';
 
@@ -147,10 +154,57 @@ export function useProcessImportQueue() {
                 let candidates: ResolvedCandidate[] = [];
 
                 if (m.kind === 'url') {
+                    // TICKET-086/086b extraction for TikTok links — FUSE both
+                    // channels. Creators PRINT exact names on-screen (OCR) and
+                    // SPEAK context (ASR transcript); each channel alone misses
+                    // ~30% of spots, the union covers them all (TOPJAW E2E,
+                    // 2026-07-02). Ladder: transcript (TikTok's own ASR, fetched
+                    // on-device) + playAddr download → media-extract OCR →
+                    // fused extracted_text → server caption resolve as fallback.
+                    let extractedText: string | null = null;
+                    if (isTikTokUrl(m.url)) {
+                        const perception = await fetchTikTokPerception(m.url as string);
+                        const transcript = perception?.hasTranscript ? perception.text : null;
+                        let ocrText: string | null = null;
+                        if (perception?.playAddr) {
+                            const fileUri = await downloadTikTokVideo(
+                                perception.playAddr,
+                                m.url as string,
+                            );
+                            if (fileUri) {
+                                try {
+                                    const { ocr, transcript: spoken } = await extractFromVideo(
+                                        fileUri,
+                                        // TikTok's ASR already covers speech when
+                                        // present — only transcribe as a fallback.
+                                        { maxFrames: 60, transcribe: !transcript },
+                                    );
+                                    ocrText =
+                                        [...(ocr ?? []), transcript ? '' : (spoken ?? '')]
+                                            .filter(Boolean)
+                                            .join('\n')
+                                            .trim() || null;
+                                } catch {
+                                    // OCR channel is best-effort by contract.
+                                }
+                                deleteCachedTikTokVideo(fileUri);
+                            }
+                        }
+                        extractedText =
+                            [ocrText, transcript].filter(Boolean).join('\n').trim() || null;
+                    }
+                    // Same proven contract as the video path: extracted_text
+                    // rides alone (never alongside url).
                     const resolved = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                        body: { url: m.url },
+                        body: extractedText ? { extracted_text: extractedText } : { url: m.url },
                     });
                     candidates = resolved?.candidates ?? [];
+                    if (candidates.length === 0 && extractedText) {
+                        const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
+                            body: { url: m.url },
+                        });
+                        candidates = fallback?.candidates ?? [];
+                    }
                 } else {
                     let info = { exists: true, size: 1 };
                     try {
@@ -301,12 +355,20 @@ export function useProcessImportQueue() {
             // On a retry/re-drain the save may have landed on the prior pass and now
             // come back as already_pinned — still a success, count both.
             const done = saved + already;
+            // Extraction is fallible by nature — the toast carries a "review"
+            // action into the batch screen (fix/remove/add) so a wrong pin is
+            // two taps from corrected, not buried in the wishlist.
+            const batchJobId = result?.job_id ?? null;
+            const reviewAction = batchJobId && done > 0
+                ? { label: 'review', onPress: () => router.push(`/imports/${batchJobId}` as any) }
+                : undefined;
             toast.show(
                 saved > 0
                     ? `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
                     : done > 0
                       ? 'already in your wishlist'
                       : "couldn't import that",
+                reviewAction,
             );
 
             if (userId) {

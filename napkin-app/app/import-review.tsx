@@ -1,23 +1,21 @@
 /**
- * /import-review — confirm the spots from a review-mode import (b47).
+ * /import-review — confirm the spots from a review-mode import (b47, restyled
+ * 2026-07-02 to the batch-screen grammar the founder liked).
  *
- * Reached from the wishlist "to review" band. When auto-save was toggled OFF on
- * the share card, the app still resolves the import in the background (OCR /
- * caption) and PERSISTS the spots, but holds the save. This screen lets you keep
- * or drop each spot; on "save" it prunes the manifest to the kept spots, flips
- * mode → 'auto', and pokes the drain — which runs the normal save+route path
- * (wishlist + chosen lists + table), so there's no duplicated save logic here.
- *
- * Heirloom Journal: warm paper, italic serif names, terracotta tick + CTA. No
- * 1px sectioning borders, no emoji in chrome, lowercase verbs.
+ * Pre-save gate: the app resolved the import in the background and PERSISTED
+ * the spots, but held the save. This screen shows "12 spots from TikTok" with
+ * the same rows as /imports/[jobId] — each spot can be FIXED (place picker,
+ * prefilled with the wrong name) or unticked — then one save releases the
+ * manifest: prune to kept spots, flip mode → 'auto', poke the drain (the
+ * normal save+route path — no duplicated save logic here).
  */
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/providers/ToastProvider';
 import {
@@ -26,8 +24,18 @@ import {
     setImportMode,
     removeImport,
     pokeImportQueue,
+    type PersistedImportSpot,
 } from '@/lib/importQueue';
 import { deleteAppGroupFile } from '@/modules/media-extract';
+import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function sourceLabelFor(kind: 'video' | 'url' | undefined, url: string | undefined): string {
+    if (kind === 'url' && url && /tiktok\.com/i.test(url)) return 'from TikTok';
+    if (kind === 'url') return 'from a link';
+    return 'from a video';
+}
 
 export default function ImportReviewScreen() {
     const { jobId } = useLocalSearchParams<{ jobId: string }>();
@@ -39,11 +47,13 @@ export default function ImportReviewScreen() {
 
     // Snapshot the manifest once — the drain won't touch a held review manifest.
     const manifest = useMemo(() => (jobId ? getImport(jobId) : null), [jobId]);
-    const spots = manifest?.spots ?? [];
 
+    // Local working copy: fixes edit rows in place before the save prunes.
+    const [spots, setSpots] = useState<PersistedImportSpot[]>(() => manifest?.spots ?? []);
     const [ticked, setTicked] = useState<Set<string>>(
-        () => new Set(spots.map((s) => s.candidate_id)),
+        () => new Set((manifest?.spots ?? []).map((s) => s.candidate_id)),
     );
+    const [fixTarget, setFixTarget] = useState<PersistedImportSpot | null>(null);
 
     const toggle = (id: string) =>
         setTicked((prev) => {
@@ -52,6 +62,43 @@ export default function ImportReviewScreen() {
             else next.add(id);
             return next;
         });
+
+    // Fix a mis-resolved spot BEFORE it saves: swap the row's restaurant.
+    // Picker ids are either Napkin UUIDs (persisted) or Google place ids
+    // (ghosts) — the manifest carries a field for each; the save path
+    // upserts ghosts from `place`.
+    const handleFixPick = useCallback(
+        (r: PlacePickerResult) => {
+            const target = fixTarget;
+            setFixTarget(null);
+            if (!target) return;
+            const isNapkinId = UUID_RE.test(r.id);
+            setSpots((prev) =>
+                prev.map((s) =>
+                    s.candidate_id === target.candidate_id
+                        ? {
+                              ...s,
+                              restaurant_id: isNapkinId ? r.id : null,
+                              external_id: isNapkinId ? null : r.id,
+                              restaurant_name: r.name,
+                              restaurant_city: r.city ?? null,
+                              place: isNapkinId
+                                  ? null
+                                  : {
+                                        external_id: r.id,
+                                        name: r.name,
+                                        location: { locality: r.city ?? undefined },
+                                        cuisine: r.cuisine ?? null,
+                                    },
+                          }
+                        : s,
+                ),
+            );
+            setTicked((prev) => new Set(prev).add(target.candidate_id));
+            toast.show(`fixed → ${r.name}`);
+        },
+        [fixTarget, toast],
+    );
 
     const keptCount = ticked.size;
 
@@ -70,7 +117,7 @@ export default function ImportReviewScreen() {
     const handleSave = () => {
         if (!manifest || keptCount === 0) return;
         const kept = spots.filter((s) => ticked.has(s.candidate_id));
-        setImportSpots(manifest.jobId, kept); // prune to confirmed
+        setImportSpots(manifest.jobId, kept); // prune to confirmed (incl. fixes)
         setImportMode(manifest.jobId, 'auto'); // release for the normal save path
         pokeImportQueue(); // kick the drain now
         toast.show(`saving ${keptCount} ${keptCount === 1 ? 'spot' : 'spots'}…`);
@@ -96,7 +143,11 @@ export default function ImportReviewScreen() {
         return (
             <View style={[styles.container, { backgroundColor: palette.background, paddingTop: insets.top }]}>
                 <Stack.Screen options={{ headerShown: false }} />
-                <Header palette={palette} onBack={() => router.back()} />
+                <View style={styles.topBar}>
+                    <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="back">
+                        <Ionicons name="chevron-back" size={20} color={palette.textMuted} />
+                    </Pressable>
+                </View>
                 <View style={styles.emptyWrap}>
                     <Text style={[Type.headlineItalic, { color: palette.textMuted, fontSize: 18 }]}>
                         — nothing to review.
@@ -109,48 +160,83 @@ export default function ImportReviewScreen() {
     return (
         <View style={[styles.container, { backgroundColor: palette.background, paddingTop: insets.top }]}>
             <Stack.Screen options={{ headerShown: false }} />
-            <Header palette={palette} onBack={() => router.back()} />
 
-            <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-                {`we found ${spots.length} ${spots.length === 1 ? 'spot' : 'spots'} — tap to keep`}
-            </Text>
+            <View style={styles.topBar}>
+                <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="back">
+                    <Ionicons name="chevron-back" size={20} color={palette.textMuted} />
+                </Pressable>
+            </View>
+
+            {/* Batch-grammar header: "12 spots from TikTok" */}
+            <View style={styles.header}>
+                <Text style={[styles.title, { color: palette.text }]}>
+                    {`${spots.length} ${spots.length === 1 ? 'spot' : 'spots'} ${sourceLabelFor(manifest.kind, manifest.url)}`}
+                </Text>
+                <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+                    fix or untick, then save
+                </Text>
+            </View>
 
             <ScrollView
-                contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 120 }}
+                contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 170 }}
                 showsVerticalScrollIndicator={false}
             >
                 {spots.map((s) => {
                     const on = ticked.has(s.candidate_id);
-                    const meta = [s.restaurant_city].filter(Boolean).join(' · ');
                     return (
-                        <Pressable
+                        <View
                             key={s.candidate_id}
-                            onPress={() => toggle(s.candidate_id)}
-                            style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : on ? 1 : 0.55 }]}
-                            accessibilityRole="checkbox"
-                            accessibilityState={{ checked: on }}
+                            style={[
+                                styles.row,
+                                { backgroundColor: palette.card, opacity: on ? 1 : 0.45 },
+                                Shadow.subtle,
+                            ]}
                         >
-                            <View style={styles.rowText}>
+                            <Pressable
+                                onPress={() => toggle(s.candidate_id)}
+                                style={styles.rowBody}
+                                accessibilityRole="checkbox"
+                                accessibilityState={{ checked: on }}
+                                accessibilityLabel={`keep ${s.restaurant_name ?? 'unnamed spot'}`}
+                            >
                                 <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
                                     {s.restaurant_name ?? 'unnamed spot'}
                                 </Text>
-                                {meta ? (
+                                {s.restaurant_city ? (
                                     <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
-                                        {meta}
+                                        {s.restaurant_city}
                                     </Text>
                                 ) : null}
+                            </Pressable>
+
+                            <View style={styles.actions}>
+                                <Pressable
+                                    onPress={() => setFixTarget(s)}
+                                    hitSlop={8}
+                                    accessibilityLabel={`fix ${s.restaurant_name ?? 'this spot'}`}
+                                >
+                                    <Ionicons name="swap-horizontal-outline" size={20} color={palette.textMuted} />
+                                </Pressable>
+                                <Pressable
+                                    onPress={() => toggle(s.candidate_id)}
+                                    hitSlop={8}
+                                    accessibilityRole="checkbox"
+                                    accessibilityState={{ checked: on }}
+                                    accessibilityLabel={on ? 'untick' : 'keep'}
+                                >
+                                    <View
+                                        style={[
+                                            styles.tick,
+                                            on
+                                                ? { backgroundColor: palette.primary, borderColor: palette.primary }
+                                                : { borderColor: palette.outlineVariant },
+                                        ]}
+                                    >
+                                        {on ? <Ionicons name="checkmark" size={14} color="#fffdf8" /> : null}
+                                    </View>
+                                </Pressable>
                             </View>
-                            <View
-                                style={[
-                                    styles.tick,
-                                    on
-                                        ? { backgroundColor: palette.primary, borderColor: palette.primary }
-                                        : { borderColor: palette.outlineVariant },
-                                ]}
-                            >
-                                {on ? <Ionicons name="checkmark" size={15} color="#fffdf8" /> : null}
-                            </View>
-                        </Pressable>
+                        </View>
                     );
                 })}
             </ScrollView>
@@ -170,65 +256,45 @@ export default function ImportReviewScreen() {
                     <Text style={[styles.discardLabel, { color: palette.textMuted }]}>discard import</Text>
                 </Pressable>
             </View>
-        </View>
-    );
-}
 
-function Header({ palette, onBack }: { palette: typeof Colors.light; onBack: () => void }) {
-    return (
-        <View style={styles.header}>
-            <Pressable onPress={onBack} hitSlop={12} style={styles.headerBack} accessibilityLabel="back">
-                <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
-            </Pressable>
-            <Text style={[styles.headerTitle, { color: palette.text }]}>review spots</Text>
-            <View style={styles.headerBack} />
+            <PlacePickerModal
+                visible={fixTarget !== null}
+                title="fix this spot"
+                subtitle={`replace ${fixTarget?.restaurant_name ?? 'this spot'}`}
+                initialQuery={fixTarget?.restaurant_name ?? ''}
+                onSelect={handleFixPick}
+                onDismiss={() => setFixTarget(null)}
+                palette={palette}
+            />
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
+    topBar: { paddingHorizontal: 22, paddingTop: Spacing.sm, paddingBottom: Spacing.xs },
     emptyWrap: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
         paddingBottom: 80,
     },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 18,
-        paddingTop: Spacing.sm,
-        paddingBottom: Spacing.xs,
-    },
-    headerBack: { width: 32, alignItems: 'flex-start' },
-    headerTitle: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
-    },
-    subtitle: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 13,
-        paddingHorizontal: 22,
-        paddingBottom: Spacing.sm,
-    },
+    header: { paddingHorizontal: 22, paddingBottom: Spacing.md },
+    title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 26, lineHeight: 30 },
+    subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 13, marginTop: 6 },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
-        paddingVertical: 13,
+        gap: Spacing.md,
+        borderRadius: Radius.md,
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.md,
+        marginBottom: Spacing.sm,
     },
-    rowText: { flex: 1, gap: 3 },
-    name: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 21,
-    },
-    meta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-    },
+    rowBody: { flex: 1, gap: 2 },
+    name: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 17, lineHeight: 21 },
+    meta: { fontFamily: 'Manrope_500Medium', fontSize: 12 },
+    actions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, flexShrink: 0 },
     tick: {
         width: 26,
         height: 26,

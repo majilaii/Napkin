@@ -40,11 +40,11 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing, Radius } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { pickDefaultTier, populatedTiers } from '@/lib/restaurantSignal';
+import { derivePlaceTags } from '@/lib/placeTags';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
@@ -66,14 +66,16 @@ import {
     useLazyBackfillRestaurant,
 } from '@/hooks/search/useLookupByPlaceId';
 import {
-    SignalStrip,
     type SignalTier,
     type SignalCellData,
     SwitchableDistribution,
     VoicesStream,
     ProfessionalTakesBand,
     SavedFromTikTokPanel,
-    MetaActions,
+    MapHero,
+    UtilityPills,
+    ScoreBand,
+    BottomActionBar,
 } from '@/components/restaurants';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { AddToListSheet } from '@/components/lists';
@@ -126,41 +128,24 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
     });
 }
 
-/** Format a visit date for YOUR HISTORY rows: "sat 6 jun" / "14 dec" etc. */
+/** Format a visit date for YOUR HISTORY rows (design 2a): "16 APR". */
 function formatVisitDate(dateStr: string): string {
     const d = new Date(dateStr);
-    const now = new Date();
-    const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
-    if (diffDays < 7) {
-        const dow = d.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
-        const day = d.getDate();
-        const mon = d.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
-        return `${dow} ${day} ${mon}`;
-    }
     const day = d.getDate();
-    const mon = d.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+    const mon = d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
     return `${day} ${mon}`;
 }
 
-/** Format a voice date as short month: "may" / "dec" */
-function formatVoiceMonth(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+/** Review-line date: "16 Apr". */
+function formatQuoteDate(dateStr: string): string {
+    const d = new Date(dateStr);
+    return `${d.getDate()} ${d.toLocaleDateString('en-US', { month: 'short' })}`;
 }
 
 /** Build a meta string from restaurant data: "Soho · Levantine · $$" */
 function priceTierLabel(level: number | null): string {
     if (level == null) return '';
     return '$'.repeat(Math.max(1, Math.min(4, level)));
-}
-
-function buildMeta(r: RestaurantPageRestaurant | null): string {
-    if (!r) return '';
-    const parts: string[] = [];
-    if (r.city) parts.push(r.city);
-    if (r.cuisine) parts.push(r.cuisine);
-    const price = priceTierLabel(r.price_level);
-    if (price) parts.push(price);
-    return parts.join(' · ');
 }
 
 // ── Screen ─────────────────────────────────────────────────────────────────────
@@ -205,25 +190,39 @@ export default function RestaurantScreen() {
     const tiktokSource = useMyTikTokSourceForRestaurant(earlyPersistedId, user?.id);
 
     // ── Ghost synthesis ───────────────────────────────────────────────────
-    const needsPlaceLookup = isGhost && !parsedPlacePayload && !!placeId;
+    // Thin payload (old deep link, stale search cache, pre-fix row) → heal via
+    // Place Details and merge. `latitude`/`googleRating` are the canaries: the
+    // full sanitized object always carries both keys.
+    const payloadIsThin =
+        !!parsedPlacePayload &&
+        (parsedPlacePayload.latitude == null || parsedPlacePayload.googleRating === undefined);
+    const needsPlaceLookup = isGhost && !!placeId && (!parsedPlacePayload || payloadIsThin);
     const placeLookup = useLookupByPlaceId(placeId ?? null, {
         enabled: needsPlaceLookup,
     });
     const lookupPayload = placeLookup.data ?? null;
 
-    const ghostRestaurant: RestaurantPageRestaurant | null = useMemo(() => {
+    // Merged ghost source: lookup fills anything the payload lacks; the
+    // payload's non-null fields win (it's what the user tapped on).
+    const ghostSource = useMemo(() => {
         if (!isGhost) return null;
-        const source = parsedPlacePayload ?? lookupPayload;
-        if (!source) return null;
-        return ghostRestaurantFromPayload(source);
+        if (!parsedPlacePayload && !lookupPayload) return null;
+        const base: Record<string, unknown> = { ...(lookupPayload ?? {}) };
+        for (const [k, v] of Object.entries(parsedPlacePayload ?? {})) {
+            if (v != null) base[k] = v;
+        }
+        return base as any;
     }, [isGhost, parsedPlacePayload, lookupPayload]);
 
+    const ghostRestaurant: RestaurantPageRestaurant | null = useMemo(() => {
+        if (!ghostSource) return null;
+        return ghostRestaurantFromPayload(ghostSource);
+    }, [ghostSource]);
+
     const ghostWishlistPayload: RestaurantPayload | null = useMemo(() => {
-        if (!isGhost) return null;
-        const source = parsedPlacePayload ?? lookupPayload;
-        if (!source) return null;
-        return placePayloadToWishlistPayload(source);
-    }, [isGhost, parsedPlacePayload, lookupPayload]);
+        if (!ghostSource) return null;
+        return placePayloadToWishlistPayload(ghostSource);
+    }, [ghostSource]);
 
     const restaurant: RestaurantPageRestaurant | null =
         pageData?.restaurant ?? ghostRestaurant ?? null;
@@ -410,20 +409,68 @@ export default function RestaurantScreen() {
         }
     }, [bookmarkDisabled, bookmarked, persistedRestaurantId, wishlistAdd, wishlistRemove, savePayload, restaurant]);
 
+    // ── Relationship line — "pinned · been twice · last june" ────────────
+    const relationshipLine = useMemo(() => {
+        const parts: string[] = [];
+        if (isSaved) parts.push('pinned');
+        if (personalCount > 0) {
+            parts.push(
+                personalCount === 1
+                    ? 'been once'
+                    : personalCount === 2
+                        ? 'been twice'
+                        : `been ${personalCount} times`,
+            );
+            const latest = selfVisits.reduce<string | null>(
+                (max, v) => (max == null || v.date > max ? v.date : max),
+                null,
+            );
+            if (latest) {
+                const mon = new Date(latest)
+                    .toLocaleDateString('en-US', { month: 'long' })
+                    .toLowerCase();
+                parts.push(`last ${mon}`);
+            }
+        }
+        return parts.length > 0 ? parts.join(' · ') : null;
+    }, [isSaved, personalCount, selfVisits]);
+
+    // ── Hero data (design 2a) ─────────────────────────────────────────────
+    // Coordinates: persisted place_details first, then the merged ghost source.
+    const heroCoords = useMemo(() => {
+        const pd = pageData?.place_details;
+        if (pd?.lat != null && pd?.lng != null) return { lat: pd.lat, lng: pd.lng };
+        if (ghostSource?.latitude != null && ghostSource?.longitude != null) {
+            return { lat: ghostSource.latitude as number, lng: ghostSource.longitude as number };
+        }
+        return null;
+    }, [pageData?.place_details, ghostSource]);
+
+    // Tag chips: persisted place_types (stored at upsert), else the ghost's
+    // Places categories. Cuisine is excluded (the kicker already says it).
+    const tagChips = useMemo(
+        () => derivePlaceTags(
+            ((pageData?.restaurant as any)?.place_types as string[] | null | undefined)
+                ?? (ghostSource?.categories as string[] | undefined)
+                ?? null,
+            restaurant?.cuisine ?? null,
+        ),
+        [pageData?.restaurant, ghostSource, restaurant?.cuisine],
+    );
+
+    const heroKicker = restaurant
+        ? [restaurant.cuisine, restaurant.city].filter(Boolean).join(' · ') || null
+        : null;
+    const heroPrice = restaurant ? priceTierLabel(restaurant.price_level) || null : null;
+
+    // The single review line (design 2a): newest visit note from you or a
+    // tablemate; "no one's written…" invitation otherwise.
+    const reviewQuote = useMemo(() => {
+        const visits = pageData?.visits ?? [];
+        return visits.find((v) => v.note && v.note.trim() !== '') ?? null;
+    }, [pageData?.visits]);
+
     // ── Signal strip collapse ─────────────────────────────────────────────
-    const tiersWithData = [
-        youCell.hasData,
-        yourTableCell.hasData,
-        napkinCell.hasData,
-    ].filter(Boolean).length;
-
-    const showCollapsedStrip = populatedTiers({
-        you: youCell.hasData,
-        table: yourTableCell.hasData,
-        napkin: napkinCell.hasData,
-        google: googleCell.hasData,
-    }).length < 2;
-
     const hasVoices =
         selfVisits.length > 0 ||
         tablemateVisits.length > 0 ||
@@ -501,83 +548,60 @@ export default function RestaurantScreen() {
             <StatusBar style="dark" />
             <View style={[styles.container, { backgroundColor: palette.background }]}>
                 <ScrollView
-                    contentContainerStyle={[
-                        styles.scrollContent,
-                        { paddingTop: insets.top + 4 },
-                    ]}
+                    contentContainerStyle={styles.scrollContent}
                     showsVerticalScrollIndicator={false}
                 >
                     {/* Loading spinner — only when nothing to show yet */}
                     {(isPageLoading || (needsPlaceLookup && placeLookup.isLoading)) && !restaurant ? (
-                        <View style={styles.loadingCenter}>
+                        <View style={[styles.loadingCenter, { paddingTop: insets.top + 60 }]}>
                             <ActivityIndicator color={palette.primary} />
                         </View>
                     ) : null}
 
-                    {/* Top bar: ‹ search breadcrumb + pin (save) top-right.
-                        Pin is a fixed-size icon → no PIN↔PINNED width jump. */}
+                    {/* Map hero (design 2a) — faded warm map + pin standing in for the
+                        photo we'll never have; identity block sits on the fade. Falls
+                        back to a flat paper header when there are no coordinates. */}
                     {restaurant ? (
-                        <View style={styles.topBar}>
-                            <Pressable
-                                onPress={() => router.back()}
-                                style={styles.breadcrumb}
-                                hitSlop={12}
-                                accessibilityLabel="back to search"
-                                accessibilityRole="button"
-                            >
-                                <Ionicons name="chevron-back" size={16} color={palette.textSecondary} />
-                                <Text style={[styles.breadcrumbLabel, { color: palette.textSecondary }]}>
-                                    search
-                                </Text>
-                            </Pressable>
-                            <Pressable
-                                onPress={bookmarkDisabled ? undefined : () => setSaveSheetOpen(true)}
-                                style={({ pressed }) => [
-                                    styles.pinTop,
-                                    {
-                                        backgroundColor: isSaved ? palette.primaryMuted : 'transparent',
-                                        opacity: pressed ? 0.7 : 1,
-                                    },
-                                ]}
-                                hitSlop={8}
-                                accessibilityLabel={isSaved ? 'Saved — change where this is saved' : 'Save restaurant'}
-                                accessibilityRole="button"
-                            >
-                                <Ionicons
-                                    name={isSaved ? 'bookmark' : 'bookmark-outline'}
-                                    size={20}
-                                    color={palette.primary}
-                                />
-                            </Pressable>
-                        </View>
+                        <MapHero
+                            lat={heroCoords?.lat ?? null}
+                            lng={heroCoords?.lng ?? null}
+                            kicker={heroKicker}
+                            priceLabel={heroPrice}
+                            name={restaurant.name}
+                            relationshipLine={relationshipLine}
+                            onBack={() => router.back()}
+                            topInset={insets.top}
+                            palette={palette}
+                        />
                     ) : null}
 
-                    {/* Masthead — left-aligned editorial (no hairlines, no centred slab) */}
+                    {/* Call · Website · Directions pills + quiet hours line */}
                     {restaurant ? (
-                        <View style={styles.masthead}>
-                            <Text style={[styles.mastheadName, { color: palette.text }]} numberOfLines={2}>
-                                {restaurant.name}
-                            </Text>
-                            {buildMeta(restaurant) ? (
-                                <Text style={[styles.mastheadMeta, { color: palette.textMuted }]}>
-                                    {buildMeta(restaurant)}
-                                </Text>
-                            ) : null}
-                        </View>
-                    ) : null}
-
-                    {/* Metadata: directions · call · website + hours — right under the
-                        masthead so directions isn't buried mid-stack. Real Places rows only;
-                        MetaActions returns null when no datum exists. */}
-                    {restaurant?.external_id ? (
-                        <MetaActions
+                        <UtilityPills
                             phone={restaurant.phone}
                             website={restaurant.website}
                             googleMapsUri={restaurant.google_maps_uri}
-                            hours={restaurant.hours}
                             name={restaurant.name}
                             city={restaurant.city}
+                            hours={restaurant.hours}
+                            palette={palette}
                         />
+                    ) : null}
+
+                    {/* Tag chips — what kind of place this is (Places taxonomy) */}
+                    {restaurant && tagChips.length > 0 ? (
+                        <View style={styles.tagRow}>
+                            {tagChips.map((t) => (
+                                <View
+                                    key={t}
+                                    style={[styles.tagChip, { backgroundColor: palette.surfaceJournalLow }]}
+                                >
+                                    <Text style={[styles.tagChipText, { color: palette.textSecondary }]}>
+                                        {t}
+                                    </Text>
+                                </View>
+                            ))}
+                        </View>
                     ) : null}
 
                     {/* Quiet save-provenance line — sits with the metadata, not as a
@@ -586,193 +610,136 @@ export default function RestaurantScreen() {
                         <SavedFromTikTokPanel source={tiktokSource.source} />
                     ) : null}
 
-                    {/* Signal strip — letterpress variant with TICKET-065 collapse logic.
-                        Hidden on a cold restaurant (a lonely 1-cell pill reads as a bug). */}
-                    {restaurant && !isColdRestaurant ? (
-                        <SignalStrip
+                    {/* Score band (design 2a) — always renders its skeleton; empty
+                        tiers show ghosted "—" so a cold page keeps the warm bones. */}
+                    {restaurant ? (
+                        <ScoreBand
                             you={youCell}
                             yourTable={yourTableCell}
                             napkin={napkinCell}
                             google={googleCell}
-                            activeTier={activeTier}
-                            onTierChange={setActiveTier}
-                            collapsed={showCollapsedStrip}
-                            letterpress
+                            palette={palette}
                         />
                     ) : null}
 
-                    {/* Cold restaurant — Google sibling signal + "be the first"
-                        invitation card (canvas take-B letterpress empty state). Anchors
-                        the page in place of the lonely murmur-over-a-void it replaces.
-                        The FROM YOUR TABLE / YOUR HISTORY ledger sections below still
-                        render their murmurs, keeping the editorial skeleton intact. */}
-                    {isColdRestaurant ? (
-                        <View style={styles.beFirstWrap}>
-                            <View style={[styles.beFirstCard, { backgroundColor: palette.surfaceJournalLow }]}>
-                                {googleCell.hasData ? (
-                                    <>
-                                        <View style={styles.beFirstGoogle}>
-                                            <Text style={[styles.beFirstGoogleLabel, { color: palette.textMuted }]}>
-                                                GOOGLE
-                                            </Text>
-                                            <Text style={[styles.beFirstGoogleValue, { color: palette.tertiary }]}>
-                                                {googleCell.value}
-                                            </Text>
-                                            {googleCell.sub ? (
-                                                <Text style={[styles.beFirstGoogleCount, { color: palette.textMuted }]}>
-                                                    {googleCell.sub}
-                                                </Text>
-                                            ) : null}
-                                        </View>
-                                        <View style={[styles.beFirstDivider, { backgroundColor: palette.dividerSoft }]} />
-                                    </>
+                    {/* YOUR HISTORY (design 2a) — amber numeral · companions · caps
+                        date. Empty → two ghost rows hold the ledger's space. */}
+                    {restaurant ? (
+                        <View style={styles.section}>
+                            <View style={styles.sectionHead}>
+                                <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>
+                                    YOUR HISTORY
+                                </Text>
+                                {selfVisits.length > 0 ? (
+                                    <Text style={[styles.sectionCount, { color: palette.textMuted }]}>
+                                        {`${selfVisits.length} visit${selfVisits.length !== 1 ? 's' : ''}`}
+                                    </Text>
                                 ) : null}
-                                <Text style={[styles.beFirstInvite, { color: palette.textMuted }]}>
-                                    — no one you know has been. be the first.
+                            </View>
+                            {selfVisits.length === 0 ? (
+                                <>
+                                    {[0, 1].map((i) => (
+                                        <View
+                                            key={i}
+                                            style={[
+                                                styles.historyRow,
+                                                styles.ghostRow,
+                                                i === 0 && {
+                                                    borderBottomWidth: 1,
+                                                    borderBottomColor: 'rgba(28,28,25,0.06)',
+                                                },
+                                            ]}
+                                        >
+                                            <Text style={[styles.historyRating, { color: palette.amberBright, opacity: 0.3 }]}>
+                                                —
+                                            </Text>
+                                            <View style={[styles.ghostLine, { backgroundColor: palette.ruleWarmNib }]} />
+                                        </View>
+                                    ))}
+                                </>
+                            ) : selfVisits.slice(0, 5).map((v, i, arr) => (
+                                <Pressable
+                                    key={v.id}
+                                    onPress={() => handleVisitPress(v)}
+                                    style={[
+                                        styles.historyRow,
+                                        i < arr.length - 1 && {
+                                            borderBottomWidth: 1,
+                                            borderBottomColor: 'rgba(28,28,25,0.06)',
+                                        },
+                                    ]}
+                                >
+                                    <Text style={[styles.historyRating, { color: palette.amberBright }]}>
+                                        {v.rating != null ? v.rating.toFixed(1) : '—'}
+                                    </Text>
+                                    <Text
+                                        style={[styles.historyNote, { color: palette.textSecondary }]}
+                                        numberOfLines={1}
+                                    >
+                                        {v.user_display_names.length > 1
+                                            ? `with ${v.user_display_names.slice(1).join(' & ')}`
+                                            : 'on your own'}
+                                    </Text>
+                                    <Text style={[styles.historyDate, { color: palette.textMuted }]}>
+                                        {formatVisitDate(v.date)}
+                                    </Text>
+                                </Pressable>
+                            ))}
+                        </View>
+                    ) : null}
+
+                    {/* Ratings histogram (design 2a) — amber bars, pill tier toggle.
+                        Renders its frame even with zero data (ghost tracks + "—"). */}
+                    {restaurant ? (
+                        <SwitchableDistribution
+                            activeTier={activeTier}
+                            distributions={pageData?.distributions ?? { you: [0, 0, 0, 0, 0], your_table: null, napkin: [0, 0, 0, 0, 0] }}
+                            onTierChange={setActiveTier}
+                        />
+                    ) : null}
+
+                    {/* One review line (design 2a) — the newest note, or THE single
+                        invitation on an unwritten page. */}
+                    {restaurant ? (
+                        reviewQuote ? (
+                            <View style={styles.reviewLine}>
+                                {reviewQuote.avatar_url ? (
+                                    <Image
+                                        source={{ uri: reviewQuote.avatar_url }}
+                                        style={styles.reviewAvatar}
+                                    />
+                                ) : (
+                                    <View
+                                        style={[
+                                            styles.reviewAvatar,
+                                            { backgroundColor: palette.surfaceContainerHigh },
+                                        ]}
+                                    />
+                                )}
+                                <Text style={[styles.reviewQuote, { color: palette.text }]} numberOfLines={3}>
+                                    {`"${reviewQuote.note!.trim()}" `}
+                                    <Text style={[styles.reviewMeta, { color: palette.textMuted }]}>
+                                        {`— ${reviewQuote.is_self ? 'you' : reviewQuote.user_display_names[0] ?? 'a tablemate'}, ${formatQuoteDate(reviewQuote.date)}`}
+                                    </Text>
                                 </Text>
                             </View>
-                        </View>
-                    ) : null}
-
-                    {/* CTA row: LOG THIS MEAL + (supper v2) set a table */}
-                    {restaurant ? (
-                        <View style={styles.ctaRow}>
-                            <Pressable
-                                onPress={handleLogPress}
-                                style={({ pressed }) => [
-                                    styles.logBtn,
-                                    { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 },
-                                ]}
-                                accessibilityLabel="Log this meal"
-                                accessibilityRole="button"
-                            >
-                                <Text style={styles.logBtnLabel}>LOG THIS MEAL</Text>
-                            </Pressable>
-                        </View>
-                    ) : null}
-
-                    {/* Supper v2: set a table here. Restaurant-anchored — needs the
-                        restaurant persisted (so the supper has a real restaurant_id) and at
-                        least one Table to draw the crew from. Quiet secondary under the log CTA. */}
-                    {restaurant && !FRIEND_TEST.hideSuppers && hasAnyTable && persistedRestaurantId ? (
-                        <Pressable
-                            onPress={() => setSetTableSheetOpen(true)}
-                            style={({ pressed }) => [
-                                styles.setTableBtn,
-                                { borderColor: palette.terracottaBorder, opacity: pressed ? 0.7 : 1 },
-                            ]}
-                            accessibilityLabel="Set a table here"
-                            accessibilityRole="button"
-                        >
-                            <Ionicons name="people-outline" size={17} color={palette.primary} />
-                            <Text style={[styles.setTableLabel, { color: palette.primary }]}>set a table here</Text>
-                        </Pressable>
-                    ) : null}
-
-                    {/* FROM YOUR TABLE — renders in cold state too (murmur fallback) so
-                        the page keeps its ledger skeleton instead of trailing into a void. */}
-                    {restaurant ? (
-                        <View style={styles.section}>
-                            <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
-                                FROM YOUR TABLE
-                            </Text>
-                            {tablemateVisits.filter(v => v.note).slice(0, 3).length > 0 ? (
-                                tablemateVisits.filter(v => v.note).slice(0, 3).map((v) => (
-                                    <View key={v.id} style={styles.voiceRow}>
-                                        <Text
-                                            style={[styles.voiceQuote, { color: palette.text }]}
-                                            numberOfLines={3}
-                                        >
-                                            {`— ${v.note}`}
-                                        </Text>
-                                        <View style={styles.voiceMeta}>
-                                            {v.avatar_url ? (
-                                                <Image
-                                                    source={{ uri: v.avatar_url }}
-                                                    style={styles.voiceAvatar}
-                                                />
-                                            ) : (
-                                                <View
-                                                    style={[
-                                                        styles.voiceAvatar,
-                                                        { backgroundColor: palette.surfaceContainerHigh },
-                                                    ]}
-                                                />
-                                            )}
-                                            <Text
-                                                style={[styles.voiceMetaLabel, { color: palette.textMuted }]}
-                                            >
-                                                {[
-                                                    v.user_display_names[0],
-                                                    v.rating != null ? v.rating.toFixed(1) : null,
-                                                    formatVoiceMonth(v.date),
-                                                ].filter(Boolean).join(' · ')}
-                                            </Text>
-                                        </View>
-                                    </View>
-                                ))
-                            ) : (
-                                <Text style={[styles.murmur, { color: palette.textMuted }]}>
-                                    — nothing from your table yet.
+                        ) : (
+                            <Text style={[styles.reviewEmpty, { color: palette.textMuted }]}>
+                                {isColdRestaurant
+                                    ? 'No one you know has been. '
+                                    : `No one's written about ${restaurant.name} yet. `}
+                                <Text
+                                    style={{ color: palette.primary }}
+                                    onPress={handleLogPress}
+                                    accessibilityRole="button"
+                                >
+                                    Be the first →
                                 </Text>
-                            )}
-                        </View>
-                    ) : null}
-
-                    {/* YOUR HISTORY */}
-                    {restaurant ? (
-                        <View style={styles.section}>
-                            <Text style={[styles.sectionKicker, { color: palette.textSecondary }]}>
-                                YOUR HISTORY
                             </Text>
-                            {selfVisits.length > 0 ? (
-                                selfVisits.slice(0, 5).map((v) => (
-                                    <Pressable
-                                        key={v.id}
-                                        onPress={() => handleVisitPress(v)}
-                                        style={styles.historyRow}
-                                    >
-                                        {v.rating != null ? (
-                                            <Text style={[styles.historyRating, { color: '#d97706' }]}>
-                                                {v.rating % 1 === 0 ? `${v.rating}.0` : `${v.rating}`}
-                                            </Text>
-                                        ) : null}
-                                        <Text style={[styles.historyDot, { color: palette.textMuted }]}>·</Text>
-                                        <Text
-                                            style={[styles.historyNote, { color: palette.textMuted }]}
-                                            numberOfLines={1}
-                                        >
-                                            {v.note ??
-                                                (v.user_display_names.length > 1
-                                                    ? `with ${v.user_display_names.slice(1).join(' & ')}`
-                                                    : 'visited')}
-                                        </Text>
-                                        <View style={styles.historyDatePush} />
-                                        <Text style={[styles.historyDate, { color: palette.textMuted }]}>
-                                            {formatVisitDate(v.date)}
-                                        </Text>
-                                    </Pressable>
-                                ))
-                            ) : (
-                                <Text style={[styles.murmur, { color: palette.textMuted }]}>
-                                    {"— you haven’t been. or you haven’t said."}
-                                </Text>
-                            )}
-                        </View>
+                        )
                     ) : null}
 
                     {/* ── BELOW CANVAS — gated/quiet ────────────────────────────────── */}
-
-                    {/* Distribution histogram */}
-                    {restaurant && pageData && tiersWithData > 0 ? (
-                        <View style={styles.belowSection}>
-                            <SwitchableDistribution
-                                activeTier={activeTier}
-                                distributions={pageData.distributions}
-                                showTapHint={tiersWithData >= 2}
-                            />
-                        </View>
-                    ) : null}
 
                     {/* Voices stream — public reviews + tablemate visits */}
                     {restaurant && pageData && hasVoices ? (
@@ -823,6 +790,17 @@ export default function RestaurantScreen() {
                     ) : null}
                 </ScrollView>
 
+                {/* Action dock — log (sole primary) · save · directions · set a table */}
+                {restaurant ? (
+                    <BottomActionBar
+                        onLogPress={handleLogPress}
+                        saved={isSaved}
+                        onSavePress={() => setSaveSheetOpen(true)}
+                        saveDisabled={bookmarkDisabled}
+                        showSetTable={!FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId}
+                        onSetTablePress={() => setSetTableSheetOpen(true)}
+                    />
+                ) : null}
             </View>
 
             {/* Save sheet — pin opens this: Wishlist + curated lists + new list */}
@@ -863,190 +841,112 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     scrollContent: {
-        paddingBottom: 120,
-        gap: 18,
+        paddingBottom: 150, // clears the action dock + its fade
+        gap: 16,
     },
     loadingCenter: {
         paddingVertical: Spacing.xxl,
         alignItems: 'center',
     },
-    // Breadcrumb
-    topBar: {
+    // Tag chips — Places taxonomy ("fine dining", "small plates", "wine bar")
+    tagRow: {
         flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 24,
-        paddingVertical: 8,
-    },
-    breadcrumb: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    pinTop: {
-        width: 34,
-        height: 34,
-        borderRadius: Radius.full,
-        alignItems: 'center',
+        flexWrap: 'wrap',
         justifyContent: 'center',
-    },
-    breadcrumbLabel: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-    },
-    // Masthead — left-aligned editorial
-    masthead: {
-        alignItems: 'flex-start',
         gap: 6,
-        paddingHorizontal: 24,
-        paddingTop: 4,
-        paddingBottom: 2,
+        paddingHorizontal: 20,
     },
-    mastheadName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 34,
-        lineHeight: 38,
-        textAlign: 'left',
+    tagChip: {
+        borderRadius: 999,
+        paddingHorizontal: 11,
+        paddingVertical: 5,
     },
-    mastheadMeta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        textAlign: 'left',
-    },
-    // Cold restaurant — Google sibling + "be the first" invitation card
-    beFirstWrap: {
-        paddingHorizontal: 24,
-    },
-    beFirstCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: 16,
-        paddingHorizontal: 18,
-        paddingVertical: 14,
-        gap: 16,
-    },
-    beFirstGoogle: {
-        alignItems: 'center',
-        gap: 3,
-        flexShrink: 0,
-    },
-    beFirstGoogleLabel: {
+    tagChipText: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1.2,
+        fontSize: 10.5,
+        letterSpacing: 0.3,
+    },
+    // Ghost history rows — hold the ledger's shape before the first entry
+    ghostRow: {
+        opacity: 0.55,
+    },
+    ghostLine: {
+        flex: 1,
+        height: 1,
+        opacity: 0.6,
+    },
+    // YOUR HISTORY (design 2a)
+    section: {
+        paddingHorizontal: 20,
+    },
+    sectionHead: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        marginBottom: 2,
+    },
+    sectionKicker: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9.5,
+        letterSpacing: 1.5,
         textTransform: 'uppercase',
     },
-    beFirstGoogleValue: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
-    },
-    beFirstGoogleCount: {
+    sectionCount: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 10,
     },
-    beFirstDivider: {
-        width: 1,
-        alignSelf: 'stretch',
-    },
-    beFirstInvite: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
-        lineHeight: 21,
-        flex: 1,
-    },
-    // CTA row
-    ctaRow: {
-        flexDirection: 'row',
-        gap: 10,
-        paddingHorizontal: 24,
-        alignItems: 'stretch',
-    },
-    logBtn: {
-        flex: 1,
-        borderRadius: Radius.full,
-        paddingVertical: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    logBtnLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        letterSpacing: 1.6,
-        textTransform: 'uppercase',
-        color: '#fffdf8',
-    },
-    setTableBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        marginHorizontal: 24,
-        marginTop: 10,
-        paddingVertical: 12,
-        borderRadius: Radius.full,
-        borderWidth: 1,
-    },
-    setTableLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-    },
-    // FROM YOUR TABLE + YOUR HISTORY
-    section: {
-        paddingHorizontal: 24,
-        gap: 8,
-    },
-    sectionKicker: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1.4,
-        textTransform: 'uppercase',
-    },
-    voiceRow: {
-        gap: 6,
-    },
-    voiceQuote: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16,
-        lineHeight: 24,
-    },
-    voiceMeta: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    voiceAvatar: {
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-    },
-    voiceMetaLabel: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-    },
     historyRow: {
         flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 8,
-        paddingVertical: 8,
+        alignItems: 'center',
+        gap: 10,
+        paddingVertical: 9,
     },
     historyRating: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 17,
-    },
-    historyDot: {
-        fontSize: 12,
+        width: 34,
+        flexShrink: 0,
     },
     historyNote: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        flex: 1,
-    },
-    historyDatePush: {
+        fontSize: 12.5,
         flex: 1,
     },
     historyDate: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        fontSize: 10,
+        letterSpacing: 0.5,
+    },
+    // One review line (design 2a)
+    reviewLine: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 10,
+        paddingHorizontal: 20,
+    },
+    reviewAvatar: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        flexShrink: 0,
+    },
+    reviewQuote: {
+        flex: 1,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13.5,
+        lineHeight: 20,
+    },
+    reviewMeta: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        fontStyle: 'normal',
+    },
+    reviewEmpty: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13.5,
+        lineHeight: 20,
+        textAlign: 'center',
+        paddingHorizontal: 20,
     },
     murmur: {
         fontFamily: 'Newsreader_400Regular_Italic',

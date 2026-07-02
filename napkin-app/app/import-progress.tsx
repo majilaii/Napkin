@@ -17,7 +17,10 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/providers/AuthProvider';
 import { useActiveImports, type ActiveImport } from '@/hooks/wishlist/useActiveImports';
+import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
+import { importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { retryImport, removeImport } from '@/lib/importQueue';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 
@@ -33,7 +36,11 @@ export default function ImportProgressScreen() {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const { user } = useAuth();
     const active = useActiveImports();
+    // Completed batches — every import stays reachable here for fix/prune.
+    const { data: recent } = useRecentImports(user?.id, 10);
+    const recentBatches = recent ?? [];
 
     const discard = (m: ActiveImport) => {
         removeImport(m.jobId);
@@ -62,7 +69,7 @@ export default function ImportProgressScreen() {
                 contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: insets.bottom + 40, paddingTop: Spacing.sm }}
                 showsVerticalScrollIndicator={false}
             >
-                {active.length === 0 ? (
+                {active.length === 0 && recentBatches.length === 0 ? (
                     <View style={styles.emptyWrap}>
                         <Text style={[styles.emptyText, { color: palette.textMuted }]}>
                             — nothing importing right now.
@@ -131,6 +138,47 @@ export default function ImportProgressScreen() {
                         );
                     })
                 )}
+
+                {/* Earlier — completed batches; tap in to fix a wrong pin or prune */}
+                {recentBatches.length > 0 ? (
+                    <>
+                        <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>
+                            EARLIER
+                        </Text>
+                        {recentBatches.map((b) => (
+                            <Pressable
+                                key={b.job_id}
+                                onPress={() => router.push(`/imports/${b.job_id}` as any)}
+                                style={({ pressed }) => [
+                                    styles.recentRow,
+                                    { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.7 : 1 },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={`open import of ${b.item_count} spots`}
+                            >
+                                <Ionicons
+                                    name={b.source?.type === 'tiktok' ? 'logo-tiktok' : 'download-outline'}
+                                    size={16}
+                                    color={palette.textSecondary}
+                                />
+                                <View style={styles.recentBody}>
+                                    <Text style={[styles.recentTitle, { color: palette.text }]} numberOfLines={1}>
+                                        {`${b.item_count} ${b.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(b.source)}`}
+                                    </Text>
+                                    {b.preview_names.length > 0 ? (
+                                        <Text style={[styles.recentNames, { color: palette.textMuted }]} numberOfLines={1}>
+                                            {b.preview_names.join(' · ')}
+                                        </Text>
+                                    ) : null}
+                                </View>
+                                <Text style={[styles.recentTime, { color: palette.textMuted }]}>
+                                    {relativeTime(b.created_at)}
+                                </Text>
+                                <Ionicons name="chevron-forward" size={14} color={palette.textMuted} />
+                            </Pressable>
+                        ))}
+                    </>
+                ) : null}
             </ScrollView>
         </View>
     );
@@ -171,4 +219,24 @@ const styles = StyleSheet.create({
     failRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     failAction: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
     failDot: { fontFamily: 'Manrope_400Regular', fontSize: 12 },
+    sectionKicker: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9.5,
+        letterSpacing: 1.5,
+        marginTop: Spacing.md,
+        marginBottom: Spacing.sm,
+    },
+    recentRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        marginBottom: Spacing.xs,
+    },
+    recentBody: { flex: 1, minWidth: 0, gap: 2 },
+    recentTitle: { fontFamily: 'Manrope_600SemiBold', fontSize: 13.5 },
+    recentNames: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 12.5 },
+    recentTime: { fontFamily: 'Manrope_500Medium', fontSize: 11, flexShrink: 0 },
 });

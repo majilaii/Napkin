@@ -519,7 +519,7 @@ serve(async (req) => {
             if (isUuid) {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at, place_types')
                     .eq('id', restaurantId)
                     .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();
@@ -528,7 +528,7 @@ serve(async (req) => {
             } else {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at, place_types')
                     .eq('external_id', restaurantId)
                     .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();

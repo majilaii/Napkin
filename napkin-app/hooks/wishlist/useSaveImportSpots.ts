@@ -90,6 +90,9 @@ export interface SaveImportSpotsResult {
         already_pinned: number;
         failed: number;
     };
+    /** Server batch id (minted on import_nonce) — deep-link target for
+     * /imports/[jobId] review/fix. Optional: older deploys omit it. */
+    job_id?: string | null;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────

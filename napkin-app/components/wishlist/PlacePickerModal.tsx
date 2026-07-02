@@ -69,20 +69,24 @@ interface Props {
     title: string;
     /** Optional one-line murmur under the title. */
     subtitle?: string;
+    /** Prefill the search (e.g. the mis-resolved spot's name when fixing) —
+     * results appear immediately instead of starting from a blank field. */
+    initialQuery?: string;
     busy?: boolean;
     onSelect: (r: PlacePickerResult) => void;
     onDismiss: () => void;
     palette: typeof Colors.light;
 }
 
-export function PlacePickerModal({ visible, title, subtitle, busy, onSelect, onDismiss, palette }: Props) {
+export function PlacePickerModal({ visible, title, subtitle, initialQuery, busy, onSelect, onDismiss, palette }: Props) {
     const [query, setQuery] = useState('');
     const { results, isLoading } = usePlacesSearch(query);
 
-    // Reset the query each time the modal opens fresh.
+    // Each open starts from the prefill (fix mode: the wrong spot's name —
+    // usually one edit away from the right one); each close clears it.
     useEffect(() => {
-        if (!visible) setQuery('');
-    }, [visible]);
+        setQuery(visible ? (initialQuery ?? '') : '');
+    }, [visible, initialQuery]);
 
     const handleSelect = useCallback(
         (r: PlacePickerResult) => {

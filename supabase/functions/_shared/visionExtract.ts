@@ -37,6 +37,10 @@ export interface ExtractedCandidate {
     city: string | null;
     /** TICKET-063: true when city was inferred from hashtags/handle/context, not explicit. */
     city_inferred: boolean;
+    /** TICKET-086b: neighborhood/district ("Dalston", "Belsize Park", "E11") —
+     * sharpens the Places text query; distinct from city. Optional so legacy
+     * candidate constructors (cache reads, google-maps path) stay valid. */
+    area?: string | null;
     cuisine: string | null;
     address: string | null;
     booking_url: string | null;
@@ -72,6 +76,7 @@ Respond with ONLY a JSON array — no prose, no markdown, no wrapper object. Eac
   "name": string | null,
   "city": string | null,
   "city_inferred": boolean,
+  "area": string | null,
   "cuisine": string | null,
   "address": string | null,
   "booking_url": string | null,
@@ -80,8 +85,24 @@ Respond with ONLY a JSON array — no prose, no markdown, no wrapper object. Eac
   "google_place_id": string | null
 }
 
+The text often combines TWO noisy channels from a food video:
+- on-screen OCR fragments — the creator's own overlays, usually "Name, Area"
+  with correct spelling ("Cinder, Belsize Park"), mixed with menu/sign noise
+- an automatic speech-recognition (ASR) transcript — proper nouns get garbled
+  ("the pickle ring" for "The Picklery"; "Lucky. Enjoy." for "Lucky & Joy";
+  "Lang Zhou noodles" for "Lanzhou Lamian Noodle Bar")
+
 Rules:
 - Extract EVERY distinct restaurant visible or mentioned. Do NOT collapse multiple restaurants into one.
+- When the two channels describe the same place, they are ONE restaurant: prefer
+  the OCR spelling ("Name, Area" patterns with proper capitalization) for the
+  name; use the spoken context for cuisine/city hints.
+- Reconstruct ASR-garbled names to the most plausible REAL restaurant name;
+  use surrounding clues (dishes, comparisons, area) to denoise. If you cannot
+  confidently reconstruct, keep the garbled name verbatim with confidence "low"
+  — never invent a restaurant that isn't grounded in the text.
+- area: the neighborhood/district if given ("Dalston", "Belsize Park", "Brixton",
+  a UK postcode district like "E11") — distinct from city. Null when absent.
 - confidence "high": you are reasonably certain of the restaurant name AND city.
 - confidence "low": name is uncertain, or city cannot be determined even by inference.
 - city: include the city name when known OR inferable. If the caption/title/hashtags signal a city (e.g. "#londonfood", "@nycfoodie", "my faves in soho"), use that city and set city_inferred=true.
@@ -162,6 +183,7 @@ function coerceCandidate(p: unknown): ExtractedCandidate {
         name: typeof obj['name'] === 'string' ? obj['name'].trim() || null : null,
         city: typeof obj['city'] === 'string' ? obj['city'].trim() || null : null,
         city_inferred: obj['city_inferred'] === true,
+        area: typeof obj['area'] === 'string' ? obj['area'].trim() || null : null,
         cuisine: typeof obj['cuisine'] === 'string' ? obj['cuisine'].trim() || null : null,
         address: typeof obj['address'] === 'string' ? obj['address'].trim() || null : null,
         booking_url: typeof obj['booking_url'] === 'string' ? obj['booking_url'].trim() || null : null,

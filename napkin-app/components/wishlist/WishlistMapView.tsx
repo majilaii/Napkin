@@ -89,7 +89,7 @@ function openDirections(item: WishlistMapItem) {
 // Terracotta teardrop, cream interior dot. Selected = larger + cream ring.
 
 function WishlistPin({ selected, palette }: { selected: boolean; palette: typeof Colors.light }) {
-    const size = selected ? 20 : 14;
+    const size = selected ? 22 : 16;
     return (
         <View style={pinStyles.wrap}>
             <View
@@ -122,7 +122,10 @@ function WishlistPin({ selected, palette }: { selected: boolean; palette: typeof
 }
 
 const pinStyles = StyleSheet.create({
-    wrap: { alignItems: 'center', justifyContent: 'center' },
+    // 44×44 transparent hit area (iOS HIG min target) around the small visible
+    // teardrop — the dot stays small, but the tap-target is finger-sized so pins
+    // are easy to hit on a dense map. anchor={0.5,0.5} keeps the pin on-coordinate.
+    wrap: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
     pin: {
         // Teardrop: rotated rounded square w/ one square corner, like InfoMapPreview
         borderBottomLeftRadius: 0,

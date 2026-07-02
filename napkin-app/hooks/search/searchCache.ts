@@ -29,6 +29,19 @@ export interface PlacesResult {
     formattedAddress: string | null;
     latitude: number | null;
     longitude: number | null;
+    // The server sends these on every result (shared PLACE_FIELDS mask); they
+    // were silently dropped by this type until the Ritz empty-page bug. All
+    // optional so stale cached entries stay type-valid.
+    country?: string | null;
+    /** Google place types (e.g. fine_dining_restaurant) — tag-chip source. */
+    categories?: string[];
+    googleRating?: number | null;
+    googleRatingCount?: number | null;
+    priceLevel?: number | null;
+    website?: string | null;
+    phone?: string | null;
+    google_maps_uri?: string | null;
+    hours?: { weekdayDescriptions: string[] } | null;
     /**
      * Napkin restaurant id — present ONLY on a place_id lookup with persist=true
      * (places-search upserts the row and echoes its id back). Lets the Top 4

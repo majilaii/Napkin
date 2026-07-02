@@ -741,8 +741,12 @@ async function resolveCandidateToPlace(
         }
     }
 
-    // No google_place_id → text search by name + city (candidates without a known place_id)
-    const query = [candidate.name, candidate.city].filter(Boolean).join(', ');
+    // No google_place_id → text search by name + area + city. The area
+    // ("Belsize Park", "Dalston", "E11") disambiguates same-name places and
+    // rescues ASR-denoised names (TICKET-086b).
+    const query = [candidate.name, (candidate as { area?: string | null }).area ?? null, candidate.city]
+        .filter(Boolean)
+        .join(', ');
     try {
         const results = await callPlacesSearch(
             query, authHeader, supabaseUrl, supabaseAnonKey, signal,
@@ -1547,10 +1551,27 @@ async function handleSaveSpots(
     const alreadyCount = results.filter((r) => r.status === 'already_pinned').length;
     const failedCount = results.filter((r) => r.status === 'failed').length;
 
+    // The batch's server job_id (minted by the RPC keyed on import_nonce) so the
+    // client toast can deep-link to /imports/[jobId] for review/fix. Nested
+    // INSIDE data — callEdgeFn strips the outer envelope and drops siblings.
+    let batchJobId: string | null = null;
+    try {
+        const { data: jobRow } = await supabase
+            .from('import_jobs')
+            .select('job_id')
+            .eq('user_id', user.id)
+            .eq('import_nonce', importNonce)
+            .maybeSingle();
+        batchJobId = jobRow?.job_id ?? null;
+    } catch {
+        /* link is optional — never fail the save over it */
+    }
+
     return jsonResponse({
         data: {
             results,
             summary: { saved: savedCount, already_pinned: alreadyCount, failed: failedCount },
+            job_id: batchJobId,
         },
     });
 }

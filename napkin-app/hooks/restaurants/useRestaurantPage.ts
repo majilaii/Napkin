@@ -43,6 +43,8 @@ export type RestaurantPageRestaurant = {
     website: string | null;
     google_maps_uri: string | null;
     hours: { weekdayDescriptions: string[] } | null;
+    /** Google place types stored at upsert — tag-chip source ("fine dining"). */
+    place_types?: string[] | null;
     // TICKET-081 fix-pass: durable Places-sync sentinel — gates the lazy backfill so
     // a place with no phone/hours stops re-hitting Place Details after one sync.
     places_synced_at: string | null;
@@ -331,6 +333,7 @@ export function restaurantFromPlace(
         website: place.website ?? null,
         google_maps_uri: place.google_maps_uri ?? place.link ?? null,
         hours: place.hours ?? null,
+        place_types: (place as any).categories ?? place.types ?? null,
         // A ghost is not yet persisted/synced — null sentinel (no backfill gating uses
         // this on the ghost path; the page only backfills persisted rows).
         places_synced_at: null,
