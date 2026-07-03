@@ -66,6 +66,17 @@ export interface CreateEntryInput {
         longitude?: number;
         photoReference?: string;
         photoAttributionHtml?: string | null;
+        /** Full Places metadata — the upsert is sparse-write, so senders should
+         * carry everything they have (first log at a ghost creates the row;
+         * missing fields here made the page's Google numbers vanish). */
+        googleRating?: number;
+        googleRatingCount?: number;
+        priceLevel?: number;
+        cuisine?: string | null;
+        phone?: string | null;
+        website?: string | null;
+        google_maps_uri?: string | null;
+        hours?: unknown;
     };
     rating?: number | null;
     content?: string;
