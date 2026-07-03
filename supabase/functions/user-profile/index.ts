@@ -61,6 +61,27 @@ type Stats = {
     average_rating: number | null;
     followers_count: number;
     following_count: number;
+    /** TICKET-092: dated logs this calendar year (Letterboxd "This year"). */
+    logs_this_year: number;
+    /** TICKET-092: entries with real written notes (the Reviews count). */
+    reviews_count: number;
+};
+
+/** TICKET-092: one distinct logged restaurant (the profile "Spots" ledger +
+ * taste band + dining map). Like RegularSummary without the ≥3-visit bar. */
+type SpotSummary = {
+    restaurant_id: string;
+    name: string;
+    city: string | null;
+    country: string | null;
+    cuisine: string | null;
+    price_level: number | null;
+    lat: number | null;
+    lng: number | null;
+    photo_url: string | null;
+    visit_count: number;
+    avg_rating: number | null;
+    last_visited_at: string | null;
 };
 
 type ListSummary = {
@@ -248,14 +269,20 @@ async function fetchAllCallerTableIds(
  * Compute Palate stats for the target user.
  * Deliberately does NOT select table_id — enforces "no Table identity in payload".
  */
-async function fetchStats(supabase: any, targetId: string): Promise<Stats> {
+async function fetchStats(supabase: any, targetId: string, includePrivate = false): Promise<Stats> {
+    // TICKET-092: for SELF the ledger counts everything (private + unrated) —
+    // the old rated-public-only count made the founder's own "N meals" lie.
+    // Public viewers keep the doctrinal bar: non-private AND rated.
+    let entriesQuery = supabase
+        .from('entries')
+        .select('id, restaurant_id, rating, content, visited_at, created_at')
+        .eq('user_id', targetId);
+    if (!includePrivate) {
+        entriesQuery = entriesQuery.neq('visibility', 'private').not('rating', 'is', null);
+    }
+
     const [{ data: entries, error }, followersRes, followingRes] = await Promise.all([
-        supabase
-            .from('entries')
-            .select('id, restaurant_id, rating')
-            .eq('user_id', targetId)
-            .neq('visibility', 'private')
-            .not('rating', 'is', null),
+        entriesQuery,
         supabase
             .from('follows')
             .select('follower_id', { count: 'exact', head: true })
@@ -269,7 +296,14 @@ async function fetchStats(supabase: any, targetId: string): Promise<Stats> {
     if (followersRes.error) throw followersRes.error;
     if (followingRes.error) throw followingRes.error;
 
-    const rows = (entries ?? []) as Array<{ id: string; restaurant_id: string | null; rating: number | null }>;
+    const rows = (entries ?? []) as Array<{
+        id: string;
+        restaurant_id: string | null;
+        rating: number | null;
+        content: string | null;
+        visited_at: string | null;
+        created_at: string | null;
+    }>;
     const totalLogs = rows.length;
     const uniqueRestaurants = new Set(rows.map((r) => r.restaurant_id).filter(Boolean));
     const totalRestaurants = uniqueRestaurants.size;
@@ -280,12 +314,23 @@ async function fetchStats(supabase: any, targetId: string): Promise<Stats> {
             ? ratedRows.reduce((sum, r) => sum + (r.rating as number), 0) / ratedRows.length
             : null;
 
+    const yearStart = `${new Date().getFullYear()}-01-01`;
+    let logsThisYear = 0;
+    let reviewsCount = 0;
+    for (const r of rows) {
+        const visited = (r.visited_at ?? r.created_at ?? '') as string;
+        if (visited >= yearStart) logsThisYear++;
+        if (typeof r.content === 'string' && r.content.trim().length > 0) reviewsCount++;
+    }
+
     return {
         total_logs: totalLogs,
         total_restaurants: totalRestaurants,
         average_rating: averageRating,
         followers_count: followersRes.count ?? 0,
         following_count: followingRes.count ?? 0,
+        logs_this_year: logsThisYear,
+        reviews_count: reviewsCount,
     };
 }
 
@@ -750,6 +795,102 @@ async function fetchRegulars(
 }
 
 /**
+ * TICKET-092: every distinct restaurant the user has logged — the profile
+ * "Spots" ledger (Letterboxd Films), the taste band's raw material, and the
+ * dining map's pins. Same aggregation as fetchRegulars minus the ≥3-visit bar,
+ * with the restaurant select widened to geo/taste fields.
+ */
+async function fetchSpots(
+    supabase: any,
+    userId: string,
+    includePrivate: boolean,
+    limit: number = 500,
+): Promise<SpotSummary[]> {
+    let query = supabase
+        .from('entries')
+        .select('restaurant_id, rating, visited_at, created_at')
+        .eq('user_id', userId)
+        .not('restaurant_id', 'is', null);
+
+    if (!includePrivate) query = query.neq('visibility', 'private');
+
+    const { data: entries, error } = await query;
+    if (error) throw error;
+
+    type Bucket = {
+        restaurant_id: string;
+        visit_count: number;
+        rating_sum: number;
+        rating_count: number;
+        last_visited_at: string | null;
+    };
+
+    const buckets = new Map<string, Bucket>();
+    for (const e of (entries ?? []) as any[]) {
+        const rid = e.restaurant_id as string;
+        const rating = e.rating != null ? Number(e.rating) : null;
+        const visited = (e.visited_at ?? e.created_at) as string;
+        const existing = buckets.get(rid);
+        if (!existing) {
+            buckets.set(rid, {
+                restaurant_id: rid,
+                visit_count: 1,
+                rating_sum: rating ?? 0,
+                rating_count: rating != null ? 1 : 0,
+                last_visited_at: visited,
+            });
+        } else {
+            existing.visit_count += 1;
+            if (rating != null) {
+                existing.rating_sum += rating;
+                existing.rating_count += 1;
+            }
+            if (!existing.last_visited_at || visited > existing.last_visited_at) {
+                existing.last_visited_at = visited;
+            }
+        }
+    }
+
+    const ordered = Array.from(buckets.values())
+        .sort((a, b) => {
+            const al = a.last_visited_at ?? '';
+            const bl = b.last_visited_at ?? '';
+            return al < bl ? 1 : al > bl ? -1 : 0;
+        })
+        .slice(0, limit);
+
+    if (ordered.length === 0) return [];
+
+    const { data: rests, error: restErr } = await supabase
+        .from('restaurants')
+        .select('id, name, city, country, cuisine, price_level, lat, lng, photo_url')
+        .in('id', ordered.map((r) => r.restaurant_id));
+    if (restErr) throw restErr;
+
+    const byId = new Map<string, any>((rests ?? []).map((r: any) => [r.id, r]));
+    return ordered
+        .map((r): SpotSummary | null => {
+            const rest = byId.get(r.restaurant_id);
+            if (!rest) return null;
+            return {
+                restaurant_id: r.restaurant_id,
+                name: rest.name,
+                city: rest.city ?? null,
+                country: rest.country ?? null,
+                cuisine: rest.cuisine ?? null,
+                price_level: rest.price_level ?? null,
+                lat: rest.lat ?? null,
+                lng: rest.lng ?? null,
+                photo_url: rest.photo_url ?? null,
+                visit_count: r.visit_count,
+                avg_rating: r.rating_count > 0 ? r.rating_sum / r.rating_count : null,
+                last_visited_at: r.last_visited_at,
+            };
+        })
+        .filter((x): x is SpotSummary => x !== null);
+}
+
+/**
  * Fetch diary rows for a user — chronological, paginated via visited_at cursor.
  *
  * TICKET-044: When includeRoundData=true (self-view), entries that are part of
@@ -767,6 +908,7 @@ async function fetchDiary(
     cursor: string | null,
     limit: number = 30,
     includeRoundData: boolean = false,
+    reviewsOnly: boolean = false,
 ): Promise<Page<DiaryRow>> {
     const decoded = decodeCursor(cursor);
 
@@ -780,6 +922,9 @@ async function fetchDiary(
         .limit(limit + 1);
 
     if (!includePrivate) query = query.neq('visibility', 'private');
+    // TICKET-092: the Reviews surface = diary rows WITH written notes. Same
+    // ordering, so the keyset cursor stays valid.
+    if (reviewsOnly) query = query.not('content', 'is', null).neq('content', '');
     if (decoded) query = applyKeysetFilter(query, { sort_date: decoded.sort_date, id: decoded.id });
 
     const { data: entries, error } = await query;
@@ -883,7 +1028,7 @@ serve(async (req) => {
                 // Self: return everything, even if private
                 const [stats, publicLists, recentlyLogged, topFour, regularsPreview, allTableIds] =
                     await Promise.all([
-                        fetchStats(supabase, targetId),
+                        fetchStats(supabase, targetId, true), // self: full ledger incl. private/unrated
                         fetchPublicLists(supabase, targetId),
                         fetchRecentlyLogged(supabase, targetId),
                         fetchTopFour(supabase, targetId, true),
@@ -1073,6 +1218,80 @@ serve(async (req) => {
 
             const regulars = await fetchRegulars(supabase, targetId, isSelf, 200);
             return json({ data: { regulars } });
+        }
+
+        // ── spots (read) — TICKET-092: every distinct logged restaurant ────
+        if (action === 'spots') {
+            const { identifier } = body as { identifier?: string };
+            if (!identifier || typeof identifier !== 'string') {
+                return fail('identifier is required', 400);
+            }
+
+            const targetProfile = await resolveProfile(supabase, identifier);
+            if (!targetProfile) return notFound();
+
+            const callerId = user.id;
+            const targetId = targetProfile.user_id;
+            const isSelf = callerId === targetId;
+
+            if (!isSelf) {
+                const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
+                const relationship = computeRelationship(
+                    callerId,
+                    targetProfile.account_privacy,
+                    sharedTableIds,
+                );
+                if (relationship === 'none' || relationship === 'tables_in_common') {
+                    return notFound();
+                }
+            }
+
+            const spots = await fetchSpots(supabase, targetId, isSelf, 500);
+            return json({ data: { spots } });
+        }
+
+        // ── reviews (read) — TICKET-092: diary rows with written notes ─────
+        if (action === 'reviews') {
+            const { identifier, cursor, limit } = body as {
+                identifier?: string;
+                cursor?: string | null;
+                limit?: number;
+            };
+            if (!identifier || typeof identifier !== 'string') {
+                return fail('identifier is required', 400);
+            }
+
+            const targetProfile = await resolveProfile(supabase, identifier);
+            if (!targetProfile) return notFound();
+
+            const callerId = user.id;
+            const targetId = targetProfile.user_id;
+            const isSelf = callerId === targetId;
+
+            if (!isSelf) {
+                const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
+                const relationship = computeRelationship(
+                    callerId,
+                    targetProfile.account_privacy,
+                    sharedTableIds,
+                );
+                if (relationship === 'none' || relationship === 'tables_in_common') {
+                    return notFound();
+                }
+            }
+
+            const pageLimit = Math.min(Math.max(limit ?? 30, 1), 50);
+            // includeRoundData=isSelf (Tables never public); reviewsOnly=true.
+            const page = await fetchDiary(
+                supabase,
+                targetId,
+                isSelf,
+                cursor ?? null,
+                pageLimit,
+                isSelf,
+                true,
+            );
+            return json({ data: page });
         }
 
         // ── check_username ────────────────────────────────────────────────

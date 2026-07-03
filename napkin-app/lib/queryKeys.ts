@@ -92,6 +92,9 @@ export const queryKeys = {
         diary: (userId: string) =>
             ['users', 'diary', userId] as const,
         regulars: (userId: string) => ['users', 'regulars', userId] as const,
+        // TICKET-092 profile revamp
+        spots: (userId: string) => ['users', 'spots', userId] as const,
+        reviews: (userId: string) => ['users', 'reviews', userId] as const,
         searchAll: () => ['users', 'search'] as const,
         search: (q: string, opts?: { mutualOnly?: boolean }) =>
             opts?.mutualOnly

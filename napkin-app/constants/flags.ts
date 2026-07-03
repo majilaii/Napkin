@@ -6,8 +6,10 @@
  * Data hooks are never gated here — only JSX render paths.
  */
 export const FRIEND_TEST = {
-    /** Hide Lists screen entry points (profile index + settings row). */
-    hideLists: true,
+    /** Hide Lists screen entry points (profile index + settings row).
+     *  Flipped false 2026-07-03 (TICKET-092 profile revamp) — lists have been
+     *  live on the wishlist tab since TICKET-084; the curtain was stale. */
+    hideLists: false,
     /** Hide Top 4s — personal grid on profile, table grid/placeholder, edit sheet, FoundedHero placeholder. */
     hideTopFours: true,
     /** Hide Atlas tab on Tables screen + AtlasCrossLinkChip on restaurant page. */

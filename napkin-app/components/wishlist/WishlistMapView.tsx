@@ -61,8 +61,10 @@ interface Props {
     locationStatus: LocationStatus;
     onRequestLocation: () => void;
     onOpenRestaurant: (restaurantId: string) => void;
-    /** Switch back to the list view (toggle lives bottom-right, like the Map button). */
-    onSwitchToList: () => void;
+    /** Switch back to the list view (toggle lives bottom-right, like the Map
+     * button). Optional — screens with their own chrome (dining map, TICKET-092)
+     * omit it and the toggle hides. */
+    onSwitchToList?: () => void;
     palette: typeof Colors.light;
 }
 
@@ -342,7 +344,7 @@ export function WishlistMapView({
 
             {/* List toggle — bottom-RIGHT, the same corner as the list view's Map
                 button, so the view toggle stays put. Hidden while a peek card is up. */}
-            {!selected ? (
+            {!selected && onSwitchToList ? (
                 <Pressable
                     onPress={onSwitchToList}
                     style={[styles.listToggle, { backgroundColor: palette.surfaceNote, bottom: insets.bottom + 76 }]}

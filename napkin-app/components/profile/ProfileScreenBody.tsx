@@ -1,12 +1,22 @@
 /**
  * ProfileScreenBody — shared body between (tabs)/profile.tsx and u/[identifier].tsx.
- * TICKET-025
+ * TICKET-025, rebuilt for TICKET-092 (the Letterboxd/Beli revamp).
  *
- * Composes: ProfileHeader → TopFour → RegularsRail → ProfileIndex → TablesInCommonSection
- * Handles all loading/error/not-found states.
- * Cold-start: empty TopFour slots + locked Regulars panel + first-review nudge.
+ * One profile grammar for self AND public — the own tab no longer auto-expands
+ * the journal; everything lives behind the index:
+ *
+ *   ProfileHeader (identity + ScoreBand stats strip)
+ *   → TopFour (self: editable; public: read view)
+ *   → TasteBand (top cuisines · cities · countries — Beli)
+ *   → DiningMapPreview (been-pins → /dining-map — Beli)
+ *   → RegularsRail
+ *   → ProfileIndex (Journal · Spots · Reviews · Lists · Wishlist · Likes)
+ *   → TablesInCommonSection
+ *
+ * Doctrine: Tables never public; logs surface publicly only with real review
+ * content (server-gated); lists per-list privacy.
  */
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     ScrollView,
@@ -14,15 +24,19 @@ import {
     Text,
     View,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUserProfile } from '@/hooks/users/useUserProfile';
-import { FRIEND_TEST } from '@/constants/flags';
+import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
 
 import { ProfileHeader } from './ProfileHeader';
 import { TopFour } from './TopFour';
+import { ProfileTopFourSheet } from './ProfileTopFourSheet';
+import { TasteBand } from './TasteBand';
+import { DiningMapPreview } from './DiningMapPreview';
 import { RegularsRail } from './RegularsRail';
 import { ProfileIndex } from './ProfileIndex';
 import { TablesInCommonSection } from './TablesInCommonSection';
@@ -39,11 +53,27 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
+    const router = useRouter();
 
     const { data: result, isLoading, error } = useUserProfile(identifier);
 
     const isNotFound = result?.isNotFound ?? false;
     const profileData = result?.data ?? null;
+
+    const relationship = profileData?.viewer_target_relationship ?? 'none';
+    const isSelf = profileData?.is_self ?? false;
+    const hasPalateAccess =
+        relationship === 'self' ||
+        relationship === 'public_only' ||
+        relationship === 'public_and_tables';
+
+    // Spots feed the taste band + map preview (server-gated same as regulars).
+    const { data: spots } = useUserSpots(
+        hasPalateAccess ? profileData?.profile.user_id : null,
+    );
+    const taste = useMemo(() => deriveTaste(spots ?? []), [spots]);
+
+    const [editTopFourOpen, setEditTopFourOpen] = useState(false);
 
     if (isLoading || !identifier) {
         return (
@@ -57,7 +87,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         return (
             <View style={styles.center}>
                 <Text style={[Type.body, { color: palette.textSecondary, textAlign: 'center', paddingHorizontal: 20 }]}>
-                    {"Couldn\u2019t load this profile"}
+                    {"Couldn’t load this profile"}
                 </Text>
             </View>
         );
@@ -67,65 +97,60 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         return <NotFoundState />;
     }
 
-    const relationship = profileData.viewer_target_relationship;
-    const isSelf = profileData.is_self;
     const stats = profileData.stats;
     const totalLogs = stats?.total_logs ?? 0;
+    const targetUserId = profileData.profile.user_id;
 
-    // Build index sections
+    // ── Index (the Letterboxd tabs, as an editorial TOC) ─────────────────────
     const indexSections: IndexSection[] = [];
 
-    const hasPalateAccess =
-        relationship === 'self' ||
-        relationship === 'public_only' ||
-        relationship === 'public_and_tables';
-
-    // Diary — self only in Phase 1 (stranger Diary entry point is a fast-follow
-    // once copy/empty-states are reviewed). Server-side gate exists either way.
-    if (isSelf) {
+    if (hasPalateAccess) {
         const latestEntry = profileData.recently_logged?.[0];
-        const diaryHint = latestEntry
-            ? `Latest: ${latestEntry.name}`
-            : 'Your chronological log';
-
         indexSections.push({
-            title: 'Diary',
+            title: 'Journal',
             count: totalLogs || null,
-            hint: diaryHint,
+            hint: latestEntry ? `Latest: ${latestEntry.name}` : 'The chronological log',
             emphasis: true,
-            route: `/diary?userId=${profileData.profile.user_id}`,
+            route: `/diary?userId=${targetUserId}`,
         });
-    }
-
-    // Reviews — disabled placeholder
-    indexSections.push({
-        title: 'Reviews',
-        count: null,
-        hint: '— coming soon',
-        emphasis: true,
-        disabled: true,
-    });
-
-    // Lists — only for self or public profiles; hidden during friend-test
-    if (!FRIEND_TEST.hideLists && hasPalateAccess) {
-        const listsCount = profileData.public_lists?.length ?? 0;
-        const listHint =
-            profileData.public_lists && profileData.public_lists.length > 0
-                ? profileData.public_lists
-                    .slice(0, 3)
-                    .map((l) => l.title)
-                    .join(' · ')
-                : 'Your curated collections';
 
         indexSections.push({
-            title: 'Lists',
-            count: listsCount || null,
-            hint: listHint,
-            route: '/lists',
+            title: 'Spots',
+            count: stats?.total_restaurants || null,
+            hint: 'Every place, rated',
+            route: `/spots?userId=${targetUserId}`,
         });
+
+        indexSections.push({
+            title: 'Reviews',
+            count: stats?.reviews_count || null,
+            hint: 'The written ones',
+            emphasis: true,
+            route: `/reviews?userId=${targetUserId}`,
+        });
+
+        const publicLists = profileData.public_lists ?? [];
+        if (isSelf) {
+            indexSections.push({
+                title: 'Lists',
+                count: publicLists.length || null,
+                hint:
+                    publicLists.length > 0
+                        ? publicLists.slice(0, 3).map((l) => l.title).join(' · ')
+                        : 'Curated collections',
+                route: '/lists',
+            });
+        } else if (publicLists.length > 0) {
+            // Stranger list browsing is a fast-follow — quiet inventory for now.
+            indexSections.push({
+                title: 'Lists',
+                count: publicLists.length,
+                hint: publicLists.slice(0, 3).map((l) => l.title).join(' · '),
+                disabled: true,
+            });
+        }
     }
 
-    // Wishlist — only for self
     if (isSelf) {
         indexSections.push({
             title: 'Wishlist',
@@ -135,17 +160,6 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         });
     }
 
-    // Top 4s — self, or public profile viewers; hidden during friend-test
-    if (!FRIEND_TEST.hideTopFours && hasPalateAccess) {
-        indexSections.push({
-            title: 'Top 4s',
-            count: null,
-            hint: 'Your best by city',
-            route: `/top-fours?userId=${profileData.profile.user_id}`,
-        });
-    }
-
-    // Likes — disabled placeholder
     indexSections.push({
         title: 'Likes',
         count: null,
@@ -154,11 +168,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         disabled: true,
     });
 
-    // Cold-start: user has no reviewed entries yet
     const isColdStart = totalLogs === 0;
-
-    // Should show first-review nudge: self + cold start or very few logs with no notes
-    const showFirstReviewNudge = isSelf && isColdStart;
 
     return (
         <ScrollView
@@ -176,51 +186,57 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 viewerRatedEntryCount={profileData.viewer_rated_entry_count}
             />
 
-            {/* Hairline divider */}
-            <View style={[styles.hairline, { backgroundColor: palette.dividerSoft }]} />
-
-            {/* Top 4 — hidden during friend-test */}
-            {!FRIEND_TEST.hideTopFours && hasPalateAccess && (
-                <TopFour picks={profileData.top_four ?? []} />
+            {/* Top 4 — identity leads (Letterboxd: favorites before any feed).
+                FRIEND_TEST.hideTopFours deliberately bypassed on the profile
+                surface (was already bypassed on the own tab). */}
+            {hasPalateAccess && (
+                <TopFour
+                    picks={profileData.top_four ?? []}
+                    isOwner={isSelf}
+                    onEdit={isSelf ? () => setEditTopFourOpen(true) : undefined}
+                />
             )}
 
-            {/* Cold-start nudge under top 4 — hidden with top fours */}
-            {!FRIEND_TEST.hideTopFours && isColdStart && isSelf && (
+            {isColdStart && isSelf && (
                 <Text
                     style={[
-                        Type.headlineItalic,
                         styles.coldStartNudge,
-                        { color: palette.textMuted, fontFamily: 'Newsreader_400Regular_Italic' },
+                        { color: palette.textMuted },
                     ]}
                 >
                     Log four places you love and they&apos;ll appear here.
                 </Text>
             )}
 
+            {/* Taste + geography — the Beli modules, Heirloom voice */}
+            {hasPalateAccess && (
+                <TasteBand
+                    topCuisines={taste.topCuisines}
+                    cityCount={taste.cityCount}
+                    countryCount={taste.countryCount}
+                    palette={palette}
+                />
+            )}
+            {hasPalateAccess && (
+                <DiningMapPreview
+                    spots={spots ?? []}
+                    palette={palette}
+                    onPress={() =>
+                        router.push({
+                            pathname: '/dining-map',
+                            params: isSelf ? {} : { userId: targetUserId },
+                        } as never)
+                    }
+                />
+            )}
+
             {/* Regulars rail */}
             {hasPalateAccess && (
                 <RegularsRail
                     regulars={profileData.regulars_preview ?? []}
-                    userId={profileData.profile.user_id}
+                    userId={targetUserId}
                     showSeeAll={isSelf}
                 />
-            )}
-
-            {/* First-review nudge — cold start only */}
-            {showFirstReviewNudge && (
-                <View style={[styles.nudgeCard, { backgroundColor: palette.surfaceContainerLow, borderColor: palette.outlineVariant }]}>
-                    <Text
-                        style={[
-                            Type.headlineItalic,
-                            { fontSize: 14, color: palette.text, fontFamily: 'Newsreader_400Regular_Italic' },
-                        ]}
-                    >
-                        Write your first review.
-                    </Text>
-                    <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 4, lineHeight: 18 }]}>
-                        Reviews are the long-form ones — a paragraph or two about a meal worth remembering.
-                    </Text>
-                </View>
             )}
 
             {/* ProfileIndex */}
@@ -234,8 +250,21 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 relationship === 'public_and_tables') && (
                 <TablesInCommonSection
                     previews={profileData.tables_in_common}
-                    targetUserId={profileData.profile.user_id}
+                    targetUserId={targetUserId}
                     isSelf={isSelf}
+                />
+            )}
+
+            {isSelf && (
+                <ProfileTopFourSheet
+                    visible={editTopFourOpen}
+                    onClose={() => setEditTopFourOpen(false)}
+                    userId={targetUserId}
+                    currentPicks={(profileData.top_four ?? []).map((p) => ({
+                        restaurant_id: p.restaurant_id,
+                        name: p.name,
+                        photo_url: p.photo_url,
+                    }))}
                 />
             )}
         </ScrollView>
@@ -251,23 +280,11 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    hairline: {
-        height: 1,
-        marginHorizontal: Spacing.lg,
-        marginTop: Spacing.xs,
-    },
     coldStartNudge: {
         marginHorizontal: Spacing.lg,
         marginTop: Spacing.sm,
+        fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 12,
         lineHeight: 17,
-    },
-    nudgeCard: {
-        marginHorizontal: Spacing.lg,
-        marginTop: Spacing.lg,
-        padding: Spacing.md,
-        borderRadius: Radius.sm,
-        borderWidth: 1,
-        borderStyle: 'dashed',
     },
 });
