@@ -41,19 +41,23 @@ SplashScreen.preventAutoHideAsync();
 
 // Fatal-JS-error visibility (launch readiness): there is no crash SDK yet, so
 // forward fatal errors into our own events table before the app dies. Chained
-// so RN's own handler (redbox in dev, crash in release) still runs.
-const prevFatalHandler = ErrorUtils.getGlobalHandler?.();
-ErrorUtils.setGlobalHandler?.((error, isFatal) => {
-  try {
-    if (isFatal) {
-      trackError(error, 'fatal');
-      flushNow(); // best-effort — the debounce would never fire before the crash
+// so RN's own handler (redbox in dev, crash in release) still runs. The guard
+// stops Metro Fast Refresh from re-wrapping the chain on every save.
+if (!(globalThis as { __napkinFatalHook?: boolean }).__napkinFatalHook) {
+  (globalThis as { __napkinFatalHook?: boolean }).__napkinFatalHook = true;
+  const prevFatalHandler = ErrorUtils.getGlobalHandler?.();
+  ErrorUtils.setGlobalHandler?.((error, isFatal) => {
+    try {
+      if (isFatal) {
+        trackError(error, 'fatal');
+        flushNow(); // best-effort — the debounce would never fire before the crash
+      }
+    } catch {
+      /* never block the handler chain */
     }
-  } catch {
-    /* never block the handler chain */
-  }
-  prevFatalHandler?.(error, isFatal);
-});
+    prevFatalHandler?.(error, isFatal);
+  });
+}
 
 /**
  * BottomNavBar — TICKET-070 Phase A IA update.

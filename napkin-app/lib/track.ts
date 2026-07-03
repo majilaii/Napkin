@@ -13,11 +13,13 @@ import { AppState } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 
+// No client timestamp on purpose (review P1): the server default now() stamps
+// rows, so a skewed device clock can't corrupt the D1/D7/D30 cohort math.
+// Batch order is preserved by array order; day-level granularity is all the
+// gate metrics need.
 interface PendingEvent {
     name: string;
     props: Record<string, unknown>;
-    /** Client timestamp so buffered events keep their real order. */
-    at: string;
 }
 
 const queue: PendingEvent[] = [];
@@ -38,7 +40,6 @@ async function flush(): Promise<void> {
                 user_id: userId,
                 name: e.name,
                 props: e.props,
-                created_at: e.at,
             })),
         );
     } catch {
@@ -84,7 +85,7 @@ export function flushNow(): void {
 export function track(name: string, props: Record<string, unknown> = {}): void {
     try {
         hookAppState();
-        queue.push({ name, props, at: new Date().toISOString() });
+        queue.push({ name, props });
         if (queue.length > MAX_QUEUE) queue.splice(0, queue.length - MAX_QUEUE);
         scheduleFlush();
     } catch {
