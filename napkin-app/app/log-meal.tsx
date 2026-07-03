@@ -531,12 +531,29 @@ export default function LogMealScreen() {
             restaurantData = {
                 external_id: pp.id ?? pp.external_id ?? restaurant.external_id ?? '',
                 name: pp.name ?? restaurant.name,
-                location: pp.formattedAddress ? { address: pp.formattedAddress } : undefined,
+                location: {
+                    address: pp.formattedAddress ?? undefined,
+                    locality: pp.city ?? undefined,
+                    country: pp.country ?? undefined,
+                },
                 types: pp.categories ?? ['restaurant'],
                 latitude: pp.latitude ?? undefined,
                 longitude: pp.longitude ?? undefined,
                 photoReference: pp.photoReference ?? undefined,
                 photoAttributionHtml: pp.photoAttributionHtml ?? undefined,
+                // Founder bug 2026-07-03: first log at a ghost upserted the row
+                // WITHOUT these — the invalidated restaurant page then refetched
+                // a thin row and the Google numbers vanished until the backfill
+                // healed it. The edge fn has forwarded all of these since
+                // TICKET-081; the client just never sent them.
+                googleRating: pp.googleRating ?? undefined,
+                googleRatingCount: pp.googleRatingCount ?? undefined,
+                priceLevel: pp.priceLevel ?? undefined,
+                cuisine: pp.cuisine ?? undefined,
+                phone: pp.phone ?? undefined,
+                website: pp.website ?? undefined,
+                google_maps_uri: pp.google_maps_uri ?? undefined,
+                hours: pp.hours ?? undefined,
             };
         } else if (restaurant.external_id) {
             restaurantData = {
