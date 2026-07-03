@@ -122,6 +122,12 @@ Deno.test('namesOverlap: generic-token-only names stay lenient', () => {
     assert(namesOverlap('The Restaurant', 'Totally Different Name'));
 });
 
+Deno.test('namesOverlap: CJK names (normalize to empty) stay lenient', () => {
+    // \w is ASCII-only, so 兰州拉面 normalizes to '' — gating on it would
+    // ghost EVERY CJK-named candidate. No signal → trust Places.
+    assert(namesOverlap('兰州拉面', 'Lanzhou Lamian Noodle Bar'));
+});
+
 Deno.test('normalizeName strips punctuation and diacritics', () => {
     assertEquals(normalizeName("Juliet's  Café"), 'juliet s cafe');
 });

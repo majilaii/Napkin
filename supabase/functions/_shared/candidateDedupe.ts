@@ -85,7 +85,9 @@ const GENERIC_TOKENS = new Set([
 export function namesOverlap(a: string | null | undefined, b: string | null | undefined): boolean {
     const na = normalizeName(a);
     const nb = normalizeName(b);
-    if (!na || !nb) return false;
+    // No signal to gate on (CJK/emoji-only names normalize to '' — \w is
+    // ASCII-only): stay lenient, keep the pre-gate behavior of trusting Places.
+    if (!na || !nb) return true;
     if (nameContainsTokens(na, nb)) return true;
     const tokensA = na.split(' ').filter((t) => t.length >= 3 && !GENERIC_TOKENS.has(t));
     if (tokensA.length === 0) return true; // nothing distinctive to gate on

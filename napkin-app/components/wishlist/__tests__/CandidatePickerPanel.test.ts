@@ -84,6 +84,16 @@ describe('buildInitialTicked — pre-ticks ALL candidates (TICKET-082)', () => {
         expect(ticked.has('c2')).toBe(true);
         expect(ticked.has('c3')).toBe(true);
     });
+
+    it("086c: stance 'warned' (\"most overrated…\") is NEVER pre-ticked", () => {
+        const rec = { ...makeCandidate('c1', 'high'), stance: 'recommended' as const };
+        const warned = { ...makeCandidate('c2', 'high'), stance: 'warned' as const };
+        const noStance = makeCandidate('c3', 'low'); // legacy response, no field
+        const ticked = buildInitialTicked([rec, warned, noStance]);
+        expect(ticked.has('c1')).toBe(true);
+        expect(ticked.has('c2')).toBe(false);
+        expect(ticked.has('c3')).toBe(true);
+    });
 });
 
 // ── note TextInput visibility logic ──────────────────────────────────────────
