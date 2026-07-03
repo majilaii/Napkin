@@ -39,6 +39,7 @@ import {
     listPendingImports,
     removeImport,
     setImportSpots,
+    setImportDiagnostics,
     bumpImportAttempt,
     acquireDrainLock,
     releaseDrainLock,
@@ -154,44 +155,83 @@ export function useProcessImportQueue() {
                 let candidates: ResolvedCandidate[] = [];
 
                 if (m.kind === 'url') {
-                    // TICKET-086/086b extraction for TikTok links — FUSE both
-                    // channels. Creators PRINT exact names on-screen (OCR) and
-                    // SPEAK context (ASR transcript); each channel alone misses
-                    // ~30% of spots, the union covers them all (TOPJAW E2E,
-                    // 2026-07-02). Ladder: transcript (TikTok's own ASR, fetched
-                    // on-device) + playAddr download → media-extract OCR →
-                    // fused extracted_text → server caption resolve as fallback.
+                    // TICKET-086/086b/086c extraction for TikTok links — FUSE
+                    // every channel. Creators PRINT exact names on-screen (OCR)
+                    // and SPEAK context (ASR transcript); each channel alone
+                    // misses spots, the union covers them (TOPJAW E2E 2026-07-02
+                    // + 07-03). Ladder: page text (caption + TikTok's own ASR,
+                    // fetched on-device) + playAddr download → media-extract OCR
+                    // → fused extracted_text → server caption resolve as fallback.
                     let extractedText: string | null = null;
                     if (isTikTokUrl(m.url)) {
-                        const perception = await fetchTikTokPerception(m.url as string);
-                        const transcript = perception?.hasTranscript ? perception.text : null;
+                        let perception = await fetchTikTokPerception(m.url as string);
+                        // Caption ALWAYS fuses: even a name-free caption carries
+                        // the city signal (hashtags/handle) that Places needs.
+                        // (086c — it was dropped whenever the ASR was missing.)
+                        const pageText = perception?.text || null;
                         let ocrText: string | null = null;
-                        if (perception?.playAddr) {
+                        let ocrLines = 0;
+                        let sttChars = 0;
+                        let downloadOk = false;
+                        // Signed playAddr URLs are session-bound and flaky; one
+                        // fresh-perception retry halves silent OCR-channel loss.
+                        for (let attempt = 0; attempt < 2; attempt++) {
+                            if (!perception?.playAddr) break;
                             const fileUri = await downloadTikTokVideo(
                                 perception.playAddr,
                                 m.url as string,
                             );
-                            if (fileUri) {
-                                try {
-                                    const { ocr, transcript: spoken } = await extractFromVideo(
-                                        fileUri,
-                                        // TikTok's ASR already covers speech when
-                                        // present — only transcribe as a fallback.
-                                        { maxFrames: 60, transcribe: !transcript },
-                                    );
-                                    ocrText =
-                                        [...(ocr ?? []), transcript ? '' : (spoken ?? '')]
-                                            .filter(Boolean)
-                                            .join('\n')
-                                            .trim() || null;
-                                } catch {
-                                    // OCR channel is best-effort by contract.
+                            if (!fileUri) {
+                                if (attempt === 0) {
+                                    perception =
+                                        (await fetchTikTokPerception(m.url as string)) ??
+                                        perception;
                                 }
-                                deleteCachedTikTokVideo(fileUri);
+                                continue;
                             }
+                            downloadOk = true;
+                            try {
+                                const { ocr, transcript: spoken } = await extractFromVideo(
+                                    fileUri,
+                                    // 2fps: creators flash "Name, Area" overlays
+                                    // for ~1s — the old 60-frame/1.5s stride
+                                    // missed most of them (086c E2E: 2/7 caught
+                                    // at 1.5s stride, 7/7 at 0.5s).
+                                    // TikTok's ASR already covers speech when
+                                    // present — only transcribe as a fallback.
+                                    {
+                                        maxFrames: 240,
+                                        fps: 2,
+                                        transcribe: !perception?.hasTranscript,
+                                    },
+                                );
+                                ocrLines = ocr?.length ?? 0;
+                                sttChars = (spoken ?? '').length;
+                                ocrText =
+                                    [...(ocr ?? []), perception?.hasTranscript ? '' : (spoken ?? '')]
+                                        .filter(Boolean)
+                                        .join('\n')
+                                        .trim() || null;
+                            } catch {
+                                // OCR channel is best-effort by contract.
+                            }
+                            deleteCachedTikTokVideo(fileUri);
+                            break; // extraction ran — don't re-download
                         }
                         extractedText =
-                            [ocrText, transcript].filter(Boolean).join('\n').trim() || null;
+                            [ocrText, pageText].filter(Boolean).join('\n').trim() || null;
+                        // Which channels actually contributed — without this the
+                        // "why did this import flop?" question is unanswerable.
+                        const diag = {
+                            page: !!perception,
+                            caption_chars: pageText?.length ?? 0,
+                            tiktok_asr: perception?.hasTranscript ?? false,
+                            video: downloadOk,
+                            ocr_lines: ocrLines,
+                            stt_chars: sttChars,
+                        };
+                        console.log('[import] channels', JSON.stringify(diag));
+                        setImportDiagnostics(m.jobId, diag);
                     }
                     // Same proven contract as the video path: extracted_text
                     // rides alone (never alongside url).
@@ -234,6 +274,13 @@ export function useProcessImportQueue() {
                     candidates = resolved?.candidates ?? [];
                 }
 
+                // 086c: 'warned' spots ("most overrated…") never auto-save. In
+                // review mode they stay visible — unticked — so the user can
+                // override; in auto mode they're dropped here.
+                if (m.mode === 'auto') {
+                    candidates = candidates.filter((c) => c.stance !== 'warned');
+                }
+
                 if (candidates.length === 0) {
                     removeImport(m.jobId);
                     safeDeleteMov(m.videoPath);
@@ -259,6 +306,7 @@ export function useProcessImportQueue() {
                         table_client_nonce: tableIds[0] ? tableShares[tableIds[0]] : null,
                         table_shares: tableShares,
                         place: buildPlace(c),
+                        stance: c.stance ?? null,
                     };
                 });
                 setImportSpots(m.jobId, spots);

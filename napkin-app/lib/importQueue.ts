@@ -48,6 +48,9 @@ export interface PersistedImportSpot {
      */
     table_shares?: Record<string, string>;
     place: unknown;
+    /** TICKET-086c: 'warned' = the creator warned AGAINST this spot ("most
+     * overrated…"). Never auto-saved; review shows it unticked. */
+    stance?: 'recommended' | 'warned' | 'neutral' | null;
 }
 
 /** Where the import's spots should land. Chosen on the in-extension card. */
@@ -85,6 +88,10 @@ export interface ImportManifest {
     destinations: ImportDestinations;
     /** Set after the FIRST successful resolve → re-drain skips OCR/resolve. */
     spots?: PersistedImportSpot[];
+    /** TICKET-086c: per-channel perception diagnostics from the last resolve
+     * (caption chars, tiktok_asr, ocr_lines, …) — extraction is opaque without
+     * a record of which channels actually contributed. */
+    diag?: Record<string, unknown>;
 }
 
 const DEFAULT_DESTINATIONS: ImportDestinations = {
@@ -149,6 +156,9 @@ function readAll(): ImportManifest[] {
                     mode: p.mode === 'review' ? 'review' : 'auto',
                     destinations: normalizeDestinations(p.destinations),
                     spots: Array.isArray(p.spots) ? (p.spots as PersistedImportSpot[]) : undefined,
+                    diag: p.diag && typeof p.diag === 'object' && !Array.isArray(p.diag)
+                        ? (p.diag as Record<string, unknown>)
+                        : undefined,
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -278,6 +288,13 @@ export function setImportSpots(jobId: string, spots: PersistedImportSpot[]): voi
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     writeManifest({ ...m, spots });
+}
+
+/** Persist per-channel perception diagnostics (best-effort; debugging surface). */
+export function setImportDiagnostics(jobId: string, diag: Record<string, unknown>): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return;
+    writeManifest({ ...m, diag });
 }
 
 /**

@@ -1,0 +1,54 @@
+{
+  "name": "topjaw-tinie-ep253",
+  "source_url": "https://www.tiktok.com/@topjaw/video/7653760075244375318",
+  "notes": "Interview Q&A format, no TikTok ASR transcript (OCR + caption only). Persistent PICANTE watermark = false-candidate trap. Bob Bob Ricard is the 'MOST OVERRATED SPOT' answer — must not surface as a recommendation.",
+  "fused_text": "BEST RESTAURANT\nIN LONDON6\nPICANTE\nIN LONDON?\nPICAN\nIN LONDON®\nRestaurant Story.\nSouthwark\nEvery course\nhas a certain\nbehind it,\nBEST BAR\nORPUBE\nPrince of Peckham,\nPeckham\nThey have\nPICANTI\ngreat food,\nPICAL\nthey have\nWhite Men Can't Jerk?\n\"ICANTI\nthey have a\nPrince of Peckham\nwhich is sort of\nsimilar to\nGuinness,\nbut a little\nEveryone wants that\nGuinness market!!\nPLANTE\nThey want it, man!\nThey're making money!\nBut they're all sheet.,\nYou should try the\nPRINCE Y PECKHAN\nOkay!\nNanay Rosa,\nMerton Abbey\nFilipino lady\nand her\nCaribbean husband.\nSo it'sa sort of\nSoit'sa sortof\nfusion of, like\nCaribbean and Filipino\nstreet food.\nBut they make this\nBANGING burger, bro.\nIt is\nMOST OVERRATED\nSPOT IN LONDON?\nForgive me!!!!\nBob Bob Ricard,\nSoho\nBob BobRicard,\nOkay,\nyou don't like\npressing\nPRESS FOR\nCHAMPAGNE\nfor champagne?\nPICA\nI'm just over it!\nThe location is\npretty amazing,\nthe interior\nis incredible,\nbut as the food\ncomes on the table,\nIfelt a little bit\n[felt a little bit,\nSorry, man!!\nBEST COCKTAILS\nThe Roof Cardens,\nKensington\nIt's sooo\ngorgeous up there!\nIt'snice, innit?\nYou actually\nlook like...\nat the moment,\nthe...\nsofas.\nPICANT\nBEST BREAKFAST\nOR BRUNCH?\nJuliet's Quality Foods,\nTooting\nKind of Scandi decor,,\nall the produce is\nsuper good quality,\nlove it.\nMOST OUTRAGEOUS\nLorenzo's Kusina,\nParkRoyal\nHave you had that?\nіно\nThe Filipino...\nyeah yeah yeah!\nNo, but Ispoke\ntoa couple of my\nFilipino friends,\n\"yeah, it is really good,\nPIC\nbut make sure\nyou're hungover.\"\nOh wow!\nNo, Adon't think\nNo. Idon't think\nbe hungover!\nYou can get this,\nlike, eight hour\nslow roasted beef,\nPICAr\nand then you have this\nkind of hot honey sauce\nyou can put on top...\nThen you get your\nchicken wings\nthen you can get\n*take a breath*\nplantain,\nyou get this garlic rice,\nthen you can get fries..\nthen gou can get fries..\n[like the way you said!\nlike the way you said\n\"по, по, по, по, по\"\n\"it's not for when\nyou're hungover\"\nand then\nALL the things\nthat I would\nMOST\nDEFINITELYR\nWANT TO EAT.\nTick\nNLOAD THE STEP APP &\nBSCRIBE TO\nTOP.\nDOWNLOAD THE STEP APP &\nSUBSCRIBE TO TOPJAW\nTOPJAW\nSUBSCRIBETO TOPJAW\n15:361\ntopjaw\nTORJAW\nSUBSCRIBE TO TOP JAW\nTOPJANI\nSUBSCRIBETO TOP JAW\nLondon guide\nCAMDEN TOWN\nThe Regent's\nISLINGTON\nMARYLEBONE\nHyde Par\nLondon\nTOPIAH\nDOWNLOAD THE STEPAPP &\nTinie Tempah,\nPH\ngimme your answers!\n@tinietempah is a genuine foodie. Best of #London Ep.253 Part 1",
+  "cap": 12,
+  "expected": [
+    {
+      "name": "Restaurant Story",
+      "area": "Southwark"
+    },
+    {
+      "name": "Prince of Peckham",
+      "area": "Peckham"
+    },
+    {
+      "name": "Nanay Rosa",
+      "area": "Merton Abbey"
+    },
+    {
+      "name": "The Roof Gardens",
+      "area": "Kensington"
+    },
+    {
+      "name": "Juliet's Quality Foods",
+      "area": "Tooting"
+    },
+    {
+      "name": "Lorenzo's Kusina",
+      "area": "Park Royal"
+    }
+  ],
+  "optional": [
+    {
+      "name": "White Men Can't Jerk"
+    }
+  ],
+  "forbidden": [
+    {
+      "name": "Bob Bob Ricard",
+      "why": "the 'most overrated' answer",
+      "allow_if_warned": true
+    },
+    {
+      "name": "Picante",
+      "why": "persistent on-screen watermark, not a spot"
+    },
+    {
+      "name": "Guinness",
+      "why": "a stout brand mentioned in passing"
+    }
+  ],
+  "min_recall": 0.83
+}

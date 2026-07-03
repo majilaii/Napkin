@@ -50,8 +50,15 @@ export default function ImportReviewScreen() {
 
     // Local working copy: fixes edit rows in place before the save prunes.
     const [spots, setSpots] = useState<PersistedImportSpot[]>(() => manifest?.spots ?? []);
+    // 086c: warned spots ("most overrated…") start unticked — visible so the
+    // user can override, never saved by default.
     const [ticked, setTicked] = useState<Set<string>>(
-        () => new Set((manifest?.spots ?? []).map((s) => s.candidate_id)),
+        () =>
+            new Set(
+                (manifest?.spots ?? [])
+                    .filter((s) => s.stance !== 'warned')
+                    .map((s) => s.candidate_id),
+            ),
     );
     const [fixTarget, setFixTarget] = useState<PersistedImportSpot | null>(null);
 
@@ -219,9 +226,14 @@ export default function ImportReviewScreen() {
                                 <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
                                     {s.restaurant_name ?? 'unnamed spot'}
                                 </Text>
-                                {s.restaurant_city ? (
+                                {s.restaurant_city || s.stance === 'warned' ? (
                                     <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
-                                        {s.restaurant_city}
+                                        {[
+                                            s.restaurant_city,
+                                            s.stance === 'warned' ? 'called overrated' : null,
+                                        ]
+                                            .filter(Boolean)
+                                            .join(' · ')}
                                     </Text>
                                 ) : null}
                             </Pressable>

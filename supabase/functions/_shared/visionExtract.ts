@@ -41,6 +41,11 @@ export interface ExtractedCandidate {
      * sharpens the Places text query; distinct from city. Optional so legacy
      * candidate constructors (cache reads, google-maps path) stay valid. */
     area?: string | null;
+    /** TICKET-086c: how the speaker frames the place. 'warned' = an
+     * anti-recommendation ("most OVERRATED spot?", "skip it") — extracted but
+     * never auto-saved; review UI surfaces it unticked. Optional so legacy
+     * cache rows / constructors stay valid. */
+    stance?: 'recommended' | 'warned' | 'neutral';
     cuisine: string | null;
     address: string | null;
     booking_url: string | null;
@@ -57,8 +62,10 @@ export interface ExtractedCandidate {
  */
 export const EXTRACTION_MODEL_DEFAULT = 'claude-haiku-4-5-20251001';
 
-// TICKET-063: bumped from 512 to 1024 for multi-restaurant listicle output
-const MAX_TOKENS = 1024;
+// TICKET-063 bumped 512→1024; TICKET-086c →2048: six candidates with populated
+// address/hours fields overflow 1024 and the truncation salvage silently drops
+// the last spot. Haiku output is cheap; headroom costs nothing.
+const MAX_TOKENS = 2048;
 
 // ── System prompts ─────────────────────────────────────────────────────────────
 
@@ -82,6 +89,7 @@ Respond with ONLY a JSON array — no prose, no markdown, no wrapper object. Eac
   "booking_url": string | null,
   "hours": string | null,
   "confidence": "high" | "low",
+  "stance": "recommended" | "warned" | "neutral",
   "google_place_id": string | null
 }
 
@@ -92,7 +100,20 @@ The text often combines TWO noisy channels from a food video:
   ("the pickle ring" for "The Picklery"; "Lucky. Enjoy." for "Lucky & Joy";
   "Lang Zhou noodles" for "Lanzhou Lamian Noodle Bar")
 
+Interview/Q&A videos overlay a QUESTION ("BEST PUB?", "MOST OVERRATED SPOT IN
+LONDON?") immediately before the answer's "Name, Area" overlay — pair each name
+with the question that precedes it; the question sets that place's stance.
+
 Rules:
+- stance: "warned" when the place is the answer to a negative question or the
+  speaker warns against it ("most overrated?", "skip it", "don't bother",
+  "worst") — STILL extract these, never omit them. "recommended" when endorsed
+  (praise, any "best X" answer). "neutral" for passing mentions and comparisons
+  ("is it a bit like Berenjak?" → Berenjak is neutral).
+- Watermarks: a short token recurring through the text in garbled variants
+  ("PICANTE", "PICAN", "PICA", "PICANTI") is on-screen channel branding, NOT a
+  restaurant — ignore it unless it also appears with an area tag or a spoken
+  endorsement.
 - Extract EVERY distinct restaurant visible or mentioned. Do NOT collapse multiple restaurants into one.
 - When the two channels describe the same place, they are ONE restaurant: prefer
   the OCR spelling ("Name, Area" patterns with proper capitalization) for the
@@ -135,6 +156,7 @@ async function callAnthropic(
     signal?: AbortSignal,
     system: string = MULTI_SYSTEM_PROMPT,
     maxTokens: number = MAX_TOKENS,
+    temperature = 0,
 ): Promise<string> {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -146,6 +168,10 @@ async function callAnthropic(
         body: JSON.stringify({
             model: modelId,
             max_tokens: maxTokens,
+            // TICKET-086c: unset temperature (API default 1.0) made the same
+            // fused text yield different candidate COUNTS run to run — the
+            // founder-visible "1 spot on Tuesday, 3 on Wednesday" bug.
+            temperature,
             system,
             messages,
         }),
@@ -179,6 +205,12 @@ function coerceCandidate(p: unknown): ExtractedCandidate {
     const confidence: ExtractionConfidence =
         obj['confidence'] === 'high' ? 'high' : 'low';
 
+    const stanceRaw = obj['stance'];
+    const stance: ExtractedCandidate['stance'] =
+        stanceRaw === 'recommended' || stanceRaw === 'warned' || stanceRaw === 'neutral'
+            ? stanceRaw
+            : undefined;
+
     return {
         name: typeof obj['name'] === 'string' ? obj['name'].trim() || null : null,
         city: typeof obj['city'] === 'string' ? obj['city'].trim() || null : null,
@@ -189,6 +221,7 @@ function coerceCandidate(p: unknown): ExtractedCandidate {
         booking_url: typeof obj['booking_url'] === 'string' ? obj['booking_url'].trim() || null : null,
         hours: typeof obj['hours'] === 'string' ? obj['hours'].trim() || null : null,
         confidence,
+        stance,
         google_place_id: typeof obj['google_place_id'] === 'string' ? obj['google_place_id'].trim() || null : null,
     };
 }
@@ -334,22 +367,39 @@ export async function extractFromTextMulti(
     const system = max === 6 ? MULTI_SYSTEM_PROMPT : buildMultiSystemPrompt(max);
     const maxTokens = max > 6 ? 2560 : MAX_TOKENS;
 
+    const messages: AnthropicMessage[] = [{
+        role: 'user',
+        content: [{
+            type: 'text',
+            text: `Extract all restaurant information from this text:\n\n${caption.trim()}\n\nOutput ONLY the JSON array.`,
+        }],
+    }];
+
     try {
-        const raw = await callAnthropic(
-            [{
-                role: 'user',
-                content: [{
-                    type: 'text',
-                    text: `Extract all restaurant information from this text:\n\n${caption.trim()}\n\nOutput ONLY the JSON array.`,
-                }],
-            }],
-            modelId,
-            apiKey,
-            signal,
-            system,
-            maxTokens,
-        );
-        return parseMultiExtractionResponse(raw, max);
+        const raw = await callAnthropic(messages, modelId, apiKey, signal, system, maxTokens);
+        let parsed = parseMultiExtractionResponse(raw, max);
+        // TICKET-086c: a malformed response used to fail soft to [] with no
+        // retry — the entire import silently read as "no spots found". One
+        // re-ask at temperature 1 (temp-0 would reproduce the same malformed
+        // output) rescues the batch. A VALID empty array is a real answer —
+        // don't burn a retry on it.
+        const cleanedRaw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        let rawIsValidArray = false;
+        try {
+            rawIsValidArray = Array.isArray(JSON.parse(cleanedRaw));
+        } catch {
+            /* malformed — retry below */
+        }
+        if (parsed.length === 0 && !rawIsValidArray && !signal?.aborted) {
+            const retryRaw = await callAnthropic(
+                messages, modelId, apiKey, signal, system, maxTokens, 1,
+            );
+            parsed = parseMultiExtractionResponse(retryRaw, max);
+            if (parsed.length > 0) {
+                console.warn('visionExtract: first parse yielded 0, retry rescued', parsed.length);
+            }
+        }
+        return parsed;
     } catch (e) {
         if ((e as Error)?.name === 'AbortError') throw e;
         console.error('visionExtract.extractFromTextMulti error:', e);

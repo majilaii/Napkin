@@ -52,6 +52,15 @@ import {
     type ExtractedCandidate,
 } from '../_shared/visionExtract.ts';
 import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
+// TICKET-086c: dedupe/merge/rank + the Places similarity gate extracted to
+// _shared so the stage implicated in the "7 spots → 1" regressions is
+// unit-tested in pre-commit (candidateDedupe.test.ts).
+import {
+    dedupeAndRank,
+    namesOverlap,
+    normalizeName,
+    type StagedCandidate,
+} from '../_shared/candidateDedupe.ts';
 import { detectListMarker } from '../_shared/listicle.ts';
 import { resizeImageToLimit } from '../_shared/imageResize.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
@@ -154,6 +163,9 @@ interface ResolvedCandidate {
     already_wishlisted: boolean;
     /** TICKET-063: true when city was inferred from context, not stated. */
     city_inferred: boolean;
+    /** TICKET-086c: 'warned' = anti-recommendation ("most overrated") — the
+     * client never auto-saves these; review shows them unticked. */
+    stance?: 'recommended' | 'warned' | 'neutral' | null;
 }
 
 interface ResolveUrlResponse {
@@ -203,143 +215,9 @@ function detectSourceType(url: URL): SourceType {
     return detectSourceTypeFromHost(host);
 }
 
-// ── Text normalization for dedupe ─────────────────────────────────────────────
-
-/** Normalize a name for fuzzy pre-Places dedup. */
-function normalizeName(name: string | null | undefined): string {
-    if (!name) return '';
-    // Lowercase, strip diacritics, strip punctuation, collapse whitespace
-    return name
-        .normalize('NFD')
-        .replace(/[̀-ͯ]/g, '')
-        .toLowerCase()
-        .replace(/[^\w\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-/**
- * Fuzzy dedup key: normalized_name + '|' + normalized_city.
- * Containment fold: if one name contains the other, use the shorter one as the key.
- */
-function fuzzyKey(name: string | null, city: string | null): string {
-    const n = normalizeName(name);
-    const c = normalizeName(city);
-    return `${n}|${c}`;
-}
-
 // ── Candidate dedup + merge + rank ────────────────────────────────────────────
-
-interface StagedCandidate {
-    extracted: ExtractedCandidate;
-    /** 0 = text-tier; 1 = vision-tier */
-    tier: 0 | 1;
-    /** Original position within tier (for ordinal sort) */
-    ordinal: number;
-    /** True if seen in both tiers (source-agreement) */
-    inBothTiers: boolean;
-}
-
-/**
- * Two-stage dedupe + rank:
- *   Stage 1 (pre-Places): fuzzy key = normalize(name) + city
- *     - containment fold: "Berenjak Soho" + "Berenjak" → keep whichever has higher confidence / lower ordinal
- *   Stage 2 (post-Places): by google_place_id
- *
- * Rank tuple: (confidence desc, source-agreement desc, list ordinal asc)
- * Field conflicts: text-tier wins; vision fills nulls.
- * Cap 6 (silent tail drop).
- */
-function dedupeAndRank(
-    textCandidates: ExtractedCandidate[],
-    visionCandidates: ExtractedCandidate[],
-    cap = 6,
-): StagedCandidate[] {
-    const staged: StagedCandidate[] = [];
-    const fuzzySet = new Map<string, number>(); // fuzzyKey → staged index
-
-    const addOrMerge = (ext: ExtractedCandidate, tier: 0 | 1, ordinal: number) => {
-        const fk = fuzzyKey(ext.name, ext.city);
-
-        // Containment fold: check if any existing key contains / is contained by this name
-        let existingIdx: number | undefined;
-        const normN = normalizeName(ext.name);
-        for (const [existingKey, idx] of fuzzySet.entries()) {
-            const [existingName] = existingKey.split('|');
-            if (normN && existingName && (normN.includes(existingName) || existingName.includes(normN))) {
-                existingIdx = idx;
-                break;
-            }
-        }
-
-        if (existingIdx !== undefined) {
-            // Merge: text-tier wins for fields; mark inBothTiers
-            const existing = staged[existingIdx];
-            if (tier === 0) {
-                // This is the text-tier copy — it wins
-                existing.inBothTiers = true;
-                existing.extracted = mergeExtracted(ext, existing.extracted); // text wins
-                existing.tier = 0;
-            } else {
-                // Vision-tier — fill nulls only
-                existing.inBothTiers = true;
-                existing.extracted = mergeExtracted(existing.extracted, ext); // existing wins
-            }
-            return;
-        }
-
-        // Check exact fuzzy key match
-        if (fuzzySet.has(fk)) {
-            const idx = fuzzySet.get(fk)!;
-            const existing = staged[idx];
-            if (tier === 0) {
-                existing.inBothTiers = true;
-                existing.extracted = mergeExtracted(ext, existing.extracted);
-                existing.tier = 0;
-            } else {
-                existing.inBothTiers = true;
-                existing.extracted = mergeExtracted(existing.extracted, ext);
-            }
-            return;
-        }
-
-        // New candidate
-        fuzzySet.set(fk, staged.length);
-        staged.push({ extracted: ext, tier, ordinal, inBothTiers: false });
-    };
-
-    textCandidates.forEach((c, i) => addOrMerge(c, 0, i));
-    visionCandidates.forEach((c, i) => addOrMerge(c, 1, i + textCandidates.length));
-
-    // Rank: confidence desc, inBothTiers desc, ordinal asc
-    const confidenceOrder = { high: 0, exact: 0, low: 1 };
-    staged.sort((a, b) => {
-        const ca = confidenceOrder[a.extracted.confidence] ?? 1;
-        const cb = confidenceOrder[b.extracted.confidence] ?? 1;
-        if (ca !== cb) return ca - cb;
-        if (a.inBothTiers !== b.inBothTiers) return a.inBothTiers ? -1 : 1;
-        return a.ordinal - b.ordinal;
-    });
-
-    return staged.slice(0, cap);
-}
-
-/** Merge two ExtractedCandidates: `primary` wins on non-null fields; `secondary` fills nulls. */
-function mergeExtracted(primary: ExtractedCandidate, secondary: ExtractedCandidate): ExtractedCandidate {
-    return {
-        name: primary.name ?? secondary.name,
-        city: primary.city ?? secondary.city,
-        city_inferred: primary.city !== null ? primary.city_inferred : secondary.city_inferred,
-        cuisine: primary.cuisine ?? secondary.cuisine,
-        address: primary.address ?? secondary.address,
-        booking_url: primary.booking_url ?? secondary.booking_url,
-        hours: primary.hours ?? secondary.hours,
-        confidence: primary.confidence === 'high' || primary.confidence === 'exact'
-            ? primary.confidence
-            : secondary.confidence,
-        google_place_id: primary.google_place_id ?? secondary.google_place_id,
-    };
-}
+// normalizeName / dedupeAndRank / mergeExtracted / namesOverlap live in
+// _shared/candidateDedupe.ts (TICKET-086c) — imported above.
 
 // ── candidate_id (ARCH-REVIEW-2 #10) ─────────────────────────────────────────
 
@@ -387,15 +265,23 @@ async function readExtractionCache(
                 ? item as Record<string, unknown>
                 : {};
             const conf = p['confidence'];
+            const stanceRaw = p['stance'];
             return {
                 name: typeof p['name'] === 'string' ? p['name'] || null : null,
                 city: typeof p['city'] === 'string' ? p['city'] || null : null,
                 city_inferred: p['city_inferred'] === true,
+                // TICKET-086c: area + stance survive the cache round-trip (they
+                // were silently dropped here, degrading Places queries and
+                // losing the overrated flag on every cache hit).
+                area: typeof p['area'] === 'string' ? p['area'] || null : null,
                 cuisine: typeof p['cuisine'] === 'string' ? p['cuisine'] || null : null,
                 address: typeof p['address'] === 'string' ? p['address'] || null : null,
                 booking_url: typeof p['booking_url'] === 'string' ? p['booking_url'] || null : null,
                 hours: typeof p['hours'] === 'string' ? p['hours'] || null : null,
                 confidence: (['high', 'low', 'exact'].includes(conf as string) ? conf : 'low') as any,
+                stance: (stanceRaw === 'recommended' || stanceRaw === 'warned' || stanceRaw === 'neutral')
+                    ? stanceRaw
+                    : undefined,
                 google_place_id: typeof p['google_place_id'] === 'string' ? p['google_place_id'] || null : null,
             };
         });
@@ -417,6 +303,10 @@ async function writeExtractionCache(
     sourceUrl: string | null,
     candidates: ExtractedCandidate[],
     modelId: string,
+    // TICKET-086c: the fused perception text that produced this extraction.
+    // Persisted so a bad real-world import becomes an eval fixture in one
+    // query (scripts/eval/extraction) instead of being unreproducible.
+    rawText: string | null = null,
 ): Promise<void> {
     await supabase
         .from('extraction_cache')
@@ -429,15 +319,18 @@ async function writeExtractionCache(
                     name: c.name,
                     city: c.city,
                     city_inferred: c.city_inferred,
+                    area: c.area ?? null,
                     cuisine: c.cuisine,
                     address: c.address,
                     booking_url: c.booking_url,
                     hours: c.hours,
                     confidence: c.confidence,
+                    stance: c.stance ?? null,
                     google_place_id: c.google_place_id,
                 })),
             },
             model: modelId,
+            raw_text: rawText,
         }, { onConflict: 'content_hash' });
 }
 
@@ -751,7 +644,14 @@ async function resolveCandidateToPlace(
         const results = await callPlacesSearch(
             query, authHeader, supabaseUrl, supabaseAnonKey, signal,
         );
-        return results[0] ?? null;
+        const top = results[0] ?? null;
+        // TICKET-086c similarity gate: a garbled name text-search returns SOME
+        // popular place; accepting it blind masquerades as "resolved" and the
+        // real spot silently leaves the funnel (post-Places dedupe can then
+        // collapse two distinct spots onto the same wrong place). No plausible
+        // name overlap → ghost instead; the review UI already handles ghosts.
+        if (top && !namesOverlap(candidate.name, top.name)) return null;
+        return top;
     } catch {
         return null;
     }
@@ -1589,7 +1489,11 @@ async function handleUrlResolve(
     supabaseUrl: string,
     supabaseAnonKey: string,
 ): Promise<Response> {
-    const deadline = new Deadline(8000);
+    // 086c: 8s → 12s. The 2.5s text-LLM stage aborted routinely, silently
+    // falling back to a raw 3-place caption search — the founder's "3 random
+    // spots" runs. This path also serves the background import queue, where
+    // wall time is invisible; the interactive sheet shows a spinner.
+    const deadline = new Deadline(12000);
 
     let query: string | null = null;
     let notePrefill = '';
@@ -1663,7 +1567,7 @@ async function handleUrlResolve(
     // ── Step 3: text-tier extraction ──────────────────────────────────────────
     if (!fromCache && oEmbedCaption && !deadline.aborted) {
         try {
-            const extracted = await extractFromTextMulti(oEmbedCaption, deadline.stageSignal(2500));
+            const extracted = await extractFromTextMulti(oEmbedCaption, deadline.stageSignal(5000));
             textCandidates = extracted;
         } catch (e: any) {
             if (e?.name === 'AbortError') {
@@ -1709,7 +1613,8 @@ async function handleUrlResolve(
     // ── Step 6: cache write (content-derived only, before Places) ────────────
     if (!fromCache && staged.length > 0) {
         const cacheArr = staged.map((s) => s.extracted);
-        writeExtractionCache(supabase, contentHash, rawUrl, cacheArr, modelId).catch(() => null);
+        writeExtractionCache(supabase, contentHash, rawUrl, cacheArr, modelId, oEmbedCaption)
+            .catch(() => null);
     }
 
     // ── Step 7: per-candidate Places resolution (parallel ≤6) ────────────────
@@ -1894,7 +1799,9 @@ async function handleUrlResolve(
         dedupedStaged.slice(0, 6).map(async ({ staged: s, place }, idx) => {
             const restaurantId = place ? (placeIdToRestaurantId.get(place.id) ?? null) : null;
             const alreadyWishlisted = restaurantId ? wishlistedSet.has(restaurantId) : false;
-            const confidence: Confidence = s.extracted.confidence === 'high' ? 'high' : 'low';
+            // 086c: 'exact' was being demoted to 'low' here for no reason.
+            const confidence: Confidence =
+                s.extracted.confidence === 'high' || s.extracted.confidence === 'exact' ? 'high' : 'low';
             const candidateId = await computeCandidateId(
                 contentHash,
                 normalizeName(s.extracted.name),
@@ -1945,6 +1852,7 @@ async function handleUrlResolve(
                 restaurant_id: restaurantId,
                 already_wishlisted: alreadyWishlisted,
                 city_inferred: s.extracted.city_inferred,
+                stance: s.extracted.stance ?? null,
             };
         })
     );
@@ -2106,7 +2014,10 @@ async function handleVideoText(
         // didn't pay for on-device perception, but a hung extraction still needs
         // a graceful ceiling.
         const extractAc = new AbortController();
-        const extractTimer = setTimeout(() => extractAc.abort(), 7000);
+        // 086c: 7s → 15s. A 12-candidate haiku response (now with a retry on
+        // malformed JSON) can exceed 7s; an abort here silently returned []
+        // and the whole import read as "no spots found".
+        const extractTimer = setTimeout(() => extractAc.abort(), 15000);
         try {
             textCandidates = await extractFromTextMulti(fullText, extractAc.signal, CAP);
         } catch {
@@ -2115,7 +2026,8 @@ async function handleVideoText(
             clearTimeout(extractTimer);
         }
         if (textCandidates.length > 0) {
-            writeExtractionCache(supabase, contentHash, null, textCandidates, modelId).catch(() => null);
+            writeExtractionCache(supabase, contentHash, null, textCandidates, modelId, fullText)
+                .catch(() => null);
         }
     }
 
@@ -2190,7 +2102,9 @@ async function handleVideoText(
         deduped.slice(0, CAP).map(async ({ s, place }, idx) => {
             const restaurantId = place ? (placeIdToRestaurantId.get(place.id) ?? null) : null;
             const alreadyWishlisted = restaurantId ? wishlistedSet.has(restaurantId) : false;
-            const confidence: Confidence = s.extracted.confidence === 'high' ? 'high' : 'low';
+            // 086c: 'exact' was being demoted to 'low' here for no reason.
+            const confidence: Confidence =
+                s.extracted.confidence === 'high' || s.extracted.confidence === 'exact' ? 'high' : 'low';
             const candidateId = await computeCandidateId(contentHash, normalizeName(s.extracted.name), idx);
             const restaurant: PlacesPayload = place
                 ? {
@@ -2232,6 +2146,7 @@ async function handleVideoText(
                 restaurant_id: restaurantId,
                 already_wishlisted: alreadyWishlisted,
                 city_inferred: s.extracted.city_inferred,
+                stance: s.extracted.stance ?? null,
             };
         }),
     );
