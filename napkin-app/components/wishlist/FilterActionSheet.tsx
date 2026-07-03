@@ -111,7 +111,8 @@ const styles = StyleSheet.create({
     backdrop: {
         flex: 1,
         justifyContent: 'flex-end',
-        backgroundColor: 'rgba(28,28,25,0.38)',
+        // Warm dusk, not a black scrim (founder, 2026-07-03).
+        backgroundColor: 'rgba(74,55,42,0.25)',
     },
     sheet: {
         borderTopLeftRadius: Radius.xl,

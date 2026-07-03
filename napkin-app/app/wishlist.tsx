@@ -475,6 +475,10 @@ export default function WishlistScreen() {
         if (cuisineFilter) {
             rows = rows.filter((i) => i.restaurant?.cuisine?.trim() === cuisineFilter);
         }
+        if (priceFilter) {
+            // The price pill shows on the map too (2026-07-03) — it must apply.
+            rows = rows.filter((i) => String(i.restaurant?.price_level ?? '') === priceFilter);
+        }
         const mappable: WishlistMapItem[] = [];
         let missing = 0;
         for (const i of rows) {
@@ -486,7 +490,7 @@ export default function WishlistScreen() {
             }
         }
         return { mapItems: mappable, unmappableCount: missing };
-    }, [pinnedRows, cityFilter, cuisineFilter]);
+    }, [pinnedRows, cityFilter, cuisineFilter, priceFilter]);
 
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);
@@ -600,6 +604,34 @@ export default function WishlistScreen() {
                     />
                 ) : viewMode === 'map' ? (
                     <View style={styles.mapMode}>
+                        {/* Same filter bar as the list — toggling views must not
+                            lose the filters (founder, 2026-07-03). Sort is
+                            position on a map, so that pill sits this one out. */}
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.rFilterBar}
+                            keyboardShouldPersistTaps="handled"
+                        >
+                            {filterPills
+                                .filter((pill) => pill.key !== 'sort')
+                                .map((pill) => (
+                                    <Pressable
+                                        key={pill.key}
+                                        onPress={() => setOpenSheet(pill.key)}
+                                        style={[
+                                            styles.rFilterPill,
+                                            { backgroundColor: pill.active ? palette.primaryMuted : palette.surfaceJournalHi },
+                                        ]}
+                                        accessibilityRole="button"
+                                    >
+                                        <Text style={[styles.rFilterPillText, { color: pill.active ? palette.primary : palette.textSecondary }]}>
+                                            {pill.label}
+                                        </Text>
+                                        <Ionicons name="chevron-down" size={11} color={pill.active ? palette.primary : palette.textSecondary} />
+                                    </Pressable>
+                                ))}
+                        </ScrollView>
                         <WishlistMapView
                             items={mapItems}
                             unmappableCount={unmappableCount}

@@ -31,6 +31,9 @@ export interface TableHeaderProps {
     palette: Palette;
     /** When provided, a subtle settings gear icon appears right of the avatar stack (TICKET-029). */
     onSettingsPress?: () => void;
+    /** When provided (owner only), a designated + for seating people — the
+     * invite path no longer hides behind the gear (founder, 2026-07-03). */
+    onInvitePress?: () => void;
 }
 
 const MAX_STACK_AVATARS = 3;
@@ -45,6 +48,7 @@ export function TableHeader({
     onSwitcherPress,
     palette,
     onSettingsPress,
+    onInvitePress,
 }: TableHeaderProps) {
     const visibleAvatars = memberNames.slice(0, MAX_STACK_AVATARS);
     const overflow = Math.max(memberNames.length - MAX_STACK_AVATARS, 0);
@@ -146,6 +150,21 @@ export function TableHeader({
                         )}
                     </View>
                 )}
+                {onInvitePress && (
+                    <Pressable
+                        onPress={onInvitePress}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel="Invite to this table"
+                        style={[styles.inviteButton, { borderColor: 'rgba(160,63,40,0.35)' }]}
+                    >
+                        <Ionicons
+                            name="person-add-outline"
+                            size={15}
+                            color={palette.primary}
+                        />
+                    </Pressable>
+                )}
                 {onSettingsPress && (
                     <Pressable
                         onPress={onSettingsPress}
@@ -220,6 +239,14 @@ const styles = StyleSheet.create({
     },
     settingsButton: {
         padding: 2,
+    },
+    inviteButton: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     avatarWrapper: {
         position: 'absolute',
