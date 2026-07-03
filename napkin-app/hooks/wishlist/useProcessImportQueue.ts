@@ -27,6 +27,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn, isAuthFailure, SessionExpiredError } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { safeRandomUUID } from '@/lib/uuid';
+import { track } from '@/lib/track';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import {
@@ -403,6 +404,8 @@ export function useProcessImportQueue() {
             // On a retry/re-drain the save may have landed on the prior pass and now
             // come back as already_pinned — still a success, count both.
             const done = saved + already;
+            // TICKET-088: the capture funnel's terminal event (fire-and-forget).
+            track('import_completed', { spot_count: done, source_type: source.type });
             // Extraction is fallible by nature — the toast carries a "review"
             // action so a wrong pin is taps away from corrected. Routes via the
             // imports HUB (hierarchical back-nav is sacred — never deep-link

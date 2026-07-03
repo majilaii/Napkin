@@ -56,6 +56,11 @@ export function WishlistEmptyState({ palette, onImport, onSearch }: Props) {
                     <Text style={[styles.ghostLabel, { color: palette.primary }]}>Search for a spot</Text>
                 </Pressable>
             </View>
+
+            {/* The habit the product bets on — nothing else in-app teaches it. */}
+            <Text style={[styles.tip, { color: palette.textMuted }]}>
+                tip: in TikTok, Share → Napkin does this in two taps
+            </Text>
         </View>
     );
 }
@@ -121,5 +126,11 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
         fontSize: 13,
         letterSpacing: 0.3,
+    },
+    tip: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        marginTop: 22,
+        textAlign: 'center',
     },
 });

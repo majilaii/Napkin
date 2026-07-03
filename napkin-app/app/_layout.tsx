@@ -24,7 +24,7 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 
 import { useEffect } from 'react';
-import { ActivityIndicator, View, Pressable, Text, StyleSheet } from 'react-native';
+import { ActivityIndicator, AppState, View, Pressable, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryClient } from '@/lib/queryClient';
@@ -34,8 +34,26 @@ import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
 import { usePublishCollectionsSnapshot } from '@/hooks/wishlist/usePublishCollectionsSnapshot';
 import { Colors } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { track, trackError, flushNow } from '@/lib/track';
 
 SplashScreen.preventAutoHideAsync();
+
+// Fatal-JS-error visibility (launch readiness): there is no crash SDK yet, so
+// forward fatal errors into our own events table before the app dies. Chained
+// so RN's own handler (redbox in dev, crash in release) still runs.
+const prevFatalHandler = ErrorUtils.getGlobalHandler?.();
+ErrorUtils.setGlobalHandler?.((error, isFatal) => {
+  try {
+    if (isFatal) {
+      trackError(error, 'fatal');
+      flushNow(); // best-effort — the debounce would never fire before the crash
+    }
+  } catch {
+    /* never block the handler chain */
+  }
+  prevFatalHandler?.(error, isFatal);
+});
 
 /**
  * BottomNavBar — TICKET-070 Phase A IA update.
@@ -190,13 +208,30 @@ function RootLayoutNav() {
     if (!session && !inAuthGroup) {
       router.replace('/auth');
     } else if (session && inAuthGroup) {
-      router.replace('/tables');
+      // Launch-readiness (2026-07-03): land on Wishlist, not Tables — a new
+      // account has zero tables, and the capture surface is the product's
+      // first-value moment (journal-first positioning).
+      router.replace('/wishlist');
     }
   }, [session, isLoading, segments, router]);
+
+  // TICKET-088: app_open on launch + every foreground (D1/D7/D30 cohorts).
+  const userId = session?.user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    track('app_open', {});
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') track('app_open', {});
+    });
+    return () => sub.remove();
+  }, [userId]);
 
   return (
     <ThemeProvider value={DefaultTheme}>
       <View style={{ flex: 1 }}>
+        {/* Root catch: a render error anywhere used to white-screen the whole
+            app with zero trace (only entry-detail was wrapped). */}
+        <ErrorBoundary screen="root" onError={(e) => trackError(e, 'root-boundary')}>
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="auth" options={{ headerShown: false }} />
@@ -311,6 +346,7 @@ function RootLayoutNav() {
             options={{ headerShown: false, presentation: 'card' }}
           />
         </Stack>
+        </ErrorBoundary>
         <BottomNavBar />
       </View>
       <StatusBar style="auto" />

@@ -4,6 +4,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import { track } from '@/lib/track';
 import type { Table } from './useTables';
 
 interface CreateTableInput {
@@ -21,6 +22,8 @@ export function useCreateTable(userId: string | null | undefined) {
     return useMutation({
         mutationFn: createTable,
         onSuccess: () => {
+            // TICKET-088: gate metric — a Table forming is the emergence signal.
+            track('table_formed', {});
             // Invalidate tables list
             if (userId) {
                 queryClient.invalidateQueries({

@@ -19,6 +19,7 @@ import {
     Pressable,
     ActivityIndicator,
     Alert,
+    Share,
 } from 'react-native';
 import { WishlistGrid } from '@/components/wishlist';
 import { AtlasCityIndex } from '@/components/atlas';
@@ -30,6 +31,8 @@ import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { FRIEND_TEST } from '@/constants/flags';
+import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
+import { track } from '@/lib/track';
 import { useTables } from '@/hooks/tables/useTables';
 import { useLastSeenAt, useMarkSeen } from '@/hooks/tables/useLastSeenAt';
 import {
@@ -298,23 +301,43 @@ export default function TablesScreen() {
     }
 
     if (!activeTable) {
+        // Launch-readiness (2026-07-03): this was a dead end — copy with no
+        // affordance, and every create-table entry point unreachable at zero
+        // tables. One quiet CTA; solo stays a complete product (emergence arc).
         return (
             <View style={[styles.center, { backgroundColor: palette.background }]}>
                 <Text style={[Type.displaySmall, { color: palette.text }]}>
-                    No tables yet
+                    No table yet
                 </Text>
                 <Text
-                    style={[
-                        Type.body,
-                        {
-                            color: palette.textSecondary,
-                            marginTop: Spacing.sm,
-                            textAlign: 'center',
-                        },
-                    ]}
+                    style={{
+                        fontFamily: 'Newsreader_400Regular_Italic',
+                        fontSize: 15,
+                        lineHeight: 22,
+                        color: palette.textSecondary,
+                        marginTop: Spacing.sm,
+                        textAlign: 'center',
+                    }}
                 >
-                    Create or join a table to get started.
+                    {"— when your crew's ready, gather one."}
                 </Text>
+                <Pressable
+                    onPress={() => router.push('/create-table')}
+                    style={({ pressed }) => ({
+                        borderWidth: 1.5,
+                        borderColor: 'rgba(160,63,40,0.35)',
+                        borderRadius: 9999,
+                        paddingVertical: 10,
+                        paddingHorizontal: 22,
+                        marginTop: Spacing.lg,
+                        opacity: pressed ? 0.7 : 1,
+                    })}
+                    accessibilityRole="button"
+                >
+                    <Text style={{ fontFamily: 'Manrope_700Bold', fontSize: 13, color: palette.primary }}>
+                        gather your table
+                    </Text>
+                </Pressable>
             </View>
         );
     }
@@ -513,12 +536,18 @@ export default function TablesScreen() {
                             foundedAt={activeTable.created_at}
                             palette={palette}
                             memberCount={members?.length ?? 0}
-                            onInvite={() =>
-                                Alert.alert(
-                                    'Coming soon',
-                                    'Inviting members will be available in a future update.',
-                                )
-                            }
+                            onInvite={() => {
+                                // Launch-readiness (2026-07-03): the old
+                                // "Coming soon" alert was a shipped dead end.
+                                // A share sheet is a real invite — and feeds
+                                // the invite→install funnel metric.
+                                track('invite_sent', { surface: 'founded_hero' });
+                                void Share.share({
+                                    message: TESTFLIGHT_INVITE_URL
+                                        ? `come join "${tableName}" on Napkin — ${TESTFLIGHT_INVITE_URL}`
+                                        : `come join "${tableName}" on Napkin`,
+                                });
+                            }}
                             onEditTopFour={FRIEND_TEST.hideTopFours ? undefined : () => handleOpenEditTopFour()}
                         />
                     ) : isEmpty ? (
