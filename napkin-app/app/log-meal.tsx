@@ -105,16 +105,21 @@ function ratingDisplay(value: number): string {
 interface StarRatingProps {
     value: number;
     onChange: (v: number) => void;
+    /** Star glyph size — overall appraisal 30, detail rows 24. */
+    size?: number;
+    /** Voiceover prefix, e.g. "Vibes" → "Vibes 3.5". */
+    accessibilityPrefix?: string;
 }
 
-function HalfStarRating({ value, onChange }: StarRatingProps) {
+function HalfStarRating({ value, onChange, size = 30, accessibilityPrefix = 'Rate' }: StarRatingProps) {
+    const wrap = size + 4;
     return (
         <View style={starStyles.row}>
             {[1, 2, 3, 4, 5].map((n) => {
                 const filled = value >= n ? 1 : value >= n - 0.5 ? 0.5 : 0;
                 return (
-                    <View key={n} style={starStyles.starWrap}>
-                        <Text style={starStyles.starEmpty}>★</Text>
+                    <View key={n} style={[starStyles.starWrap, { width: wrap, height: wrap }]}>
+                        <Text style={[starStyles.starEmpty, { fontSize: size, lineHeight: wrap }]}>★</Text>
                         {filled > 0 && (
                             <View
                                 style={[
@@ -122,19 +127,19 @@ function HalfStarRating({ value, onChange }: StarRatingProps) {
                                     { width: filled === 1 ? '100%' : '50%' },
                                 ]}
                             >
-                                <Text style={starStyles.starFilled}>★</Text>
+                                <Text style={[starStyles.starFilled, { fontSize: size, lineHeight: wrap, width: wrap }]}>★</Text>
                             </View>
                         )}
                         <Pressable
                             style={starStyles.halfLeft}
                             onPress={() => onChange(n - 0.5)}
-                            accessibilityLabel={`Rate ${n - 0.5}`}
+                            accessibilityLabel={`${accessibilityPrefix} ${n - 0.5}`}
                             hitSlop={{ top: 4, bottom: 4 }}
                         />
                         <Pressable
                             style={starStyles.halfRight}
                             onPress={() => onChange(n)}
-                            accessibilityLabel={`Rate ${n}`}
+                            accessibilityLabel={`${accessibilityPrefix} ${n}`}
                             hitSlop={{ top: 4, bottom: 4 }}
                         />
                     </View>
@@ -144,20 +149,14 @@ function HalfStarRating({ value, onChange }: StarRatingProps) {
     );
 }
 
-const STAR_SIZE = 30;
-
 const starStyles = StyleSheet.create({
     row: { flexDirection: 'row', gap: 2 },
     starWrap: {
-        width: 34,
-        height: 34,
         alignItems: 'center',
         justifyContent: 'center',
         position: 'relative',
     },
     starEmpty: {
-        fontSize: STAR_SIZE,
-        lineHeight: 34,
         color: 'rgba(28,28,25,0.14)',
         textAlign: 'center',
     },
@@ -169,10 +168,7 @@ const starStyles = StyleSheet.create({
         overflow: 'hidden',
     },
     starFilled: {
-        fontSize: STAR_SIZE,
-        lineHeight: 34,
         color: '#d97706',
-        width: 34,
         textAlign: 'center',
     },
     halfLeft: {
@@ -201,31 +197,20 @@ interface SubRatingRowProps {
 }
 
 function SubRatingRow({ label, value, onChange, palette }: SubRatingRowProps) {
+    // Same control as the overall appraisal (founder, 2026-07-03): the old
+    // 15pt whole-star taps were fiddly and couldn't do halves. Re-tapping the
+    // current value clears the row (details stay optional).
     return (
         <View style={subStyles.row}>
             <Text style={[subStyles.label, { color: palette.textMuted }]}>
                 {label.toUpperCase()}
             </Text>
-            <View style={subStyles.stars}>
-                {[1, 2, 3, 4, 5].map((n) => (
-                    <Pressable
-                        key={n}
-                        onPress={() => onChange(n === value ? 0 : n)}
-                        hitSlop={4}
-                        accessibilityLabel={`${label} ${n}`}
-                    >
-                        <Text
-                            style={{
-                                fontSize: 15,
-                                color: n <= value ? '#d97706' : 'rgba(28,28,25,0.18)',
-                                marginLeft: 2,
-                            }}
-                        >
-                            ★
-                        </Text>
-                    </Pressable>
-                ))}
-            </View>
+            <HalfStarRating
+                size={24}
+                value={value}
+                onChange={(v) => onChange(v === value ? 0 : v)}
+                accessibilityPrefix={label}
+            />
         </View>
     );
 }
@@ -235,16 +220,12 @@ const subStyles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingVertical: 4,
+        paddingVertical: 2,
     },
     label: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 9,
         letterSpacing: 1.4,
-    },
-    stars: {
-        flexDirection: 'row',
-        alignItems: 'center',
     },
 });
 

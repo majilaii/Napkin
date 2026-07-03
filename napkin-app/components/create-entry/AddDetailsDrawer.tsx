@@ -107,7 +107,7 @@ export function AddDetailsDrawer({ breakdown, onBreakdownChange, dish, onDishCha
                                 </Text>
                                 <StarRating
                                     value={breakdown[key]}
-                                    size={20}
+                                    size={24}
                                     editable
                                     onChange={(v) => onBreakdownChange(key, v)}
                                 />
