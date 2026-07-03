@@ -22,7 +22,7 @@ import { useToast } from '@/providers/ToastProvider';
 import { useActiveImports, type ActiveImport } from '@/hooks/wishlist/useActiveImports';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
-import { retryImport, removeImport, setImportMode, pokeImportQueue } from '@/lib/importQueue';
+import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue } from '@/lib/importQueue';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 
 const PHASE_COPY: Record<ActiveImport['phase'], string> = {
@@ -60,13 +60,25 @@ export default function ImportProgressScreen() {
     // batch to save it is busywork when several pile up).
     const reviewBatches = active.filter((m) => m.phase === 'review');
     const reviewSpotTotal = reviewBatches.reduce((sum, m) => sum + m.spotCount, 0);
+    // Approve-all saves the review DEFAULTS — warned spots ("called overrated")
+    // default to unticked, so they're excluded here just like in the screen.
+    const keptFor = (m: ActiveImport) =>
+        (m.manifest.spots ?? []).filter((s) => s.stance !== 'warned');
+    const approveSpotTotal = reviewBatches.reduce((sum, m) => sum + keptFor(m).length, 0);
 
     const approveAll = () => {
         for (const m of reviewBatches) {
+            const spots = m.manifest.spots ?? [];
+            const kept = keptFor(m);
+            if (kept.length === 0 && spots.length > 0) {
+                discard(m); // nothing default-kept — same as unticking everything
+                continue;
+            }
+            if (kept.length !== spots.length) setImportSpots(m.jobId, kept);
             setImportMode(m.jobId, 'auto'); // release; spots already persisted
         }
         pokeImportQueue();
-        toast.show(`saving ${reviewSpotTotal} ${reviewSpotTotal === 1 ? 'spot' : 'spots'}…`);
+        toast.show(`saving ${approveSpotTotal} ${approveSpotTotal === 1 ? 'spot' : 'spots'}…`);
     };
 
     const discardAll = () => {
@@ -183,7 +195,7 @@ export default function ImportProgressScreen() {
                     <View style={styles.bulkRow}>
                         <Pressable onPress={approveAll} hitSlop={8} accessibilityRole="button">
                             <Text style={[styles.bulkAction, { color: palette.primary }]}>
-                                {`approve all ${reviewSpotTotal}`}
+                                {`approve all ${approveSpotTotal}`}
                             </Text>
                         </Pressable>
                         <Text style={[styles.bulkDot, { color: palette.textMuted }]}>·</Text>

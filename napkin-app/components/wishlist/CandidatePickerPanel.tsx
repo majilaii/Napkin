@@ -394,6 +394,8 @@ function CandidateRow({
         cityPart,
         r.cuisine,
         isLow && !isAlreadySaved ? 'uncertain' : null,
+        // 086c: anti-recommendation — starts unticked (buildInitialTicked).
+        candidate.stance === 'warned' ? 'called overrated' : null,
         extraMurmur || null,
     ].filter(Boolean).join(' · ');
 

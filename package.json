@@ -39,6 +39,7 @@
   },
   "scripts": {
     "test:functions": "~/.deno/bin/deno test --allow-env supabase/functions/",
+    "eval:extraction": "~/.deno/bin/deno run --allow-env --allow-read --allow-net=api.anthropic.com scripts/eval/extraction/run.ts",
     "test:app": "cd napkin-app && npm test",
     "test": "npm run test:functions && npm run test:app",
     "lint": "cd napkin-app && npm run lint",

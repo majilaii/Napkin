@@ -203,21 +203,36 @@ public class MediaExtractModule: Module {
 
   // MARK: - Voiceover transcription (on-device when supported)
 
+  // Prefer the device's own locale (a London user gets en-GB's far better read
+  // on London names/accents than hardcoded en-US), falling back through en-GB
+  // then en-US. On-device support is per-locale, so probe each.
+  private static func pickRecognizer() -> SFSpeechRecognizer? {
+    var locales: [Locale] = [Locale.current]
+    locales.append(Locale(identifier: "en-GB"))
+    locales.append(Locale(identifier: "en-US"))
+    for locale in locales {
+      if let r = SFSpeechRecognizer(locale: locale), r.isAvailable, r.supportsOnDeviceRecognition {
+        return r
+      }
+    }
+    return nil
+  }
+
   private static func transcribe(url: URL) async throws -> String {
     let status: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { cont in
       SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0) }
     }
     guard status == .authorized else { return "" }
-    guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.isAvailable else {
-      return ""
-    }
     // On-device ONLY — never send audio off the phone (keeps the privacy promise
-    // in NSSpeechRecognitionUsageDescription true). If the device/locale can't do
-    // local STT, skip the transcript; OCR still carries the spots.
-    guard recognizer.supportsOnDeviceRecognition else { return "" }
+    // in NSSpeechRecognitionUsageDescription true). If no locale can do local
+    // STT, skip the transcript; OCR still carries the spots.
+    guard let recognizer = Self.pickRecognizer() else { return "" }
     let request = SFSpeechURLRecognitionRequest(url: url)
     request.requiresOnDeviceRecognition = true
     request.shouldReportPartialResults = false
+    if #available(iOS 16.0, *) {
+      request.addsPunctuation = true
+    }
 
     return await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
       var done = false

@@ -54,6 +54,9 @@ export interface ResolvedCandidate {
     already_wishlisted: boolean;
     /** TICKET-063: true when city was inferred from hashtags/handle/context. */
     city_inferred?: boolean;
+    /** TICKET-086c: 'warned' = the creator warned AGAINST this spot ("most
+     * overrated…"). Never auto-saved; review surfaces it unticked. */
+    stance?: 'recommended' | 'warned' | 'neutral' | null;
     /**
      * TICKET-072: the sharer's rating for this spot, frozen at share time.
      * Only present on handoff-receive candidates; undefined for import flows.
