@@ -606,9 +606,12 @@ export default function WishlistScreen() {
                     <View style={styles.mapMode}>
                         {/* Same filter bar as the list — toggling views must not
                             lose the filters (founder, 2026-07-03). Sort is
-                            position on a map, so that pill sits this one out. */}
+                            position on a map, so that pill sits this one out.
+                            flexGrow 0: next to the flex map this ScrollView
+                            stretched and the pills grew into pillars (b78). */}
                         <ScrollView
                             horizontal
+                            style={styles.rFilterBarScroll}
                             showsHorizontalScrollIndicator={false}
                             contentContainerStyle={styles.rFilterBar}
                             keyboardShouldPersistTaps="handled"
@@ -648,6 +651,7 @@ export default function WishlistScreen() {
                         {/* Filter bar — Cuisine · Price · Sort */}
                         <ScrollView
                             horizontal
+                            style={styles.rFilterBarScroll}
                             showsHorizontalScrollIndicator={false}
                             contentContainerStyle={styles.rFilterBar}
                             keyboardShouldPersistTaps="handled"
@@ -886,8 +890,12 @@ const styles = StyleSheet.create({
         fontSize: 14,
         letterSpacing: 0.2,
     },
+    rFilterBarScroll: {
+        flexGrow: 0,
+    },
     rFilterBar: {
         flexDirection: 'row',
+        alignItems: 'center',
         gap: 8,
         paddingHorizontal: 20,
         paddingTop: 8,
