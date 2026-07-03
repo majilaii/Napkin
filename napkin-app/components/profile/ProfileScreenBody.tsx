@@ -19,6 +19,7 @@
 import React, { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
@@ -55,7 +56,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const { data: result, isLoading, error } = useUserProfile(identifier);
+    const { data: result, isLoading, error, refetch, isRefetching } = useUserProfile(identifier);
 
     const isNotFound = result?.isNotFound ?? false;
     const profileData = result?.data ?? null;
@@ -68,7 +69,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         relationship === 'public_and_tables';
 
     // Spots feed the taste band + map preview (server-gated same as regulars).
-    const { data: spots } = useUserSpots(
+    const { data: spots, refetch: refetchSpots } = useUserSpots(
         hasPalateAccess ? profileData?.profile.user_id : null,
     );
     const taste = useMemo(() => deriveTaste(spots ?? []), [spots]);
@@ -175,6 +176,16 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             style={[styles.container, { backgroundColor: palette.background }]}
             contentContainerStyle={{ paddingBottom: (inTab ? 100 : 40) + insets.bottom }}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+                <RefreshControl
+                    refreshing={isRefetching}
+                    onRefresh={() => {
+                        refetch();
+                        refetchSpots();
+                    }}
+                    tintColor={palette.primary}
+                />
+            }
         >
             <ProfileHeader
                 profile={profileData.profile}

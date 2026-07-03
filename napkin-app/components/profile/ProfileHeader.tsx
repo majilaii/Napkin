@@ -287,12 +287,12 @@ const styles = StyleSheet.create({
         marginTop: 16,
         flexDirection: 'row',
         alignItems: 'stretch',
-        borderTopWidth: 1,
-        borderBottomWidth: 1,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: StyleSheet.hairlineWidth,
         paddingVertical: 10,
     },
     statRule: {
-        width: 1,
+        width: StyleSheet.hairlineWidth,
         backgroundColor: 'rgba(28,28,25,0.07)',
     },
     statCell: {

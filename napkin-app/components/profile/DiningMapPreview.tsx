@@ -36,8 +36,10 @@ export function DiningMapPreview({ spots, onPress, palette }: Props) {
         return {
             latitude: (minLat + maxLat) / 2,
             longitude: (minLng + maxLng) / 2,
-            latitudeDelta: Math.max((maxLat - minLat) * 1.5, 0.04),
-            longitudeDelta: Math.max((maxLng - minLng) * 1.5, 0.04),
+            // Clamped: meals on two continents would otherwise compute deltas
+            // outside MKCoordinateRegion's meaningful range.
+            latitudeDelta: Math.min(Math.max((maxLat - minLat) * 1.5, 0.04), 100),
+            longitudeDelta: Math.min(Math.max((maxLng - minLng) * 1.5, 0.04), 180),
         };
     }, [pins]);
 
