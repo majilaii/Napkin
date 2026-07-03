@@ -31,6 +31,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { snapshot } from '@/lib/optimistic';
+import { track } from '@/lib/track';
 import type { TableDetail, TableMember as DetailMember } from '@/hooks/tables/useTableDetail';
 import type { TableMember as MembersMember } from '@/hooks/tables/useTableMembers';
 import type { UserProfileResult } from '@/hooks/users/useUserProfile';
@@ -158,6 +159,9 @@ export function useAddMember(_userId: string | null | undefined) {
                 ctx.restoreMembers();
                 return;
             }
+
+            // TICKET-088: a table gaining a member (fire-and-forget).
+            track('table_member_added', {});
 
             // Reconcile: replace stub member_id with server-assigned member_id.
             const detailKey = queryKeys.tables.detail(tableId);

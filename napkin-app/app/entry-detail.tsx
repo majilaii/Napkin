@@ -51,6 +51,7 @@ import { FRIEND_TEST } from '@/constants/flags';
 import { PreviouslyHereBanner } from '@/components/restaurants';
 import { useAuth } from '@/providers/AuthProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { trackError } from '@/lib/track';
 import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts';
 import { useUpdateEntry } from '@/hooks/entries/useUpdateEntry';
 import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
@@ -2662,10 +2663,11 @@ const styles = StyleSheet.create({
 });
 
 // Wrap the screen so a bad entry's render error shows a graceful fallback
-// instead of crashing the whole app (TICKET-083 polish).
+// instead of crashing the whole app (TICKET-083 polish). This boundary catches
+// before the root one, so it must report too (TICKET-088 crash visibility).
 export default function EntryDetailScreenWithBoundary() {
     return (
-        <ErrorBoundary screen="entry-detail">
+        <ErrorBoundary screen="entry-detail" onError={(e) => trackError(e, 'entry-detail')}>
             <EntryDetailScreen />
         </ErrorBoundary>
     );

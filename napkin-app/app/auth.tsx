@@ -101,13 +101,32 @@ export default function AuthScreen() {
                 }
                 // No pending stash — RootLayoutNav handles the /feed redirect.
             } else {
+                // Launch-readiness (2026-07-03): sign-UP resumes the pending
+                // share too. The highest-intent cold install — shares a TikTok,
+                // creates an account to save it — used to lose the link here.
+                const winner = await postAuthResume.consumeWinner();
                 const { data, error } = await supabase.auth.signUp({ email, password });
                 if (error) {
+                    if (winner) await postAuthResume.restashWinner(winner);
                     Alert.alert("Couldn't create account", error.message);
                 } else if (!data.session) {
+                    // Email-confirmation round-trip — keep the stash so the
+                    // first sign-in after confirming resumes it.
+                    if (winner) await postAuthResume.restashWinner(winner);
                     Alert.alert('Check your email', 'Confirm your address to finish signing up.');
+                } else if (winner?.kind === 'import') {
+                    router.replace({
+                        pathname: '/import',
+                        params: { url: winner.stash.url, nonce: winner.stash.import_nonce },
+                    } as any);
+                    return;
+                } else if (winner?.kind === 'handoff') {
+                    router.replace({
+                        pathname: '/handoff',
+                        params: { t: winner.token },
+                    } as any);
+                    return;
                 }
-                // signUp does NOT resume pending share — new users land on /feed first.
             }
         } finally {
             setLoading(false);
@@ -147,7 +166,7 @@ export default function AuthScreen() {
                                     { color: palette.textSecondary, textAlign: 'center', marginTop: Spacing.md },
                                 ]}
                             >
-                                A private table for those you trust.
+                                Every meal worth remembering.
                             </Text>
                             {/* TICKET-055: shown when arriving from iOS share extension. */}
                             {hasPendingImport && (
@@ -157,7 +176,7 @@ export default function AuthScreen() {
                                         { color: palette.textMuted, textAlign: 'center', marginTop: Spacing.sm },
                                     ]}
                                 >
-                                    sign in to save links to your wishlist.
+                                    your shared link saves right after.
                                 </Text>
                             )}
                         </View>

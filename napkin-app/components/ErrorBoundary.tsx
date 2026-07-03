@@ -18,6 +18,8 @@ interface Props {
     children: React.ReactNode;
     /** Screen name for the logged context. */
     screen?: string;
+    /** Forward the caught error (e.g. into the events table) — never throws back. */
+    onError?: (error: Error) => void;
 }
 
 interface State {
@@ -36,6 +38,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
         // Surfaced to Metro / device logs for diagnosis.
         console.error(`[ErrorBoundary:${this.props.screen ?? 'screen'}]`, error, info.componentStack);
         this.setState({ info: info.componentStack ?? null });
+        try {
+            this.props.onError?.(error);
+        } catch {
+            /* reporting must never re-crash the boundary */
+        }
     }
 
     render() {

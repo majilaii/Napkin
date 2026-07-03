@@ -6,6 +6,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import { track } from '@/lib/track';
 import type { WishlistSource } from '@/lib/types/wishlistSource';
 
 /** Shape of a Places ghost restaurant payload (matches _shared/restaurant.ts RestaurantInput) */
@@ -97,6 +98,8 @@ export function useWishlistAdd(userId: string | null | undefined) {
         },
         onSuccess: (item, input) => {
             if (!userId) return;
+            // TICKET-088: the capture-loop metric (fire-and-forget).
+            track('spot_saved', { source_type: input.source?.type ?? 'manual' });
             // Authoritative server id — set the canonical check key true.
             if (item?.restaurant_id) {
                 queryClient.setQueryData(

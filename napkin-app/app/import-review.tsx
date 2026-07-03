@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/providers/ToastProvider';
+import { track } from '@/lib/track';
 import {
     getImport,
     setImportSpots,
@@ -124,6 +125,19 @@ export default function ImportReviewScreen() {
     const handleSave = () => {
         if (!manifest || keptCount === 0) return;
         const kept = spots.filter((s) => ticked.has(s.candidate_id));
+        // TICKET-088: how much human correction the extraction needed.
+        const originalById = new Map(
+            (manifest.spots ?? []).map((s) => [s.candidate_id, s]),
+        );
+        const fixedN = kept.filter((s) => {
+            const o = originalById.get(s.candidate_id);
+            return o && (o.restaurant_id !== s.restaurant_id || o.external_id !== s.external_id);
+        }).length;
+        track('import_review_edits', {
+            kept_n: kept.length,
+            removed_n: spots.length - kept.length,
+            fixed_n: fixedN,
+        });
         setImportSpots(manifest.jobId, kept); // prune to confirmed (incl. fixes)
         setImportMode(manifest.jobId, 'auto'); // release for the normal save path
         pokeImportQueue(); // kick the drain now

@@ -36,6 +36,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useToast } from '@/providers/ToastProvider';
 import { localDateStr } from '@/lib/dateHelpers';
 import { safeRandomUUID } from '@/lib/uuid';
+import { track } from '@/lib/track';
 import {
     prependToInfinitePages,
     swapByNonce,
@@ -451,6 +452,18 @@ export function useCreateEntry(
             if (warnings?.some((w) => w.type === 'companion_tag_failed')) {
                 toast.show("Couldn't tag some friends.");
             }
+
+            // TICKET-088 loop metrics (fire-and-forget).
+            const companionsN = _input.companion_ids?.length ?? 0;
+            track('entry_logged', {
+                has_note: !!_input.content?.trim(),
+                has_photo: !!(_input.photo_urls?.length || _input.photo_url),
+                has_rating: _input.rating != null,
+                tables_n: _input.table_ids?.length ?? (_input.table_id ? 1 : 0),
+                companions_n: companionsN,
+                supper: !!_input.supper,
+            });
+            if (companionsN > 0) track('companion_tagged', { companions_n: companionsN });
 
             if (!userId || !context) return;
             const { nonce, viewerLocalDate } = context;
