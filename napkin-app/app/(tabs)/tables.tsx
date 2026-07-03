@@ -64,6 +64,7 @@ import {
     TableTopFourPlaceholder,
     EditTop4Sheet,
     StartRoundPill,
+    AddMemberSheet,
 } from '@/components/tables';
 import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
@@ -151,6 +152,7 @@ export default function TablesScreen() {
     }, [selectedTableId, tables]);
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const [showTablePicker, setShowTablePicker] = useState(false);
+    const [showAddMember, setShowAddMember] = useState(false);
     const [invitationDismissed, setInvitationDismissed] = useState(false);
 
     // Unseen dot system (TICKET-010)
@@ -387,6 +389,14 @@ export default function TablesScreen() {
                 onSwitcherPress={() => setShowTablePicker(true)}
                 palette={palette}
                 onSettingsPress={!(activeTable as any).is_personal ? handleSettingsPress : undefined}
+                // Designated + — the invite path no longer hides behind the gear
+                // (founder, 2026-07-03). Owner-only: add_member is owner-gated
+                // server-side; showing it to members would be a dead button.
+                onInvitePress={
+                    activeTable.owner_id === user?.id
+                        ? () => setShowAddMember(true)
+                        : undefined
+                }
             />
 
             {/* Welcome banner — shown once when a user is added to a table (TICKET-029) */}
@@ -537,10 +547,14 @@ export default function TablesScreen() {
                             palette={palette}
                             memberCount={members?.length ?? 0}
                             onInvite={() => {
-                                // Launch-readiness (2026-07-03): the old
-                                // "Coming soon" alert was a shipped dead end.
-                                // A share sheet is a real invite — and feeds
-                                // the invite→install funnel metric.
+                                // One invite flow (2026-07-03): the AddMemberSheet
+                                // seats mutuals directly and carries the share-link
+                                // row for friends not on Napkin yet. Founder = owner
+                                // on a brand-new table; share-sheet fallback otherwise.
+                                if (activeTable.owner_id === user?.id) {
+                                    setShowAddMember(true);
+                                    return;
+                                }
                                 track('invite_sent', { surface: 'founded_hero' });
                                 void Share.share({
                                     message: TESTFLIGHT_INVITE_URL
@@ -1035,6 +1049,17 @@ export default function TablesScreen() {
                     router.push('/create-table');
                 }}
             />
+
+            {/* Invite — the designated + on the masthead (owner only) */}
+            {activeTable?.id ? (
+                <AddMemberSheet
+                    visible={showAddMember}
+                    onClose={() => setShowAddMember(false)}
+                    tableId={activeTable.id}
+                    palette={palette}
+                    userId={user?.id}
+                />
+            ) : null}
         </View>
     );
 }

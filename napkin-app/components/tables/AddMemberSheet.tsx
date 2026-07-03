@@ -23,7 +23,10 @@ import {
     StyleSheet,
     Image,
     Alert,
+    Share,
 } from 'react-native';
+import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
+import { track } from '@/lib/track';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -336,6 +339,25 @@ export function AddMemberSheet({
                         showsVerticalScrollIndicator={false}
                     />
                 )}
+
+                {/* Not on Napkin yet? The share sheet covers them (2026-07-03). */}
+                <Pressable
+                    onPress={() => {
+                        track('invite_sent', { surface: 'add_member_sheet' });
+                        void Share.share({
+                            message: TESTFLIGHT_INVITE_URL
+                                ? `come join our table on Napkin — ${TESTFLIGHT_INVITE_URL}`
+                                : 'come join our table on Napkin',
+                        });
+                    }}
+                    style={({ pressed }) => [styles.shareRow, { opacity: pressed ? 0.7 : 1 }]}
+                    accessibilityRole="button"
+                >
+                    <Ionicons name="paper-plane-outline" size={14} color={palette.primary} />
+                    <Text style={[styles.shareRowText, { color: palette.primary }]}>
+                        or share an invite link
+                    </Text>
+                </Pressable>
             </Animated.View>
         </Modal>
     );
@@ -345,7 +367,20 @@ export function AddMemberSheet({
 
 const styles = StyleSheet.create({
     backdrop: {
-        backgroundColor: 'rgba(28, 28, 25, 0.4)',
+        // Warm dusk, not a black scrim (founder, 2026-07-03).
+        backgroundColor: 'rgba(74, 55, 42, 0.25)',
+    },
+    shareRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: 12,
+        marginTop: Spacing.xs,
+    },
+    shareRowText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
     },
     sheet: {
         position: 'absolute',
