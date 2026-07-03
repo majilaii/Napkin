@@ -46,6 +46,10 @@ export type UserStats = {
     average_rating: number | null;
     followers_count: number;
     following_count: number;
+    /** TICKET-092: dated logs this calendar year. Optional — older cached payloads. */
+    logs_this_year?: number;
+    /** TICKET-092: entries with written notes. Optional — older cached payloads. */
+    reviews_count?: number;
 };
 
 export type ProfileListSummary = {

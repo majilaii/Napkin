@@ -154,49 +154,67 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                 );
             })()}
 
-            <View style={styles.numbers}>
-                <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
-                    <Text style={[styles.numberStrong, { color: palette.text }]}>
-                        {totalLogs}
-                    </Text>
-                    {' logs'}
-                </Text>
-                <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
-                    <Text style={[styles.numberStrong, { color: palette.text }]}>
-                        {totalPlaces}
-                    </Text>
-                    {' places'}
-                </Text>
-                {stats && (
-                    <>
-                        <Pressable onPress={() => openFollowList('followers')} hitSlop={6}>
-                            <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
-                                <Text style={[styles.numberStrong, { color: palette.text }]}>
-                                    {followersCount}
-                                </Text>
-                                {' followers'}
-                            </Text>
-                        </Pressable>
-                        <Pressable onPress={() => openFollowList('following')} hitSlop={6}>
-                            <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
-                                <Text style={[styles.numberStrong, { color: palette.text }]}>
-                                    {followingCount}
-                                </Text>
-                                {' following'}
-                            </Text>
-                        </Pressable>
-                    </>
-                )}
-                {stats?.average_rating != null && (
-                    <Text style={[styles.numbersText, { color: palette.textSecondary }]}>
-                        <Text style={[styles.numberStrong, { color: palette.text }]}>
-                            {stats.average_rating.toFixed(1)}
-                        </Text>
-                        {' avg'}
-                    </Text>
-                )}
+            {/* TICKET-092: stats strip in the ScoreBand grammar — ledger counts
+                first, social last (the Letterboxd move). One identity-counts
+                surface; the old inline sans row is gone. */}
+            <View style={[styles.statsStrip, { borderColor: 'rgba(28,28,25,0.07)' }]}>
+                <StatCell label="meals" value={totalLogs} palette={palette} />
+                <View style={styles.statRule} />
+                <StatCell label="places" value={totalPlaces} palette={palette} />
+                <View style={styles.statRule} />
+                <StatCell
+                    label="this yr"
+                    value={stats?.logs_this_year ?? 0}
+                    palette={palette}
+                />
+                <View style={styles.statRule} />
+                <StatCell
+                    label="followers"
+                    value={followersCount}
+                    palette={palette}
+                    onPress={() => openFollowList('followers')}
+                />
+                <View style={styles.statRule} />
+                <StatCell
+                    label="following"
+                    value={followingCount}
+                    palette={palette}
+                    onPress={() => openFollowList('following')}
+                />
             </View>
         </View>
+    );
+}
+
+function StatCell({
+    label,
+    value,
+    palette,
+    onPress,
+}: {
+    label: string;
+    value: number;
+    palette: typeof Colors.light;
+    onPress?: () => void;
+}) {
+    const body = (
+        <>
+            <Text style={[styles.statValue, { color: palette.text, opacity: value === 0 ? 0.4 : 1 }]}>
+                {value === 0 ? '—' : value}
+            </Text>
+            <Text style={[styles.statLabel, { color: palette.textMuted }]}>{label}</Text>
+        </>
+    );
+    if (!onPress) return <View style={styles.statCell}>{body}</View>;
+    return (
+        <Pressable
+            onPress={onPress}
+            style={({ pressed }) => [styles.statCell, { opacity: pressed ? 0.7 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={`${value} ${label}`}
+        >
+            {body}
+        </Pressable>
     );
 }
 
@@ -265,18 +283,32 @@ const styles = StyleSheet.create({
         marginTop: Spacing.sm,
         paddingHorizontal: 0,
     },
-    numbers: {
-        marginTop: 14,
+    statsStrip: {
+        marginTop: 16,
         flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: Spacing.md,
+        alignItems: 'stretch',
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        paddingVertical: 10,
     },
-    numbersText: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
+    statRule: {
+        width: StyleSheet.hairlineWidth,
+        backgroundColor: 'rgba(28,28,25,0.07)',
     },
-    numberStrong: {
+    statCell: {
+        flex: 1,
+        alignItems: 'center',
+        gap: 2,
+    },
+    statValue: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 21,
+        lineHeight: 25,
+    },
+    statLabel: {
         fontFamily: 'Manrope_600SemiBold',
-        fontWeight: '600',
+        fontSize: 8.5,
+        letterSpacing: 1.1,
+        textTransform: 'uppercase',
     },
 });
