@@ -60,6 +60,18 @@ export default function ResetPasswordScreen() {
     const [saving, setSaving] = useState(false);
     const adoptedRef = useRef(false);
 
+    // Review P2: a bare cold entry (no deep-link URL ever arrives, no session)
+    // would spin forever — settle to dead-link if nothing adopts in time.
+    useEffect(() => {
+        const t = setTimeout(() => {
+            if (!adoptedRef.current) {
+                adoptedRef.current = true;
+                setPhase('dead-link');
+            }
+        }, 8000);
+        return () => clearTimeout(t);
+    }, []);
+
     useEffect(() => {
         if (adoptedRef.current) return;
 

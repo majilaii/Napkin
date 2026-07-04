@@ -169,3 +169,35 @@ create policy blocked_users_delete_own on public.blocked_users
 
 -- Reverse lookups ("who blocked X") used by edge-side enforcement.
 create index blocked_users_blocked_idx on public.blocked_users (blocked_id);
+
+-- ── Part 3b: unread badge respects blocks ────────────────────────────────────
+-- The inbox pager (notifications fn) drops rows from blocked actors at
+-- hydration; without this the SECURITY DEFINER count would still tally them,
+-- leaving a phantom unread badge the user can never clear by reading.
+create or replace function public.unread_notification_count_for(p_recipient_id uuid)
+returns integer
+language sql
+stable
+security definer
+set search_path = public
+as $$
+    select count(*)::int
+    from notifications n
+    where n.user_id = p_recipient_id
+      and n.read_at is null
+      and (
+          n.kind <> 'friend_logged'
+          or (
+              n.subject_entry_id is not null
+              and public.can_recipient_view_entry(p_recipient_id, n.subject_entry_id)
+          )
+      )
+      and (
+          n.actor_user_id is null
+          or not exists (
+              select 1 from public.blocked_users b
+              where (b.blocker_id = p_recipient_id and b.blocked_id = n.actor_user_id)
+                 or (b.blocker_id = n.actor_user_id and b.blocked_id = p_recipient_id)
+          )
+      )
+$$;

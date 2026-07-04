@@ -191,6 +191,28 @@ async function hydrate(
 ): Promise<HydratedNotification[]> {
     if (rows.length === 0) return [];
 
+    // TICKET-090: a block is total — drop notifications whose ACTOR is someone
+    // the recipient has blocked (or who blocked the recipient) before hydration.
+    // This is the one surface that actively pushes a blocked user's activity
+    // into the blocker's face; the keyset pager treats dropped rows like any
+    // other invisible row.
+    const { data: blockRows, error: blockErr } = await supabase
+        .from('blocked_users')
+        .select('blocker_id, blocked_id')
+        .or(`blocker_id.eq.${recipientUserId},blocked_id.eq.${recipientUserId}`);
+    if (blockErr) {
+        console.error('inbox hydration: blocked_users failed', blockErr);
+        throw new Error(`DB_ERROR: blocked_users hydration failed — ${blockErr.message}`);
+    }
+    const blockedEitherWay = new Set<string>();
+    for (const b of (blockRows ?? []) as { blocker_id: string; blocked_id: string }[]) {
+        blockedEitherWay.add(b.blocker_id === recipientUserId ? b.blocked_id : b.blocker_id);
+    }
+    if (blockedEitherWay.size > 0) {
+        rows = rows.filter((r) => !r.actor_user_id || !blockedEitherWay.has(r.actor_user_id));
+        if (rows.length === 0) return [];
+    }
+
     const actorIds = unique(rows.map(r => r.actor_user_id).filter(Boolean) as string[]);
     const tableIds = unique(rows.map(r => r.subject_table_id).filter(Boolean) as string[]);
     const restaurantIds = unique(rows.map(r => r.subject_restaurant_id).filter(Boolean) as string[]);

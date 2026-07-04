@@ -185,6 +185,7 @@ async function main() {
         [2, 4, 'Bone marrow on toast, a glass of the house red. Quietly perfect lunch.'],
     ];
     let firstEntryId: string | null = null;
+    let firstRestaurantId: string | null = null;
     for (const [i, rating, content] of entryNotes) {
         const created = await edge(a, 'entry', {
             restaurant: SPOTS[i],
@@ -195,6 +196,7 @@ async function main() {
             visibility: 'table',
         });
         if (!firstEntryId) firstEntryId = created?.id ?? null;
+        if (!firstRestaurantId) firstRestaurantId = created?.restaurant_id ?? null;
         console.log(`  ✓ ${SPOTS[i].name} (${rating})`);
     }
 
@@ -238,6 +240,8 @@ async function main() {
     }
 
     console.log('\nDone. Review-notes account: A (Alex Reviewer).');
+    // For the CI smoke secret — a real persisted restaurant on prod.
+    console.log(`PROD_SMOKE_TEST_RESTAURANT_ID candidate: ${firstRestaurantId ?? '(entry returned no restaurant_id — query restaurants table)'}`);
 }
 
 main().catch((e) => {

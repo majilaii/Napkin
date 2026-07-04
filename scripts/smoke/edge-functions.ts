@@ -197,6 +197,21 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-090: account fn read path — backs the Blocked settings screen and
+    // is the same fn that performs account deletion. blocked_list on the smoke
+    // user must return the rows envelope (200 + data.rows array).
+    {
+        name: 'account?action=blocked_list (TICKET-090 safety surface)',
+        method: 'POST',
+        fn: 'account',
+        body: { action: 'blocked_list' },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown[] } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            return null;
+        },
+    },
     // TICKET-072: share-page public endpoint smoke — bogus token → HTTP 410 + text/html.
     // This check is UNAUTHENTICATED (no Authorization header) because the function
     // is deployed with verify_jwt=false. The smoke asserts:
