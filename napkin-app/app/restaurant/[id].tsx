@@ -80,6 +80,8 @@ import {
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { AddToListSheet } from '@/components/lists';
 import { SetTableSheet } from '@/components/suppers';
+// TICKET-095: gather the table (propose a future date here)
+import { GatherSheet } from '@/components/gatherings';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
 type Palette = typeof Colors.light;
@@ -374,6 +376,9 @@ export default function RestaurantScreen() {
     // Supper v2: "set a table" here (restaurant-anchored). Needs a persisted restaurant
     // + at least one Table.
     const [setTableSheetOpen, setSetTableSheetOpen] = useState(false);
+    // TICKET-095: "gather the table" — same gate as set-a-table (persisted
+    // restaurant + at least one Table; hidden with the supper curtain).
+    const [gatherSheetOpen, setGatherSheetOpen] = useState(false);
 
     // Payload used for BOTH the wishlist toggle and list adds (ghost-safe: a
     // not-yet-persisted restaurant carries its Places payload so the server upserts).
@@ -799,6 +804,8 @@ export default function RestaurantScreen() {
                         saveDisabled={bookmarkDisabled}
                         showSetTable={!FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId}
                         onSetTablePress={() => setSetTableSheetOpen(true)}
+                        showGather={!FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId}
+                        onGatherPress={() => setGatherSheetOpen(true)}
                     />
                 ) : null}
             </View>
@@ -823,6 +830,21 @@ export default function RestaurantScreen() {
                 <SetTableSheet
                     visible={setTableSheetOpen}
                     onClose={() => setSetTableSheetOpen(false)}
+                    restaurant={{
+                        id: persistedRestaurantId,
+                        name: restaurant.name,
+                        city: restaurant.city ?? null,
+                        photo_url: restaurant.photo_url ?? null,
+                    }}
+                    tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
+                />
+            ) : null}
+
+            {/* TICKET-095: gather the table (propose a future date here) */}
+            {restaurant && persistedRestaurantId && !FRIEND_TEST.hideSuppers ? (
+                <GatherSheet
+                    visible={gatherSheetOpen}
+                    onClose={() => setGatherSheetOpen(false)}
                     restaurant={{
                         id: persistedRestaurantId,
                         name: restaurant.name,

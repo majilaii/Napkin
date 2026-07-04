@@ -65,11 +65,13 @@ serve(async (req) => {
             cursor,
             filter_type: filterType,
             filter_user_id: filterUserId,
+            known_kinds: knownKinds,
         } = body as {
             table_id?: string;
             cursor?: string | null;
             filter_type?: string | null;
             filter_user_id?: string | null;
+            known_kinds?: string[] | null;
         };
 
         if (!tableId) {
@@ -109,6 +111,19 @@ serve(async (req) => {
         // Decode cursor for RPC
         const decoded = decodeCursor(cursor ?? null);
 
+        // ── TICKET-095: dispatch due gatherings on the FIRST page load only ────
+        // The supper card appearing in the feed on/after gather_on IS the automatic
+        // dispatch — no cron, no push (deferred by doctrine). Log-and-continue on
+        // error: the feed must never 500 because dispatch hiccuped.
+        if (!cursor) {
+            const { error: dispatchErr } = await supabase.rpc('fn_dispatch_due_gatherings', {
+                p_table_id: tableId,
+            });
+            if (dispatchErr) {
+                console.error('fn_dispatch_due_gatherings error (continuing):', dispatchErr);
+            }
+        }
+
         // ── Call fn_table_activity_page RPC ───────────────────────────────────
         // TICKET-060 R7: pass p_coalesce_hours (defaulted to 6 in SQL — non-breaking)
         const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_table_activity_page', {
@@ -139,17 +154,34 @@ serve(async (req) => {
         const has_more = pageRows.length > PAGE_SIZE;
         const keptRpc = has_more ? pageRows.slice(0, PAGE_SIZE) : pageRows;
 
+        // ── TICKET-095: known_kinds back-compat filter ─────────────────────────
+        // The RPC now emits kinds newer clients understand (e.g. 'gathering').
+        // Old clients don't send known_kinds, so they get LEGACY_KINDS — the exact
+        // set the RPC emitted before this ticket — and never see a kind their
+        // fallback card would render as junk. New clients enumerate every kind
+        // they render (including 'gathering'). Filtering happens AFTER the
+        // PAGE_SIZE slice and the cursor is still built from the UNFILTERED
+        // keptRpc, so keyset pagination never skips rows — a page may just render
+        // fewer than PAGE_SIZE items on an old client.
+        const LEGACY_KINDS = ['entry', 'table_night', 'top_4_edited', 'shared_save', 'share_digest', 'restaurant_float', 'supper'];
+        const knownKindSet = new Set(
+            Array.isArray(knownKinds) && knownKinds.length > 0 ? knownKinds : LEGACY_KINDS,
+        );
+        const visibleRpc = keptRpc.filter((r) => knownKindSet.has(r.kind));
+
         // ── Collect IDs for hydration ──────────────────────────────────────────
-        const entryRpcRows = keptRpc.filter((r) => r.kind === 'entry');
-        const nightRpcRows = keptRpc.filter((r) => r.kind === 'table_night');
-        const tt4RpcRows = keptRpc.filter((r) => r.kind === 'top_4_edited');
+        const entryRpcRows = visibleRpc.filter((r) => r.kind === 'entry');
+        const nightRpcRows = visibleRpc.filter((r) => r.kind === 'table_night');
+        const tt4RpcRows = visibleRpc.filter((r) => r.kind === 'top_4_edited');
         // TICKET-060: new share/float kinds
-        const shareRpcRows = keptRpc.filter((r) => r.kind === 'shared_save' || r.kind === 'share_digest');
-        const floatRpcRows = keptRpc.filter((r) => r.kind === 'restaurant_float');
+        const shareRpcRows = visibleRpc.filter((r) => r.kind === 'shared_save' || r.kind === 'share_digest');
+        const floatRpcRows = visibleRpc.filter((r) => r.kind === 'restaurant_float');
         // Supper v2: the empty-table card. fn_table_activity_page already gated these
         // to suppers the VIEWER is a member of (is_supper_member), so every row here is
         // viewer-visible — but the TAKE read below is still author-membership scoped.
-        const supperRpcRows = keptRpc.filter((r) => r.kind === 'supper');
+        const supperRpcRows = visibleRpc.filter((r) => r.kind === 'supper');
+        // TICKET-095: gathering proposal cards.
+        const gatheringRpcRows = visibleRpc.filter((r) => r.kind === 'gathering');
 
         const entryIds = entryRpcRows.map((r) => r.id);
         const nightIds = nightRpcRows.map((r) => r.id);
@@ -844,6 +876,118 @@ serve(async (req) => {
             }
         }
 
+        // ── TICKET-095: hydrate the gathering proposal card ─────────────────────
+        // Anchor fields ride in the RPC payload. Everything else is batch-fetched
+        // (rsvps, current table roster, profiles, restaurants) — NEVER PostgREST-
+        // embed profiles off entries (known 400 trap, reference_entries_no_profiles_fk).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let gatheringItems: any[] = [];
+        if (gatheringRpcRows.length > 0) {
+            const gatheringIds = gatheringRpcRows.map((r) => r.id);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const anchorByGathering = new Map<string, any>(
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                gatheringRpcRows.map((r) => [r.id, r.payload as any]),
+            );
+
+            // RSVPs for these gatherings.
+            const { data: rsvpRows } = await supabase
+                .from('gathering_rsvps')
+                .select('gathering_id, user_id, response')
+                .in('gathering_id', gatheringIds);
+            const rsvpByGatheringUser = new Map<string, string>();
+            for (const r of (rsvpRows ?? []) as { gathering_id: string; user_id: string; response: string }[]) {
+                rsvpByGatheringUser.set(`${r.gathering_id}:${r.user_id}`, r.response);
+            }
+
+            // Current table roster — every gathering in this feed belongs to the
+            // requested table (RPC filters table_id = p_table_id), so one roster
+            // fetch serves all. member_id doctrine (NOT user_id).
+            const { data: gRosterRows } = await supabase
+                .from('table_members')
+                .select('member_id')
+                .eq('table_id', tableId);
+            const rosterIds = ((gRosterRows ?? []) as { member_id: string }[]).map((m) => m.member_id);
+
+            // Profiles: roster + hosts (a host may have left the table — the card
+            // still names them).
+            const hostIds = gatheringIds
+                .map((gid) => anchorByGathering.get(gid)?.host_user_id)
+                .filter(Boolean) as string[];
+            const profileIds = [...new Set([...rosterIds, ...hostIds])];
+            const { data: gatheringProfiles } = profileIds.length > 0
+                ? await supabase
+                    .from('profiles')
+                    .select('user_id, display_name, avatar_url')
+                    .in('user_id', profileIds)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                : { data: [] as any[] };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const gatheringProfMap = new Map((gatheringProfiles ?? []).map((p: any) => [p.user_id, p]));
+
+            // Restaurants.
+            const gatheringRestIds = [...new Set(
+                gatheringIds.map((gid) => anchorByGathering.get(gid)?.restaurant_id).filter(Boolean),
+            )] as string[];
+            const { data: gatheringRestaurants } = gatheringRestIds.length > 0
+                ? await supabase
+                    .from('restaurants')
+                    .select('id, name, city, photo_url')
+                    .in('id', gatheringRestIds)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                : { data: [] as any[] };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const gatheringRestMap = new Map((gatheringRestaurants ?? []).map((r: any) => [r.id, r]));
+
+            for (const r of gatheringRpcRows) {
+                const gid = r.id;
+                const anchor = anchorByGathering.get(gid);
+                const hostUserId = anchor?.host_user_id ?? null;
+
+                // Seats = every CURRENT table member: host first, then 'in', then
+                // undecided, then 'out'. RSVPs from ex-members simply drop out
+                // (mirrors fn_dispatch_due_gatherings' confirmed-roster semantics).
+                const seatRank = (s: { is_host: boolean; response: string | null }) =>
+                    s.is_host ? 0 : s.response === 'in' ? 1 : s.response == null ? 2 : 3;
+                const seats = rosterIds
+                    .map((uid) => {
+                        const prof = gatheringProfMap.get(uid);
+                        return {
+                            user_id: uid,
+                            display_name: prof?.display_name ?? null,
+                            avatar_url: prof?.avatar_url ?? null,
+                            is_host: uid === hostUserId,
+                            response: (rsvpByGatheringUser.get(`${gid}:${uid}`) ?? null) as 'in' | 'out' | null,
+                        };
+                    })
+                    .sort((a, b) => seatRank(a) - seatRank(b));
+
+                const inCount = seats.filter((s) => s.response === 'in').length;
+                const viewerResponse =
+                    (rsvpByGatheringUser.get(`${gid}:${user.id}`) ?? null) as 'in' | 'out' | null;
+
+                gatheringItems.push({
+                    id: gid,
+                    type: 'gathering' as const,
+                    sort_date: r.sort_date,
+                    table_id: tableId,
+                    restaurant: anchor?.restaurant_id
+                        ? (gatheringRestMap.get(anchor.restaurant_id) ?? null)
+                        : null,
+                    host_user_id: hostUserId,
+                    host_name: gatheringProfMap.get(hostUserId)?.display_name ?? null,
+                    note: anchor?.note ?? null,
+                    gather_on: anchor?.gather_on ?? null,
+                    status: anchor?.status ?? 'proposed',
+                    supper_id: anchor?.supper_id ?? null,
+                    seats,
+                    in_count: inCount,
+                    viewer_response: viewerResponse,
+                    created_at: anchor?.created_at ?? r.sort_date,
+                });
+            }
+        }
+
         // ── Reactions ────────────────────────────────────────────────────────
         const myReactionsByTarget = new Map<string, string[]>();
         const targetKey = (targetType: string, targetId: string) => `${targetType}:${targetId}`;
@@ -909,8 +1053,10 @@ serve(async (req) => {
         const floatById = new Map(floatItems.map((f: any) => [f.id, f]));
         // Supper v2: map for the empty-table card.
         const supperById = new Map(supperItems.map((s: any) => [s.id, s]));
+        // TICKET-095: map for the gathering card.
+        const gatheringById = new Map(gatheringItems.map((g: any) => [g.id, g]));
 
-        const orderedItems = keptRpc
+        const orderedItems = visibleRpc
             .map((rpcRow) => {
                 let item: any;
                 let tk: string | null = null;
@@ -936,6 +1082,9 @@ serve(async (req) => {
                     item = supperById.get(rpcRow.id);
                     // Supper-level reactions are not wired yet — engagement lives on each
                     // take (tap a seat → entry-detail). Per-take reactions, not card-level.
+                } else if (rpcRow.kind === 'gathering') {
+                    item = gatheringById.get(rpcRow.id);
+                    // Gathering cards carry RSVPs, not reactions (out of scope v1).
                 }
                 if (!item) return null;
                 return {
@@ -945,10 +1094,13 @@ serve(async (req) => {
             })
             .filter(Boolean);
 
-        // Build Page envelope from the RPC rows (cursor uses sort_date + id)
+        // Build Page envelope from the RPC rows (cursor uses sort_date + id).
+        // buildPage must see the UNSLICED limit+1 rows — it detects has_more via
+        // rows.length > pageSize, so passing the pre-sliced keptRpc always yields
+        // next_cursor=null and the feed hard-caps at one page.
         const last = keptRpc[keptRpc.length - 1];
         const next_cursor = has_more && last
-            ? buildPage(keptRpc, PAGE_SIZE, (r) => ({ sort_date: r.sort_date, id: r.id })).next_cursor
+            ? buildPage(pageRows, PAGE_SIZE, (r) => ({ sort_date: r.sort_date, id: r.id })).next_cursor
             : null;
 
         return new Response(

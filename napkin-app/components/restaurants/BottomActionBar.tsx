@@ -6,6 +6,7 @@
  *   · save (bookmark → AddToListSheet)
  *   · directions
  *   · set a table (when the viewer has a Table and the restaurant is persisted)
+ *   · gather (TICKET-095 — propose a future date; same gate as set a table)
  *
  * The bar pins to the bottom and fades upward into the page background —
  * structure by background shift, not a hard border (Heirloom rule).
@@ -28,6 +29,8 @@ interface Props {
     saveDisabled?: boolean;
     showSetTable?: boolean;
     onSetTablePress?: () => void;
+    showGather?: boolean;
+    onGatherPress?: () => void;
 }
 
 function withAlpha(hex: string, alpha: number): string {
@@ -74,6 +77,8 @@ export function BottomActionBar({
     saveDisabled,
     showSetTable,
     onSetTablePress,
+    showGather,
+    onGatherPress,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
@@ -124,6 +129,14 @@ export function BottomActionBar({
                         icon="people-outline"
                         label="set a table here"
                         onPress={onSetTablePress}
+                        palette={palette}
+                    />
+                ) : null}
+                {showGather ? (
+                    <DockIcon
+                        icon="calendar-outline"
+                        label="gather"
+                        onPress={onGatherPress}
                         palette={palette}
                     />
                 ) : null}
