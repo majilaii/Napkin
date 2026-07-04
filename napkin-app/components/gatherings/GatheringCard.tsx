@@ -274,11 +274,19 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
 
                 {isDispatched ? (
                     isHost || viewer_response === 'in' ? (
-                        <Pressable onPress={openSupper} hitSlop={6} accessibilityRole="button" accessibilityLabel="see the table">
-                            <Text style={[styles.seeTable, { color: palette.primary }]}>
-                                gathered — see the table →
-                            </Text>
-                        </Pressable>
+                        <View style={styles.footerRow}>
+                            <Pressable
+                                onPress={openSupper}
+                                accessibilityRole="button"
+                                accessibilityLabel="see the table"
+                                style={({ pressed }) => [
+                                    styles.ghostPill,
+                                    { borderColor: palette.ruleInkSoft, opacity: pressed ? 0.7 : 1 },
+                                ]}
+                            >
+                                <Text style={[styles.ghostPillText, { color: palette.primary }]}>see the table →</Text>
+                            </Pressable>
+                        </View>
                     ) : (
                         /* The supper roster is confirmed members only — supper-detail
                            404s everyone else, so don't link them into a dead end. */
@@ -317,35 +325,62 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                             </Pressable>
                         </View>
                     ) : (
-                        <View style={styles.answeredRow}>
-                            <Ionicons
-                                name={viewer_response === 'in' ? 'checkmark-circle-outline' : 'close-circle-outline'}
-                                size={16}
-                                color={viewer_response === 'in' ? palette.primary : palette.textMuted}
-                            />
-                            <Text style={[styles.answered, { color: palette.textSecondary }]}>
-                                {viewer_response === 'in' ? "you're in" : "you can't make it"}
-                                <Text style={{ color: palette.textMuted }}> · </Text>
-                            </Text>
-                            <Pressable onPress={() => setChanging(true)} hitSlop={8} accessibilityRole="button" accessibilityLabel="change your answer">
-                                <Text style={[styles.change, { color: palette.primary }]}>change</Text>
+                        <View style={styles.footerRow}>
+                            <View
+                                style={[
+                                    styles.stateChip,
+                                    {
+                                        backgroundColor:
+                                            viewer_response === 'in'
+                                                ? palette.primaryMuted
+                                                : palette.surfaceContainerLow,
+                                    },
+                                ]}
+                            >
+                                <Ionicons
+                                    name={viewer_response === 'in' ? 'checkmark-circle-outline' : 'close-circle-outline'}
+                                    size={14}
+                                    color={viewer_response === 'in' ? palette.primary : palette.textMuted}
+                                />
+                                <Text
+                                    style={[
+                                        styles.stateChipText,
+                                        { color: viewer_response === 'in' ? palette.primary : palette.textSecondary },
+                                    ]}
+                                >
+                                    {viewer_response === 'in' ? "you're in" : "you can't make it"}
+                                </Text>
+                            </View>
+                            <Pressable
+                                onPress={() => setChanging(true)}
+                                accessibilityRole="button"
+                                accessibilityLabel="change your answer"
+                                style={({ pressed }) => [
+                                    styles.ghostPill,
+                                    { borderColor: palette.ruleInkSoft, opacity: pressed ? 0.7 : 1 },
+                                ]}
+                            >
+                                <Text style={[styles.ghostPillText, { color: palette.textMuted }]}>change</Text>
                             </Pressable>
                         </View>
                     )
                 ) : null}
 
                 {isProposed && isHost ? (
-                    <Pressable
-                        onPress={confirmCancel}
-                        disabled={cancel.isPending}
-                        hitSlop={6}
-                        accessibilityRole="button"
-                        accessibilityLabel="call it off"
-                    >
-                        <Text style={[styles.callOff, { color: palette.textMuted, opacity: cancel.isPending ? 0.5 : 1 }]}>
-                            call it off
-                        </Text>
-                    </Pressable>
+                    <View style={styles.footerRow}>
+                        <Pressable
+                            onPress={confirmCancel}
+                            disabled={cancel.isPending}
+                            accessibilityRole="button"
+                            accessibilityLabel="call it off"
+                            style={({ pressed }) => [
+                                styles.ghostPill,
+                                { borderColor: palette.ruleInkSoft, opacity: cancel.isPending ? 0.5 : pressed ? 0.7 : 1 },
+                            ]}
+                        >
+                            <Text style={[styles.ghostPillText, { color: palette.textMuted }]}>call it off</Text>
+                        </Pressable>
+                    </View>
                 ) : null}
             </View>
         </Pressable>
@@ -444,9 +479,36 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 14,
     },
-    seeTable: {
+    // Footer vocabulary — a state chip (what you answered) + ghost pills (every
+    // quiet action: change, call it off, see the table). One grammar, all states.
+    footerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    stateChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        height: 34,
+        paddingHorizontal: 13,
+        borderRadius: 999,
+    },
+    stateChipText: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
+        fontSize: 12,
+    },
+    ghostPill: {
+        height: 34,
+        paddingHorizontal: 14,
+        borderRadius: 999,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    ghostPillText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
     },
     rsvpRow: {
         flexDirection: 'row',
@@ -475,22 +537,5 @@ const styles = StyleSheet.create({
     outBtnText: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 14,
-    },
-    answeredRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-    },
-    answered: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-    },
-    change: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-    },
-    callOff: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
     },
 });
