@@ -8,6 +8,11 @@
  *
  * Implementation: Modal + Animated.spring (same as TableSwitcherSheet — no
  * extra deps). Drag-to-dismiss via PanResponder.
+ *
+ * Keyboard: the sheet rides above the iOS keyboard via KeyboardAvoidingView
+ * (behavior="position", same idiom as CreateListSheet) and its max height
+ * shrinks to the space left above the keyboard — the autofocused search field
+ * used to sit fully behind the keyboard, which read as "add member is broken."
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -16,7 +21,9 @@ import {
     Text,
     Modal,
     Animated,
+    KeyboardAvoidingView,
     PanResponder,
+    Platform,
     Pressable,
     FlatList,
     ActivityIndicator,
@@ -24,6 +31,7 @@ import {
     Image,
     Alert,
     Share,
+    useWindowDimensions,
 } from 'react-native';
 import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { track } from '@/lib/track';
@@ -32,6 +40,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { SearchInput } from '@/components/search/SearchInput';
+import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useUserSearch, type UserSearchResult } from '@/hooks/users/useUserSearch';
 import { useAddMember, AddMemberError } from '@/hooks/tables/useAddMember';
 
@@ -139,6 +148,8 @@ export function AddMemberSheet({
 }: AddMemberSheetProps) {
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const { height: windowHeight } = useWindowDimensions();
+    const keyboardHeight = useKeyboardHeight();
     const translateY = useRef(new Animated.Value(SHEET_MAX_HEIGHT)).current;
     const dragY = useRef(new Animated.Value(0)).current;
     const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -248,6 +259,13 @@ export function AddMemberSheet({
     const hasQuery = debouncedQ.trim().length > 0;
     const showEmpty = hasQuery && !isFetching && (searchResults?.length ?? 0) === 0;
 
+    // Fit the sheet in the space left above the keyboard (KAV shifts it up by
+    // exactly keyboardHeight, so anything taller would clip off the top).
+    const sheetMaxHeight = Math.min(
+        SHEET_MAX_HEIGHT,
+        windowHeight - keyboardHeight - insets.top - Spacing.xl,
+    );
+
     return (
         <Modal
             visible={visible}
@@ -265,7 +283,12 @@ export function AddMemberSheet({
                 />
             </Animated.View>
 
-            {/* Sheet */}
+            {/* Sheet — rides above the keyboard (same KAV idiom as CreateListSheet) */}
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'position' : undefined}
+                style={styles.avoidingView}
+                pointerEvents="box-none"
+            >
             <Animated.View
                 style={[
                     styles.sheet,
@@ -273,7 +296,7 @@ export function AddMemberSheet({
                         backgroundColor: palette.surfaceContainerLow,
                         paddingBottom: insets.bottom + Spacing.md,
                         transform: [{ translateY: sheetTranslate }],
-                        maxHeight: SHEET_MAX_HEIGHT,
+                        maxHeight: sheetMaxHeight,
                     },
                 ]}
             >
@@ -324,6 +347,7 @@ export function AddMemberSheet({
                     </View>
                 ) : (
                     <FlatList
+                        style={styles.resultsList}
                         data={searchResults ?? []}
                         keyExtractor={(item) => item.user_id}
                         renderItem={({ item }) => (
@@ -359,6 +383,7 @@ export function AddMemberSheet({
                     </Text>
                 </Pressable>
             </Animated.View>
+            </KeyboardAvoidingView>
         </Modal>
     );
 }
@@ -382,11 +407,13 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 13,
     },
-    sheet: {
+    avoidingView: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
+    },
+    sheet: {
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
         shadowColor: '#1c1c19',
@@ -419,6 +446,10 @@ const styles = StyleSheet.create({
     hint: {
         paddingVertical: Spacing.xl,
         alignItems: 'center',
+    },
+    resultsList: {
+        flexGrow: 0,
+        flexShrink: 1,
     },
     hintText: {
         fontFamily: 'Manrope_400Regular',
