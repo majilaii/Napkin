@@ -2,6 +2,12 @@
 # Minimal: only edge function overrides needed for TICKET-072.
 # Other project settings are controlled by the linked Supabase project.
 
+[db]
+# Prod runs Postgres 17 (17.6.1.044). Pinned so local `supabase start` and the
+# migration-replay CI guard can't drift onto a different major if a future CLI
+# changes its default. Local-only setting; `config push` never sends it.
+major_version = 17
+
 [functions.share-page]
 # Public URL renderer — no JWT required (iMessage/WhatsApp unfurl bots, browsers)
 verify_jwt = false
