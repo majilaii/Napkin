@@ -423,7 +423,7 @@ The checklist lives in the ticket's `## Notes / Blast Radius` section, written b
 - **Backdated timestamps are the trap.** A branch cut before another migration merges will replay before it, even though prod applied them in merge order. If an earlier-versioned file must reference a later table inside a `language sql` body, `set check_function_bodies = off;` / `reset` around it (see `20260424100000_pagination_rpcs.sql`).
 - **Nested `$$` never parses.** Use distinct dollar-quote tags for strings inside DO blocks (`$do$` / `$job$`).
 - CI enforces this: `.github/workflows/migration-replay.yml` replays the full chain into a throwaway DB on every PR touching `supabase/migrations/**`. A red replay guard fails the PR.
-- Prod carries ~39 legacy objects no migration creates (`entry_likes`, `entry_comments`, `table_wishlist`, `notify_on_*`, `fn_user_stats`, …) — all dead, zero code references (audited 2026-07-04). A fresh replay not having them is correct. Don't "fix" that by adding capture migrations; a cleanup ticket may drop them from prod someday.
+- The 39 dashboard-era fossil objects prod used to carry (`entry_likes`, `entry_comments`, `table_wishlist`, `notify_on_*`, `fn_user_stats`, …) were **dropped 2026-07-04** by TICKET-100 (`20260705000000_drop_dashboard_era_fossils.sql`; all three fossil tables verified empty first). Prod and a fresh replay now agree. If a future audit finds prod-only objects again, drop them via a guarded `IF EXISTS` migration through CI — never add capture migrations, never laptop-push.
 
 ### PostgREST embed disambiguation rule
 
