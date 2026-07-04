@@ -1094,10 +1094,13 @@ serve(async (req) => {
             })
             .filter(Boolean);
 
-        // Build Page envelope from the RPC rows (cursor uses sort_date + id)
+        // Build Page envelope from the RPC rows (cursor uses sort_date + id).
+        // buildPage must see the UNSLICED limit+1 rows — it detects has_more via
+        // rows.length > pageSize, so passing the pre-sliced keptRpc always yields
+        // next_cursor=null and the feed hard-caps at one page.
         const last = keptRpc[keptRpc.length - 1];
         const next_cursor = has_more && last
-            ? buildPage(keptRpc, PAGE_SIZE, (r) => ({ sort_date: r.sort_date, id: r.id })).next_cursor
+            ? buildPage(pageRows, PAGE_SIZE, (r) => ({ sort_date: r.sort_date, id: r.id })).next_cursor
             : null;
 
         return new Response(

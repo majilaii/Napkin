@@ -301,13 +301,18 @@ async function handleCancel(
         return err('GATHERING_CLOSED', 'Only a proposed gathering can be cancelled', 409);
     }
 
-    const { error: cancelErr } = await supabase
+    const { data: cancelledRows, error: cancelErr } = await supabase
         .from('gatherings')
         .update({ status: 'cancelled', updated_at: new Date().toISOString() })
         .eq('id', gatheringId)
         .eq('host_user_id', user.id)
-        .eq('status', 'proposed');
+        .eq('status', 'proposed')
+        .select('id');
     if (cancelErr) throw cancelErr;
+    if (!cancelledRows || cancelledRows.length === 0) {
+        // Dispatch/expiry won the race between the status read and this update.
+        return err('GATHERING_CLOSED', 'Only a proposed gathering can be cancelled', 409);
+    }
 
     return json({ cancelled: true });
 }

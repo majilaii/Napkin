@@ -208,11 +208,19 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                 ) : null}
 
                 {isDispatched ? (
-                    <Pressable onPress={openSupper} hitSlop={6} accessibilityRole="button" accessibilityLabel="see the table">
-                        <Text style={[styles.seeTable, { color: palette.primary }]}>
-                            gathered — see the table →
+                    isHost || viewer_response === 'in' ? (
+                        <Pressable onPress={openSupper} hitSlop={6} accessibilityRole="button" accessibilityLabel="see the table">
+                            <Text style={[styles.seeTable, { color: palette.primary }]}>
+                                gathered — see the table →
+                            </Text>
+                        </Pressable>
+                    ) : (
+                        /* The supper roster is confirmed members only — supper-detail
+                           404s everyone else, so don't link them into a dead end. */
+                        <Text style={[styles.expired, { color: palette.textMuted }]}>
+                            gathered
                         </Text>
-                    </Pressable>
+                    )
                 ) : null}
 
                 {isProposed && !isHost ? (

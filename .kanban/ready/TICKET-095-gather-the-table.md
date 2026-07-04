@@ -139,3 +139,35 @@ table-shares-style (cors/json/err helpers, service-role client, auth.getUser, `{
 - `in_count` counts 'in' RSVPs **from current members only** (the seats list) so the number a member sees always equals what dispatch would count. An ex-member's stale 'in' is invisible. Flagging as a deliberate interpretation of "`<n> in`".
 - The host keeps `call it off` as their only control (host is auto-'in' and cannot RSVP 'out'); a host who can't make their own gathering cancels it. If hosts should be able to flip to 'out' while keeping the proposal alive, that's a small follow-up.
 - Dispatched supper's `host_user_id` = the gathering host even if the host wasn't 'in' by dispatch time (spec-as-written; `is_supper_member` treats the host as a member either way, so they can still see it).
+
+---
+
+## Review History
+
+### Review 1 — code-reviewer (cold, vs acceptance criteria)
+```
+Date: 2026-07-04
+Verdict: PASS-WITH-NITS
+Score: 11/11 acceptance criteria PASS · 0 P0 · 0 P1 · 2 P2
+```
+- fn_table_activity_page replacement mechanically diffed against 20260620000000 base: additive only (gatherings_stream CTE + UNION leg). RLS/grants/optimistic-patch/design-compliance all PASS.
+- P2 nits: gatherings not in smoke list (deliberate — list additions are postmortem-driven and CI smoke lacks secrets); GatherSheet is light-scheme like sibling sheets.
+
+### Review 2 — adversarial landmine pass (Codex slot; Codex CLI broken on this machine, substituted with an independent Claude pass)
+```
+Date: 2026-07-04
+Verdict: PASS-WITH-NITS
+Score: 0 P0 · 2 P1 (1 new, 1 pre-existing) · 7 P2
+```
+- Cleared under attack: double-dispatch (FOR UPDATE SKIP LOCKED + EvalPlanQual), privilege model (member_id everywhere, service-role-only writes, SECDEF search_path pinned), feed-cannot-500-from-dispatch, HKT boundary math, old-client + auto-revert safety, cache patch coverage across filter variants, no broken callers.
+
+### Post-review fixes (applied by orchestrator, same branch)
+- **P1-1 fixed** — GatheringCard: `gathered — see the table →` now only for host / viewers with response `'in'`; everyone else gets a muted `gathered` (the supper roster is confirmed-only; supper-detail 404s non-members).
+- **P1-2 fixed** — table-activity `next_cursor` was ALWAYS null (pre-existing on main since TICKET-035: `buildPage(keptRpc…)` on a pre-sliced array → internal has_more always false → Table feed silently hard-capped at 20 items). Fixed by passing the unsliced `pageRows`. Bundled here because this release redeploys table-activity anyway and the known_kinds back-compat story assumes working pagination.
+- **P2-1 fixed** — gatherings `cancel` now checks affected rows; a cancel racing dispatch returns 409 GATHERING_CLOSED instead of false success.
+
+### Known/deferred (documented, not fixed)
+- RSVP-vs-dispatch TOCTOU: a stale 'in' racing dispatch shows in seats but not the supper roster — cosmetic, self-heals on refetch.
+- Dispatch loop is all-or-nothing per table (no per-gathering subtransaction); no poison row exists today, revisit if suppers gains NOT-NULL columns.
+- Deleted supper leaves a dispatched card whose link no-ops (supper_id → NULL) — fold into the supper-delete ticket (TICKET-096 candidate).
+- Client min-date is device-local tomorrow vs server HKT — accepted for the HK/Macau cohort; failure copy is generic.
