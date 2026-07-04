@@ -251,6 +251,41 @@ export interface SupperCardActivity {
     created_at: string;
 }
 
+/** TICKET-095 "Gather the table" — one seat on a gathering card. Every CURRENT
+ *  table member is a seat; `response` is their RSVP ('in' renders solid,
+ *  undecided/out ghosted). Host first, then 'in', then undecided. */
+export interface GatheringSeat {
+    user_id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+    is_host: boolean;
+    response: 'in' | 'out' | null;
+}
+
+/** TICKET-095 gathering feed card — a proposed future date at a restaurant.
+ *  status drives the card: proposed (RSVP zone) → dispatched (supper_id set,
+ *  "gathered — see the table") | expired ("didn't come together"). Cancelled
+ *  rows are excluded server-side. */
+export interface GatheringCardActivity {
+    type: 'gathering';
+    id: string;
+    sort_date: string;
+    table_id: string;
+    restaurant: { id: string; name: string; city: string | null; photo_url: string | null } | null;
+    host_user_id: string | null;
+    host_name: string | null;
+    note: string | null;
+    /** YYYY-MM-DD (date-only — no time-of-day in v1). */
+    gather_on: string;
+    status: 'proposed' | 'dispatched' | 'expired';
+    /** Set when dispatched — the auto-created supper this gathering became. */
+    supper_id: string | null;
+    seats: GatheringSeat[];
+    in_count: number;
+    viewer_response: 'in' | 'out' | null;
+    created_at: string;
+}
+
 export type ActivityItem =
     | SoloShareActivity
     | TableNightActivity
@@ -259,7 +294,23 @@ export type ActivityItem =
     | SharedSaveActivityItem
     | ShareDigestActivityItem
     | RestaurantFloatActivityItem
-    | SupperCardActivity;
+    | SupperCardActivity
+    | GatheringCardActivity;
+
+/** TICKET-095: every feed-card kind THIS client build can render. Sent as
+ *  known_kinds so the server can add new kinds without breaking old clients
+ *  (they don't send it and get the legacy set). Keep in sync with the
+ *  tables.tsx feed if-chain. */
+export const KNOWN_ACTIVITY_KINDS = [
+    'entry',
+    'table_night',
+    'top_4_edited',
+    'shared_save',
+    'share_digest',
+    'restaurant_float',
+    'supper',
+    'gathering',
+] as const;
 
 export interface TableActivityFilters {
     filterType?: string;   // 'round' | 'solo_share'
@@ -272,7 +323,12 @@ async function fetchTableActivityPage(
     filters: TableActivityFilters | undefined,
     _token: string | null,
 ): Promise<Page<ActivityItem>> {
-    const body: Record<string, unknown> = { table_id: tableId };
+    const body: Record<string, unknown> = {
+        table_id: tableId,
+        // TICKET-095: enumerate every kind this build renders so the server can
+        // ship new kinds without junk-carding older clients.
+        known_kinds: KNOWN_ACTIVITY_KINDS,
+    };
     if (cursor) body.cursor = cursor;
     if (filters?.filterType) body.filter_type = filters.filterType;
     if (filters?.filterUserId) body.filter_user_id = filters.filterUserId;

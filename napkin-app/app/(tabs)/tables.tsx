@@ -46,6 +46,7 @@ import {
     type ShareDigestActivityItem,
     type RestaurantFloatActivityItem,
     type SupperCardActivity,
+    type GatheringCardActivity,
 } from '@/hooks/tables/useTableActivity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
@@ -77,6 +78,8 @@ import { RestaurantFloatCard } from '@/components/feed/RestaurantFloatCard';
 import { TableEntryCard } from '@/components/journal';
 // TICKET-082 v2: the empty-table supper card + in-app nudge
 import { SupperCard, SupperNudgeBanner } from '@/components/suppers';
+// TICKET-095: the gather-the-table proposal card
+import { GatheringCard } from '@/components/gatherings';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -260,7 +263,10 @@ export default function TablesScreen() {
                     // Supper v2 kill-switch: drop supper cards from the DATA (not just the
                     // leaf render) so a date whose only item is a supper never forms an
                     // empty/orphan DateSectionHeader when the curtain is on.
-                    !(i.type === 'supper' && FRIEND_TEST.hideSuppers),
+                    !(i.type === 'supper' && FRIEND_TEST.hideSuppers) &&
+                    // TICKET-095: gatherings terminate in a supper — same curtain,
+                    // same orphan-header rationale.
+                    !(i.type === 'gathering' && FRIEND_TEST.hideSuppers),
             ),
         [items],
     );
@@ -967,6 +973,20 @@ export default function TablesScreen() {
                                                                       },
                                                                   })
                                                               }
+                                                          />
+                                                      );
+                                                  }
+                                                  // TICKET-095: the gather-the-table proposal card. RSVP +
+                                                  // host-cancel mutations live inside the card (RestaurantFloatCard
+                                                  // precedent); it navigates to /restaurant and /supper itself.
+                                                  if (item.type === 'gathering') {
+                                                      if (FRIEND_TEST.hideSuppers) return null;
+                                                      const g = item as GatheringCardActivity;
+                                                      return (
+                                                          <GatheringCard
+                                                              key={`gathering-${g.id}`}
+                                                              gathering={g}
+                                                              viewerId={user?.id}
                                                           />
                                                       );
                                                   }
