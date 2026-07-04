@@ -59,7 +59,11 @@ $$;
 -- project, this block is skipped and the table is bounded at ~30 rows/hr/user
 -- (acceptable for v1). See Builder Questions in TICKET-053 build log.
 
-DO $$
+-- Replay fix (2026-07-04): the inner cron command previously used $$…$$ inside
+-- a $$-quoted DO block — the inner $$ terminated the DO body early, a hard
+-- parse error on any Postgres. Distinct dollar-quote tag fixes it; behavior
+-- unchanged (block still no-ops unless pg_cron is installed).
+DO $do$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM pg_extension WHERE extname = 'pg_cron'
@@ -67,8 +71,8 @@ BEGIN
         PERFORM cron.schedule(
             'rate-limit-cleanup',
             '0 * * * *',
-            $$DELETE FROM rate_limit_buckets WHERE window_start < now() - interval '24 hours'$$
+            $job$DELETE FROM rate_limit_buckets WHERE window_start < now() - interval '24 hours'$job$
         );
     END IF;
 END
-$$;
+$do$;

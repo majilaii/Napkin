@@ -415,6 +415,16 @@ For each schema change in the migration, the plan must list:
 
 The checklist lives in the ticket's `## Notes / Blast Radius` section, written before the build phase. Builders treat it as a TODO list. Reviewers reject any PR where a listed file wasn't touched or wasn't explicitly justified.
 
+### From-scratch replayability (locked 2026-07-04)
+
+`supabase db push` only applies NEW versions against the complete prod schema — it never re-checks that the chain still replays from zero. Local `supabase start` / `db reset` (and any future staging/branching) DO replay from zero. Rules:
+
+- **Never rename an already-applied migration version.** It desyncs `supabase_migrations.schema_migrations` on prod. Fix ordering bugs by editing file *content* — applied files never re-run on prod.
+- **Backdated timestamps are the trap.** A branch cut before another migration merges will replay before it, even though prod applied them in merge order. If an earlier-versioned file must reference a later table inside a `language sql` body, `set check_function_bodies = off;` / `reset` around it (see `20260424100000_pagination_rpcs.sql`).
+- **Nested `$$` never parses.** Use distinct dollar-quote tags for strings inside DO blocks (`$do$` / `$job$`).
+- CI enforces this: `.github/workflows/migration-replay.yml` replays the full chain into a throwaway DB on every PR touching `supabase/migrations/**`. A red replay guard fails the PR.
+- Prod carries ~39 legacy objects no migration creates (`entry_likes`, `entry_comments`, `table_wishlist`, `notify_on_*`, `fn_user_stats`, …) — all dead, zero code references (audited 2026-07-04). A fresh replay not having them is correct. Don't "fix" that by adding capture migrations; a cleanup ticket may drop them from prod someday.
+
 ### PostgREST embed disambiguation rule
 
 If a table T has more than one foreign-key relationship to the same target table U (which happens whenever you add a join table that bridges T and U), every PostgREST embed `from('T').select('... U(...)')` MUST name the FK explicitly: `from('T').select('... U!T_<col>_fkey(...)')`. Otherwise PostgREST throws `PGRST201` at request time (HTTP 500).

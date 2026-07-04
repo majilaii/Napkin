@@ -3,6 +3,15 @@
 -- All DDL is additive (no RLS changes, no destructive operations).
 -- Safe to ship alongside the edge-function deploy.
 
+-- Replay-order fix (2026-07-04): this file merged to main AFTER
+-- 20260427000000_entry_companions.sql, so prod applied it with entry_companions
+-- already present. A from-scratch replay runs it in version order (earlier),
+-- where the table doesn't exist yet. fn_table_activity_page's body references
+-- entry_companions, and `language sql` bodies are validated at CREATE time.
+-- Skip body validation so the stored definition matches prod exactly; nothing
+-- calls the function before 20260427000000, and later migrations redefine it.
+set check_function_bodies = off;
+
 -- ── fn_table_activity_page ────────────────────────────────────────────────────
 -- Merges solo entries + table_nights for a table into a single keyset-paginated
 -- stream ordered by sort_date DESC, id DESC.
@@ -154,3 +163,5 @@ create index if not exists idx_table_nights_table_sort
 create index if not exists idx_restaurants_city
     on restaurants (city)
     where city is not null;
+
+reset check_function_bodies;
