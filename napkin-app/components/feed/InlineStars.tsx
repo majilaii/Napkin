@@ -9,7 +9,7 @@ interface Props {
 
 /**
  * Simple inline stars — 5 glyphs, each full/half/empty via opacity.
- * Half-step precision. Used in FriendLogCard and FastLogRow.
+ * Half-step precision. Used in FriendFeedCard and restaurant surfaces.
  */
 export function InlineStars({ value, size = 12, color = '#b8842a' }: Props) {
     return (

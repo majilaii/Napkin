@@ -132,15 +132,18 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-098: feed-friends replaces the deleted legacy `feed` fn. Page
+    // envelope check — an empty rows array is a legitimate zero-follow state.
     {
-        name: 'feed?action=page (cross-Table aggregated feed)',
+        name: 'feed-friends (TICKET-098 friends-only reviews feed)',
         method: 'POST',
-        fn: 'feed',
-        body: { action: 'page', limit: 5 },
+        fn: 'feed-friends',
+        body: { limit: 5 },
         shape: (json) => {
-            const data = (json as { data?: { rows?: unknown[] } }).data;
+            const data = (json as { data?: { rows?: unknown[]; has_more?: unknown } }).data;
             if (!data) return 'missing data envelope';
             if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (typeof data.has_more !== 'boolean') return 'data.has_more is not a boolean';
             return null;
         },
     },

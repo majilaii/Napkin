@@ -22,12 +22,15 @@
  *   - Atlas invalidation fires for `table_ids[0]` (primary) only.
  *
  * TICKET-042: extended optimistic patch to:
- *   - feed.all(userId)       — cross-Table chronological feed
  *   - tables.activity(tableId) — Table activity feed (when table_id present)
  *   - entries.forDay(userId, localDateStr) — day-bucketed journal view
  *   - entries.mySolo(userId) — solo journal (existing, feed-only entries only)
- * All four caches are snapshotted and rolled back together on error.
+ * All caches are snapshotted and rolled back together on error.
  * onSuccess reconciles by client_nonce, handles midnight day-bucket migration.
+ *
+ * TICKET-098: the feed.all optimistic prepend/reconcile was REMOVED. The legacy
+ * cross-Table feed is gone; the new friends feed (feed.friends) never shows the
+ * viewer's own entries, so there is nothing to patch on create.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -40,14 +43,12 @@ import { track } from '@/lib/track';
 import {
     prependToInfinitePages,
     swapByNonce,
-    removeByMatch,
     snapshotInfinite,
     prependArray,
     removeFromArray,
     swapInArray,
 } from '@/lib/optimistic';
 import type { SoloShareActivity } from '@/hooks/tables/useTableActivity';
-import type { FeedEntry, FeedPage } from '@/hooks/feed/useFeed';
 import type { ActivityItem } from '@/hooks/tables/useTableActivity';
 import type { Page } from '@/lib/pagination';
 import type { InfiniteData } from '@tanstack/react-query';
@@ -276,43 +277,6 @@ function buildOptimisticSoloShare(
 }
 
 /**
- * Build a placeholder FeedEntry for the feed.all cache.
- * Shape differs from SoloShareActivity — notably `restaurant` (singular) vs `restaurants`.
- */
-function buildOptimisticFeedEntry(
-    input: CreateEntryInput,
-    userId: string,
-    nonce: string,
-): FeedEntry {
-    const now = new Date().toISOString();
-    const visited = input.visited_at ?? now;
-    return {
-        id: `optimistic-${nonce}`,
-        user_id: userId,
-        restaurant_id: null,
-        rating: input.rating ?? null,
-        content: input.content ?? null,
-        visited_at: visited,
-        created_at: now,
-        sort_date: visited,
-        photos: input.photo_urls ?? (input.photo_url ? [input.photo_url] : []),
-        photo_count: input.photo_urls?.length ?? (input.photo_url ? 1 : 0),
-        reaction_count: 0,
-        comment_count: 0,
-        top_emojis: [],
-        my_reactions: [],
-        restaurant: input.restaurant
-            ? {
-                  id: '',
-                  name: input.restaurant.name,
-                  photo_url: null,
-              }
-            : null,
-        author: { display_name: '', avatar_url: null },
-    };
-}
-
-/**
  * Build a placeholder ActivityItem (solo_share type) for the tables.activity cache.
  * The activity feed shows solo shares via SoloShareActivity shape.
  */
@@ -332,7 +296,6 @@ interface MutationContext {
     /** The viewer-local date bucket the entry was optimistically placed in. */
     viewerLocalDate: string;
     mySoloKey?: readonly unknown[];
-    feedKey?: readonly unknown[];
     /** TICKET-043: one key per selected Table (multi-Table fan-out). */
     activityKeys: Array<readonly unknown[]>;
     forDayKey?: readonly unknown[];
@@ -378,17 +341,9 @@ export function useCreateEntry(
             const viewerLocalDate = localDateStr(new Date());
             const restores: Array<() => void> = [];
 
-            // ── 1. feed.all(userId) — InfiniteData<FeedPage> ──────────────────
-            const feedKey = queryKeys.feed.all(userId);
-            await qc.cancelQueries({ queryKey: feedKey });
-            const { restore: restoreFeed } = snapshotInfinite<FeedEntry, FeedPage>(qc, feedKey);
-            restores.push(restoreFeed);
-            const optimisticFeedRow = buildOptimisticFeedEntry(input, userId, nonce);
-            qc.setQueryData<InfiniteData<FeedPage>>(feedKey, (prev) =>
-                prependToInfinitePages<FeedEntry, FeedPage>(prev, optimisticFeedRow),
-            );
+            // (TICKET-098: no feed patch here — the friends feed excludes self.)
 
-            // ── 2. tables.activity — fan out per Table (TICKET-043) ───────────
+            // ── 1. tables.activity — fan out per Table (TICKET-043) ───────────
             // One optimistic row per selected Table. Each cache is snapshotted
             // independently so all restores are collected and rolled back atomically.
             const activityKeys: Array<readonly unknown[]> = [];
@@ -404,7 +359,7 @@ export function useCreateEntry(
                 );
             }
 
-            // ── 3. entries.forDay(userId, localDate) — flat SoloShareActivity[] ─
+            // ── 2. entries.forDay(userId, localDate) — flat SoloShareActivity[] ─
             // forDay is a flat array (non-paginated), used by day-bucketed calendar view.
             // ONE row regardless of table_ids count (aggregate-feed dedup invariant).
             const forDayKey = queryKeys.entries.forDay(userId, viewerLocalDate);
@@ -420,7 +375,7 @@ export function useCreateEntry(
                 prependArray(prev, optimisticSoloRow),
             );
 
-            // ── 4. entries.mySolo(userId) — flat SoloShareActivity[] ─────────
+            // ── 3. entries.mySolo(userId) — flat SoloShareActivity[] ─────────
             // The personal Journal shows ALL the viewer's own entries (feed-only +
             // Table-shared + Round) since 20260616000100, so prepend regardless of
             // table context. (Previously gated to feed-only, which hid shared meals
@@ -438,7 +393,6 @@ export function useCreateEntry(
                 nonce,
                 viewerLocalDate,
                 mySoloKey,
-                feedKey,
                 activityKeys,
                 forDayKey,
             };
@@ -479,17 +433,6 @@ export function useCreateEntry(
             if (!userId || !context) return;
             const { nonce, viewerLocalDate } = context;
 
-            // Build the server-reconciled FeedEntry from the result.
-            const serverFeedRow: Partial<FeedEntry> = {
-                id: result?.id,
-                restaurant_id: result?.restaurant_id ?? null,
-                created_at: result?.created_at,
-                sort_date: result?.visited_at ?? result?.created_at,
-                visited_at: result?.visited_at ?? null,
-                rating: result?.rating ?? null,
-                content: result?.content ?? null,
-            };
-
             // Build the server-reconciled SoloShareActivity from the result.
             const serverSoloRow: Partial<SoloShareActivity> = {
                 id: result?.id,
@@ -501,18 +444,7 @@ export function useCreateEntry(
                 content: result?.content ?? null,
             };
 
-            // ── 1. Reconcile feed.all ─────────────────────────────────────────
-            if (context.feedKey) {
-                qc.setQueryData<InfiniteData<FeedPage>>(context.feedKey, (prev) => {
-                    if (!prev) return prev;
-                    return swapByNonce<FeedEntry, FeedPage>(prev, nonce, {
-                        ...((prev.pages[0]?.rows?.find((r) => r.id === `optimistic-${nonce}`) ?? {}) as FeedEntry),
-                        ...serverFeedRow,
-                    } as FeedEntry) ?? prev;
-                });
-            }
-
-            // ── 2. Reconcile tables.activity — per Table (TICKET-043) ─────────
+            // ── 1. Reconcile tables.activity — per Table (TICKET-043) ─────────
             for (const activityKey of context.activityKeys) {
                 qc.setQueryData<InfiniteData<Page<ActivityItem>>>(activityKey as any, (prev) => {
                     if (!prev) return prev;
@@ -523,7 +455,7 @@ export function useCreateEntry(
                 });
             }
 
-            // ── 3. Reconcile entries.forDay ───────────────────────────────────
+            // ── 2. Reconcile entries.forDay ───────────────────────────────────
             // Day-bucket migration: server's created_at may have crossed midnight.
             const serverCreatedAt = result?.created_at;
             const serverLocalDate = serverCreatedAt ? localDateStr(new Date(serverCreatedAt)) : viewerLocalDate;
@@ -550,7 +482,7 @@ export function useCreateEntry(
                 );
             }
 
-            // ── 4. Reconcile entries.mySolo ───────────────────────────────────
+            // ── 3. Reconcile entries.mySolo ───────────────────────────────────
             if (context.mySoloKey) {
                 qc.setQueryData<SoloShareActivity[]>(context.mySoloKey, (prev) => {
                     if (!prev) return prev;

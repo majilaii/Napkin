@@ -60,12 +60,14 @@ if (!(globalThis as { __napkinFatalHook?: boolean }).__napkinFatalHook) {
 }
 
 /**
- * BottomNavBar — TICKET-070 Phase A IA update.
+ * BottomNavBar — TICKET-070 Phase A IA update; TICKET-098 adds Feed.
  *
- * 4 tabs: Table · Search · Wishlist · Profile
+ * 5 tabs: Feed · Table · Search · Wishlist · Profile
  * Icons: 21px outline, labels 8px/600 uppercase ls1.2
  * Journal exits the nav (route stays alive for deep links).
- * Profile tab added with person-circle-outline icon.
+ * Feed inserted leftmost (TICKET-098 [ARCH-REVIEW-7] — the reorder is in-spec);
+ * sibling styling/sizing/active-color untouched. Journal remains the landing
+ * surface — post-auth redirect stays `/wishlist`.
  *
  * Wishlist routing: points to the existing Stack route `app/wishlist.tsx`
  * (`/wishlist`). inTabs includes `segments[0] === 'wishlist'` so the bar
@@ -110,6 +112,17 @@ function BottomNavBar() {
         },
       ]}
     >
+      {/* Feed — TICKET-098, leftmost */}
+      <Pressable
+        onPress={() => router.replace('/feed')}
+        style={navStyles.tab}
+        accessibilityLabel="Feed"
+        accessibilityRole="tab"
+      >
+        <Ionicons name="newspaper-outline" size={21} color={tabColor('feed')} />
+        <Text style={labelStyle('feed')}>Feed</Text>
+      </Pressable>
+
       {/* Table */}
       <Pressable
         onPress={() => router.replace('/tables')}

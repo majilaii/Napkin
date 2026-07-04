@@ -121,6 +121,41 @@ function patchTopEmojis(
 }
 
 /**
+ * TICKET-098 [ARCH-REVIEW-2]: which card caches carry counters for a scope.
+ *
+ * Scope isolation (TICKET-021/085) applies to CACHES too:
+ *   - 'table'  → Table activity pages (rows carry TABLE-scope counters).
+ *   - 'public' → friends-feed pages (FriendFeedRow.reaction_count etc. are the
+ *                PUBLIC-scope counters — entries.public_reaction_count).
+ *
+ * The pre-098 walk also patched queryKeys.feed.rootAll() on table scope; after
+ * the legacy cross-Table feed deletion the only pages under ['feed'] are the
+ * friends feed (public counters), so a table-scope delta there would
+ * cross-contaminate scopes. Hence the split: each scope patches exactly the
+ * caches whose counters it owns.
+ */
+function cardCacheKeysForScope(scope: Scope): Array<readonly unknown[]> {
+    return scope === 'table'
+        ? [queryKeys.tables.activityAll()]
+        : [queryKeys.feed.friendsAll()];
+}
+
+/**
+ * Map every row of every page in a cursor-paged cache shape.
+ * Handles the canonical InfiniteData<Page<T>> shape ({ pages: [{ rows }] }) —
+ * ALWAYS maps `page.rows` envelopes, never `page.map` (the shipped 5bb6c6d
+ * lesson: tableActivity/feed pages are `{ rows }` envelopes, not arrays).
+ * Non-page shapes pass through untouched (safe no-op).
+ */
+function mapPagedRows(data: any, mapRow: (item: any) => any): any {
+    if (!data?.pages) return data;
+    return {
+        ...data,
+        pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(mapRow) ?? p.rows })),
+    };
+}
+
+/**
  * Single source of truth for the comment count rendered in UI.
  * (TICKET-036 P1-4)
  *
@@ -216,24 +251,20 @@ export function useToggleReaction() {
           try {
             await queryClient.cancelQueries({ queryKey: key });
 
-            // Only invalidate feed caches for table-scope reactions (public reactions
-            // don't affect Table feed cards)
-            if (scope === 'table') {
-                await queryClient.cancelQueries({ queryKey: queryKeys.tables.activityAll() });
-                await queryClient.cancelQueries({ queryKey: queryKeys.feed.rootAll() });
+            // TICKET-098 [ARCH-REVIEW-2]: card caches are scope-owned —
+            // table → Table activity pages, public → friends-feed pages.
+            const cardKeys = cardCacheKeysForScope(scope);
+            for (const cardKey of cardKeys) {
+                await queryClient.cancelQueries({ queryKey: cardKey });
             }
 
             const previous = queryClient.getQueryData<PostInteractionsData>(key);
             const userId = (await supabase.auth.getUser()).data.user?.id;
 
-            // Snapshot every feed-side cache so we can roll back on error
+            // Snapshot every card-side cache so we can roll back on error
             const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
-            if (scope === 'table') {
-                queryClient.getQueriesData<any>({ queryKey: queryKeys.tables.activityAll() })
-                    .forEach(([k, data]) => {
-                        if (data) feedSnapshots.push({ key: k, data });
-                    });
-                queryClient.getQueriesData<any>({ queryKey: queryKeys.feed.rootAll() })
+            for (const cardKey of cardKeys) {
+                queryClient.getQueriesData<any>({ queryKey: cardKey })
                     .forEach(([k, data]) => {
                         if (data) feedSnapshots.push({ key: k, data });
                     });
@@ -268,49 +299,31 @@ export function useToggleReaction() {
                 });
             }
 
-            if (scope === 'table') {
-                // Flips reaction_count + my_reactions + top_emojis on the matching item.
-                // Shared by both cache shapes since they use the same field names.
-                const flipItem = (item: any) => {
-                    if (item?.id !== targetId) return item;
-                    const currentReactions: string[] = item.my_reactions ?? [];
-                    const has = currentReactions.includes(emoji);
-                    return {
-                        ...item,
-                        my_reactions: has
-                            ? currentReactions.filter((e) => e !== emoji)
-                            : [...currentReactions, emoji],
-                        reaction_count: has
-                            ? Math.max(0, (item.reaction_count ?? 0) - 1)
-                            : (item.reaction_count ?? 0) + 1,
-                        top_emojis: patchTopEmojis(item.top_emojis ?? [], emoji, has ? 'remove' : 'add'),
-                    };
+            // Flips reaction_count + my_reactions + top_emojis on the matching item.
+            // Field names are shared by ActivityItem (table scope) and
+            // FriendFeedRow (public scope) — same names, scope-owned values.
+            const flipItem = (item: any) => {
+                if (item?.id !== targetId) return item;
+                const currentReactions: string[] = item.my_reactions ?? [];
+                const has = currentReactions.includes(emoji);
+                return {
+                    ...item,
+                    my_reactions: has
+                        ? currentReactions.filter((e) => e !== emoji)
+                        : [...currentReactions, emoji],
+                    reaction_count: has
+                        ? Math.max(0, (item.reaction_count ?? 0) - 1)
+                        : (item.reaction_count ?? 0) + 1,
+                    top_emojis: patchTopEmojis(item.top_emojis ?? [], emoji, has ? 'remove' : 'add'),
                 };
+            };
 
-                // tableActivity = useInfiniteQuery → { pages: ActivityItem[][] }
-                queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
-                    { queryKey: queryKeys.tables.activityAll() },
-                    (data) => {
-                        if (!data?.pages) return data;
-                        return {
-                            ...data,
-                            pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(flipItem) })),
-                        };
-                    },
-                );
-
-                // feed = useCursorPagedQuery → { pages: [{ rows }] }; older callers
-                // may still hold a { entries } shape — handle both.
+            // Both caches are cursor-paged { pages: [{ rows }] } envelopes —
+            // mapPagedRows maps page.rows, never page.map.
+            for (const cardKey of cardKeys) {
                 queryClient.setQueriesData<any>(
-                    { queryKey: queryKeys.feed.rootAll() },
-                    (data: any) => {
-                        if (!data) return data;
-                        if (data.pages) {
-                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(flipItem) ?? p.rows })) };
-                        }
-                        if (data.entries) return { ...data, entries: data.entries.map(flipItem) };
-                        return data;
-                    },
+                    { queryKey: cardKey },
+                    (data: any) => mapPagedRows(data, flipItem),
                 );
             }
 
@@ -370,9 +383,11 @@ export function useToggleReaction() {
                 });
             }
 
-            if (scope === 'table' && result.counts) {
-                // Sync feed-card top_emojis + reaction_count from server's authoritative
-                // counts so all caches converge without invalidating.
+            if (result.counts) {
+                // Sync card top_emojis + reaction_count from the server's
+                // authoritative counts so all caches converge without invalidating.
+                // TICKET-098 [ARCH-REVIEW-2]: scope-owned card caches only —
+                // table → activity pages, public → friends-feed pages.
                 const syncItem = (item: any) => {
                     if (item?.id !== targetId) return item;
                     return {
@@ -381,24 +396,12 @@ export function useToggleReaction() {
                         top_emojis: result.counts!.top_emojis,
                     };
                 };
-                queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
-                    { queryKey: queryKeys.tables.activityAll() },
-                    (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
-                        if (!data?.pages) return data;
-                        return { ...data, pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(syncItem) })) };
-                    },
-                );
-                queryClient.setQueriesData<any>(
-                    { queryKey: queryKeys.feed.rootAll() },
-                    (data: any) => {
-                        if (!data) return data;
-                        if (data.pages) {
-                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(syncItem) ?? p.rows })) };
-                        }
-                        if (data.entries) return { ...data, entries: data.entries.map(syncItem) };
-                        return data;
-                    },
-                );
+                for (const cardKey of cardCacheKeysForScope(scope)) {
+                    queryClient.setQueriesData<any>(
+                        { queryKey: cardKey },
+                        (data: any) => mapPagedRows(data, syncItem),
+                    );
+                }
             }
             // Suppress unused warnings.
             void emoji;
@@ -453,13 +456,11 @@ export function useAddComment() {
             // TICKET-036 P1-10 (symmetry with delete): increment feed-card
             // comment_count optimistically so the count pill reflects the new
             // comment immediately. Snapshot for rollback.
+            // TICKET-098 [ARCH-REVIEW-2]: card caches are scope-owned.
+            const cardKeys = cardCacheKeysForScope(scope);
             const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
-            if (scope === 'table') {
-                queryClient.getQueriesData<any>({ queryKey: queryKeys.tables.activityAll() })
-                    .forEach(([k, data]) => {
-                        if (data) feedSnapshots.push({ key: k, data });
-                    });
-                queryClient.getQueriesData<any>({ queryKey: queryKeys.feed.rootAll() })
+            for (const cardKey of cardKeys) {
+                queryClient.getQueriesData<any>({ queryKey: cardKey })
                     .forEach(([k, data]) => {
                         if (data) feedSnapshots.push({ key: k, data });
                     });
@@ -488,28 +489,14 @@ export function useAddComment() {
                 });
             }
 
-            if (scope === 'table') {
-                const incrementItem = (item: any) => {
-                    if (item?.id !== targetId) return item;
-                    return { ...item, comment_count: (item.comment_count ?? 0) + 1 };
-                };
-                queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
-                    { queryKey: queryKeys.tables.activityAll() },
-                    (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
-                        if (!data?.pages) return data;
-                        return { ...data, pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(incrementItem) })) };
-                    },
-                );
+            const incrementItem = (item: any) => {
+                if (item?.id !== targetId) return item;
+                return { ...item, comment_count: (item.comment_count ?? 0) + 1 };
+            };
+            for (const cardKey of cardKeys) {
                 queryClient.setQueriesData<any>(
-                    { queryKey: queryKeys.feed.rootAll() },
-                    (data: any) => {
-                        if (!data) return data;
-                        if (data.pages) {
-                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(incrementItem) ?? p.rows })) };
-                        }
-                        if (data.entries) return { ...data, entries: data.entries.map(incrementItem) };
-                        return data;
-                    },
+                    { queryKey: cardKey },
+                    (data: any) => mapPagedRows(data, incrementItem),
                 );
             }
 
@@ -720,15 +707,13 @@ export function useDeleteComment() {
             }
             const removedCount = removedIds.size;
 
-            // TICKET-036 P1-10: snapshot feed-side caches too so we can
+            // TICKET-036 P1-10: snapshot card-side caches too so we can
             // decrement comment_count on the matching card and roll back.
+            // TICKET-098 [ARCH-REVIEW-2]: card caches are scope-owned.
+            const cardKeys = cardCacheKeysForScope(scope);
             const feedSnapshots: Array<{ key: readonly unknown[]; data: unknown }> = [];
-            if (scope === 'table') {
-                queryClient.getQueriesData<any>({ queryKey: queryKeys.tables.activityAll() })
-                    .forEach(([k, data]) => {
-                        if (data) feedSnapshots.push({ key: k, data });
-                    });
-                queryClient.getQueriesData<any>({ queryKey: queryKeys.feed.rootAll() })
+            for (const cardKey of cardKeys) {
+                queryClient.getQueriesData<any>({ queryKey: cardKey })
                     .forEach(([k, data]) => {
                         if (data) feedSnapshots.push({ key: k, data });
                     });
@@ -743,30 +728,16 @@ export function useDeleteComment() {
                 });
             }
 
-            // Decrement comment_count on the matching feed card so the count
-            // pill updates instantly. Only meaningful for table-scope.
-            if (scope === 'table') {
-                const decrementItem = (item: any) => {
-                    if (item?.id !== targetId) return item;
-                    return { ...item, comment_count: Math.max(0, (item.comment_count ?? 0) - removedCount) };
-                };
-                queryClient.setQueriesData<{ pages: any[][]; pageParams: unknown[] }>(
-                    { queryKey: queryKeys.tables.activityAll() },
-                    (data: { pages: any[][]; pageParams: unknown[] } | undefined) => {
-                        if (!data?.pages) return data;
-                        return { ...data, pages: data.pages.map((page: any) => ({ ...page, rows: (page.rows ?? []).map(decrementItem) })) };
-                    },
-                );
+            // Decrement comment_count on the matching card so the count pill
+            // updates instantly — scope-owned caches only [ARCH-REVIEW-2].
+            const decrementItem = (item: any) => {
+                if (item?.id !== targetId) return item;
+                return { ...item, comment_count: Math.max(0, (item.comment_count ?? 0) - removedCount) };
+            };
+            for (const cardKey of cardKeys) {
                 queryClient.setQueriesData<any>(
-                    { queryKey: queryKeys.feed.rootAll() },
-                    (data: any) => {
-                        if (!data) return data;
-                        if (data.pages) {
-                            return { ...data, pages: data.pages.map((p: any) => ({ ...p, rows: p.rows?.map(decrementItem) ?? p.rows })) };
-                        }
-                        if (data.entries) return { ...data, entries: data.entries.map(decrementItem) };
-                        return data;
-                    },
+                    { queryKey: cardKey },
+                    (data: any) => mapPagedRows(data, decrementItem),
                 );
             }
 

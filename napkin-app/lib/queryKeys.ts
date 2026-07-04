@@ -110,10 +110,21 @@ export const queryKeys = {
         recentlyPostedTables: (userId: string) => ['users', 'recentlyPostedTables', userId] as const,
     },
 
-    // Feed (cross-Table chronological feed — Feed tab)
+    // Feed (Feed tab — TICKET-098: friends-only reviews + trending rail)
     feed: {
+        /** Prefix over every feed cache. Retained as the patch/invalidation
+         * prefix in useDeleteEntry / useUpdateEntry / useBlocking. */
         rootAll: () => ['feed'] as const,
+        /** Legacy cross-Table aggregate cache key (TICKET-032, retired in
+         * TICKET-098). No hook populates it anymore; kept so historical
+         * rootAll() walkers stay type-compatible. Do not repopulate. */
         all: (userId: string) => ['feed', userId] as const,
+        /** Friends feed pages — prefix form for the public-scope reaction/comment
+         * cache sync in usePostInteractions [ARCH-REVIEW-2]. */
+        friendsAll: () => ['feed', 'friends'] as const,
+        friends: (userId: string) => ['feed', 'friends', userId] as const,
+        /** Trending rail — global (not per-viewer), 1h server cache. */
+        trending: () => ['feed', 'trending'] as const,
     },
 
     // Atlas (geographic lens on a Table's dining history)

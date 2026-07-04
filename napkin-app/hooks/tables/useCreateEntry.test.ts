@@ -1,12 +1,14 @@
 /**
  * Tests for useCreateEntry — TICKET-042 + TICKET-043.
  *
- * Covers the extended optimistic patch across feed.all, tables.activity,
- * entries.forDay, and entries.mySolo caches.
+ * Covers the extended optimistic patch across tables.activity, entries.forDay,
+ * and entries.mySolo caches. (TICKET-098: the feed.all patch was removed — the
+ * legacy cross-Table feed is gone and the friends feed excludes self — so its
+ * assertions were removed here too.)
  *
  * Tests:
- *   (a) success reconcile — all four caches patched + nonce swapped for server id
- *   (b) failure rollback — all four caches rolled back to snapshots
+ *   (a) success reconcile — caches patched + nonce swapped for server id
+ *   (b) failure rollback — caches rolled back to snapshots
  *   (c) rapid double-mutation — no races
  *   (d) table entry — tables.activity patched, mySolo ALSO patched (journal = all
  *       own entries since 20260616000100)
@@ -45,7 +47,6 @@ import { renderHookWithClient } from '../../__tests__/utils/queryWrapper';
 import { useCreateEntry, type CreateEntryInput } from './useCreateEntry';
 import { queryKeys } from '@/lib/queryKeys';
 import type { InfiniteData } from '@tanstack/react-query';
-import type { FeedPage } from '@/hooks/feed/useFeed';
 import type { Page } from '@/lib/pagination';
 import type { ActivityItem, SoloShareActivity } from './useTableActivity';
 
@@ -54,19 +55,6 @@ import type { ActivityItem, SoloShareActivity } from './useTableActivity';
 const USER_ID = 'test-user-id'; // matches MockAuthProvider default
 const TABLE_ID = 'table-1';
 const NONCE = 'test-nonce-abc';
-
-function makeFeedInfiniteData(): InfiniteData<FeedPage> {
-    return {
-        pages: [{
-            rows: [],
-            next_cursor: null,
-            has_more: false,
-            trending: null,
-            window_days: 7,
-        }],
-        pageParams: [null],
-    };
-}
 
 function makeActivityInfiniteData(): InfiniteData<Page<ActivityItem>> {
     return {
@@ -110,30 +98,6 @@ describe('useCreateEntry', () => {
         });
     });
 
-    it('(a) feed.all reconciles on success: server entry replaces optimistic id', async () => {
-        const { result, client } = renderHookWithClient(
-            () => useCreateEntry(USER_ID, null),
-        );
-
-        const feedKey = queryKeys.feed.all(USER_ID);
-        const mySoloKey = queryKeys.entries.mySolo(USER_ID);
-        client.setQueryData(feedKey, makeFeedInfiniteData());
-        client.setQueryData(mySoloKey, makeMySoloData());
-
-        act(() => {
-            result.current.mutate({ ...ENTRY_INPUT });
-        });
-
-        await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-        // After success: server id present, no optimistic id
-        const feedData = client.getQueryData<InfiniteData<FeedPage>>(feedKey);
-        expect(feedData?.pages[0].rows.find((r) => r.id === `optimistic-${NONCE}`)).toBeUndefined();
-        expect(feedData?.pages[0].rows.find((r) => r.id === 'server-entry-1')).toBeDefined();
-        // Extra page-0 fields preserved
-        expect(feedData?.pages[0].window_days).toBe(7);
-    });
-
     it('(a) mySolo reconciles on success: server entry replaces optimistic id', async () => {
         const { result, client } = renderHookWithClient(
             () => useCreateEntry(USER_ID, null),
@@ -153,7 +117,7 @@ describe('useCreateEntry', () => {
         expect(mySoloData?.find((r) => r.id === 'server-entry-1')).toBeDefined();
     });
 
-    it('(b) rolls back feed.all and mySolo on server error', async () => {
+    it('(b) rolls back mySolo and forDay on server error', async () => {
         const { supabase: mockSupabase } = require('@/__mocks__/supabase');
         mockSupabase.functions.invoke.mockResolvedValue({
             data: { error: 'Server error' },
@@ -164,11 +128,8 @@ describe('useCreateEntry', () => {
             () => useCreateEntry(USER_ID, null),
         );
 
-        const feedKey = queryKeys.feed.all(USER_ID);
         const mySoloKey = queryKeys.entries.mySolo(USER_ID);
-        const initialFeed = makeFeedInfiniteData();
         const initialMySolo = makeMySoloData();
-        client.setQueryData(feedKey, initialFeed);
         client.setQueryData(mySoloKey, initialMySolo);
 
         act(() => {
@@ -177,10 +138,7 @@ describe('useCreateEntry', () => {
 
         await waitFor(() => expect(result.current.isError).toBe(true));
 
-        // Both caches should roll back to empty state
-        const feedData = client.getQueryData<InfiniteData<FeedPage>>(feedKey);
-        expect(feedData?.pages[0].rows).toHaveLength(0);
-
+        // Cache should roll back to empty state — no optimistic row survives
         const mySoloData = client.getQueryData<SoloShareActivity[]>(mySoloKey);
         expect(mySoloData).toEqual([]);
     });
@@ -384,8 +342,8 @@ describe('useCreateEntry', () => {
             () => useCreateEntry(USER_ID, null),
         );
 
-        const feedKey = queryKeys.feed.all(USER_ID);
-        client.setQueryData(feedKey, makeFeedInfiniteData());
+        const mySoloKey = queryKeys.entries.mySolo(USER_ID);
+        client.setQueryData(mySoloKey, makeMySoloData());
 
         act(() => {
             result.current.mutate({ ...ENTRY_INPUT });
@@ -396,12 +354,12 @@ describe('useCreateEntry', () => {
 
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-        const feedData = client.getQueryData<InfiniteData<FeedPage>>(feedKey);
-        expect(feedData).toBeDefined();
-        expect(Array.isArray(feedData?.pages[0].rows)).toBe(true);
+        const mySoloData = client.getQueryData<SoloShareActivity[]>(mySoloKey);
+        expect(mySoloData).toBeDefined();
+        expect(Array.isArray(mySoloData)).toBe(true);
         // No optimistic ids from either mutation should remain
         expect(
-            feedData?.pages[0].rows.filter((r) => r.id.startsWith('optimistic-'))
+            mySoloData?.filter((r) => r.id.startsWith('optimistic-'))
         ).toHaveLength(0);
     });
 });
