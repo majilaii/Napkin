@@ -389,18 +389,22 @@ for (const check of CHECKS) {
     console.log(`✓ ${check.name}`);
 }
 
-// ── TICKET-099: diary keyset pagination guard ───────────────────────────────
-// The profile diary is the only user-profile path that pages via cursor. The
+// ── TICKET-099: diary + reviews keyset pagination guards ────────────────────
+// The profile diary (and its reviews-only sibling — same fetchDiary cursor
+// path, reviewsOnly=true) are the user-profile paths that page via cursor. The
 // 2026-07-04 bug (applyKeysetFilter emitting a phantom `sort_date` column
 // filter against raw entries → 42703 → 500) ONLY fired on cursor requests, so
 // a page-1 check can never catch its regression class. Walk two pages with
-// limit=1: any smoke user with ≥2 restaurant-linked entries exercises the
-// keyset filter; with fewer, page 1's envelope is still asserted and the check
-// passes with a note (single-request checks stay in CHECKS; this one needs the
-// page-1 → page-2 dependency).
-{
-    const name = 'user-profile?action=diary two-page keyset walk (TICKET-099)';
-    const callDiary = async (cursor: string | null) => {
+// limit=1. STRICT: a single page is a FAILURE — the walk ran vacuously for
+// months ("keyset not exercised" pass-with-note) before ensure-fixtures.ts
+// closed that hole. CI seeds the fixtures immediately before this suite
+// (prod-deploy.yml "Ensure smoke fixtures" step); locally, run
+// scripts/smoke/ensure-fixtures.ts once against the same project.
+// (Single-request checks stay in CHECKS; these need the page-1 → page-2
+// dependency.)
+for (const walkAction of ['diary', 'reviews'] as const) {
+    const name = `user-profile?action=${walkAction} two-page keyset walk (TICKET-099)`;
+    const callPage = async (cursor: string | null) => {
         const res = await fetch(`${SUPABASE_URL}/functions/v1/user-profile`, {
             method: 'POST',
             headers: {
@@ -408,7 +412,7 @@ for (const check of CHECKS) {
                 Authorization: `Bearer ${JWT}`,
                 apikey: ANON_KEY!,
             },
-            body: JSON.stringify({ action: 'diary', identifier: SMOKE_USER_ID, limit: 1, cursor }),
+            body: JSON.stringify({ action: walkAction, identifier: SMOKE_USER_ID, limit: 1, cursor }),
         });
         const text = await res.text();
         let json: unknown = null;
@@ -419,28 +423,35 @@ for (const check of CHECKS) {
     };
 
     try {
-        const p1 = await callDiary(null);
-        const d1 = (p1.json as { data?: { rows?: Array<{ entry_id?: string }>; next_cursor?: string | null } } | null)?.data;
+        const p1 = await callPage(null);
+        const d1 = (p1.json as { data?: { rows?: Array<{ entry_id?: string; note?: unknown }>; next_cursor?: string | null } } | null)?.data;
         if (p1.status !== 200) throw new Error(`page 1 HTTP ${p1.status}: ${p1.text.slice(0, 200)}`);
         if (!d1 || !Array.isArray(d1.rows)) throw new Error('page 1: missing data.rows envelope');
-
-        if (d1.next_cursor) {
-            const p2 = await callDiary(d1.next_cursor);
-            const d2 = (p2.json as { data?: { rows?: Array<{ entry_id?: string }> } } | null)?.data;
-            if (p2.status !== 200) {
-                throw new Error(`page 2 HTTP ${p2.status} (keyset filter broken?): ${p2.text.slice(0, 200)}`);
+        if (walkAction === 'reviews') {
+            const note = d1.rows[0]?.note;
+            if (typeof note !== 'string' || note.trim().length === 0) {
+                throw new Error('reviews page 1 row has no written note — reviewsOnly filter drifted');
             }
-            if (!d2 || !Array.isArray(d2.rows)) throw new Error('page 2: missing data.rows envelope');
-            const id1 = d1.rows[0]?.entry_id;
-            if (id1 && d2.rows[0]?.entry_id === id1) {
-                throw new Error('page 2 repeated page 1 row — cursor silently no-oping');
-            }
-            passed++;
-            console.log(`✓ ${name}`);
-        } else {
-            passed++;
-            console.log(`✓ ${name} (single page — smoke user has <2 diary entries, keyset not exercised)`);
         }
+        if (!d1.next_cursor) {
+            throw new Error(
+                `single page — smoke user has <2 ${walkAction} rows, keyset filter NOT exercised. ` +
+                    'Run scripts/smoke/ensure-fixtures.ts (CI runs it before this suite).',
+            );
+        }
+
+        const p2 = await callPage(d1.next_cursor);
+        const d2 = (p2.json as { data?: { rows?: Array<{ entry_id?: string }> } } | null)?.data;
+        if (p2.status !== 200) {
+            throw new Error(`page 2 HTTP ${p2.status} (keyset filter broken?): ${p2.text.slice(0, 200)}`);
+        }
+        if (!d2 || !Array.isArray(d2.rows)) throw new Error('page 2: missing data.rows envelope');
+        const id1 = d1.rows[0]?.entry_id;
+        if (id1 && d2.rows[0]?.entry_id === id1) {
+            throw new Error('page 2 repeated page 1 row — cursor silently no-oping');
+        }
+        passed++;
+        console.log(`✓ ${name} (page 2 fetched via cursor)`);
     } catch (err) {
         failed++;
         const msg = `✗ ${name}\n   ${(err as Error).message}`;
