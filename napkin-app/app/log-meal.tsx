@@ -50,6 +50,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
+import { useUserProfile } from '@/hooks/users/useUserProfile';
 import { useAddSupperTake } from '@/hooks/suppers';
 import { useToast } from '@/providers/ToastProvider';
 import { queryKeys } from '@/lib/queryKeys';
@@ -293,6 +294,11 @@ export default function LogMealScreen() {
     const [selectedTableIds, setSelectedTableIds] = useState<string[]>(() =>
         initialTableId ? [initialTableId] : [],
     );
+    // TICKET-093: sharing to a table makes the entry public-eligible (decision a);
+    // the SHARE TO card carries a transparency line when the account is public.
+    const { data: ownProfileResult } = useUserProfile(user?.id);
+    const isAccountPublic =
+        ownProfileResult?.data?.profile.account_privacy === 'public';
     const [photos, setPhotos] = useState<PhotoSlot[]>([]);
     const [breakdown, setBreakdown] = useState<ComposerBreakdown>(EMPTY_BREAKDOWN);
     const [showDetails, setShowDetails] = useState(false);
@@ -909,6 +915,14 @@ export default function LogMealScreen() {
                                     </Pressable>
                                 );
                             })}
+                            {/* TICKET-093 (decision a): table-shared entries are
+                                public-eligible — say so at share time instead of
+                                gating. Only when the account is actually public. */}
+                            {selectedTableIds.length > 0 && isAccountPublic && (
+                                <Text style={[styles.publicNote, { color: palette.textMuted }]}>
+                                    also appears on your public profile
+                                </Text>
+                            )}
                         </View>
                     )}
 
@@ -1128,6 +1142,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingVertical: 2,
+    },
+    publicNote: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        letterSpacing: 0.2,
+        marginTop: 6,
     },
     tableName: {
         fontFamily: 'Newsreader_400Regular_Italic',

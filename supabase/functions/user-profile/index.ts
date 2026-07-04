@@ -38,12 +38,12 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type ViewerRelationship =
-    | 'self'
-    | 'tables_in_common'
-    | 'public_only'
-    | 'public_and_tables'
-    | 'none';
+import {
+    computeRelationship,
+    fetchBlockState,
+    strangerCanReadPalate,
+    type ViewerRelationship,
+} from './gates.ts';
 
 type ProfileRow = {
     user_id: string;
@@ -180,23 +180,6 @@ function notFound(): Response {
 }
 
 /**
- * Compute viewer ↔ target relationship.
- * Must be called BEFORE any Palate data fetching.
- */
-function computeRelationship(
-    callerId: string,
-    targetPrivacy: 'private' | 'public',
-    sharedTableIds: string[],
-): ViewerRelationship {
-    const hasSharedTables = sharedTableIds.length > 0;
-
-    if (targetPrivacy === 'public' && hasSharedTables) return 'public_and_tables';
-    if (targetPrivacy === 'public') return 'public_only';
-    if (hasSharedTables) return 'tables_in_common';
-    return 'none';
-}
-
-/**
  * Resolve a profile row from an identifier.
  * UUID → lookup by user_id; else → case-insensitive username lookup.
  * Returns null if not found.
@@ -220,31 +203,6 @@ async function resolveProfile(
 
     if (error) throw error;
     return data ?? null;
-}
-
-/**
- * Block state between viewer and target (TICKET-090). Blocks trump every
- * relationship tier — checked before palate data is fetched.
- */
-type BlockState = 'none' | 'viewer_blocked_target' | 'target_blocked_viewer';
-
-async function fetchBlockState(
-    supabase: any,
-    viewerId: string,
-    targetId: string,
-): Promise<BlockState> {
-    const { data, error } = await supabase
-        .from('blocked_users')
-        .select('blocker_id')
-        .or(
-            `and(blocker_id.eq.${viewerId},blocked_id.eq.${targetId}),` +
-            `and(blocker_id.eq.${targetId},blocked_id.eq.${viewerId})`,
-        );
-    if (error) throw error;
-    const rows = (data ?? []) as Array<{ blocker_id: string }>;
-    if (rows.some((r) => r.blocker_id === viewerId)) return 'viewer_blocked_target';
-    if (rows.some((r) => r.blocker_id === targetId)) return 'target_blocked_viewer';
-    return 'none';
 }
 
 /**
@@ -1211,17 +1169,18 @@ serve(async (req) => {
             const isSelf = callerId === targetId;
 
             if (!isSelf) {
-                // Blocks (either direction) close the surface entirely (TICKET-090).
-                if ((await fetchBlockState(supabase, callerId, targetId)) !== 'none') {
-                    return notFound();
-                }
-                const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
+                // TICKET-090 blocks + TICKET-093(a) audience gate — the decision
+                // matrix is pinned by gates.test.ts.
+                const blockState = await fetchBlockState(supabase, callerId, targetId);
+                const sharedTableIds = blockState === 'none'
+                    ? await fetchSharedTableIds(supabase, callerId, targetId)
+                    : [];
                 const relationship = computeRelationship(
                     callerId,
                     targetProfile.account_privacy,
                     sharedTableIds,
                 );
-                if (relationship === 'none' || relationship === 'tables_in_common') {
+                if (!strangerCanReadPalate(blockState, relationship)) {
                     return notFound();
                 }
             }
@@ -1257,17 +1216,18 @@ serve(async (req) => {
             const isSelf = callerId === targetId;
 
             if (!isSelf) {
-                // Blocks (either direction) close the surface entirely (TICKET-090).
-                if ((await fetchBlockState(supabase, callerId, targetId)) !== 'none') {
-                    return notFound();
-                }
-                const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
+                // TICKET-090 blocks + TICKET-093(a) audience gate — the decision
+                // matrix is pinned by gates.test.ts.
+                const blockState = await fetchBlockState(supabase, callerId, targetId);
+                const sharedTableIds = blockState === 'none'
+                    ? await fetchSharedTableIds(supabase, callerId, targetId)
+                    : [];
                 const relationship = computeRelationship(
                     callerId,
                     targetProfile.account_privacy,
                     sharedTableIds,
                 );
-                if (relationship === 'none' || relationship === 'tables_in_common') {
+                if (!strangerCanReadPalate(blockState, relationship)) {
                     return notFound();
                 }
             }
@@ -1291,17 +1251,18 @@ serve(async (req) => {
             const isSelf = callerId === targetId;
 
             if (!isSelf) {
-                // Blocks (either direction) close the surface entirely (TICKET-090).
-                if ((await fetchBlockState(supabase, callerId, targetId)) !== 'none') {
-                    return notFound();
-                }
-                const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
+                // TICKET-090 blocks + TICKET-093(a) audience gate — the decision
+                // matrix is pinned by gates.test.ts.
+                const blockState = await fetchBlockState(supabase, callerId, targetId);
+                const sharedTableIds = blockState === 'none'
+                    ? await fetchSharedTableIds(supabase, callerId, targetId)
+                    : [];
                 const relationship = computeRelationship(
                     callerId,
                     targetProfile.account_privacy,
                     sharedTableIds,
                 );
-                if (relationship === 'none' || relationship === 'tables_in_common') {
+                if (!strangerCanReadPalate(blockState, relationship)) {
                     return notFound();
                 }
             }
@@ -1329,17 +1290,18 @@ serve(async (req) => {
             const isSelf = callerId === targetId;
 
             if (!isSelf) {
-                // Blocks (either direction) close the surface entirely (TICKET-090).
-                if ((await fetchBlockState(supabase, callerId, targetId)) !== 'none') {
-                    return notFound();
-                }
-                const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
+                // TICKET-090 blocks + TICKET-093(a) audience gate — the decision
+                // matrix is pinned by gates.test.ts.
+                const blockState = await fetchBlockState(supabase, callerId, targetId);
+                const sharedTableIds = blockState === 'none'
+                    ? await fetchSharedTableIds(supabase, callerId, targetId)
+                    : [];
                 const relationship = computeRelationship(
                     callerId,
                     targetProfile.account_privacy,
                     sharedTableIds,
                 );
-                if (relationship === 'none' || relationship === 'tables_in_common') {
+                if (!strangerCanReadPalate(blockState, relationship)) {
                     return notFound();
                 }
             }
