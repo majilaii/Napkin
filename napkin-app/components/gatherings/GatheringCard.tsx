@@ -1,23 +1,29 @@
 /**
  * GatheringCard — the "gather the table" feed card (TICKET-095).
  *
- * A proposed future date at a restaurant. Structural/aesthetic reference is
- * SupperCard: warm journal card, italic Newsreader restaurant name, em-dash
- * murmur, seat avatars (in = solid, undecided/out = ghosted), quiet text
- * progress, ambient shadow, no 1px sectioning borders. One accent: terracotta.
+ * An invitation object: a white note card (archetype 2 — the only white card on
+ * the cream feed, so a future plan reads differently from a logged past) with a
+ * calendar leaf for the date, the host's murmur, and a seat ledger that answers
+ * the card's whole question at a glance: who's in · who can't · who hasn't said.
+ *
+ * Heirloom: italic Newsreader for the restaurant name and the date numeral
+ * (content, like rating numerals), Manrope for labels, ghosted warm border,
+ * ambient Shadow.note, quiet text — never a progress bar. One accent: terracotta.
  *
  * Three states from `status`:
- *   proposed   — kicker with the date, murmur, seats, RSVP zone (I'm in / can't;
- *                collapses to "you're in · change" after answering). The host
- *                instead sees a quiet "call it off" (Alert-confirmed cancel).
- *   dispatched — the day came: RSVP zone becomes "gathered — see the table →"
- *                (routes to the auto-created supper).
+ *   proposed   — leaf + murmur + ledger + RSVP footer ("I'm in" / "can't make
+ *                it"; collapses to "you're in · change" after answering). The
+ *                host instead sees a quiet "call it off" (Alert-confirmed).
+ *   dispatched — the day came: footer becomes "gathered — see the table →"
+ *                (routes to the auto-created supper; non-confirmed viewers get
+ *                a plain "gathered" — the supper roster would 404 them).
  *   expired    — muted single line "didn't come together".
  *
  * Card body tap → the restaurant page. Cancelled rows never reach the client.
  */
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -28,6 +34,7 @@ import type { GatheringCardActivity, GatheringSeat } from '@/hooks/tables/useTab
 type Palette = typeof Colors.light;
 
 const GHOST_OPACITY = 0.34;
+const STACK_MAX = 4;
 
 interface GatheringCardProps {
     gathering: GatheringCardActivity;
@@ -35,13 +42,15 @@ interface GatheringCardProps {
     viewerId?: string;
 }
 
-/** 'YYYY-MM-DD' → "SAT · JUL 12" for the kicker. */
-function fmtGatherOn(ymd: string): string {
+/** 'YYYY-MM-DD' → the calendar-leaf pieces ("SUN", "5", "JUL"). */
+function dateLeaf(ymd: string): { wd: string; day: string; mo: string } | null {
     const d = new Date(`${ymd}T00:00:00`);
-    if (Number.isNaN(d.getTime())) return '';
-    const wd = d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
-    const mo = d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
-    return `${wd} · ${mo} ${d.getDate()}`;
+    if (Number.isNaN(d.getTime())) return null;
+    return {
+        wd: d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(),
+        day: String(d.getDate()),
+        mo: d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(),
+    };
 }
 
 function firstName(name: string | null): string | null {
@@ -49,35 +58,73 @@ function firstName(name: string | null): string | null {
     return name.split(' ')[0] || null;
 }
 
-function SeatDot({
-    seat,
-    size,
-    overlap,
+/** Viewer first (as "you"), then the host, then everyone else. */
+function orderSeats(rows: GatheringSeat[], viewerId?: string): GatheringSeat[] {
+    const score = (s: GatheringSeat) =>
+        s.user_id === viewerId ? 0 : s.is_host ? 1 : 2;
+    return [...rows].sort((a, b) => score(a) - score(b));
+}
+
+/** "you, Clara +2" — up to two names, the rest counted. */
+function namesLine(rows: GatheringSeat[], viewerId?: string): string {
+    const names: string[] = [];
+    for (const s of rows) {
+        if (names.length === 2) break;
+        const n = s.user_id === viewerId ? 'you' : firstName(s.display_name);
+        if (n) names.push(n);
+    }
+    const extra = rows.length - names.length;
+    if (names.length === 0) return `${rows.length}`;
+    return `${names.join(', ')}${extra > 0 ? ` +${extra}` : ''}`;
+}
+
+/** One ledger row: a small stack of seats + "in · you, Clara +1". */
+function LedgerRow({
+    rows,
+    label,
+    solid,
+    viewerId,
     palette,
-    borderColor,
 }: {
-    seat: GatheringSeat;
-    size: number;
-    overlap: boolean;
+    rows: GatheringSeat[];
+    label: string;
+    solid: boolean;
+    viewerId?: string;
     palette: Palette;
-    borderColor: string;
 }) {
+    const visible = rows.slice(0, STACK_MAX);
     return (
-        <View
-            style={{
-                marginLeft: overlap ? -size * 0.3 : 0,
-                borderRadius: size / 2,
-                borderWidth: 2,
-                borderColor,
-                opacity: seat.response === 'in' ? 1 : GHOST_OPACITY,
-            }}
-        >
-            <InitialsAvatar
-                name={seat.display_name}
-                avatarUrl={seat.avatar_url}
-                size={size}
-                palette={palette}
-            />
+        <View style={styles.ledgerRow}>
+            <View style={styles.stack}>
+                {visible.map((seat, i) => (
+                    <View
+                        key={seat.user_id}
+                        style={{
+                            marginLeft: i > 0 ? -7 : 0,
+                            borderRadius: 12,
+                            borderWidth: 2,
+                            borderColor: palette.surfaceNote,
+                            opacity: solid ? 1 : GHOST_OPACITY,
+                        }}
+                    >
+                        <InitialsAvatar
+                            name={seat.display_name}
+                            avatarUrl={seat.avatar_url}
+                            size={22}
+                            palette={palette}
+                        />
+                    </View>
+                ))}
+            </View>
+            <Text style={styles.ledgerText} numberOfLines={1}>
+                <Text style={[styles.ledgerLabel, { color: solid ? palette.primary : palette.textMuted }]}>
+                    {label}
+                </Text>
+                <Text style={[styles.ledgerNames, { color: palette.textSecondary }]}>
+                    {' · '}
+                    {namesLine(rows, viewerId)}
+                </Text>
+            </Text>
         </View>
     );
 }
@@ -114,13 +161,26 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
     const [changing, setChanging] = useState(false);
     const showControls = isProposed && !isHost && (viewer_response === null || changing);
 
-    const visibleSeats = seats.slice(0, 6);
-    const overflow = seats.length - visibleSeats.length;
+    const leaf = dateLeaf(gather_on);
+    const ins = orderSeats(seats.filter((s) => s.response === 'in'), viewerId);
+    const outs = orderSeats(seats.filter((s) => s.response === 'out'), viewerId);
+    const waiting = seats.filter((s) => s.response === null);
+    const waitingNames = waiting
+        .map((s) => (s.user_id === viewerId ? 'you' : firstName(s.display_name)))
+        .filter(Boolean) as string[];
+    const waitingLine =
+        waiting.length === 0
+            ? null
+            : waiting.length === 1 && waitingNames[0]
+              ? `waiting on ${waitingNames[0]}`
+              : `waiting on ${waiting.length} more`;
 
     const restaurantName = restaurant?.name ?? 'a spot';
     const murmur = note
         ? note
-        : `${firstName(host_name) ?? 'someone'} wants to gather the table`;
+        : isHost
+          ? 'you want to gather the table'
+          : `${firstName(host_name) ?? 'someone'} wants to gather the table`;
 
     const answer = (response: 'in' | 'out') => {
         setChanging(false);
@@ -153,14 +213,36 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
             onPress={openRestaurant}
             style={({ pressed }) => [styles.pressable, pressed ? { opacity: 0.92 } : undefined]}
             accessibilityRole="button"
-            accessibilityLabel={`gathering at ${restaurantName}, ${in_count} in`}
+            accessibilityLabel={`gathering at ${restaurantName} on ${gather_on}, ${in_count} in`}
         >
-            <View style={[styles.card, { backgroundColor: palette.surfaceJournalLow }, Shadow.note]}>
-                {/* Kicker — GATHERING · SAT · JUL 12 */}
-                <Text style={[styles.kicker, { color: palette.textMuted }]}>
-                    GATHERING{gather_on ? ' · ' : ''}
-                    <Text style={{ color: palette.primary }}>{fmtGatherOn(gather_on)}</Text>
-                </Text>
+            <View
+                style={[
+                    styles.card,
+                    { backgroundColor: palette.surfaceNote, borderColor: palette.divider },
+                    Shadow.note,
+                ]}
+            >
+                {/* Header — calendar leaf + masthead */}
+                <View style={styles.headerRow}>
+                    {leaf ? (
+                        <View style={[styles.leaf, { backgroundColor: palette.surfaceJournalLow }]}>
+                            <Text style={[styles.leafCap, { color: palette.textMuted }]}>{leaf.wd}</Text>
+                            <Text style={[styles.leafDay, { color: palette.primary }]}>{leaf.day}</Text>
+                            <Text style={[styles.leafCap, { color: palette.textMuted }]}>{leaf.mo}</Text>
+                        </View>
+                    ) : null}
+                    <View style={styles.masthead}>
+                        <Text style={[styles.kicker, { color: palette.textMuted }]}>gathering</Text>
+                        <Text style={[styles.restaurant, { color: palette.text }]} numberOfLines={2}>
+                            {restaurantName}
+                        </Text>
+                        {restaurant?.city ? (
+                            <Text style={[styles.city, { color: palette.textMuted }]} numberOfLines={1}>
+                                {restaurant.city}
+                            </Text>
+                        ) : null}
+                    </View>
+                </View>
 
                 {/* Murmur — the note, else the host's ask */}
                 <Text style={[styles.murmur, { color: palette.textSecondary }]} numberOfLines={2}>
@@ -168,39 +250,22 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                     {murmur}
                 </Text>
 
-                {/* Restaurant + city */}
-                <View>
-                    <Text style={[styles.restaurant, { color: palette.text }]} numberOfLines={1}>
-                        {restaurantName}
-                    </Text>
-                    {restaurant?.city ? (
-                        <Text style={[styles.city, { color: palette.textMuted }]} numberOfLines={1}>
-                            {restaurant.city}
-                        </Text>
-                    ) : null}
-                </View>
-
-                {/* Seats — in solid, undecided/out ghosted, host first (server order) */}
-                <View style={styles.stackRow}>
-                    <View style={styles.stack}>
-                        {visibleSeats.map((seat, i) => (
-                            <SeatDot
-                                key={seat.user_id}
-                                seat={seat}
-                                size={30}
-                                overlap={i > 0}
-                                palette={palette}
-                                borderColor={palette.surfaceJournalLow}
-                            />
-                        ))}
+                {/* Seat ledger — who's in · who can't · who hasn't said */}
+                {!isExpired ? (
+                    <View style={styles.ledger}>
+                        {ins.length > 0 ? (
+                            <LedgerRow rows={ins} label="in" solid viewerId={viewerId} palette={palette} />
+                        ) : null}
+                        {outs.length > 0 ? (
+                            <LedgerRow rows={outs} label="can't" solid={false} viewerId={viewerId} palette={palette} />
+                        ) : null}
+                        {isProposed && waitingLine ? (
+                            <Text style={[styles.waiting, { color: palette.textMuted }]}>{waitingLine}</Text>
+                        ) : null}
                     </View>
-                    <Text style={[styles.inMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                        {overflow > 0 ? `+${overflow} · ` : ''}
-                        {in_count} in
-                    </Text>
-                </View>
+                ) : null}
 
-                {/* ── State zone ─────────────────────────────────────────────── */}
+                {/* ── Footer zone ────────────────────────────────────────────── */}
                 {isExpired ? (
                     <Text style={[styles.expired, { color: palette.textMuted }]}>
                         didn&apos;t come together
@@ -209,11 +274,19 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
 
                 {isDispatched ? (
                     isHost || viewer_response === 'in' ? (
-                        <Pressable onPress={openSupper} hitSlop={6} accessibilityRole="button" accessibilityLabel="see the table">
-                            <Text style={[styles.seeTable, { color: palette.primary }]}>
-                                gathered — see the table →
-                            </Text>
-                        </Pressable>
+                        <View style={styles.footerRow}>
+                            <Pressable
+                                onPress={openSupper}
+                                accessibilityRole="button"
+                                accessibilityLabel="see the table"
+                                style={({ pressed }) => [
+                                    styles.ghostPill,
+                                    { borderColor: palette.ruleInkSoft, opacity: pressed ? 0.7 : 1 },
+                                ]}
+                            >
+                                <Text style={[styles.ghostPillText, { color: palette.primary }]}>see the table →</Text>
+                            </Pressable>
+                        </View>
                     ) : (
                         /* The supper roster is confirmed members only — supper-detail
                            404s everyone else, so don't link them into a dead end. */
@@ -243,39 +316,71 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                                 disabled={rsvp.isPending}
                                 style={({ pressed }) => [
                                     styles.outBtn,
-                                    { backgroundColor: palette.surfaceNote, opacity: pressed || rsvp.isPending ? 0.85 : 1 },
+                                    { backgroundColor: palette.surfaceContainerLow, opacity: pressed || rsvp.isPending ? 0.85 : 1 },
                                 ]}
                                 accessibilityRole="button"
                                 accessibilityLabel="can't make it"
                             >
-                                <Text style={[styles.outBtnText, { color: palette.textSecondary }]}>can&apos;t</Text>
+                                <Text style={[styles.outBtnText, { color: palette.textSecondary }]}>can&apos;t make it</Text>
                             </Pressable>
                         </View>
                     ) : (
-                        <View style={styles.answeredRow}>
-                            <Text style={[styles.answered, { color: palette.textSecondary }]}>
-                                {viewer_response === 'in' ? "you're in" : "can't make it"}
-                                <Text style={{ color: palette.textMuted }}> · </Text>
-                            </Text>
-                            <Pressable onPress={() => setChanging(true)} hitSlop={8} accessibilityRole="button" accessibilityLabel="change your answer">
-                                <Text style={[styles.change, { color: palette.primary }]}>change</Text>
+                        <View style={styles.footerRow}>
+                            <View
+                                style={[
+                                    styles.stateChip,
+                                    {
+                                        backgroundColor:
+                                            viewer_response === 'in'
+                                                ? palette.primaryMuted
+                                                : palette.surfaceContainerLow,
+                                    },
+                                ]}
+                            >
+                                <Ionicons
+                                    name={viewer_response === 'in' ? 'checkmark-circle-outline' : 'close-circle-outline'}
+                                    size={14}
+                                    color={viewer_response === 'in' ? palette.primary : palette.textMuted}
+                                />
+                                <Text
+                                    style={[
+                                        styles.stateChipText,
+                                        { color: viewer_response === 'in' ? palette.primary : palette.textSecondary },
+                                    ]}
+                                >
+                                    {viewer_response === 'in' ? "you're in" : "you can't make it"}
+                                </Text>
+                            </View>
+                            <Pressable
+                                onPress={() => setChanging(true)}
+                                accessibilityRole="button"
+                                accessibilityLabel="change your answer"
+                                style={({ pressed }) => [
+                                    styles.ghostPill,
+                                    { borderColor: palette.ruleInkSoft, opacity: pressed ? 0.7 : 1 },
+                                ]}
+                            >
+                                <Text style={[styles.ghostPillText, { color: palette.textMuted }]}>change</Text>
                             </Pressable>
                         </View>
                     )
                 ) : null}
 
                 {isProposed && isHost ? (
-                    <Pressable
-                        onPress={confirmCancel}
-                        disabled={cancel.isPending}
-                        hitSlop={6}
-                        accessibilityRole="button"
-                        accessibilityLabel="call it off"
-                    >
-                        <Text style={[styles.callOff, { color: palette.textMuted, opacity: cancel.isPending ? 0.5 : 1 }]}>
-                            call it off
-                        </Text>
-                    </Pressable>
+                    <View style={styles.footerRow}>
+                        <Pressable
+                            onPress={confirmCancel}
+                            disabled={cancel.isPending}
+                            accessibilityRole="button"
+                            accessibilityLabel="call it off"
+                            style={({ pressed }) => [
+                                styles.ghostPill,
+                                { borderColor: palette.ruleInkSoft, opacity: cancel.isPending ? 0.5 : pressed ? 0.7 : 1 },
+                            ]}
+                        >
+                            <Text style={[styles.ghostPillText, { color: palette.textMuted }]}>call it off</Text>
+                        </Pressable>
+                    </View>
                 ) : null}
             </View>
         </Pressable>
@@ -287,11 +392,37 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.sm,
     },
     card: {
-        borderRadius: 20,
-        borderWidth: 0,
-        overflow: 'hidden',
+        borderRadius: 24,
+        borderWidth: 1,
         padding: Spacing.md,
-        gap: 12,
+        gap: 14,
+    },
+    headerRow: {
+        flexDirection: 'row',
+        gap: 14,
+    },
+    leaf: {
+        width: 56,
+        borderRadius: 12,
+        paddingVertical: 9,
+        alignItems: 'center',
+        gap: 1,
+    },
+    leafCap: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+    },
+    leafDay: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 27,
+        lineHeight: 30,
+        letterSpacing: -0.5,
+    },
+    masthead: {
+        flex: 1,
+        gap: 3,
     },
     kicker: {
         fontFamily: 'Manrope_700Bold',
@@ -299,44 +430,85 @@ const styles = StyleSheet.create({
         letterSpacing: 1.4,
         textTransform: 'uppercase',
     },
-    murmur: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16,
-        lineHeight: 24,
-    },
     restaurant: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 25,
+        fontSize: 23,
         letterSpacing: -0.3,
-        lineHeight: 28,
+        lineHeight: 27,
     },
     city: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 10,
         letterSpacing: 1,
         textTransform: 'uppercase',
-        marginTop: 5,
+        marginTop: 2,
     },
-    stackRow: {
+    murmur: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 16,
+        lineHeight: 24,
+    },
+    ledger: {
+        gap: 8,
+    },
+    ledgerRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        gap: 8,
     },
     stack: {
         flexDirection: 'row',
     },
-    inMeta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
+    ledgerText: {
         flex: 1,
+        fontSize: 12,
+    },
+    ledgerLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 12,
+    },
+    ledgerNames: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+    },
+    waiting: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
     },
     expired: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 14,
     },
-    seeTable: {
+    // Footer vocabulary — a state chip (what you answered) + ghost pills (every
+    // quiet action: change, call it off, see the table). One grammar, all states.
+    footerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    stateChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        height: 34,
+        paddingHorizontal: 13,
+        borderRadius: 999,
+    },
+    stateChipText: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
+        fontSize: 12,
+    },
+    ghostPill: {
+        height: 34,
+        paddingHorizontal: 14,
+        borderRadius: 999,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    ghostPillText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
     },
     rsvpRow: {
         flexDirection: 'row',
@@ -345,7 +517,7 @@ const styles = StyleSheet.create({
     },
     inBtn: {
         flex: 1,
-        height: 42,
+        height: 44,
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
@@ -356,8 +528,8 @@ const styles = StyleSheet.create({
         color: '#fff',
     },
     outBtn: {
-        paddingHorizontal: 22,
-        height: 42,
+        flex: 1,
+        height: 44,
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
@@ -365,21 +537,5 @@ const styles = StyleSheet.create({
     outBtnText: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 14,
-    },
-    answeredRow: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-    },
-    answered: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-    },
-    change: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-    },
-    callOff: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
     },
 });

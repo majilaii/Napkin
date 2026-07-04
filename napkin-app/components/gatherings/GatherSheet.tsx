@@ -7,11 +7,15 @@
  * only when the user has more than one Table, a WHEN row opening a future-facing
  * calendar (min tomorrow, max +90 days), an optional note, one CTA.
  *
- * Modal + KeyboardAvoidingView behavior="position" (CreateListSheet idiom) so
- * the note input rides above the iOS keyboard. The calendar overlay mirrors
+ * Keyboard geometry is driven directly off useKeyboardHeight — the sheet stays
+ * anchored to the screen bottom and pads itself above the keyboard, and the CTA
+ * is pinned below the ScrollView so it can never scroll out of reach.
+ * (KeyboardAvoidingView behavior="position" is banned here: the nested calendar
+ * modal steals focus mid-transition and strands the sheet mid-screen with the
+ * CTA clipped — hit on device in b83.) The calendar overlay mirrors
  * components/log/CalendarModal but future-facing (that one hard-caps at today).
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
@@ -21,10 +25,10 @@ import {
     StyleSheet,
     TouchableWithoutFeedback,
     ScrollView,
-    KeyboardAvoidingView,
     ActivityIndicator,
     Alert,
     Platform,
+    useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,6 +37,7 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
+import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useTables } from '@/hooks/tables/useTables';
 import { useCreateGathering, isAlreadyProposed } from '@/hooks/gatherings';
 
@@ -83,6 +88,12 @@ export function GatherSheet({ visible, onClose, restaurant, tableId }: GatherShe
     const insets = useSafeAreaInsets();
     const toast = useToast();
     const { user } = useAuth();
+    const { height: windowHeight } = useWindowDimensions();
+    // Android keeps the system adjustResize behavior (the old KAV was inert
+    // there); only iOS needs manual padding.
+    const keyboardHeight = useKeyboardHeight();
+    const kbPad = Platform.OS === 'ios' ? keyboardHeight : 0;
+    const scrollRef = useRef<ScrollView>(null);
 
     const { data: tableMemberships } = useTables(user?.id);
     const tableList = useMemo(
@@ -156,111 +167,119 @@ export function GatherSheet({ visible, onClose, restaurant, tableId }: GatherShe
                 <View style={[styles.backdrop, { backgroundColor: palette.overlay }]} />
             </TouchableWithoutFeedback>
 
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'position' : undefined}
-                style={styles.avoidingView}
+            <View
+                style={[
+                    styles.sheet,
+                    {
+                        backgroundColor: palette.surface,
+                        paddingBottom: kbPad > 0 ? kbPad + Spacing.sm : insets.bottom + Spacing.md,
+                        maxHeight: windowHeight - insets.top - Spacing.xl - kbPad,
+                    },
+                    Shadow.ambient,
+                ]}
             >
-                <View
-                    style={[
-                        styles.sheet,
-                        { backgroundColor: palette.surface, paddingBottom: insets.bottom + Spacing.md },
-                        Shadow.ambient,
-                    ]}
-                >
-                    <View style={styles.handleArea}>
-                        <View style={[styles.handle, { backgroundColor: palette.ruleInkSoft }]} />
-                    </View>
-
-                    <View style={styles.headerRow}>
-                        <Pressable onPress={onClose} hitSlop={8}>
-                            <Text style={[styles.cancel, { color: palette.textMuted }]}>Cancel</Text>
-                        </Pressable>
-                    </View>
-
-                    <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                        {/* Masthead — the spot */}
-                        <Text style={[styles.restaurantName, { color: palette.text }]} numberOfLines={2}>
-                            {restaurant.name}
-                        </Text>
-                        {restaurant.city ? (
-                            <Text style={[styles.cityMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                                {restaurant.city}
-                            </Text>
-                        ) : null}
-
-                        {/* Table picker — only when the user has more than one */}
-                        {tableList.length > 1 ? (
-                            <>
-                                <Text style={[styles.kicker, { color: palette.textMuted }]}>The table</Text>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableChips}>
-                                    {tableList.map((t) => {
-                                        const sel = t.id === selectedTableId;
-                                        return (
-                                            <Pressable
-                                                key={t.id}
-                                                onPress={() => setSelectedTableId(t.id)}
-                                                style={[styles.tableChip, { backgroundColor: sel ? palette.primary : palette.surfaceContainerLow }]}
-                                            >
-                                                <Text style={[styles.tableChipText, { color: sel ? '#fff' : palette.textSecondary }]} numberOfLines={1}>
-                                                    {t.name}
-                                                </Text>
-                                            </Pressable>
-                                        );
-                                    })}
-                                </ScrollView>
-                            </>
-                        ) : null}
-
-                        {/* When */}
-                        <Text style={[styles.kicker, { color: palette.textMuted }]}>When</Text>
-                        <Pressable
-                            onPress={() => setCalendarVisible(true)}
-                            style={({ pressed }) => [
-                                styles.whenRow,
-                                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.85 : 1 },
-                            ]}
-                            accessibilityRole="button"
-                            accessibilityLabel="pick a date"
-                        >
-                            <Ionicons name="calendar-outline" size={18} color={palette.primary} />
-                            <Text style={[styles.whenText, { color: palette.text }]}>{fmtDay(gatherDate)}</Text>
-                            <Ionicons name="chevron-down" size={15} color={palette.textMuted} />
-                        </Pressable>
-
-                        {/* Note (optional) */}
-                        <TextInput
-                            style={[
-                                styles.noteInput,
-                                { color: palette.text, backgroundColor: palette.surfaceContainerLow },
-                            ]}
-                            value={note}
-                            onChangeText={(t) => setNote(t.slice(0, MAX_NOTE_LENGTH))}
-                            placeholder="why this spot?"
-                            placeholderTextColor={palette.textMuted}
-                            maxLength={MAX_NOTE_LENGTH}
-                            multiline
-                        />
-
-                        {/* CTA */}
-                        <Pressable
-                            onPress={handleGather}
-                            disabled={!canGather}
-                            style={({ pressed }) => [
-                                styles.cta,
-                                { backgroundColor: palette.primary, opacity: !canGather ? 0.5 : pressed ? 0.9 : 1 },
-                            ]}
-                            accessibilityRole="button"
-                            accessibilityLabel="gather the table"
-                        >
-                            {createGathering.isPending ? (
-                                <ActivityIndicator size="small" color="#fff" />
-                            ) : (
-                                <Text style={styles.ctaText}>gather the table</Text>
-                            )}
-                        </Pressable>
-                    </ScrollView>
+                <View style={styles.handleArea}>
+                    <View style={[styles.handle, { backgroundColor: palette.ruleInkSoft }]} />
                 </View>
-            </KeyboardAvoidingView>
+
+                <View style={styles.headerRow}>
+                    <Pressable onPress={onClose} hitSlop={8}>
+                        <Text style={[styles.cancel, { color: palette.textMuted }]}>Cancel</Text>
+                    </Pressable>
+                </View>
+
+                <ScrollView
+                    ref={scrollRef}
+                    style={styles.scrollArea}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                >
+                    {/* Masthead — the spot */}
+                    <Text style={[styles.restaurantName, { color: palette.text }]} numberOfLines={2}>
+                        {restaurant.name}
+                    </Text>
+                    {restaurant.city ? (
+                        <Text style={[styles.cityMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                            {restaurant.city}
+                        </Text>
+                    ) : null}
+
+                    {/* Table picker — only when the user has more than one */}
+                    {tableList.length > 1 ? (
+                        <>
+                            <Text style={[styles.kicker, { color: palette.textMuted }]}>The table</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableChips}>
+                                {tableList.map((t) => {
+                                    const sel = t.id === selectedTableId;
+                                    return (
+                                        <Pressable
+                                            key={t.id}
+                                            onPress={() => setSelectedTableId(t.id)}
+                                            style={[styles.tableChip, { backgroundColor: sel ? palette.primary : palette.surfaceContainerLow }]}
+                                        >
+                                            <Text style={[styles.tableChipText, { color: sel ? '#fff' : palette.textSecondary }]} numberOfLines={1}>
+                                                {t.name}
+                                            </Text>
+                                        </Pressable>
+                                    );
+                                })}
+                            </ScrollView>
+                        </>
+                    ) : null}
+
+                    {/* When */}
+                    <Text style={[styles.kicker, { color: palette.textMuted }]}>When</Text>
+                    <Pressable
+                        onPress={() => setCalendarVisible(true)}
+                        style={({ pressed }) => [
+                            styles.whenRow,
+                            { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.85 : 1 },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="pick a date"
+                    >
+                        <Ionicons name="calendar-outline" size={18} color={palette.primary} />
+                        <Text style={[styles.whenText, { color: palette.text }]}>{fmtDay(gatherDate)}</Text>
+                        <Ionicons name="chevron-down" size={15} color={palette.textMuted} />
+                    </Pressable>
+
+                    {/* Note (optional) */}
+                    <TextInput
+                        style={[
+                            styles.noteInput,
+                            { color: palette.text, backgroundColor: palette.surfaceContainerLow },
+                        ]}
+                        value={note}
+                        onChangeText={(t) => setNote(t.slice(0, MAX_NOTE_LENGTH))}
+                        onFocus={() => {
+                            // The note is the last scroll item — bring it above the keyboard.
+                            setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 250);
+                        }}
+                        placeholder="why this spot?"
+                        placeholderTextColor={palette.textMuted}
+                        maxLength={MAX_NOTE_LENGTH}
+                        multiline
+                    />
+                </ScrollView>
+
+                {/* CTA — pinned below the scroll area so it is always reachable */}
+                <Pressable
+                    onPress={handleGather}
+                    disabled={!canGather}
+                    style={({ pressed }) => [
+                        styles.cta,
+                        { backgroundColor: palette.primary, opacity: !canGather ? 0.5 : pressed ? 0.9 : 1 },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="gather the table"
+                >
+                    {createGathering.isPending ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                        <Text style={styles.ctaText}>gather the table</Text>
+                    )}
+                </Pressable>
+            </View>
 
             {/* Future-facing calendar overlay (CalendarModal chrome, min tomorrow / max +90d) */}
             <Modal
@@ -310,18 +329,17 @@ export function GatherSheet({ visible, onClose, restaurant, tableId }: GatherShe
 
 const styles = StyleSheet.create({
     backdrop: { flex: 1 },
-    avoidingView: {
+    sheet: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
-    },
-    sheet: {
         borderTopLeftRadius: Radius.xl,
         borderTopRightRadius: Radius.xl,
         paddingHorizontal: Spacing.lg,
-        maxHeight: '88%',
     },
+    // Shrinks (and scrolls) before the pinned CTA does when the sheet hits maxHeight.
+    scrollArea: { flexGrow: 0, flexShrink: 1 },
     handleArea: { alignItems: 'center', paddingVertical: 10 },
     handle: { width: 40, height: 5, borderRadius: 9999 },
     headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
