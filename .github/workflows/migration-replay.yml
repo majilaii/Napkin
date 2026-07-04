@@ -1,0 +1,72 @@
+name: Migration replay guard
+
+# From-scratch replayability check (2026-07-04, TICKET-100 class of bug).
+#
+# `supabase db push --linked` only applies NEW versions against the
+# already-complete prod schema, so CI never notices when the chain stops
+# replaying from zero — e.g. a branch with a backdated timestamp merging
+# after a migration it references was already live (the 20260424100000 →
+# entry_companions break), or SQL that never parsed in the first place
+# (20260504000001's nested $$ quoting, history-repaired on prod).
+#
+# A broken chain blocks `supabase start` / `supabase db reset` for local
+# dev, and will block staging/branching the day it exists. This job replays
+# the FULL chain into a throwaway local database and fails if any migration
+# errors.
+#
+# Rules this guard enforces (see CLAUDE.md → Migration blast-radius):
+#   - Never rename an already-applied migration version (desyncs
+#     supabase_migrations.schema_migrations on prod).
+#   - Repair out-of-order references by editing file CONTENT so the chain
+#     replays in version order (already-applied files never re-run on prod).
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/**'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+
+concurrency:
+  group: migration-replay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    name: Replay full chain from scratch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Duplicate timestamp guard
+        run: bash scripts/check-migration-timestamps.sh
+
+      - uses: supabase/setup-cli@v1
+        with:
+          # Matches the version pinned in package.json — the same CLI the
+          # local verification loop uses.
+          version: 2.58.5
+
+      - name: Replay all migrations into a throwaway database
+        run: |
+          # Isolated project dir: explicit project_id + ports so this can
+          # never collide with any other supabase state on the runner, and
+          # the repo's minimal config.toml (no [db] section) stays the
+          # single source of truth for the real local stack.
+          mkdir -p /tmp/replay/supabase
+          cp -R supabase/migrations /tmp/replay/supabase/migrations
+          cat > /tmp/replay/supabase/config.toml <<'EOF'
+          project_id = "migration-replay-guard"
+
+          [db]
+          port = 54329
+          shadow_port = 54330
+          major_version = 17
+          EOF
+          cd /tmp/replay
+          # `db start` boots the db container and applies every migration in
+          # version order — exactly what `supabase start` / `db reset` do on
+          # a fresh machine. Any failing migration fails this step.
+          supabase db start
