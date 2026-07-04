@@ -26,7 +26,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useFriendsFeed, flattenFriendsFeed } from '@/hooks/feed';
-import { FriendFeedCard } from '@/components/feed';
+import { FriendFeedCard, TrendingRail } from '@/components/feed';
 import type { FriendFeedRow } from '@/hooks/feed';
 
 export default function FeedScreen() {
@@ -62,7 +62,8 @@ export default function FeedScreen() {
                 <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
                     <Text style={[styles.title, { color: palette.text }]}>Feed</Text>
                 </View>
-                {/* Trending rail mounts here in Phase B. */}
+                {/* Finite trending rail — renders nothing below 3 qualifiers. */}
+                <TrendingRail />
             </View>
         ),
         [insets.top, palette],

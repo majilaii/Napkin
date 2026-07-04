@@ -113,14 +113,14 @@ AS $$
     LIMIT p_limit;
 $$;
 
-COMMENT ON FUNCTION public.fn_public_eligible_entries(uuid, uuid[], timestamptz, timestamptz, uuid, int) IS
+COMMENT ON FUNCTION public.fn_public_eligible_entries(uuid, uuid[], timestamptz, uuid, int) IS
     'TICKET-098: shared public-eligibility entry predicate + keyset page. Single '
     'source of truth for the friends feed; profile diary migrates onto it in a '
     'follow-up. Service-role only — the edge fn authenticates and passes p_viewer.';
 
-REVOKE ALL ON FUNCTION public.fn_public_eligible_entries(uuid, uuid[], timestamptz, timestamptz, uuid, int)
+REVOKE ALL ON FUNCTION public.fn_public_eligible_entries(uuid, uuid[], timestamptz, uuid, int)
     FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.fn_public_eligible_entries(uuid, uuid[], timestamptz, timestamptz, uuid, int)
+GRANT EXECUTE ON FUNCTION public.fn_public_eligible_entries(uuid, uuid[], timestamptz, uuid, int)
     TO service_role;
 
 -- ── fn_friends_feed — follow-set resolution + delegate ───────────────────────

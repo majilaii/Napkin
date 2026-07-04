@@ -217,6 +217,21 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-098 Phase B: trending rail read path. [ARCH-REVIEW-5] assert
+    // Array.isArray(rows) ONLY — an empty array is the legitimate rail-hidden
+    // state (fewer than 3 qualifying restaurants), so no length/content check.
+    {
+        name: 'feed-trending (TICKET-098 rail — empty rows is legitimate)',
+        method: 'POST',
+        fn: 'feed-trending',
+        body: {},
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            return null;
+        },
+    },
     // TICKET-090: account fn read path — backs the Blocked settings screen and
     // is the same fn that performs account deletion. blocked_list on the smoke
     // user must return the rows envelope (200 + data.rows array).

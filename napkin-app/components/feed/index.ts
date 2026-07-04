@@ -20,4 +20,5 @@ export { RestaurantFloatCard, type RestaurantFloatCardProps, type FloatMember } 
 
 // Feed tab (TICKET-098: friends-only reviews + trending rail)
 export { FriendFeedCard } from './FriendFeedCard';
+export { TrendingRail } from './TrendingRail';
 export { InlineStars } from './InlineStars';
