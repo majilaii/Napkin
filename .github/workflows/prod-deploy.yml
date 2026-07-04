@@ -26,6 +26,9 @@ on:
     paths:
       - 'supabase/migrations/**'
       - 'supabase/functions/**'
+  # Manual re-run: db push is idempotent, fn detection diffs HEAD~1 (usually
+  # nothing), so a dispatch is effectively "run the smoke suite against prod".
+  workflow_dispatch:
 
 concurrency:
   group: supabase-prod-deploy
@@ -38,6 +41,14 @@ jobs:
     permissions:
       contents: write       # needed to push the auto-revert branch
       pull-requests: write  # needed to open the auto-revert PR
+    defaults:
+      run:
+        # `shell: bash` = `bash -eo pipefail` (vs the default `bash -e`).
+        # Load-bearing: db push, fn deploy, and smoke all pipe through
+        # `tee`, and without pipefail a failing left side exits 0 — smoke
+        # "passed" for four straight deploys on 2026-07-04 while deno was
+        # crashing on startup. Every step here must fail loudly.
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,9 +79,13 @@ jobs:
         with:
           version: latest
 
-      - uses: denoland/setup-deno@v1
+      # Deno 2.x required: the repo's deno.lock is lockfile v5, which Deno 1.x
+      # cannot read — `deno run` crashed on startup ("Unsupported lockfile
+      # version '5'") in every smoke step since the lockfile landed, and the
+      # missing pipefail (fixed above) hid it.
+      - uses: denoland/setup-deno@v2
         with:
-          deno-version: v1.x
+          deno-version: v2.x
 
       - name: Link to prod project
         env:
