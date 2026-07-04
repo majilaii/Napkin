@@ -92,10 +92,24 @@ jobs:
       - name: Identify changed edge functions (vs previous main commit)
         id: changed-fns
         run: |
-          changed=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/**' \
-            | awk -F/ '/^supabase\/functions\/[^_]/ {print $3}' \
-            | sort -u \
-            | grep -v '^$' || true)
+          diff_paths=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/**')
+
+          # _shared/** modules and top-level files (import_map.json) are baked
+          # into every function's bundle at deploy time — they are not deployed
+          # on their own. A commit touching only those must redeploy the whole
+          # fleet, or live bundles keep the old shared code until each function
+          # is next redeployed for an unrelated reason.
+          if echo "$diff_paths" | grep -Eq '^supabase/functions/(_|[^/]+$)'; then
+            echo "Shared code changed — redeploying ALL edge functions." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            changed=$(find supabase/functions -mindepth 1 -maxdepth 1 -type d ! -name '_*' \
+              -exec basename {} \; | sort)
+          else
+            changed=$(echo "$diff_paths" \
+              | awk -F/ '/^supabase\/functions\/[^_]/ {print $3}' \
+              | sort -u \
+              | grep -v '^$' || true)
+          fi
           if [[ -z "$changed" ]]; then
             echo "fns=" >> "$GITHUB_OUTPUT"
           else
