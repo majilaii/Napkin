@@ -8,8 +8,11 @@
  * no ranking.
  *
  * Eligibility lives in ONE shared SQL helper (fn_public_eligible_entries,
- * called via fn_friends_feed) so it can never drift from the profile diary:
+ * called via fn_friends_feed):
  *   restaurant_id IS NOT NULL AND visibility <> 'private'
+ *   AND rating IS NOT NULL AND trim(content) >= 20 chars   -- engagement gate,
+ *       synced with is_entry_publicly_eligible so no feed card is ever a
+ *       dead card (displayable but not tappable/reactable)
  *   AND author account public AND no either-direction block.
  * Table-shared entries are eligible (TICKET-093 decision a) and render as
  * PLAIN entries — no table_id, Table name, Round context, or thread data is

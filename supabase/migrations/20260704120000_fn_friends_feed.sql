@@ -2,12 +2,18 @@
 --
 -- fn_public_eligible_entries: THE shared public-eligibility predicate for entry
 -- surfaces, extracted so the friends feed and (in a follow-up) the profile diary
--- can never drift. Encodes, per [ARCH-REVIEW-1]:
---   • the TICKET-092 diary BASE predicate, byte-identical:
+-- can never drift. Encodes, per [ARCH-REVIEW-1] as amended in review cycle 2:
+--   • the TICKET-092 diary BASE predicate:
 --       restaurant_id IS NOT NULL AND visibility <> 'private'
---     (NO rating filter, NO note filter — the shipped diary has none; PostgREST
---      .neq('visibility','private') excludes NULL visibility, and so does the
---      SQL `<>` here — semantics match exactly)
+--     (PostgREST .neq('visibility','private') excludes NULL visibility, and so
+--      does the SQL `<>` here — semantics match exactly)
+--   • PLUS the public-engagement gate, inlined (sync with
+--     is_entry_publicly_eligible, 20260430000000 — same precedent as
+--     can_view_entry_v2): rating IS NOT NULL AND trim(content) >= 20 chars.
+--     Display predicate = engagement predicate, so every feed card is
+--     tappable + reactable — no dead cards (review cycle 2, W1). The feed is
+--     strictly NARROWER than is_entry_publicly_eligible (which checks neither
+--     visibility nor blocks), never wider.
 --   • author account public (profiles.account_privacy = 'public', via
 --     fn_public_account — the gates.ts public_only relationship, SQL-encoded)
 --   • no either-direction blocked_users row vs the viewer (gates.ts
@@ -91,9 +97,13 @@ AS $$
             COALESCE(e.visited_at, e.created_at) AS sort_date
         FROM public.entries e
         WHERE e.user_id = ANY(p_author_ids)
-          -- diary base predicate (TICKET-092), byte-identical — no rating filter
+          -- diary base predicate (TICKET-092)
           AND e.restaurant_id IS NOT NULL
           AND e.visibility <> 'private'
+          -- public-engagement gate, inlined — sync with is_entry_publicly_eligible
+          -- (20260430000000). Keeps every feed card tappable + reactable.
+          AND e.rating IS NOT NULL
+          AND char_length(trim(COALESCE(e.content, ''))) >= 20
           -- author account public (gates.ts public_only)
           AND public.fn_public_account(e.user_id)
           -- either-direction block denies (gates.ts fetchBlockState)

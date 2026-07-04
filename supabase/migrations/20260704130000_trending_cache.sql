@@ -69,6 +69,9 @@ as $$
             case when w.job_id is not null then 0.5 else 1.0 end as weight
         from public.wishlist_items w
         where w.restaurant_id is not null
+          -- withdrawn saves must not feed the score, the k-floor, or the
+          -- displayed count (review cycle 2, FAIL-1; house soft-delete rule)
+          and w.deleted_at is null
           and w.created_at >= now() - interval '14 days'
         order by w.user_id, w.restaurant_id, w.created_at asc
     ),
@@ -89,7 +92,8 @@ as $$
             d.restaurant_id,
             sum(
                 log(2, (1 + d.day_weight)::numeric)::double precision
-                * power(2, -((current_date - d.day)::double precision / 7.0))
+                -- UTC date to match the events CTE day bucketing (cycle 2, W2)
+                * power(2, -(((now() at time zone 'UTC')::date - d.day)::double precision / 7.0))
             ) as score
         from daily d
         group by d.restaurant_id
