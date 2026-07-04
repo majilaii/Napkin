@@ -52,9 +52,10 @@ jobs:
       - name: Replay all migrations into a throwaway database
         run: |
           # Isolated project dir: explicit project_id + ports so this can
-          # never collide with any other supabase state on the runner, and
-          # the repo's minimal config.toml (no [db] section) stays the
-          # single source of truth for the real local stack.
+          # never collide with any other supabase state on the runner. The
+          # repo's config.toml stays the source of truth for the real local
+          # stack; mirror its [db] major_version here (17, matching prod) so
+          # the replay runs on the same Postgres major.
           mkdir -p /tmp/replay/supabase
           cp -R supabase/migrations /tmp/replay/supabase/migrations
           cat > /tmp/replay/supabase/config.toml <<'EOF'
