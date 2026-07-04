@@ -3,7 +3,8 @@
  *
  * Layout:
  *   [sticky SearchInput]
- *   [empty state: heading + RecentSearchesList] OR [tiered FlatList]
+ *   [empty state: SearchEmptyState — recents · pinned near you · your lists]
+ *   OR [tiered FlatList (+ trailing "Your lists" section when titles match)]
  *
  * Autofocus policy: focus on first mount only. Re-entering the tab within the
  * same session does NOT re-autofocus (respects user intent per UX spec).
@@ -13,7 +14,7 @@
  *   Tier 1/2 → /restaurant/[id]?tableId=... (persisted)
  *   Tier 3 (ghost) → /restaurant/[placeId]?placeId=... (TICKET-016 ghost shape)
  */
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
     View,
     Text,
@@ -28,13 +29,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import * as Location from 'expo-location';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
+import { useNearbyLocation } from '@/hooks/useNearbyLocation';
+import { useMyLists, type MyList } from '@/hooks/lists/useMyLists';
+import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import {
     useRestaurantSearch,
     useRecentSearches,
@@ -44,10 +47,13 @@ import { searchCache } from '@/hooks/search/searchCache';
 import {
     SearchInput,
     SearchResultRow,
-    RecentSearchesList,
+    ListRow,
+    SearchEmptyState,
     TierHeader,
     SearchModeTabs,
     PeopleSearchPane,
+    selectNearbyPinned,
+    filterListsByQuery,
 } from '@/components/search';
 import type { SearchMode } from '@/components/search';
 
@@ -63,13 +69,17 @@ let lastScrollOffset = 0;
 
 type SectionHeaderItem = { _type: 'header'; label: string; key: string };
 type ResultItem = { _type: 'result'; row: SearchResultRowType; key: string };
-type FlatItem = SectionHeaderItem | ResultItem;
+type ListItem = { _type: 'list'; list: MyList; key: string };
+type FlatItem = SectionHeaderItem | ResultItem | ListItem;
 
-function buildFlatList(results: {
-    visited: SearchResultRowType[];
-    onNapkin: SearchResultRowType[];
-    morePlaces: SearchResultRowType[];
-}): FlatItem[] {
+function buildFlatList(
+    results: {
+        visited: SearchResultRowType[];
+        onNapkin: SearchResultRowType[];
+        morePlaces: SearchResultRowType[];
+    },
+    matchingLists: MyList[],
+): FlatItem[] {
     const items: FlatItem[] = [];
 
     if (results.visited.length > 0) {
@@ -88,6 +98,13 @@ function buildFlatList(results: {
         items.push({ _type: 'header', label: 'More places', key: 'hdr-more' });
         for (const row of results.morePlaces) {
             items.push({ _type: 'result', row, key: `r-${row.id ?? row.placeId ?? row.name}` });
+        }
+    }
+    // TICKET-097 (TICKET-094 option A): matching lists tail the tiered results.
+    if (matchingLists.length > 0) {
+        items.push({ _type: 'header', label: 'Your lists', key: 'hdr-lists' });
+        for (const list of matchingLists) {
+            items.push({ _type: 'list', list, key: `l-${list.id}` });
         }
     }
 
@@ -137,21 +154,15 @@ export default function SearchScreen() {
     const listRef = useRef<FlatList<FlatItem>>(null);
     const didRestoreScrollRef = useRef(false);
 
-    // ── Geolocation for Places bias ──────────────────────────────────────
-    const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+    // ── Geolocation — silent, granted-only (TICKET-097) ──────────────────
+    // Feeds the Places result bias AND the "Pinned near you" empty-state
+    // section. NEVER prompts from this tab: coords come only from a prior
+    // grant elsewhere (e.g. the wishlist "Nearest" sort). No grant → no bias,
+    // no section, no nag.
+    const { coords, requestIfGranted } = useNearbyLocation();
     useEffect(() => {
-        (async () => {
-            try {
-                const { status } = await Location.requestForegroundPermissionsAsync();
-                if (status !== 'granted') return;
-                const loc = await Location.getLastKnownPositionAsync() ??
-                    await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-                if (loc) setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-            } catch {
-                // Location unavailable — search works fine without bias
-            }
-        })();
-    }, []);
+        void requestIfGranted();
+    }, [requestIfGranted]);
 
     // Sync module-scope lastQuery on unmount / query change
     useEffect(() => {
@@ -184,13 +195,34 @@ export default function SearchScreen() {
     );
     const recentQueries = useRecentSearches();
 
+    // ── Empty-state material (TICKET-097) — the user's OWN stuff ─────────
+    const { data: myLists } = useMyLists(user?.id);
+    const { data: wishlistData } = useMyWishlist(user?.id);
+
+    // First page only — no pagination loops for a 6-row shelf.
+    const nearbyPinned = useMemo(
+        () => selectNearbyPinned(wishlistData?.pages?.[0]?.data ?? [], coords),
+        [wishlistData, coords],
+    );
+
+    // Typing mode: lists whose title (or description) matches the query —
+    // client-side, top 3 (TICKET-094 option A). Keyed off debouncedQuery so
+    // the section moves in step with the restaurant tiers.
+    const matchingLists = useMemo(
+        () =>
+            debouncedQuery.trim().length >= 2
+                ? filterListsByQuery(myLists ?? [], debouncedQuery)
+                : [],
+        [myLists, debouncedQuery],
+    );
+
     const hasQuery = immediateQuery.trim().length > 0;
     const hasResults =
         results.visited.length > 0 ||
         results.onNapkin.length > 0 ||
         results.morePlaces.length > 0;
 
-    const flatData = hasQuery ? buildFlatList(results) : [];
+    const flatData = hasQuery ? buildFlatList(results, matchingLists) : [];
 
     // Pick the first table as context for persisted restaurant navigation
     const activeTableId = tables?.[0]?.tables?.id;
@@ -230,6 +262,17 @@ export default function SearchScreen() {
         [],
     );
 
+    const handleClearRecents = useCallback(() => {
+        searchCache.clearRecents();
+    }, []);
+
+    const handleListPress = useCallback(
+        (list: MyList) => {
+            router.push({ pathname: '/list/[id]', params: { id: list.id } });
+        },
+        [router],
+    );
+
     const handleClear = useCallback(() => {
         setImmediateQuery('');
         setDebouncedQuery('');
@@ -240,9 +283,12 @@ export default function SearchScreen() {
             if (item._type === 'header') {
                 return <TierHeader label={item.label} />;
             }
+            if (item._type === 'list') {
+                return <ListRow list={item.list} onPress={handleListPress} />;
+            }
             return <SearchResultRow item={item.row} onPress={handleResultPress} />;
         },
-        [handleResultPress],
+        [handleResultPress, handleListPress],
     );
 
     return (
@@ -283,20 +329,24 @@ export default function SearchScreen() {
             ) : (
                 /* Places content (unchanged) */
                 !hasQuery ? (
-                    // Empty state — canvas E·SEARCH
+                    // Empty state — TICKET-097: the user's own material.
+                    // Each section renders only when it has data; a brand-new
+                    // user still gets the clean field with nothing to
+                    // apologise for.
                     <ScrollView
                         style={styles.emptyContainer}
                         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
                         keyboardShouldPersistTaps="handled"
                     >
-                        {recentQueries.length > 0 && (
-                            <RecentSearchesList
-                                queries={recentQueries}
-                                onSelect={handleRecentSelect}
-                            />
-                        )}
-                        {/* No placeholder slab — a clean, focused search field with
-                            nothing to apologise for is the empty state. */}
+                        <SearchEmptyState
+                            recentQueries={recentQueries}
+                            onSelectRecent={handleRecentSelect}
+                            onClearRecents={handleClearRecents}
+                            nearbyPinned={nearbyPinned}
+                            onPressRestaurant={handleResultPress}
+                            lists={myLists ?? []}
+                            onPressList={handleListPress}
+                        />
                     </ScrollView>
                 ) : isLoading && !hasResults ? (
                     // Loading state

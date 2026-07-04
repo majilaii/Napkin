@@ -21,6 +21,12 @@ import type { SearchResultRow as SearchResultRowType } from '@/hooks/search/useR
 interface Props {
     item: SearchResultRowType;
     onPress: (item: SearchResultRowType) => void;
+    /**
+     * TICKET-097 — optional pre-formatted distance ("0.3 mi") appended to the
+     * meta line (`city · cuisine · 0.3 mi`). Used by the empty-state
+     * "Pinned near you" section; absent everywhere else.
+     */
+    distanceLabel?: string | null;
 }
 
 function buildPhotoUrl(_photoReference: string | null): string | null {
@@ -28,7 +34,7 @@ function buildPhotoUrl(_photoReference: string | null): string | null {
     return null;
 }
 
-export function SearchResultRow({ item, onPress }: Props) {
+export function SearchResultRow({ item, onPress, distanceLabel }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const [imgError, setImgError] = useState(false);
@@ -41,6 +47,7 @@ export function SearchResultRow({ item, onPress }: Props) {
     if (item.city) metaParts.push(item.city);
     else if (item.address) metaParts.push(item.address);
     if (item.cuisine) metaParts.push(item.cuisine);
+    if (distanceLabel) metaParts.push(distanceLabel);
     const meta = metaParts.join(' · ');
 
     // Right-edge signal: canvas says "your rating | pin | nothing"
