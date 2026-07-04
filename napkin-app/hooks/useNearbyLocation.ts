@@ -50,6 +50,32 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
         }
     }, [coords]);
 
+    /**
+     * TICKET-097 — silent, granted-only path. Obtains coords ONLY when
+     * foreground permission was already granted elsewhere; NEVER prompts.
+     * If permission is absent (or anything fails) it no-ops and status stays
+     * `idle` — consumers hide their location-dependent UI, no CTA, no nag.
+     */
+    const requestIfGranted = useCallback(async () => {
+        if (inFlight.current || coords) return;
+        inFlight.current = true;
+        try {
+            const { status: perm } = await Location.getForegroundPermissionsAsync();
+            if (perm !== 'granted') return;
+            const loc =
+                (await Location.getLastKnownPositionAsync()) ??
+                (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+            if (loc) {
+                setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+            }
+            setStatus('granted');
+        } catch {
+            // Silent path — swallow; the dependent section simply stays absent.
+        } finally {
+            inFlight.current = false;
+        }
+    }, [coords]);
+
     // Live updates while `watch` is active (the "nearest" sort or the map view), so
     // distances re-rank as the user walks instead of staying frozen until restart.
     // Only after permission is granted; torn down when watch turns off / on unmount.
@@ -80,5 +106,5 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
         };
     }, [watch, status]);
 
-    return { coords, status, request };
+    return { coords, status, request, requestIfGranted };
 }

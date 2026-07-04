@@ -16,7 +16,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { searchCache, type PlacesResult, type PersistedRow, type VisitedRow } from './searchCache';
@@ -246,7 +246,15 @@ export function useRestaurantSearch(
     };
 }
 
-/** Returns the last 5 searched queries for the empty-state "Recent searches" list */
+/**
+ * Returns the last 8 searched queries for the empty-state "Recent searches"
+ * list. Subscribed to the store — re-renders when a query is added, on clear,
+ * and when the AsyncStorage hydration lands (TICKET-097).
+ */
 export function useRecentSearches(): readonly string[] {
-    return searchCache.getRecentQueries();
+    return useSyncExternalStore(
+        searchCache.subscribeRecents,
+        searchCache.getRecentQueries,
+        searchCache.getRecentQueries,
+    );
 }

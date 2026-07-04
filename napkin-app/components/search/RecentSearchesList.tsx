@@ -1,29 +1,35 @@
 /**
  * RecentSearchesList — shown in the empty state when no query is typed.
- * Displays last 5 searches from the session-only LRU cache.
+ * Displays the last 8 searches (AsyncStorage-persisted, TICKET-097).
+ * Kicker rendered via TierHeader for continuity with result tiers; when
+ * `onClear` is provided the kicker row gains a quiet right-aligned `clear`.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { TierHeader } from './TierHeader';
 
 interface Props {
     queries: readonly string[];
     onSelect: (query: string) => void;
+    /** When provided, the kicker row shows a right-aligned `clear` action. */
+    onClear?: () => void;
 }
 
-export function RecentSearchesList({ queries, onSelect }: Props) {
+export function RecentSearchesList({ queries, onSelect, onClear }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
     if (queries.length === 0) return null;
 
     return (
-        <View style={styles.container}>
-            <Text style={[Type.label, styles.heading, { color: palette.textMuted }]}>
-                Recent
-            </Text>
+        <View>
+            <TierHeader
+                label="Recent"
+                action={onClear ? { label: 'clear', onPress: onClear } : undefined}
+            />
             {queries.map((q) => (
                 <Pressable
                     key={q}
@@ -48,13 +54,6 @@ export function RecentSearchesList({ queries, onSelect }: Props) {
 }
 
 const styles = StyleSheet.create({
-    container: {
-        marginTop: Spacing.sm,
-    },
-    heading: {
-        paddingHorizontal: Spacing.md,
-        paddingBottom: Spacing.xs,
-    },
     row: {
         flexDirection: 'row',
         alignItems: 'center',

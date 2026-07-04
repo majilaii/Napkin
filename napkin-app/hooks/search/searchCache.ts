@@ -2,13 +2,21 @@
  * Module-scope in-memory LRU cache for restaurant search.
  *
  * - Capacity: 10 entries (keyed by normalized query string)
- * - Survives tab unmounts, dies on app cold start (no AsyncStorage)
- * - Tracks last 5 queries for the "recent searches" empty state
+ * - Result cache survives tab unmounts, dies on app cold start
+ * - Tracks last 8 queries for the "recent searches" empty state
  *
  * Design: a plain Map used as an LRU via insertion-order eviction.
  * We evict the oldest entry when capacity is exceeded — Map preserves
  * insertion order so the first key is always the oldest.
+ *
+ * TICKET-097: recent queries are persisted to AsyncStorage
+ * (`napkin.recentSearches.v1`) so they survive app restarts. Hydration is
+ * lazy (first subscribe/add), async, and merge-safe: queries added before
+ * hydration lands stay newest. Write-through on add/clear. The result LRU
+ * stays memory-only.
  */
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface CachedSearchResult {
     places: PlacesResult[];
@@ -70,14 +78,66 @@ export interface PersistedSearchResult {
 }
 
 const LRU_CAPACITY = 10;
-const RECENT_CAPACITY = 5;
+const RECENT_CAPACITY = 8;
+const RECENTS_STORAGE_KEY = 'napkin.recentSearches.v1';
 
 // Module-scope state — survives tab unmounts
 const cache = new Map<string, CachedSearchResult>();
-const recentQueries: string[] = [];
+
+// Recents — immutable snapshot, reassigned on every change so
+// useSyncExternalStore change detection (Object.is) works.
+let recentQueries: readonly string[] = [];
+const recentListeners = new Set<() => void>();
+let hydrationStarted = false;
+// Bumped on clearRecents so an in-flight hydration can't resurrect cleared
+// entries (clear-while-hydrating race).
+let recentsEpoch = 0;
 
 function normalizeQuery(q: string): string {
     return q.trim().toLowerCase();
+}
+
+function emitRecents(): void {
+    for (const listener of recentListeners) listener();
+}
+
+/** Fire-and-forget write-through. Storage failures are non-fatal. */
+function persistRecents(): void {
+    AsyncStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(recentQueries)).catch(() => {});
+}
+
+async function hydrateRecents(): Promise<void> {
+    const epochAtStart = recentsEpoch;
+    try {
+        const raw = await AsyncStorage.getItem(RECENTS_STORAGE_KEY);
+        if (raw == null) return;
+        // A clear (or another writer) won the race — discard the stale read.
+        if (epochAtStart !== recentsEpoch) return;
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return;
+        const persisted = parsed.filter(
+            (q): q is string => typeof q === 'string' && q.trim().length > 0,
+        );
+        if (persisted.length === 0) return;
+        // Merge: queries added this session (before hydration landed) stay
+        // newest; persisted entries follow, deduped.
+        const merged = [...recentQueries];
+        for (const q of persisted) {
+            if (!merged.includes(q)) merged.push(q);
+        }
+        recentQueries = merged.slice(0, RECENT_CAPACITY);
+        emitRecents();
+        // Re-persist only when the session added entries pre-hydration.
+        if (merged.length !== persisted.length) persistRecents();
+    } catch {
+        // Unreadable stash — start fresh; next add overwrites it.
+    }
+}
+
+function ensureRecentsHydrated(): void {
+    if (hydrationStarted) return;
+    hydrationStarted = true;
+    void hydrateRecents();
 }
 
 export const searchCache = {
@@ -103,10 +163,13 @@ export const searchCache = {
     addRecent(query: string): void {
         const trimmed = query.trim();
         if (!trimmed) return;
-        const existingIdx = recentQueries.indexOf(trimmed);
-        if (existingIdx !== -1) recentQueries.splice(existingIdx, 1);
-        recentQueries.unshift(trimmed);
-        if (recentQueries.length > RECENT_CAPACITY) recentQueries.pop();
+        ensureRecentsHydrated();
+        recentQueries = [
+            trimmed,
+            ...recentQueries.filter((q) => q !== trimmed),
+        ].slice(0, RECENT_CAPACITY);
+        emitRecents();
+        persistRecents();
     },
 
     has(query: string): boolean {
@@ -117,8 +180,30 @@ export const searchCache = {
         return recentQueries;
     },
 
+    /**
+     * Subscribe to recents changes (add / clear / hydration landing).
+     * Kicks off the one-time AsyncStorage hydration on first call.
+     * Returns an unsubscribe function — useSyncExternalStore-compatible.
+     */
+    subscribeRecents(listener: () => void): () => void {
+        ensureRecentsHydrated();
+        recentListeners.add(listener);
+        return () => {
+            recentListeners.delete(listener);
+        };
+    },
+
+    /** Clear recents only (memory + disk). The result LRU is untouched. */
+    clearRecents(): void {
+        hydrationStarted = true; // an explicit clear must never be resurrected
+        recentsEpoch += 1;
+        recentQueries = [];
+        emitRecents();
+        AsyncStorage.removeItem(RECENTS_STORAGE_KEY).catch(() => {});
+    },
+
     clear(): void {
         cache.clear();
-        recentQueries.length = 0;
+        this.clearRecents();
     },
 };
