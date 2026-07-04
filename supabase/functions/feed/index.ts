@@ -26,7 +26,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
-import { buildPage, decodeCursor } from '../_shared/pagination.ts';
+import { decodeCursor, encodeCursor } from '../_shared/pagination.ts';
 
 const DEFAULT_WINDOW_DAYS = 14;
 const DEFAULT_PAGE_SIZE = 30;
@@ -147,9 +147,29 @@ serve(async (req) => {
             sort_date: string;
         }>;
 
+        // 2a-bis. TICKET-090: drop entries authored by users the viewer blocked.
+        // Filter INSIDE the fetched window while has_more/next_cursor still come
+        // from the unfiltered window — otherwise a blocked row near the page tail
+        // would shrink the array below limit+1 and falsely end pagination.
+        const windowRows = rpcEntries.slice(0, limit);
+        const hasMore = rpcEntries.length > limit;
+        const windowTail = windowRows[windowRows.length - 1] ?? null;
+
+        const { data: blockedRows, error: blockedErr } = await supabase
+            .from('blocked_users')
+            .select('blocked_id')
+            .eq('blocker_id', user.id);
+        if (blockedErr) throw blockedErr;
+        const blockedSet = new Set(
+            (blockedRows ?? []).map((b: { blocked_id: string }) => b.blocked_id),
+        );
+        const visibleRows = blockedSet.size > 0
+            ? windowRows.filter((e) => !blockedSet.has(e.user_id))
+            : windowRows;
+
         // 2b. Hydrate restaurants for the rows we got back.
         const restaurantIds = [
-            ...new Set(rpcEntries.map((e) => e.restaurant_id).filter((id): id is string => !!id)),
+            ...new Set(visibleRows.map((e) => e.restaurant_id).filter((id): id is string => !!id)),
         ];
         const { data: restaurantRows } = restaurantIds.length > 0
             ? await supabase
@@ -161,7 +181,7 @@ serve(async (req) => {
             (restaurantRows ?? []).map((r: { id: string; name: string; address: string | null; city: string | null; photo_url: string | null }) => [r.id, r]),
         );
 
-        const rawEntries = rpcEntries.map((e) => ({
+        const rawEntries = visibleRows.map((e) => ({
             ...e,
             restaurants: e.restaurant_id ? restaurantMap.get(e.restaurant_id) ?? null : null,
         }));
@@ -287,11 +307,16 @@ serve(async (req) => {
             };
         });
 
-        // Build the Page envelope
-        const page = buildPage(shaped, limit, (e) => ({
-            sort_date: e.sort_date,
-            id: e.id,
-        }));
+        // Build the Page envelope by hand — cursor advances over the UNFILTERED
+        // window tail so blocked rows don't stall or truncate the keyset walk
+        // (buildPage would derive has_more from the post-filter length).
+        const page = {
+            rows: shaped,
+            next_cursor: hasMore && windowTail
+                ? encodeCursor({ sort_date: windowTail.sort_date, id: windowTail.id })
+                : null,
+            has_more: hasMore,
+        };
 
         // 6. Trending rail — only compute on first page
         let trending: unknown[] | null = null;

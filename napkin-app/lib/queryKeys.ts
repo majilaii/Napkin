@@ -206,6 +206,11 @@ export const queryKeys = {
         byHash: (contentHash: string) => ['extraction', contentHash] as const,
     },
 
+    // Account — safety + lifecycle (TICKET-090)
+    account: {
+        blocked: () => ['account', 'blocked'] as const,
+    },
+
     // Admin — operator surfaces (TICKET-033)
     admin: {
         // Critics list paginated by (scraped_at desc, id desc)

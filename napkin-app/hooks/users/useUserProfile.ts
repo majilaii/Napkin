@@ -147,6 +147,9 @@ export type UserProfileData = {
     calibration?: Calibration | null;
     /** Viewer's own rated-entry count — present only when viewer_target_relationship === 'public_only'. */
     viewer_rated_entry_count?: number;
+    /** TICKET-090: true when the viewer has blocked this profile — server returns
+     * a minimal stub (profile row only) so the client can offer "unblock". */
+    blocked_by_viewer?: boolean;
 };
 
 export type UserProfileResult = {

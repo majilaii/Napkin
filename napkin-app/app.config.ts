@@ -67,8 +67,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
             },
         },
         permissions: [
-            'android.permission.RECORD_AUDIO',
             // Foreground-only location for Places bias + "near me" wishlist sort.
+            // RECORD_AUDIO dropped (TICKET-090): photos-only picker, no mic use.
             'android.permission.ACCESS_COARSE_LOCATION',
             'android.permission.ACCESS_FINE_LOCATION',
         ],
@@ -86,6 +86,21 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
                     '$(PRODUCT_NAME) would like to access your photo library to add a photo to your entry.',
                 cameraPermission:
                     '$(PRODUCT_NAME) would like to use your camera to take a photo for your entry.',
+                // TICKET-090: photos only (mediaTypes: ['images'] everywhere) — no
+                // mic string, or App Review asks why a food journal wants audio.
+                microphonePermission: false,
+            },
+        ],
+        [
+            'expo-location',
+            {
+                // Foreground-only. The plugin's default Always strings read as
+                // background tracking to App Review — explicitly disabled.
+                locationWhenInUsePermission:
+                    'Napkin uses your location to sort your saved spots by distance and find places near you.',
+                locationAlwaysPermission: false,
+                locationAlwaysAndWhenInUsePermission: false,
+                isIosBackgroundLocationEnabled: false,
             },
         ],
         [

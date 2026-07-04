@@ -16,7 +16,8 @@ name: Deploy to Production
 #   - SUPABASE_ACCESS_TOKEN
 #   - SUPABASE_DB_PASSWORD            (prod password)
 #   - PROD_ANON_KEY                   (anon key for prod)
-#   - PROD_SMOKE_TEST_JWT             (long-lived test-user JWT on prod)
+#   - PROD_SMOKE_TEST_EMAIL           (smoke user on prod — signs in at runtime)
+#   - PROD_SMOKE_TEST_PASSWORD
 #   - PROD_SMOKE_TEST_RESTAURANT_ID
 
 on:
@@ -47,11 +48,12 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PROD_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
-          PROD_SMOKE_TEST_JWT: ${{ secrets.PROD_SMOKE_TEST_JWT }}
+          PROD_SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
+          PROD_SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
           PROD_SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
         run: |
           missing=()
-          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROD_ANON_KEY PROD_SMOKE_TEST_JWT PROD_SMOKE_TEST_RESTAURANT_ID; do
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROD_ANON_KEY PROD_SMOKE_TEST_EMAIL PROD_SMOKE_TEST_PASSWORD PROD_SMOKE_TEST_RESTAURANT_ID; do
             if [[ -z "${!v:-}" ]]; then missing+=("$v"); fi
           done
           if [[ ${#missing[@]} -gt 0 ]]; then
@@ -117,7 +119,8 @@ jobs:
         env:
           SUPABASE_URL: https://ftvmseaqwwlcxtdlvxxz.supabase.co
           SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
-          SMOKE_TEST_JWT: ${{ secrets.PROD_SMOKE_TEST_JWT }}
+          SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
           SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
         run: |
           echo "## Smoke test results (PROD)" >> "$GITHUB_STEP_SUMMARY"

@@ -5,3 +5,9 @@
 [functions.share-page]
 # Public URL renderer — no JWT required (iMessage/WhatsApp unfurl bots, browsers)
 verify_jwt = false
+
+[auth]
+# TICKET-090: password-recovery emails 302 to these deep links. Without the
+# allowlist entry Supabase falls back to site_url and the link dead-ends.
+# Applied to prod via `npx supabase config push`.
+additional_redirect_urls = ["napkin://reset-password", "diningjournalapp://reset-password"]

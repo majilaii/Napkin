@@ -208,8 +208,12 @@ function RootLayoutNav() {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === 'auth';
+    // TICKET-090: the password-recovery deep link must survive both redirects —
+    // it starts signed-out (would bounce to /auth) and setSession() flips to
+    // signed-in mid-form (would bounce to /wishlist before the new password).
+    const inRecovery = segments[0] === 'reset-password';
 
-    if (!session && !inAuthGroup) {
+    if (!session && !inAuthGroup && !inRecovery) {
       router.replace('/auth');
     } else if (session && inAuthGroup) {
       // Launch-readiness (2026-07-03): land on Wishlist, not Tables — a new

@@ -133,6 +133,23 @@ export default function AuthScreen() {
         }
     };
 
+    // TICKET-090: recovery email deep-links back into /reset-password.
+    const forgotPassword = async () => {
+        const target = email.trim();
+        if (!target) {
+            Alert.alert('Enter your email first', 'Type it above, then tap "forgot password?" again.');
+            return;
+        }
+        const { error } = await supabase.auth.resetPasswordForEmail(target, {
+            redirectTo: 'napkin://reset-password',
+        });
+        if (error) {
+            Alert.alert("Couldn't send the reset email", error.message);
+        } else {
+            Alert.alert('Check your email', `A reset link is on its way to ${target}.`);
+        }
+    };
+
     const ctaLabel = loading ? '' : mode === 'sign-in' ? 'Sign in' : 'Create account';
     const toggleLabel =
         mode === 'sign-in'
@@ -267,6 +284,14 @@ export default function AuthScreen() {
                                     {toggleLabel}
                                 </Text>
                             </Pressable>
+
+                            {mode === 'sign-in' && (
+                                <Pressable onPress={forgotPassword} style={styles.forgot} hitSlop={12}>
+                                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
+                                        forgot password?
+                                    </Text>
+                                </Pressable>
+                            )}
                         </View>
 
                         {/* Footer flourish */}
@@ -327,6 +352,10 @@ const styles = StyleSheet.create({
     },
     toggle: {
         marginTop: Spacing.lg,
+        alignItems: 'center',
+    },
+    forgot: {
+        marginTop: Spacing.md,
         alignItems: 'center',
     },
     footer: {

@@ -211,8 +211,34 @@ serve(async req => {
                     { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
                 );
             }
+
+            // ── Rate limit (TICKET-091) — every user-facing call costs a Google
+            // Places request, so the bucket is checked fail-CLOSED: an RPC error
+            // denies rather than letting a DB blip uncork unlimited spend.
+            // 120/hr ≈ 40 typed searches at the 250ms debounce — generous for a
+            // human, ruinous for a loop.
+            const { data: rateRows, error: rateError } = await supabase.rpc(
+                'check_and_increment_rate_limit',
+                { p_user_id: user.id, p_bucket_key: 'places_search', p_max: 120, p_window_seconds: 3600 },
+            );
+            const rateRow = rateRows?.[0];
+            if (rateError || !rateRow || !rateRow.allowed) {
+                if (rateError) console.error('places-search rate check failed:', rateError);
+                const retryAfter = rateRow?.retry_after_seconds ?? 60;
+                return new Response(
+                    JSON.stringify({
+                        error: {
+                            code: 'RATE_LIMITED',
+                            message: 'Too many searches — try again shortly',
+                            details: { retry_after_seconds: retryAfter },
+                        },
+                    }),
+                    { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
         }
-        // On the internal path: no auth.getUser call; supabase client uses service-role key.
+        // On the internal path: no auth.getUser call; supabase client uses service-role
+        // key. Internal calls are already throttled upstream by resolve-url's buckets.
 
         // ── API key check ──────────────────────────────────────────────────
         if (!GOOGLE_PLACES_API_KEY) {

@@ -328,10 +328,37 @@ serve(async (req) => {
 
             if (commentsError) throw commentsError;
 
+            // TICKET-090: hide contributions from users the viewer has blocked.
+            // One-way — each side's own view applies their own block list. Replies
+            // dangling under a dropped comment are dropped with it (max depth 2).
+            let reactionsVisible = reactionsRaw ?? [];
+            let commentsVisible = commentsRaw ?? [];
+            const { data: blockedRows, error: blockedErr } = await supabase
+                .from('blocked_users')
+                .select('blocked_id')
+                .eq('blocker_id', user.id);
+            if (blockedErr) throw blockedErr;
+            const blockedSet = new Set(
+                (blockedRows ?? []).map((b: { blocked_id: string }) => b.blocked_id),
+            );
+            if (blockedSet.size > 0) {
+                reactionsVisible = reactionsVisible.filter((r: any) => !blockedSet.has(r.user_id));
+                const droppedParentIds = new Set(
+                    commentsVisible
+                        .filter((c: any) => blockedSet.has(c.user_id))
+                        .map((c: any) => c.id as string),
+                );
+                commentsVisible = commentsVisible.filter(
+                    (c: any) =>
+                        !blockedSet.has(c.user_id) &&
+                        !(c.parent_id && droppedParentIds.has(c.parent_id)),
+                );
+            }
+
             // Batch-fetch profiles for all unique user_ids referenced
             const userIds = Array.from(new Set([
-                ...(reactionsRaw ?? []).map((r: any) => r.user_id as string),
-                ...(commentsRaw  ?? []).map((c: any) => c.user_id as string),
+                ...reactionsVisible.map((r: any) => r.user_id as string),
+                ...commentsVisible.map((c: any) => c.user_id as string),
             ]));
 
             const profileById = new Map<string, { display_name: string; avatar_url: string | null; username?: string | null }>();
@@ -350,12 +377,12 @@ serve(async (req) => {
                 }
             }
 
-            const reactionsList = (reactionsRaw ?? []).map((r: any) => ({
+            const reactionsList = reactionsVisible.map((r: any) => ({
                 ...r,
                 profiles: profileById.get(r.user_id) ?? null,
             }));
             // TICKET-085: per-comment ❤️ — which of these comments the viewer liked.
-            const commentIds = (commentsRaw ?? []).map((c: any) => c.id as string);
+            const commentIds = commentsVisible.map((c: any) => c.id as string);
             const likedSet = new Set<string>();
             if (commentIds.length > 0) {
                 const { data: myLikes, error: likesErr } = await supabase
@@ -366,7 +393,7 @@ serve(async (req) => {
                 if (likesErr) throw likesErr;
                 for (const l of (myLikes ?? []) as any[]) likedSet.add(l.comment_id as string);
             }
-            const commentsList = (commentsRaw ?? []).map((c: any) => ({
+            const commentsList = commentsVisible.map((c: any) => ({
                 ...c,
                 parent_id: c.parent_id ?? null,
                 like_count: c.like_count ?? 0,

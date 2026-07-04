@@ -19,13 +19,17 @@
  * Required env (read at runtime, not build):
  *   SUPABASE_URL              — e.g. https://<ref>.supabase.co
  *   SUPABASE_ANON_KEY         — anon key for the same project
- *   SMOKE_TEST_JWT            — a long-lived test-user access token (see runbook)
  *   SMOKE_TEST_RESTAURANT_ID  — UUID of a seeded restaurant on the project
+ * Auth (one of, checked in order):
+ *   SMOKE_TEST_JWT            — a pre-minted test-user access token
+ *   SMOKE_TEST_EMAIL + SMOKE_TEST_PASSWORD — smoke-user credentials; the script
+ *       signs in at runtime (TICKET-091 — JWTs expire hourly, so static-JWT
+ *       secrets rot; password sign-in gives CI a fresh token every run).
  *
  * Run locally:
  *   deno run --allow-env --allow-net scripts/smoke/edge-functions.ts
  *
- * Run in CI: see .github/workflows/staging-deploy.yml + prod-deploy.yml.
+ * Run in CI: see .github/workflows/prod-deploy.yml.
  */
 
 type Check = {
@@ -48,7 +52,6 @@ type Check = {
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
-const JWT = Deno.env.get('SMOKE_TEST_JWT');
 const RESTAURANT_ID = Deno.env.get('SMOKE_TEST_RESTAURANT_ID');
 // Optional: a real table-scoped entry id the SMOKE_TEST_JWT user can read.
 // When set, enables the post-interactions read-path guard below. Left unset in
@@ -66,8 +69,34 @@ function requireEnv(name: string, val: string | undefined): string {
 
 requireEnv('SUPABASE_URL', SUPABASE_URL);
 requireEnv('SUPABASE_ANON_KEY', ANON_KEY);
-requireEnv('SMOKE_TEST_JWT', JWT);
 requireEnv('SMOKE_TEST_RESTAURANT_ID', RESTAURANT_ID);
+
+// ── Auth: static JWT, or password sign-in for a runtime-fresh token ─────────
+async function resolveJwt(): Promise<string> {
+    const staticJwt = Deno.env.get('SMOKE_TEST_JWT');
+    if (staticJwt) return staticJwt;
+
+    const email = Deno.env.get('SMOKE_TEST_EMAIL');
+    const password = Deno.env.get('SMOKE_TEST_PASSWORD');
+    if (!email || !password) {
+        console.error('✗ missing auth: set SMOKE_TEST_JWT, or SMOKE_TEST_EMAIL + SMOKE_TEST_PASSWORD');
+        Deno.exit(2);
+    }
+
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: ANON_KEY! },
+        body: JSON.stringify({ email, password }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.access_token) {
+        console.error(`✗ smoke-user sign-in failed (HTTP ${res.status}): ${JSON.stringify(json).slice(0, 300)}`);
+        Deno.exit(2);
+    }
+    return json.access_token as string;
+}
+
+const JWT = await resolveJwt();
 
 // ── Checks ─────────────────────────────────────────────────────────────────
 //
