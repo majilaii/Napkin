@@ -1,0 +1,65 @@
+name: Nightly DB Backup
+
+# TICKET-091: the Supabase free tier keeps ZERO backups. This dumps schema +
+# data + roles nightly and stores them as private workflow artifacts
+# (30-day retention). Restore path:
+#   1. Download the artifact from the Actions run.
+#   2. psql "$DB_URL" -f roles.sql && psql -f schema.sql && psql -f data.sql
+# Revisit when upgrading to Supabase Pro (managed PITR replaces this).
+#
+# Required repo secrets: SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC nightly
+  workflow_dispatch: {}    # manual "back up now" button
+
+concurrency:
+  group: nightly-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: pg_dump prod → artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to prod project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref ftvmseaqwwlcxtdlvxxz --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Dump schema + data + roles
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          mkdir -p backup
+          supabase db dump --linked -p "$SUPABASE_DB_PASSWORD" -f backup/schema.sql
+          supabase db dump --linked -p "$SUPABASE_DB_PASSWORD" -f backup/data.sql --data-only --use-copy
+          supabase db dump --linked -p "$SUPABASE_DB_PASSWORD" -f backup/roles.sql --role-only
+          gzip backup/*.sql
+          ls -lh backup/ | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Sanity check (data dump is not suspiciously empty)
+        run: |
+          size=$(stat -c%s backup/data.sql.gz)
+          echo "data.sql.gz: ${size} bytes"
+          if [[ "$size" -lt 1024 ]]; then
+            echo "::error::data dump under 1KB — the backup is almost certainly broken."
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-backup-${{ github.run_id }}
+          path: backup/
+          retention-days: 30
+          if-no-files-found: error

@@ -56,6 +56,7 @@ import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts'
 import { useUpdateEntry } from '@/hooks/entries/useUpdateEntry';
 import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
 import { useAddEntryPhoto, useRemoveEntryPhoto } from '@/hooks/entries/useEntryPhotoMutations';
+import { useReportContent, useBlockUser } from '@/hooks/account';
 import { CompanionPickerSheet } from '@/components/logging';
 import { formatCompanions } from '@/lib/companions';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
@@ -458,6 +459,60 @@ function EntryDetailScreen() {
     const isOwnEntry = !!(viewer && entry && viewer.id === entry.user_id);
     const updateEntry = useUpdateEntry(entry?.id ?? '');
     const deleteEntry = useDeleteEntry();
+
+    // ── Viewer safety actions (TICKET-090, guideline 1.2) ─────────────────────
+    const reportContent = useReportContent();
+    const blockUser = useBlockUser();
+
+    const handleViewerMenu = useCallback(() => {
+        if (!entry) return;
+        const authorId = entry.user_id;
+        const authorName = entry.profiles?.display_name ?? 'this person';
+        const fileReport = (reason: string) => {
+            reportContent.mutate(
+                { targetType: 'entry', targetId: entry.id, reason },
+                {
+                    onSuccess: () => Alert.alert('Reported', 'Thanks — we review reports within 24 hours.'),
+                    onError: () => Alert.alert('Something went wrong', 'Try again in a moment.'),
+                },
+            );
+        };
+        Alert.alert(authorName, undefined, [
+            {
+                text: 'Report this review',
+                style: 'destructive',
+                onPress: () =>
+                    Alert.alert('Report this review', undefined, [
+                        { text: 'Spam or misleading', onPress: () => fileReport('spam') },
+                        { text: 'Offensive or abusive', onPress: () => fileReport('offensive') },
+                        { text: 'Something else', onPress: () => fileReport('other') },
+                        { text: 'Cancel', style: 'cancel' },
+                    ]),
+            },
+            {
+                text: `Block ${authorName}`,
+                style: 'destructive',
+                onPress: () =>
+                    Alert.alert(
+                        `Block ${authorName}?`,
+                        "You won't see each other's reviews, comments, or profiles.",
+                        [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                                text: 'Block',
+                                style: 'destructive',
+                                onPress: () =>
+                                    blockUser.mutate(authorId, {
+                                        onSuccess: () => router.back(),
+                                        onError: () => Alert.alert('Something went wrong', 'Try again in a moment.'),
+                                    }),
+                            },
+                        ],
+                    ),
+            },
+            { text: 'Cancel', style: 'cancel' },
+        ]);
+    }, [entry, reportContent, blockUser, router]);
 
     const handleDelete = useCallback(() => {
         if (!isOwnEntry || !entry?.id || !viewer?.id) return;
@@ -1066,6 +1121,15 @@ function EntryDetailScreen() {
                                     <Ionicons name="ellipsis-horizontal" size={20} color={palette.textMuted} />
                                 </Pressable>
                             )
+                        ) : viewer ? (
+                            // Non-owner: report/block menu (TICKET-090, guideline 1.2)
+                            <Pressable
+                                onPress={handleViewerMenu}
+                                hitSlop={12}
+                                accessibilityLabel="Report or block"
+                            >
+                                <Ionicons name="ellipsis-horizontal" size={20} color={palette.textMuted} />
+                            </Pressable>
                         ) : null}
                     </View>
                 </View>

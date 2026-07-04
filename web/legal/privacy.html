@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Privacy Policy · Napkin</title>
+<link rel="icon" href="data:,">
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        background: #faf7f2;
+        color: #1c1c19;
+        font-family: -apple-system, BlinkMacSystemFont, "Manrope", "Segoe UI", Helvetica, Arial, sans-serif;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        -webkit-text-size-adjust: 100%;
+    }
+    .page { max-width: 640px; margin: 0 auto; padding: 56px 24px 72px; }
+    .wordmark {
+        font-family: "Newsreader", Georgia, "Times New Roman", serif;
+        font-style: italic;
+        font-size: 1.4rem;
+        color: #a03f28;
+    }
+    .kicker {
+        font-variant-caps: all-small-caps;
+        letter-spacing: 0.18em;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #8a726c;
+        margin: 44px 0 4px;
+    }
+    h1 {
+        font-family: "Newsreader", Georgia, "Times New Roman", serif;
+        font-style: italic;
+        font-weight: 500;
+        font-size: 2.2rem;
+        line-height: 1.15;
+        margin: 0 0 10px;
+    }
+    .meta { color: #8a726c; font-size: 0.9rem; }
+    .intro { margin-top: 32px; }
+    h2 {
+        font-family: "Newsreader", Georgia, "Times New Roman", serif;
+        font-style: italic;
+        font-weight: 500;
+        font-size: 1.4rem;
+        line-height: 1.3;
+        margin: 42px 0 12px;
+    }
+    h2 .no { color: #a03f28; padding-right: 0.15em; }
+    p { margin: 0 0 14px; }
+    ul { margin: 0 0 16px; padding-left: 1.3em; }
+    li { margin-bottom: 8px; }
+    a {
+        color: #a03f28;
+        text-decoration: underline;
+        text-decoration-color: rgba(160, 63, 40, 0.35);
+        text-underline-offset: 3px;
+    }
+    strong { font-weight: 650; }
+    .callout {
+        background: #f1eae0;
+        border-radius: 14px;
+        padding: 16px 18px;
+        margin: 0 0 16px;
+    }
+    .table-wrap { overflow-x: auto; margin: 4px 0 6px; }
+    table {
+        width: 100%;
+        min-width: 520px;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+        font-size: 0.92rem;
+    }
+    th {
+        text-align: left;
+        font-variant-caps: all-small-caps;
+        letter-spacing: 0.14em;
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #8a726c;
+        padding: 0 14px;
+    }
+    td { background: #f1eae0; padding: 12px 14px; vertical-align: top; }
+    td:first-child { border-radius: 12px 0 0 12px; font-weight: 650; white-space: nowrap; }
+    td:last-child { border-radius: 0 12px 12px 0; }
+    footer { margin-top: 72px; }
+    .rule {
+        height: 1px;
+        border: 0;
+        background: linear-gradient(90deg, rgba(138, 114, 108, 0.4), rgba(138, 114, 108, 0));
+        margin-bottom: 22px;
+    }
+    footer nav {
+        font-variant-caps: all-small-caps;
+        letter-spacing: 0.16em;
+        font-size: 0.95rem;
+        color: #8a726c;
+    }
+    footer nav a { color: #8a726c; text-decoration: none; }
+    footer nav a[aria-current], footer nav a:hover { color: #a03f28; }
+    .tagline {
+        font-family: "Newsreader", Georgia, "Times New Roman", serif;
+        font-style: italic;
+        color: #8a726c;
+        font-size: 0.95rem;
+        margin: 10px 0 0;
+    }
+    @media (max-width: 480px) {
+        .page { padding: 40px 20px 56px; }
+        h1 { font-size: 1.85rem; }
+    }
+</style>
+</head>
+<body>
+<div class="page">
+
+    <header>
+        <p class="wordmark">napkin</p>
+        <p class="kicker">legal</p>
+        <h1>Privacy Policy</h1>
+        <p class="meta">Effective 4 July 2026 · built and operated by Jacky Ieong</p>
+    </header>
+
+    <p class="intro">Napkin is a meal journal for iPhone: you log the restaurants you eat at, keep a wishlist of ones to try, and share — if you choose — with small private groups called Tables. This page explains what data Napkin handles and what happens to it. The short version: your data exists to power your journal. No ads, no data sales, no tracking.</p>
+
+    <h2><span class="no">1.</span>What we collect</h2>
+    <ul>
+        <li><strong>Account.</strong> Your email address and password, handled by Supabase Auth (passwords are stored hashed — we never see them), plus your display name and an optional avatar photo.</li>
+        <li><strong>Things you make.</strong> Restaurant logs — ratings, written notes, dates, tagged companions — the photos you attach, wishlist saves, lists, your Table memberships and activity, comments, and emoji reactions.</li>
+        <li><strong>Location — optional, foreground only.</strong> If you allow it, your coordinates are used to find restaurants near you and to sort saved spots by distance. They serve the search in front of you and nothing else: we don't record where you've been or build a location history. Restaurant coordinates come from Google, not from tracking you.</li>
+        <li><strong>Search text.</strong> What you type into restaurant search is sent to Google Places to return results.</li>
+        <li><strong>Imported video text.</strong> Paste a TikTok or similar link and the video is read on your device — frames and audio are turned into text locally. Only that extracted text (restaurant names, captions) is sent to our server and to Anthropic's Claude to identify the restaurants. The video itself is never uploaded, stored, or redistributed.</li>
+        <li><strong>Usage events.</strong> First-party events like "logged a meal", tied to your account id and stored in our own database. There is no third-party analytics SDK in the app.</li>
+    </ul>
+
+    <h2><span class="no">2.</span>How we use it</h2>
+    <ul>
+        <li>To run the app: your journal, feed, wishlist, Tables, and profile.</li>
+        <li>To show what you make to the people you chose — Tablemates, tagged friends, or anyone, if your profile is public.</li>
+        <li>To find restaurants: search text (and, for nearby search, transient coordinates) goes to Google Places; imported video text goes to Anthropic.</li>
+        <li>To see which features get used, via our own usage events.</li>
+        <li>To email you about your account — password resets, replies when you write to us.</li>
+    </ul>
+    <p>We never sell your data, never show ads, and never share your data with advertisers or data brokers.</p>
+
+    <h2><span class="no">3.</span>What's public, what's private</h2>
+    <ul>
+        <li><strong>Profiles are public by default.</strong> Yours can be found and browsed unless you switch it off in <strong>Settings → Privacy</strong>.</li>
+        <li><strong>Logs are private by default.</strong> A log can appear on your public profile only if it has a written review and your profile is public. Ratings-only logs never appear publicly.</li>
+    </ul>
+    <div class="callout"><strong>Tables are never public.</strong> Anything shared to a Table is visible only to that Table's members, whatever your profile setting.</div>
+
+    <h2><span class="no">4.</span>Third-party services</h2>
+    <p>A small set of providers runs Napkin. Each gets only what its job requires, and none of them get data for advertising.</p>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Service</th><th>Purpose</th><th>Data shared</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Supabase</td><td>Database, sign-in, and photo storage. Hosted in EU-West.</td><td>Account data and the content you create.</td></tr>
+                <tr><td>Google Places</td><td>Restaurant search and restaurant details.</td><td>Your search text; transient coordinates for nearby search.</td></tr>
+                <tr><td>Anthropic</td><td>Identifies restaurant names during video/link import.</td><td>Text extracted on your device — never the video.</td></tr>
+                <tr><td>Apple</td><td>App Store distribution.</td><td>Nothing from inside Napkin.</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h2><span class="no">5.</span>How long we keep it</h2>
+    <p>For as long as your account exists. Your search text and location aren't stored as a history — they serve the request in front of you, and that's it. When you delete your account, your data goes with it.</p>
+
+    <h2><span class="no">6.</span>Deleting your data</h2>
+    <p><strong>Settings → Account → Delete account.</strong> Deletion is immediate and irreversible: your logs, photos, wishlist, comments, Table memberships, and the account itself are all deleted. If you'd rather we handle it — or you can't get into the app — email <a href="mailto:jackyieong@mainrichinternational.com">jackyieong@mainrichinternational.com</a>.</p>
+
+    <h2><span class="no">7.</span>Your rights</h2>
+    <p>Wherever you live, you get the GDPR-style basics:</p>
+    <ul>
+        <li><strong>Access</strong> — ask for a copy of the data we hold about you.</li>
+        <li><strong>Correction</strong> — fix your account data (most of it is editable in the app).</li>
+        <li><strong>Deletion</strong> — see section 6.</li>
+        <li><strong>Objection and restriction</strong> — ask us to stop or limit a particular use.</li>
+        <li><strong>Portability</strong> — ask for your content in a machine-readable format.</li>
+    </ul>
+    <p>Email <a href="mailto:jackyieong@mainrichinternational.com">jackyieong@mainrichinternational.com</a> and we'll respond within a month. Data is hosted in the EU (see section 4); if you're in the EEA or UK, you can also complain to your local data-protection authority.</p>
+
+    <h2><span class="no">8.</span>Children</h2>
+    <p>Napkin is for people aged 13 and over — or older, if that's the minimum age where you live. We don't knowingly collect data from children below that age; if you believe a child has an account, email us and we'll delete it.</p>
+
+    <h2><span class="no">9.</span>Changes to this policy</h2>
+    <p>If this policy changes, the new version appears here with a new effective date. Meaningful changes get flagged in the app.</p>
+
+    <h2><span class="no">10.</span>Contact</h2>
+    <p>Napkin is built and run by one person — Jacky Ieong. Email <a href="mailto:jackyieong@mainrichinternational.com">jackyieong@mainrichinternational.com</a> and you'll be writing to the developer, not a ticket queue.</p>
+
+    <footer>
+        <div class="rule"></div>
+        <nav><a href="privacy.html" aria-current="page">privacy</a> · <a href="terms.html">terms</a> · <a href="support.html">support</a></nav>
+        <p class="tagline">napkin — every meal worth remembering.</p>
+    </footer>
+
+</div>
+</body>
+</html>

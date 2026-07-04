@@ -19,6 +19,8 @@
 import React, { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
+    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -32,6 +34,7 @@ import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUserProfile } from '@/hooks/users/useUserProfile';
 import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
+import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account';
 
 import { ProfileHeader } from './ProfileHeader';
 import { TopFour } from './TopFour';
@@ -76,6 +79,53 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
 
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
 
+    // ── Viewer safety actions (TICKET-090, guideline 1.2) ────────────────────
+    const reportContent = useReportContent();
+    const blockUser = useBlockUser();
+    const unblockUser = useUnblockUser();
+
+    const handleSafetyMenu = () => {
+        if (!profileData) return;
+        const targetId = profileData.profile.user_id;
+        const name = profileData.profile.display_name ?? 'this person';
+        const fileReport = (reason: string) => {
+            reportContent.mutate(
+                { targetType: 'profile', targetId, reason },
+                {
+                    onSuccess: () => Alert.alert('Reported', 'Thanks — we review reports within 24 hours.'),
+                    onError: () => Alert.alert('Something went wrong', 'Try again in a moment.'),
+                },
+            );
+        };
+        Alert.alert(name, undefined, [
+            {
+                text: 'Report',
+                style: 'destructive',
+                onPress: () =>
+                    Alert.alert('Report this profile', undefined, [
+                        { text: 'Spam or misleading', onPress: () => fileReport('spam') },
+                        { text: 'Offensive or abusive', onPress: () => fileReport('offensive') },
+                        { text: 'Something else', onPress: () => fileReport('other') },
+                        { text: 'Cancel', style: 'cancel' },
+                    ]),
+            },
+            {
+                text: `Block ${name}`,
+                style: 'destructive',
+                onPress: () =>
+                    Alert.alert(
+                        `Block ${name}?`,
+                        "You won't see each other's reviews, comments, or profiles.",
+                        [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Block', style: 'destructive', onPress: () => blockUser.mutate(targetId) },
+                        ],
+                    ),
+            },
+            { text: 'Cancel', style: 'cancel' },
+        ]);
+    };
+
     if (isLoading || !identifier) {
         return (
             <View style={styles.center}>
@@ -96,6 +146,31 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
 
     if (isNotFound || !profileData) {
         return <NotFoundState />;
+    }
+
+    // ── Blocked stub (TICKET-090) — the one surface a blocked profile keeps ──
+    if (profileData.blocked_by_viewer) {
+        return (
+            <View style={styles.center}>
+                <Text style={[Type.headlineMedium, { color: palette.text, textAlign: 'center' }]}>
+                    {profileData.profile.display_name ?? 'Someone'}
+                </Text>
+                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: Spacing.sm }]}>
+                    {"You've blocked this person."}
+                </Text>
+                <Pressable
+                    onPress={() => unblockUser.mutate(profileData.profile.user_id)}
+                    disabled={unblockUser.isPending}
+                    style={[styles.unblockPill, { borderColor: 'rgba(160,63,40,0.35)' }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Unblock"
+                >
+                    <Text style={[styles.unblockLabel, { color: palette.primary }]}>
+                        {unblockUser.isPending ? 'unblocking…' : 'unblock'}
+                    </Text>
+                </Pressable>
+            </View>
+        );
     }
 
     const stats = profileData.stats;
@@ -195,6 +270,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 isFollowingViewer={profileData.is_following_viewer ?? false}
                 calibration={profileData.calibration}
                 viewerRatedEntryCount={profileData.viewer_rated_entry_count}
+                onSafetyMenu={!isSelf ? handleSafetyMenu : undefined}
             />
 
             {/* Top 4 — identity leads (Letterboxd: favorites before any feed).
@@ -297,5 +373,17 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 12,
         lineHeight: 17,
+    },
+    unblockPill: {
+        marginTop: Spacing.lg,
+        borderWidth: 1.5,
+        borderRadius: 999,
+        paddingHorizontal: 18,
+        paddingVertical: 8,
+    },
+    unblockLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 12,
+        textTransform: 'lowercase',
     },
 });

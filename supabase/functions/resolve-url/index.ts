@@ -902,12 +902,14 @@ async function handleAsyncExtract(
         return jsonResponse({ data: { job_id: jobId, status: job.status } });
     }
 
+    // Fail-CLOSED (TICKET-091): a missing/errored rate row denies — a DB blip
+    // must not uncork unlimited Anthropic + Places spend on the async path.
     const { data: rateRows } = await supabase.rpc(
         'check_and_increment_rate_limit',
         { p_user_id: jobOwnerId, p_bucket_key: 'resolve_content', p_max: 20, p_window_seconds: 3600 },
     ).catch(() => ({ data: null }));
     const rateRow = rateRows?.[0];
-    if (rateRow && !rateRow.allowed) {
+    if (!rateRow || !rateRow.allowed) {
         await supabase.rpc('fn_complete_import_job', {
             p_job_id: jobId, p_status: 'needs_confirm', p_restaurant_id: null,
         }).catch(() => null);
@@ -2252,12 +2254,15 @@ serve(async (req) => {
     // run the cheap text extractor + Places resolution here. No URL required.
     const extractedText = typeof body?.extracted_text === 'string' ? body.extracted_text.trim() : '';
     if (extractedText) {
+        // Fail-CLOSED (TICKET-091): RPC error or missing row denies.
         const { data: rlRows, error: rlErr } = await supabase.rpc('check_and_increment_rate_limit', {
             p_user_id: user.id, p_bucket_key: 'resolve_url', p_max: 30, p_window_seconds: 3600,
         });
-        if (!rlErr && rlRows?.[0] && !rlRows[0].allowed) {
+        const rlRow = rlRows?.[0];
+        if (rlErr || !rlRow || !rlRow.allowed) {
+            if (rlErr) console.error('resolve-url video-text rate check failed:', rlErr);
             return jsonResponse(
-                { error: { code: 'RATE_LIMITED', message: 'Too many requests', details: { retry_after_seconds: rlRows[0].retry_after_seconds } } },
+                { error: { code: 'RATE_LIMITED', message: 'Too many requests', details: { retry_after_seconds: rlRow?.retry_after_seconds ?? 60 } } },
                 429,
             );
         }
@@ -2291,20 +2296,19 @@ serve(async (req) => {
     }
 
     // ── Rate limit ────────────────────────────────────────────────────────────
+    // Fail-CLOSED (TICKET-091): RPC error or missing row denies — this branch
+    // previously logged-and-continued, letting a DB blip bypass the throttle.
     const { data: rateRows, error: rateError } = await supabase.rpc(
         'check_and_increment_rate_limit',
         { p_user_id: user.id, p_bucket_key: 'resolve_url', p_max: 30, p_window_seconds: 3600 },
     );
-    if (rateError) {
-        console.error('Rate limit check failed:', rateError);
-    } else {
-        const row = rateRows?.[0];
-        if (row && !row.allowed) {
-            return jsonResponse(
-                { error: { code: 'RATE_LIMITED', message: 'Too many requests', details: { retry_after_seconds: row.retry_after_seconds } } },
-                429,
-            );
-        }
+    const rateRow = rateRows?.[0];
+    if (rateError || !rateRow || !rateRow.allowed) {
+        if (rateError) console.error('Rate limit check failed:', rateError);
+        return jsonResponse(
+            { error: { code: 'RATE_LIMITED', message: 'Too many requests', details: { retry_after_seconds: rateRow?.retry_after_seconds ?? 60 } } },
+            429,
+        );
     }
 
     // ── Source detection ──────────────────────────────────────────────────────

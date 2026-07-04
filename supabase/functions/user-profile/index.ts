@@ -223,6 +223,31 @@ async function resolveProfile(
 }
 
 /**
+ * Block state between viewer and target (TICKET-090). Blocks trump every
+ * relationship tier — checked before palate data is fetched.
+ */
+type BlockState = 'none' | 'viewer_blocked_target' | 'target_blocked_viewer';
+
+async function fetchBlockState(
+    supabase: any,
+    viewerId: string,
+    targetId: string,
+): Promise<BlockState> {
+    const { data, error } = await supabase
+        .from('blocked_users')
+        .select('blocker_id')
+        .or(
+            `and(blocker_id.eq.${viewerId},blocked_id.eq.${targetId}),` +
+            `and(blocker_id.eq.${targetId},blocked_id.eq.${viewerId})`,
+        );
+    if (error) throw error;
+    const rows = (data ?? []) as Array<{ blocker_id: string }>;
+    if (rows.some((r) => r.blocker_id === viewerId)) return 'viewer_blocked_target';
+    if (rows.some((r) => r.blocker_id === targetId)) return 'target_blocked_viewer';
+    return 'none';
+}
+
+/**
  * Fetch shared table IDs between caller and target.
  */
 async function fetchSharedTableIds(
@@ -1054,6 +1079,29 @@ serve(async (req) => {
                 });
             }
 
+            // 1b. Blocks trump everything (TICKET-090). Target-blocked-viewer
+            // reads as not-found (no existence signal); viewer-blocked-target
+            // returns a minimal stub so the client can offer "unblock".
+            const blockState = await fetchBlockState(supabase, callerId, targetId);
+            if (blockState === 'target_blocked_viewer') return notFound();
+            if (blockState === 'viewer_blocked_target') {
+                return json({
+                    data: {
+                        profile: targetProfile,
+                        stats: null,
+                        public_lists: null,
+                        recently_logged: null,
+                        tables_in_common: [],
+                        top_four: [],
+                        regulars_preview: [],
+                        is_self: false,
+                        is_following_viewer: false,
+                        viewer_target_relationship: 'none' as ViewerRelationship,
+                        blocked_by_viewer: true,
+                    },
+                });
+            }
+
             // 2. Compute relationship BEFORE any palate DB reads
             const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
             const relationship = computeRelationship(callerId, targetProfile.account_privacy, sharedTableIds);
@@ -1163,6 +1211,10 @@ serve(async (req) => {
             const isSelf = callerId === targetId;
 
             if (!isSelf) {
+                // Blocks (either direction) close the surface entirely (TICKET-090).
+                if ((await fetchBlockState(supabase, callerId, targetId)) !== 'none') {
+                    return notFound();
+                }
                 const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
                 const relationship = computeRelationship(
                     callerId,
@@ -1205,6 +1257,10 @@ serve(async (req) => {
             const isSelf = callerId === targetId;
 
             if (!isSelf) {
+                // Blocks (either direction) close the surface entirely (TICKET-090).
+                if ((await fetchBlockState(supabase, callerId, targetId)) !== 'none') {
+                    return notFound();
+                }
                 const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
                 const relationship = computeRelationship(
                     callerId,
@@ -1235,6 +1291,10 @@ serve(async (req) => {
             const isSelf = callerId === targetId;
 
             if (!isSelf) {
+                // Blocks (either direction) close the surface entirely (TICKET-090).
+                if ((await fetchBlockState(supabase, callerId, targetId)) !== 'none') {
+                    return notFound();
+                }
                 const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
                 const relationship = computeRelationship(
                     callerId,
@@ -1269,6 +1329,10 @@ serve(async (req) => {
             const isSelf = callerId === targetId;
 
             if (!isSelf) {
+                // Blocks (either direction) close the surface entirely (TICKET-090).
+                if ((await fetchBlockState(supabase, callerId, targetId)) !== 'none') {
+                    return notFound();
+                }
                 const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
                 const relationship = computeRelationship(
                     callerId,

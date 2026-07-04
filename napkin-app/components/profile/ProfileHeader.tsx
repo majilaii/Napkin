@@ -48,6 +48,9 @@ interface Props {
      * Only meaningful when relationship === 'public_only'.
      */
     viewerRatedEntryCount?: number;
+    /** TICKET-090: opens the report/block menu. Rendered as a quiet ⋯ beside
+     * the follow button on non-self profiles. */
+    onSafetyMenu?: () => void;
 }
 
 function initials(displayName: string): string {
@@ -56,7 +59,7 @@ function initials(displayName: string): string {
     return displayName.slice(0, 1).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowingViewer = false, calibration, viewerRatedEntryCount }: Props) {
+export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowingViewer = false, calibration, viewerRatedEntryCount, onSafetyMenu }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -128,10 +131,26 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                         </Pressable>
                     </View>
                 ) : (
-                    <FollowButton
-                        targetUserId={profile.user_id}
-                        initialIsFollowing={isFollowingViewer}
-                    />
+                    <View style={styles.selfActions}>
+                        <FollowButton
+                            targetUserId={profile.user_id}
+                            initialIsFollowing={isFollowingViewer}
+                        />
+                        {onSafetyMenu ? (
+                            <Pressable
+                                onPress={onSafetyMenu}
+                                hitSlop={10}
+                                accessibilityRole="button"
+                                accessibilityLabel="Report or block"
+                            >
+                                <Ionicons
+                                    name="ellipsis-horizontal"
+                                    size={18}
+                                    color={palette.textMuted}
+                                />
+                            </Pressable>
+                        ) : null}
+                    </View>
                 )}
             </View>
 
