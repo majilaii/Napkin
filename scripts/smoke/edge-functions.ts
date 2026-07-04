@@ -389,7 +389,67 @@ for (const check of CHECKS) {
     console.log(`✓ ${check.name}`);
 }
 
-console.log(`\n${passed} passed, ${failed} failed (${CHECKS.length} total)`);
+// ── TICKET-099: diary keyset pagination guard ───────────────────────────────
+// The profile diary is the only user-profile path that pages via cursor. The
+// 2026-07-04 bug (applyKeysetFilter emitting a phantom `sort_date` column
+// filter against raw entries → 42703 → 500) ONLY fired on cursor requests, so
+// a page-1 check can never catch its regression class. Walk two pages with
+// limit=1: any smoke user with ≥2 restaurant-linked entries exercises the
+// keyset filter; with fewer, page 1's envelope is still asserted and the check
+// passes with a note (single-request checks stay in CHECKS; this one needs the
+// page-1 → page-2 dependency).
+{
+    const name = 'user-profile?action=diary two-page keyset walk (TICKET-099)';
+    const callDiary = async (cursor: string | null) => {
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/user-profile`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${JWT}`,
+                apikey: ANON_KEY!,
+            },
+            body: JSON.stringify({ action: 'diary', identifier: SMOKE_USER_ID, limit: 1, cursor }),
+        });
+        const text = await res.text();
+        let json: unknown = null;
+        try {
+            json = JSON.parse(text);
+        } catch { /* non-JSON stays null; status check below reports it */ }
+        return { status: res.status, json, text };
+    };
+
+    try {
+        const p1 = await callDiary(null);
+        const d1 = (p1.json as { data?: { rows?: Array<{ entry_id?: string }>; next_cursor?: string | null } } | null)?.data;
+        if (p1.status !== 200) throw new Error(`page 1 HTTP ${p1.status}: ${p1.text.slice(0, 200)}`);
+        if (!d1 || !Array.isArray(d1.rows)) throw new Error('page 1: missing data.rows envelope');
+
+        if (d1.next_cursor) {
+            const p2 = await callDiary(d1.next_cursor);
+            const d2 = (p2.json as { data?: { rows?: Array<{ entry_id?: string }> } } | null)?.data;
+            if (p2.status !== 200) {
+                throw new Error(`page 2 HTTP ${p2.status} (keyset filter broken?): ${p2.text.slice(0, 200)}`);
+            }
+            if (!d2 || !Array.isArray(d2.rows)) throw new Error('page 2: missing data.rows envelope');
+            const id1 = d1.rows[0]?.entry_id;
+            if (id1 && d2.rows[0]?.entry_id === id1) {
+                throw new Error('page 2 repeated page 1 row — cursor silently no-oping');
+            }
+            passed++;
+            console.log(`✓ ${name}`);
+        } else {
+            passed++;
+            console.log(`✓ ${name} (single page — smoke user has <2 diary entries, keyset not exercised)`);
+        }
+    } catch (err) {
+        failed++;
+        const msg = `✗ ${name}\n   ${(err as Error).message}`;
+        console.error(msg);
+        failures.push(msg);
+    }
+}
+
+console.log(`\n${passed} passed, ${failed} failed (${passed + failed} total)`);
 
 if (failed > 0) {
     console.error('\n--- failure summary ---');

@@ -29,7 +29,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
-import { buildPage, decodeCursor, applyKeysetFilter, type Page } from '../_shared/pagination.ts';
+import { buildPage, decodeCursor, type Page } from '../_shared/pagination.ts';
 import { projectRound } from '../_shared/round_projection.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -895,34 +895,35 @@ async function fetchDiary(
 ): Promise<Page<DiaryRow>> {
     const decoded = decodeCursor(cursor);
 
-    let query = supabase
-        .from('entries')
-        .select('id, restaurant_id, rating, content, photo_url, visited_at, created_at, restaurants(name, city, photo_url)')
-        .eq('user_id', userId)
-        .not('restaurant_id', 'is', null)
-        .order('visited_at', { ascending: false })
-        .order('id', { ascending: false })
-        .limit(limit + 1);
-
-    if (!includePrivate) query = query.neq('visibility', 'private');
-    // TICKET-092: the Reviews surface = diary rows WITH written notes. Same
-    // ordering, so the keyset cursor stays valid.
-    if (reviewsOnly) query = query.not('content', 'is', null).neq('content', '');
-    if (decoded) query = applyKeysetFilter(query, { sort_date: decoded.sort_date, id: decoded.id });
-
-    const { data: entries, error } = await query;
+    // TICKET-099: keyset pagination lives in SQL on a projected
+    // sort_date = COALESCE(visited_at, created_at) — `entries` has no sort_date
+    // column, so filtering it via PostgREST 42703'd every page-2+ request.
+    // Same pattern as fn_friends_feed / fn_user_aggregate_feed. The reviews
+    // surface (TICKET-092) shares the ordering, so the cursor stays valid.
+    const { data: entries, error } = await supabase.rpc('fn_user_diary_page', {
+        p_user_id: userId,
+        p_include_private: includePrivate,
+        p_reviews_only: reviewsOnly,
+        p_cursor_date: decoded?.sort_date ?? null,
+        p_cursor_id: decoded?.id ?? null,
+        p_limit: limit + 1,
+    });
     if (error) throw error;
 
-    const raw = (entries ?? []) as any[];
+    // Page the RAW limit+1 rows first so the has_more probe row is never
+    // hydrated, and the cursor date is the exact sort_date the SQL ordered by.
+    const page = buildPage((entries ?? []) as any[], limit, (r) => ({
+        sort_date: r.sort_date,
+        id: r.id,
+    }));
 
-    const mapped: DiaryRow[] = await Promise.all(raw.map(async (e) => {
-        const rest = Array.isArray(e.restaurants) ? e.restaurants[0] : e.restaurants;
+    const mapped: DiaryRow[] = await Promise.all(page.rows.map(async (e) => {
         const base: DiaryRow = {
             entry_id: e.id,
             restaurant_id: e.restaurant_id,
-            restaurant_name: rest?.name ?? 'Unknown',
-            city: rest?.city ?? null,
-            photo_url: e.photo_url ?? rest?.photo_url ?? null,
+            restaurant_name: e.restaurant_name ?? 'Unknown',
+            city: e.restaurant_city ?? null,
+            photo_url: e.photo_url ?? e.restaurant_photo_url ?? null,
             rating: e.rating,
             note: e.content ?? null,
             visited_at: e.visited_at ?? e.created_at,
@@ -958,10 +959,7 @@ async function fetchDiary(
         return base;
     }));
 
-    return buildPage(mapped, limit, (r) => ({
-        sort_date: r.visited_at,
-        id: r.entry_id,
-    }));
+    return { rows: mapped, next_cursor: page.next_cursor, has_more: page.has_more };
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────

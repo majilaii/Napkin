@@ -55,17 +55,10 @@ export function buildPage<Row>(
     return { rows: kept, next_cursor, has_more };
 }
 
-/**
- * Apply a keyset filter equivalent to `WHERE (sort_date, id) < (d, i)` for
- * `ORDER BY sort_date DESC, id DESC` pagination using supabase-js.
- *
- * supabase-js doesn't support native tuple comparisons, so we decompose:
- *   (sort_date < d) OR (sort_date = d AND id < i)
- */
-export function applyKeysetFilter<T extends { or: (...args: any[]) => T }>(
-    query: T,
-    cursor: CursorTuple,
-): T {
-    const { sort_date: d, id: i } = cursor;
-    return query.or(`sort_date.lt.${d},and(sort_date.eq.${d},id.lt.${i})`);
-}
+// NOTE (TICKET-099): a former `applyKeysetFilter` helper here decomposed the
+// keyset tuple into a PostgREST or-filter on a literal `sort_date` column. Its
+// only caller filtered raw `entries` — which has no sort_date column — so every
+// cursor request 42703'd. Keyset filtering belongs IN SQL, on a projected
+// sort_date = COALESCE(visited_at, created_at): see fn_user_diary_page,
+// fn_friends_feed, fn_user_aggregate_feed. Do not reintroduce a client-side
+// keyset filter against a base table.
