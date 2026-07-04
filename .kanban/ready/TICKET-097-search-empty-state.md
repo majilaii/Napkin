@@ -165,3 +165,17 @@ Built 2026-07-04 on `feat/ticket-097-search-empty-state`.
   granted location elsewhere lose the (never-explicitly-granted) search bias
   until they opt in via wishlist "Nearest"/map. Flagging in case the bias
   prompt was considered load-bearing.
+
+---
+
+## Review History
+
+### Review 1 — code-reviewer (cold)
+```
+Date: 2026-07-04
+Verdict: FAIL → fixed → re-verified
+Score: 9/10 acceptance criteria on first pass · 1 P0 · 3 P2
+```
+- **P0 (fixed):** recents write-through raced the lazy AsyncStorage hydration read — an add in the first ~50ms after launch committed to disk before the read returned, permanently wiping the prior session's recents. The jest mock's same-microtask `getItem` hid it. Fix: `persistRecents` is gated until hydration settles; pre-hydration adds queue into ONE combined write flushed in `hydrateRecents`' finally; `clearRecents` owns its state (direct `removeItem`, marks hydrated, drops pending). Two regression tests with a delayed `getItem` mock pin the invariant (no `setItem` while the read is in flight; merge lands in a single write; clear-mid-read never resurrects).
+- Reviewer endorsed the location-prompt removal: silent-if-granted is correct; if geo-bias coverage matters later, earn the grant contextually (thin-results chip), never a mount-time prompt.
+- P2s (open, non-blocking): `hasQuery` at 1 char vs 2-char search threshold briefly shows "No results" (pre-existing on main); `SearchResultRow` carries a pre-existing ARCHITECT-REVIEW comment about user ratings.

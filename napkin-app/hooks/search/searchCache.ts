@@ -89,6 +89,14 @@ const cache = new Map<string, CachedSearchResult>();
 let recentQueries: readonly string[] = [];
 const recentListeners = new Set<() => void>();
 let hydrationStarted = false;
+// True once the hydration read has settled (or a clear made it moot). Disk
+// writes are forbidden before this: a setItem dispatched while the getItem is
+// in flight commits first, and the read then returns the clobbered value —
+// wiping the prior session's recents.
+let recentsHydrated = false;
+// An add happened while the hydration read was in flight; flush one combined
+// write after the merge instead.
+let pendingPersistPreHydration = false;
 // Bumped on clearRecents so an in-flight hydration can't resurrect cleared
 // entries (clear-while-hydrating race).
 let recentsEpoch = 0;
@@ -103,6 +111,10 @@ function emitRecents(): void {
 
 /** Fire-and-forget write-through. Storage failures are non-fatal. */
 function persistRecents(): void {
+    if (!recentsHydrated) {
+        pendingPersistPreHydration = true;
+        return;
+    }
     AsyncStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(recentQueries)).catch(() => {});
 }
 
@@ -110,9 +122,9 @@ async function hydrateRecents(): Promise<void> {
     const epochAtStart = recentsEpoch;
     try {
         const raw = await AsyncStorage.getItem(RECENTS_STORAGE_KEY);
-        if (raw == null) return;
-        // A clear (or another writer) won the race — discard the stale read.
+        // A clear won the race — its state (memory + removeItem) is authoritative.
         if (epochAtStart !== recentsEpoch) return;
+        if (raw == null) return;
         const parsed: unknown = JSON.parse(raw);
         if (!Array.isArray(parsed)) return;
         const persisted = parsed.filter(
@@ -127,10 +139,16 @@ async function hydrateRecents(): Promise<void> {
         }
         recentQueries = merged.slice(0, RECENT_CAPACITY);
         emitRecents();
-        // Re-persist only when the session added entries pre-hydration.
-        if (merged.length !== persisted.length) persistRecents();
     } catch {
         // Unreadable stash — start fresh; next add overwrites it.
+    } finally {
+        recentsHydrated = true;
+        // One combined write covers everything added while the read was in
+        // flight (also what used to be the length-heuristic re-persist).
+        if (pendingPersistPreHydration) {
+            pendingPersistPreHydration = false;
+            persistRecents();
+        }
     }
 }
 
@@ -196,6 +214,8 @@ export const searchCache = {
     /** Clear recents only (memory + disk). The result LRU is untouched. */
     clearRecents(): void {
         hydrationStarted = true; // an explicit clear must never be resurrected
+        recentsHydrated = true; // the clear defines the state; a late read is epoch-discarded
+        pendingPersistPreHydration = false;
         recentsEpoch += 1;
         recentQueries = [];
         emitRecents();

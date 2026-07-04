@@ -91,6 +91,53 @@ describe('hydration', () => {
         expect([...searchCache.getRecentQueries()]).toEqual(['carbone', 'tatiana', 'buvette']);
     });
 
+    // The jest mock resolves getItem on the same microtask; a real device takes
+    // a native round-trip. These pin the ordering bug that timing difference
+    // hides: an add's write-through must never commit before the hydration
+    // read, or it clobbers the prior session's stash.
+
+    it('an add during a SLOW hydration read merges instead of wiping the stash', async () => {
+        jest.spyOn(AsyncStorage, 'getItem').mockImplementation(
+            () =>
+                new Promise<string | null>((resolve) =>
+                    setTimeout(() => resolve(JSON.stringify(['a', 'b', 'c'])), 10),
+                ),
+        );
+        const setItemSpy = jest.spyOn(AsyncStorage, 'setItem');
+
+        searchCache.addRecent('donia'); // kicks hydration; read is now in flight
+        await flush();
+        // The P0 invariant: no disk write may commit while the read is in flight.
+        expect(setItemSpy).not.toHaveBeenCalled();
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect([...searchCache.getRecentQueries()]).toEqual(['donia', 'a', 'b', 'c']);
+        // Exactly one combined write, after the read landed, carrying the merge.
+        expect(setItemSpy).toHaveBeenCalledTimes(1);
+        expect(setItemSpy).toHaveBeenLastCalledWith(
+            STORAGE_KEY,
+            JSON.stringify(['donia', 'a', 'b', 'c']),
+        );
+    });
+
+    it('clear during a SLOW hydration read stays cleared; later adds persist alone', async () => {
+        jest.spyOn(AsyncStorage, 'getItem').mockImplementation(
+            () =>
+                new Promise<string | null>((resolve) =>
+                    setTimeout(() => resolve(JSON.stringify(['a', 'b'])), 10),
+                ),
+        );
+        const setItemSpy = jest.spyOn(AsyncStorage, 'setItem');
+
+        searchCache.subscribeRecents(() => {}); // kicks hydration
+        searchCache.clearRecents();
+        searchCache.addRecent('x'); // post-clear add, still pre-read-resolution
+        await new Promise((resolve) => setTimeout(resolve, 30));
+
+        expect([...searchCache.getRecentQueries()]).toEqual(['x']); // a,b not resurrected
+        expect(setItemSpy).toHaveBeenLastCalledWith(STORAGE_KEY, JSON.stringify(['x']));
+    });
+
     it('ignores a corrupt stash', async () => {
         await AsyncStorage.setItem(STORAGE_KEY, 'not json {');
 
