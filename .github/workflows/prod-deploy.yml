@@ -137,16 +137,33 @@ jobs:
           fi
 
       - name: Deploy changed edge functions to prod
+        id: deploy-fns
         if: steps.changed-fns.outputs.fns != ''
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           echo "## Edge functions deployed to PROD" >> "$GITHUB_STEP_SUMMARY"
+          # Deploy the WHOLE fleet even when one function fails. Aborting
+          # mid-loop (bare `deploy | tee` under -e -o pipefail) leaves the
+          # functions deployed before the failure on new _shared code while
+          # the rest keep the old bundle — split-brain — and skips smoke, so
+          # the auto-revert PR never opens. The `if !` wrapper keeps pipefail
+          # semantics per pipeline while letting the loop finish; failures
+          # are collected and the step exits non-zero at the end.
+          failed=()
           for fn in ${{ steps.changed-fns.outputs.fns }}; do
             echo "### $fn" >> "$GITHUB_STEP_SUMMARY"
-            supabase functions deploy "$fn" --project-ref ftvmseaqwwlcxtdlvxxz 2>&1 \
-              | tee -a "$GITHUB_STEP_SUMMARY"
+            if ! supabase functions deploy "$fn" --project-ref ftvmseaqwwlcxtdlvxxz 2>&1 \
+              | tee -a "$GITHUB_STEP_SUMMARY"; then
+              failed+=("$fn")
+              echo "::error::Edge function deploy FAILED: $fn"
+            fi
           done
+          if [[ ${#failed[@]} -gt 0 ]]; then
+            echo "failed_fns=${failed[*]}" >> "$GITHUB_OUTPUT"
+            echo "**FAILED to deploy (still on the previous bundle):** ${failed[*]}" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       # The diary/reviews keyset walks in the smoke suite are only real when
       # the smoke user holds ≥2 review-bearing entries (walks page at limit=1).
@@ -166,6 +183,11 @@ jobs:
 
       - name: Smoke test prod
         id: smoke
+        # Runs on full success AND when the fleet deploy failed partway —
+        # smoke must exercise whatever mix of bundles is actually live so a
+        # broken prod still trips the auto-revert PR. (Deliberately NOT
+        # `always()`: a migration-push failure still skips smoke as before.)
+        if: success() || steps.deploy-fns.outcome == 'failure'
         env:
           SUPABASE_URL: https://ftvmseaqwwlcxtdlvxxz.supabase.co
           SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
@@ -224,7 +246,12 @@ jobs:
 
       - name: Failure note
         if: failure()
+        env:
+          FAILED_FNS: ${{ steps.deploy-fns.outputs.failed_fns }}
         run: |
           echo "::error::PROD deploy or smoke tests failed."
+          if [[ -n "$FAILED_FNS" ]]; then
+            echo "::error::Edge functions that FAILED to deploy (still on the OLD bundle): $FAILED_FNS"
+          fi
           echo "::error::If smoke failed, an auto-revert PR has been opened — go merge it now."
           echo "::error::If deploy failed (migrations / edge functions), prod may be in a partial state. Investigate the step output above."
