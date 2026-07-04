@@ -98,6 +98,19 @@ async function resolveJwt(): Promise<string> {
 
 const JWT = await resolveJwt();
 
+/** The smoke user's own id, from the JWT sub claim — some checks self-target. */
+function jwtSub(jwt: string): string {
+    try {
+        const payload = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        const sub = JSON.parse(atob(payload))?.sub;
+        if (typeof sub === 'string' && sub) return sub;
+    } catch { /* fall through */ }
+    console.error('✗ could not decode JWT sub claim');
+    Deno.exit(2);
+}
+
+const SMOKE_USER_ID = jwtSub(JWT);
+
 // ── Checks ─────────────────────────────────────────────────────────────────
 //
 // Add one entry per (function, action) you want guarded. Keep this list small
@@ -133,12 +146,16 @@ const CHECKS: Check[] = [
     },
     {
         name: 'user-profile?action=profile (own profile)',
-        method: 'GET',
+        // POST-only fn (405s GET); identifier = the smoke user itself, decoded
+        // from the JWT sub claim at runtime (works for both auth modes).
+        method: 'POST',
         fn: 'user-profile',
-        query: 'action=profile',
+        body: { action: 'profile', identifier: '__SMOKE_USER_ID__' },
         shape: (json) => {
-            const data = (json as { data?: unknown }).data;
+            const data = (json as { data?: { profile?: unknown; is_self?: boolean } }).data;
             if (!data) return 'missing data envelope';
+            if (!data.profile) return 'missing data.profile';
+            if (data.is_self !== true) return 'expected is_self=true for own profile';
             return null;
         },
     },
@@ -225,8 +242,11 @@ const CHECKS: Check[] = [
         expectedStatus: 410,
         noAuth: true,
         rawShape: (body, contentType) => {
-            if (!contentType.includes('text/html')) {
-                return `expected text/html, got: ${contentType}`;
+            // Free-tier gateway rewrites HTML responses to text/plain (see
+            // memory/reference_supabase_html_limit) — accept either; the body
+            // checks are the real guard.
+            if (!contentType.includes('text/html') && !contentType.includes('text/plain')) {
+                return `expected text/html or text/plain, got: ${contentType}`;
             }
             if (body.includes('Internal Server Error') || body.includes('stack') || body.includes('Error:')) {
                 return 'tombstone must not expose raw error or stack trace';
@@ -281,7 +301,10 @@ for (const check of CHECKS) {
     const init: RequestInit = {
         method: check.method,
         headers,
-        body: check.body ? JSON.stringify(check.body) : undefined,
+        // __SMOKE_USER_ID__ placeholder → the runtime smoke user's own id.
+        body: check.body
+            ? JSON.stringify(check.body).replaceAll('"__SMOKE_USER_ID__"', JSON.stringify(SMOKE_USER_ID))
+            : undefined,
     };
 
     let res: Response;
