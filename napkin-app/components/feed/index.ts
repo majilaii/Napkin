@@ -18,13 +18,7 @@ export { SharedSaveCard, type SharedSaveCardProps, type SharedSaveCardRestaurant
 export { ShareDigestCard, type ShareDigestCardProps } from './ShareDigestCard';
 export { RestaurantFloatCard, type RestaurantFloatCardProps, type FloatMember } from './RestaurantFloatCard';
 
-// Feed tab (cross-Table chronological feed)
-export { FeedHeader } from './FeedHeader';
-export { ScopePills, type FeedScope } from './ScopePills';
+// Feed tab (TICKET-098: friends-only reviews + trending rail)
+export { FriendFeedCard } from './FriendFeedCard';
 export { TrendingRail } from './TrendingRail';
-export { FeedDateHeader } from './FeedDateHeader';
-export { FriendLogCard } from './FriendLogCard';
-export { FastLogRow } from './FastLogRow';
-export { FeedTerminus } from './FeedTerminus';
 export { InlineStars } from './InlineStars';
-export { FeedEmpty } from './FeedEmpty';

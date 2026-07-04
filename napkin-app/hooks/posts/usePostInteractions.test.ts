@@ -5,6 +5,11 @@
  *   (a) success reconcile — cache reflects server shape, no optimistic- ids remain
  *   (b) failure rollback  — cache rolls back to pre-mutation snapshot
  *   (c) rapid double-mutation — no races leaving cache in invalid state
+ *
+ * TICKET-098 [ARCH-REVIEW-2] additions (bottom describe): the card-cache walk
+ * is scope-owned — public-scope taps patch friends-feed pages ({ pages: [{ rows }] }
+ * envelopes, mapped via page.rows — never page.map), table-scope taps patch
+ * Table activity pages, and NEITHER scope touches the other's cache.
  */
 
 jest.mock('@/providers/AuthProvider', () => ({
@@ -269,5 +274,179 @@ describe('useAddComment', () => {
                 cache.comments.filter((c) => /^optimistic-\d+$/.test(c.id))
             ).toHaveLength(0);
         }
+    });
+});
+
+// ── TICKET-098 [ARCH-REVIEW-2]: scope-owned card-cache sync ───────────────────
+
+describe('card-cache scope isolation (TICKET-098)', () => {
+    const FRIENDS_KEY = queryKeys.feed.friends('viewer-user');
+    const ACTIVITY_KEY = queryKeys.tables.activity('table-1');
+
+    /** A friends-feed page cache: { pages: [{ rows }] } envelope (Page<T>). */
+    function makeFriendsPages(reactionCount = 0, commentCount = 0) {
+        return {
+            pages: [{
+                rows: [{
+                    id: TARGET_ID,
+                    user_id: 'author-1',
+                    reaction_count: reactionCount,
+                    comment_count: commentCount,
+                    top_emojis: [],
+                    my_reactions: [],
+                }],
+                next_cursor: null,
+                has_more: false,
+            }],
+            pageParams: [null],
+        };
+    }
+
+    function makeActivityPages(reactionCount = 0) {
+        return {
+            pages: [{
+                rows: [{
+                    id: TARGET_ID,
+                    reaction_count: reactionCount,
+                    comment_count: 0,
+                    top_emojis: [],
+                    my_reactions: [],
+                }],
+                next_cursor: null,
+                has_more: false,
+            }],
+            pageParams: [null],
+        };
+    }
+
+    it('public-scope reaction patches friends-feed pages, not Table activity', async () => {
+        mockEdgeFnResolves({
+            added: true,
+            removed: false,
+            reaction: {
+                id: 'server-reaction-p1',
+                user_id: VIEWER_ID,
+                emoji: '❤️',
+                created_at: '2026-07-04T12:00:00Z',
+                profiles: null,
+            },
+            counts: { reactions: 5, top_emojis: [{ emoji: '❤️', count: 5, last_reacted_at: '2026-07-04T12:00:00Z' }] },
+        });
+
+        const { result, client } = renderHookWithClient(() => useToggleReaction());
+        client.setQueryData(FRIENDS_KEY, makeFriendsPages(4));
+        client.setQueryData(ACTIVITY_KEY, makeActivityPages(9));
+        client.setQueryData(
+            queryKeys.postInteractions.all(TARGET_TYPE, TARGET_ID, 'public'),
+            INITIAL_STATE,
+        );
+
+        act(() => {
+            result.current.mutate({ targetType: TARGET_TYPE, targetId: TARGET_ID, emoji: '❤️', scope: 'public' });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        // Friends page synced with server-authoritative public counts…
+        const friends = client.getQueryData<any>(FRIENDS_KEY);
+        expect(friends.pages[0].rows[0].reaction_count).toBe(5);
+        expect(friends.pages[0].rows[0].my_reactions).toContain('❤️');
+        // …page envelope preserved (rows mapped, not the page itself)
+        expect(friends.pages[0].next_cursor).toBeNull();
+        expect(friends.pages[0].has_more).toBe(false);
+        // …and the Table activity cache (table-scope counters) is untouched.
+        const activity = client.getQueryData<any>(ACTIVITY_KEY);
+        expect(activity.pages[0].rows[0].reaction_count).toBe(9);
+        expect(activity.pages[0].rows[0].my_reactions).toEqual([]);
+    });
+
+    it('table-scope reaction never touches friends-feed pages (public counters)', async () => {
+        mockEdgeFnResolves({
+            added: true,
+            removed: false,
+            reaction: {
+                id: 'server-reaction-t1',
+                user_id: VIEWER_ID,
+                emoji: '🔥',
+                created_at: '2026-07-04T12:00:00Z',
+                profiles: null,
+            },
+            counts: { reactions: 3, top_emojis: [] },
+        });
+
+        const { result, client } = renderHookWithClient(() => useToggleReaction());
+        client.setQueryData(FRIENDS_KEY, makeFriendsPages(4));
+        client.setQueryData(ACTIVITY_KEY, makeActivityPages(2));
+        client.setQueryData(interactionsKey, INITIAL_STATE);
+
+        act(() => {
+            result.current.mutate({ targetType: TARGET_TYPE, targetId: TARGET_ID, emoji: '🔥', scope: 'table' });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        // Table activity synced from server counts…
+        const activity = client.getQueryData<any>(ACTIVITY_KEY);
+        expect(activity.pages[0].rows[0].reaction_count).toBe(3);
+        // …friends-feed row keeps its PUBLIC count — no cross-scope bleed.
+        const friends = client.getQueryData<any>(FRIENDS_KEY);
+        expect(friends.pages[0].rows[0].reaction_count).toBe(4);
+        expect(friends.pages[0].rows[0].my_reactions).toEqual([]);
+    });
+
+    it('public-scope reaction rolls back friends-feed pages on error', async () => {
+        mockEdgeFnRejects({ code: 'SERVER_ERROR', message: 'fail' });
+
+        const { result, client } = renderHookWithClient(() => useToggleReaction());
+        const initial = makeFriendsPages(4);
+        client.setQueryData(FRIENDS_KEY, initial);
+        client.setQueryData(
+            queryKeys.postInteractions.all(TARGET_TYPE, TARGET_ID, 'public'),
+            INITIAL_STATE,
+        );
+
+        act(() => {
+            result.current.mutate({ targetType: TARGET_TYPE, targetId: TARGET_ID, emoji: '❤️', scope: 'public' });
+        });
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+
+        const friends = client.getQueryData<any>(FRIENDS_KEY);
+        expect(friends.pages[0].rows[0].reaction_count).toBe(4);
+        expect(friends.pages[0].rows[0].my_reactions).toEqual([]);
+    });
+
+    it('public-scope comment increments friends-feed comment_count', async () => {
+        mockEdgeFnResolves({
+            id: 'server-comment-p1',
+            user_id: VIEWER_ID,
+            body: 'lovely',
+            created_at: '2026-07-04T12:00:00Z',
+            edited_at: null,
+            profiles: null,
+            client_nonce: 'nonce-p1',
+        });
+
+        const { result, client } = renderHookWithClient(() => useAddComment());
+        client.setQueryData(FRIENDS_KEY, makeFriendsPages(0, 2));
+        client.setQueryData(
+            queryKeys.postInteractions.all(TARGET_TYPE, TARGET_ID, 'public'),
+            INITIAL_STATE,
+        );
+
+        act(() => {
+            result.current.mutate({
+                targetType: TARGET_TYPE,
+                targetId: TARGET_ID,
+                body: 'lovely',
+                clientNonce: 'nonce-p1',
+                scope: 'public',
+            });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        const friends = client.getQueryData<any>(FRIENDS_KEY);
+        expect(friends.pages[0].rows[0].comment_count).toBe(3);
     });
 });

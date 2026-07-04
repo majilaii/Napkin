@@ -132,15 +132,18 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-098: feed-friends replaces the deleted legacy `feed` fn. Page
+    // envelope check — an empty rows array is a legitimate zero-follow state.
     {
-        name: 'feed?action=page (cross-Table aggregated feed)',
+        name: 'feed-friends (TICKET-098 friends-only reviews feed)',
         method: 'POST',
-        fn: 'feed',
-        body: { action: 'page', limit: 5 },
+        fn: 'feed-friends',
+        body: { limit: 5 },
         shape: (json) => {
-            const data = (json as { data?: { rows?: unknown[] } }).data;
+            const data = (json as { data?: { rows?: unknown[]; has_more?: unknown } }).data;
             if (!data) return 'missing data envelope';
             if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (typeof data.has_more !== 'boolean') return 'data.has_more is not a boolean';
             return null;
         },
     },
@@ -211,6 +214,21 @@ const CHECKS: Check[] = [
             const err = (json as { error?: { code?: string } }).error;
             if (!err) return 'missing error envelope';
             if (err.code !== 'NOT_FOUND') return `expected error.code NOT_FOUND, got ${err.code}`;
+            return null;
+        },
+    },
+    // TICKET-098 Phase B: trending rail read path. [ARCH-REVIEW-5] assert
+    // Array.isArray(rows) ONLY — an empty array is the legitimate rail-hidden
+    // state (fewer than 3 qualifying restaurants), so no length/content check.
+    {
+        name: 'feed-trending (TICKET-098 rail — empty rows is legitimate)',
+        method: 'POST',
+        fn: 'feed-trending',
+        body: {},
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
             return null;
         },
     },

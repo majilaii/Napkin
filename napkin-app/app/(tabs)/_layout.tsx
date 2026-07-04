@@ -19,13 +19,13 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
  * belong to the (tabs) group.
  *
  * Active routes (appear in BottomNavBar):
+ *   - feed     (Feed tab — TICKET-098 friends feed + trending rail, leftmost)
  *   - tables   (Table tab)
  *   - search   (Search tab)
  *   - profile  (Profile tab — TICKET-070)
  *
  * Hidden routes (preserved for deep-link safety):
  *   - journal  (demoted from tab; /journal still reachable via deep link)
- *   - feed     (legacy)
  *   - log      (legacy)
  */
 export default function TabsLayout() {
@@ -46,6 +46,15 @@ export default function TabsLayout() {
             }}
         >
             {/* === Active nav routes === */}
+            <Tabs.Screen
+                name="feed"
+                options={{
+                    title: 'Feed',
+                    tabBarIcon: ({ color, size }) => (
+                        <Ionicons name="newspaper-outline" size={size} color={color} />
+                    ),
+                }}
+            />
             <Tabs.Screen
                 name="tables"
                 options={{
@@ -78,10 +87,6 @@ export default function TabsLayout() {
             {/* journal: demoted from tab in TICKET-070; /journal still reachable */}
             <Tabs.Screen
                 name="journal"
-                options={{ href: null }}
-            />
-            <Tabs.Screen
-                name="feed"
                 options={{ href: null }}
             />
             <Tabs.Screen

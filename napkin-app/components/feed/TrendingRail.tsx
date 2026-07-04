@@ -1,191 +1,118 @@
+/**
+ * TrendingRail — TICKET-098 Phase B. Finite horizontal carousel of trending
+ * restaurants, sourced from wishlist intent (distinct savers — never ratings,
+ * never names).
+ *
+ * Rules:
+ *   - Max 10 cards, then it ends. No infinite scroll, no "load more".
+ *   - Hidden ENTIRELY below 3 cards (clean absence — no skeleton, no
+ *     placeholder; a one-card rail advertises the ghost town). The server
+ *     already floors at 3; this is the client's double-gate.
+ *   - Card = restaurant name in Newsreader italic (brand voice), then a
+ *     Manrope meta line "cuisine · neighborhood · {n} saved this week".
+ *   - Tap → restaurant/[id]. No rating anywhere.
+ */
 import React from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
-import { Image } from 'expo-image';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { Colors, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { TrendingPoster } from '@/hooks/feed';
+import { useTrending, type TrendingCard } from '@/hooks/feed/useTrending';
+import { visibleTrendingCards } from './trendingRailGate';
 
-interface Props {
-    kicker: string;
-    title: string;
-    scope?: string;
-    posters: TrendingPoster[];
-}
-
-export function TrendingRail({ kicker, title, scope, posters }: Props) {
+export function TrendingRail() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const { data } = useTrending();
 
-    if (posters.length === 0) return null;
+    const rows = visibleTrendingCards(data);
+    if (rows.length === 0) return null;
 
     return (
-        <View style={{ marginBottom: 24 }}>
-            {/* Header */}
-            <View style={{ paddingHorizontal: Spacing.lg - 2, paddingBottom: 10 }}>
-                <Text
-                    style={{
-                        fontFamily: 'Manrope_600SemiBold',
-                        fontSize: 10,
-                        letterSpacing: 0.8,
-                        color: palette.textMuted,
-                        marginBottom: 4,
-                        textTransform: 'uppercase',
-                    }}
-                >
-                    {kicker}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
-                    <Text
-                        style={{
-                            fontFamily: 'Newsreader_400Regular_Italic',
-                            fontSize: 20,
-                            color: palette.text,
-                            lineHeight: 22,
-                            flex: 1,
-                        }}
-                    >
-                        {title}
-                    </Text>
-                    {scope && (
-                        <Text
-                            style={{
-                                fontFamily: 'Newsreader_400Regular_Italic',
-                                fontSize: 10,
-                                color: palette.textMuted,
-                                marginLeft: 8,
-                            }}
-                        >
-                            {scope}
-                        </Text>
-                    )}
-                </View>
-            </View>
-
+        <View style={styles.wrap}>
+            <Text style={[styles.label, { color: palette.textMuted }]}>Trending</Text>
             <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{
-                    paddingHorizontal: Spacing.lg - 2,
-                    gap: 14,
-                    paddingBottom: 8,
-                }}
+                contentContainerStyle={styles.railContent}
             >
-                {posters.map((p) => (
-                    <Poster key={p.restaurant.id} poster={p} />
+                {rows.map((card) => (
+                    <RailCard key={card.restaurant_id} card={card} />
                 ))}
             </ScrollView>
         </View>
     );
 }
 
-function Poster({ poster }: { poster: TrendingPoster }) {
+function RailCard({ card }: { card: TrendingCard }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
 
-    const subtitle = poster.logger_count === 1
-        ? '1 logged'
-        : `${poster.logger_count} logged`;
+    const meta = [
+        card.cuisine,
+        card.neighborhood,
+        `${card.saver_count_7d} saved this week`,
+    ]
+        .filter(Boolean)
+        .join(' · ');
 
     return (
         <Pressable
-            onPress={() => router.push({ pathname: '/restaurant/[id]', params: { id: poster.restaurant.id } })}
-            style={({ pressed }) => ({ width: 124, opacity: pressed ? 0.85 : 1 })}
+            onPress={() =>
+                router.push({ pathname: '/restaurant/[id]', params: { id: card.restaurant_id } })
+            }
+            style={({ pressed }) => [
+                styles.card,
+                Shadow.note,
+                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.8 : 1 },
+            ]}
         >
-            <View
-                style={{
-                    aspectRatio: 3 / 4,
-                    borderRadius: 6,
-                    backgroundColor: palette.surfaceContainerLow,
-                    overflow: 'hidden',
-                    ...Shadow.subtle,
-                }}
-            >
-                {poster.restaurant.photo_url && (
-                    <Image
-                        source={{ uri: poster.restaurant.photo_url }}
-                        style={{ width: '100%', height: '100%' }}
-                        contentFit="cover"
-                        transition={200}
-                    />
-                )}
-                {/* Rank badge */}
-                <View
-                    style={{
-                        position: 'absolute',
-                        top: 6,
-                        left: 6,
-                        width: 20,
-                        height: 20,
-                        borderRadius: 3,
-                        backgroundColor: 'rgba(28,28,25,0.82)',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                    }}
-                >
-                    <Text
-                        style={{
-                            fontFamily: 'Newsreader_400Regular_Italic',
-                            fontSize: 12,
-                            color: palette.cream,
-                            lineHeight: 14,
-                        }}
-                    >
-                        {poster.rank}
-                    </Text>
-                </View>
-                {/* Score badge */}
-                {poster.average_rating != null && (
-                    <View
-                        style={{
-                            position: 'absolute',
-                            bottom: 5,
-                            right: 5,
-                            paddingHorizontal: 6,
-                            paddingVertical: 2,
-                            borderRadius: 3,
-                            backgroundColor: 'rgba(28,28,25,0.82)',
-                        }}
-                    >
-                        <Text
-                            style={{
-                                fontFamily: 'Manrope_600SemiBold',
-                                fontSize: 10,
-                                color: palette.cream,
-                                letterSpacing: 0.3,
-                            }}
-                        >
-                            {poster.average_rating.toFixed(1)}
-                        </Text>
-                    </View>
-                )}
-            </View>
-
             <Text
-                numberOfLines={1}
-                style={{
-                    fontFamily: 'Newsreader_400Regular_Italic',
-                    fontSize: 13,
-                    color: palette.text,
-                    marginTop: 6,
-                    lineHeight: 16,
-                }}
+                numberOfLines={2}
+                style={[styles.name, { color: palette.text }]}
             >
-                {poster.restaurant.name}
+                {card.name}
             </Text>
-            <Text
-                style={{
-                    fontFamily: 'Manrope_400Regular',
-                    fontSize: 10,
-                    color: palette.textMuted,
-                    marginTop: 1,
-                    letterSpacing: 0.2,
-                }}
-            >
-                {subtitle}
+            <Text numberOfLines={2} style={[styles.meta, { color: palette.textMuted }]}>
+                {meta}
             </Text>
         </Pressable>
     );
 }
+
+const styles = StyleSheet.create({
+    wrap: {
+        paddingBottom: Spacing.sm,
+    },
+    label: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        letterSpacing: 1.4,
+        textTransform: 'uppercase',
+        paddingHorizontal: Spacing.lg,
+        marginBottom: Spacing.sm,
+    },
+    railContent: {
+        paddingHorizontal: Spacing.lg,
+        gap: 10,
+    },
+    card: {
+        width: 190,
+        borderRadius: Radius.lg,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: 14,
+    },
+    name: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 17,
+        lineHeight: 21,
+        marginBottom: 6,
+    },
+    meta: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        lineHeight: 15,
+    },
+});

@@ -1,3 +1,16 @@
+/**
+ * FriendFeedCard — TICKET-098 plain-entry card for the friends feed.
+ *
+ * Byline: avatar + "{name} tried {restaurant}" ("noted" when unrated),
+ * restaurant in Newsreader italic (brand voice). Rating stars, optional prose,
+ * optional photo grid, footer with PUBLIC-scope reactions + reply count.
+ *
+ * Deliberately NO Table grammar: no Table name, no Round context, no thread,
+ * no "shared to" chrome — a table-shared entry renders as a plain entry
+ * (TICKET-093 decision a). Engagement is the PUBLIC scope only (TICKET-085
+ * scope isolation); taps route to entry-detail?viewAs=public (the restaurant-
+ * page public-review precedent), or the plain owner view for own entries.
+ */
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { Image } from 'expo-image';
@@ -6,47 +19,48 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/providers/AuthProvider';
+import { Avatar } from './Avatar';
 import { InlineStars } from './InlineStars';
-import type { FeedEntry } from '@/hooks/feed';
+import type { FriendFeedRow } from '@/hooks/feed/useFriendsFeed';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 
 interface Props {
-    entry: FeedEntry;
-    time: string;
-    sub?: string;
+    row: FriendFeedRow;
 }
 
-/**
- * Prose-rich chronological feed card.
- * Byline: "{name} tried {restaurant}" (or "noted" when unrated) with the restaurant in serif italic.
- * Rating + optional liked heart, right-aligned relative time.
- * Optional prose, optional photo grid (1/2/3+), reaction + reply footer.
- */
-export function FriendLogCard({ entry, time, sub }: Props) {
+export function FriendFeedCard({ row }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
+    const { user } = useAuth();
     const toggleReaction = useToggleReaction();
 
-    const restaurantName = entry.restaurant?.name ?? 'somewhere';
-    const rating = entry.rating ?? 0;
-    const hasContent = !!entry.content && entry.content.trim().length > 0;
-    const photos = entry.photos.slice(0, 3);
+    const restaurantName = row.restaurant?.name ?? 'somewhere';
+    const rating = row.rating ?? 0;
+    const hasContent = !!row.content && row.content.trim().length > 0;
+    const photos = row.photos.slice(0, 3);
+    const time = formatRelative(row.sort_date);
 
-    const myReactions = entry.my_reactions ?? [];
-    const likedEmoji = myReactions.includes('❤️')
-        ? '❤️'
-        : myReactions[0] ?? null;
+    const myReactions = row.my_reactions ?? [];
+    const likedEmoji = myReactions.includes('❤️') ? '❤️' : myReactions[0] ?? null;
     const liked = !!likedEmoji;
 
-    const onPress = () => router.push({ pathname: '/entry-detail', params: { entryId: entry.id } });
+    const isOwn = user?.id === row.user_id;
+    const onPress = () =>
+        router.push({
+            pathname: '/entry-detail',
+            params: isOwn
+                ? { entryId: row.id }
+                : { entryId: row.id, viewAs: 'public' },
+        });
 
     const handleToggleLike = () => {
         toggleReaction.mutate({
             targetType: 'entry',
-            targetId: entry.id,
+            targetId: row.id,
             emoji: liked ? likedEmoji! : '❤️',
-            scope: 'table',
+            scope: 'public',
         });
     };
 
@@ -64,39 +78,16 @@ export function FriendLogCard({ entry, time, sub }: Props) {
         >
             {/* Byline */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <View
-                    style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: 14,
-                        backgroundColor: palette.secondaryContainer,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        overflow: 'hidden',
-                    }}
-                >
-                    {entry.author.avatar_url ? (
-                        <Image
-                            source={{ uri: entry.author.avatar_url }}
-                            style={{ width: '100%', height: '100%' }}
-                            contentFit="cover"
-                        />
-                    ) : (
-                        <Text
-                            style={{
-                                fontFamily: 'Newsreader_400Regular_Italic',
-                                fontSize: 13,
-                                color: palette.secondary,
-                            }}
-                        >
-                            {entry.author.display_name.slice(0, 1)}
-                        </Text>
-                    )}
-                </View>
+                <Avatar
+                    name={row.author.display_name}
+                    url={row.author.avatar_url}
+                    size={28}
+                    palette={palette}
+                />
 
                 <Text style={{ flex: 1, fontSize: 13, color: palette.textSecondary, fontFamily: 'Manrope_400Regular' }}>
                     <Text style={{ fontFamily: 'Manrope_600SemiBold', color: palette.text }}>
-                        {entry.author.display_name}
+                        {row.author.display_name}
                     </Text>
                     <Text>{rating > 0 ? ' tried ' : ' noted '}</Text>
                     <Text style={{ fontFamily: 'Newsreader_400Regular_Italic', fontSize: 14, color: palette.text }}>
@@ -109,7 +100,7 @@ export function FriendLogCard({ entry, time, sub }: Props) {
                 </Text>
             </View>
 
-            {/* Rating + sub row */}
+            {/* Rating row */}
             {rating > 0 && (
                 <View
                     style={{
@@ -129,18 +120,6 @@ export function FriendLogCard({ entry, time, sub }: Props) {
                     >
                         {rating.toFixed(1)}
                     </Text>
-                    <View style={{ flex: 1 }} />
-                    {sub && (
-                        <Text
-                            style={{
-                                fontFamily: 'Newsreader_400Regular_Italic',
-                                fontSize: 11,
-                                color: palette.textMuted,
-                            }}
-                        >
-                            {sub}
-                        </Text>
-                    )}
                 </View>
             )}
 
@@ -156,14 +135,14 @@ export function FriendLogCard({ entry, time, sub }: Props) {
                         marginBottom: photos.length > 0 ? 12 : 0,
                     }}
                 >
-                    {entry.content}
+                    {row.content}
                 </Text>
             )}
 
             {/* Photos */}
-            {photos.length > 0 && <PhotoGrid photos={photos} total={entry.photos.length} />}
+            {photos.length > 0 && <PhotoGrid photos={photos} total={row.photos.length} />}
 
-            {/* Footer */}
+            {/* Footer — public-scope engagement */}
             <View style={{ flexDirection: 'row', gap: 18, marginTop: 12 }}>
                 <Pressable
                     onPress={handleToggleLike}
@@ -185,13 +164,13 @@ export function FriendLogCard({ entry, time, sub }: Props) {
                         <Ionicons name="heart-outline" size={13} color={palette.textMuted} />
                     )}
                     <Text style={{ fontSize: 11, color: palette.textMuted, fontFamily: 'Manrope_400Regular' }}>
-                        {entry.reaction_count || 'React'}
+                        {row.reaction_count || 'React'}
                     </Text>
                 </Pressable>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <Ionicons name="chatbubble-outline" size={12} color={palette.textMuted} />
                     <Text style={{ fontSize: 11, color: palette.textMuted, fontFamily: 'Manrope_400Regular' }}>
-                        {entry.comment_count || 'Reply'}
+                        {row.comment_count || 'Reply'}
                     </Text>
                 </View>
             </View>
@@ -266,7 +245,7 @@ function PhotoGrid({ photos, total }: { photos: string[]; total: number }) {
                                 right: 0,
                                 bottom: 0,
                                 left: 0,
-                                backgroundColor: 'rgba(28,28,25,0.45)',
+                                backgroundColor: palette.scrimDark,
                                 borderRadius: Radius.sm + 2,
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -276,8 +255,7 @@ function PhotoGrid({ photos, total }: { photos: string[]; total: number }) {
                                 style={{
                                     fontFamily: 'Newsreader_400Regular_Italic',
                                     fontSize: 16,
-                                    color: palette.textInverse,
-                                    fontWeight: '600',
+                                    color: palette.textOnImage,
                                 }}
                             >
                                 +{total - 3}
@@ -288,4 +266,14 @@ function PhotoGrid({ photos, total }: { photos: string[]; total: number }) {
             </View>
         </View>
     );
+}
+
+function formatRelative(iso: string) {
+    const ms = Date.now() - new Date(iso).getTime();
+    const h = Math.floor(ms / (60 * 60 * 1000));
+    if (h < 1) return 'now';
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    if (d < 7) return `${d}d`;
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
