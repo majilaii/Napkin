@@ -173,7 +173,9 @@ export function GatherSheet({ visible, onClose, restaurant, tableId }: GatherShe
                     {
                         backgroundColor: palette.surface,
                         paddingBottom: kbPad > 0 ? kbPad + Spacing.sm : insets.bottom + Spacing.md,
-                        maxHeight: windowHeight - insets.top - Spacing.xl - kbPad,
+                        // kbPad is interior padding (heights are border-box), so the
+                        // keyboard is already inside maxHeight — don't subtract it again.
+                        maxHeight: windowHeight - insets.top - Spacing.xl,
                     },
                     Shadow.ambient,
                 ]}
