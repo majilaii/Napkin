@@ -44,8 +44,8 @@ export function RegularRow({ regular }: Props) {
             accessibilityRole="button"
             accessibilityLabel={`View ${regular.name}`}
         >
-            {/* Thumb */}
-            <View style={[styles.thumb, { backgroundColor: palette.surfaceContainerHigh }]}>
+            {/* Thumb — user's own entry photo, else a quiet monogram (no restaurant photos). */}
+            <View style={[styles.thumb, { backgroundColor: regular.photo_url ? palette.surfaceContainerHigh : palette.surfaceJournalLow }]}>
                 {regular.photo_url ? (
                     <Image
                         source={{ uri: regular.photo_url }}
@@ -53,7 +53,19 @@ export function RegularRow({ regular }: Props) {
                         contentFit="cover"
                         transition={150}
                     />
-                ) : null}
+                ) : (
+                    <View style={styles.monogram}>
+                        <Text
+                            style={{
+                                fontFamily: 'Newsreader_400Regular_Italic',
+                                fontSize: 22,
+                                color: palette.textMuted,
+                            }}
+                        >
+                            {regular.name?.trim()?.charAt(0)?.toUpperCase() ?? ''}
+                        </Text>
+                    </View>
+                )}
             </View>
 
             {/* Details */}
@@ -112,6 +124,11 @@ const styles = StyleSheet.create({
         borderRadius: Radius.sm,
         flexShrink: 0,
         overflow: 'hidden',
+    },
+    monogram: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     content: {
         flex: 1,

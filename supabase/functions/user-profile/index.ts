@@ -753,11 +753,44 @@ async function fetchRegulars(
 
     if (eligible.length === 0) return [];
 
+    const regularRestaurantIds = eligible.map((r) => r.restaurant_id);
+
+    // Restaurant name/city only — NEVER restaurants.photo_url (Google Places
+    // photo). Founder doctrine (TICKET-105, 2026-07-05): Napkin shows no
+    // restaurant photos right now. A regular's thumb may only be a photo the
+    // profile owner uploaded on one of their OWN entries at that restaurant.
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, photo_url')
-        .in('id', eligible.map((r) => r.restaurant_id));
+        .select('id, name, city')
+        .in('id', regularRestaurantIds);
     if (restErr) throw restErr;
+
+    // Batch-fetch the profile owner's own entry photos at these restaurants —
+    // ONE query, newest first, then keep the first (most recent) photo per
+    // restaurant. Same visibility gate as the entries aggregation above: for a
+    // non-self viewer, private entries are excluded (`includePrivate === false`
+    // ⇒ visibility != 'private'), which mirrors the public diary/reviews gate.
+    // Self may surface photos from any of their own entries.
+    const photoByRestaurant = new Map<string, string>();
+    let photoQuery = supabase
+        .from('entry_photos')
+        .select('photo_url, created_at, entries!inner(user_id, restaurant_id, visibility)')
+        .eq('entries.user_id', userId)
+        .in('entries.restaurant_id', regularRestaurantIds)
+        .not('photo_url', 'is', null)
+        .order('created_at', { ascending: false });
+    if (!includePrivate) photoQuery = photoQuery.neq('entries.visibility', 'private');
+
+    const { data: photoRows, error: photoErr } = await photoQuery;
+    if (photoErr) throw photoErr;
+
+    // Rows are newest-first; the first one seen per restaurant is the most recent.
+    for (const p of (photoRows ?? []) as any[]) {
+        const rid = p.entries?.restaurant_id as string | undefined;
+        const url = p.photo_url as string | null;
+        if (!rid || !url) continue;
+        if (!photoByRestaurant.has(rid)) photoByRestaurant.set(rid, url);
+    }
 
     const byId = new Map<string, any>((rests ?? []).map((r: any) => [r.id, r]));
     return eligible
@@ -768,7 +801,7 @@ async function fetchRegulars(
                 restaurant_id: r.restaurant_id,
                 name: rest.name,
                 city: rest.city ?? null,
-                photo_url: rest.photo_url ?? null,
+                photo_url: photoByRestaurant.get(r.restaurant_id) ?? null,
                 visit_count: r.visit_count,
                 avg_rating: r.rating_count > 0 ? r.rating_sum / r.rating_count : null,
                 last_visited_at: r.last_visited_at,
