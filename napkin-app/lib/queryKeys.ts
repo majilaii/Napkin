@@ -125,6 +125,8 @@ export const queryKeys = {
         friends: (userId: string) => ['feed', 'friends', userId] as const,
         /** Trending rail — global (not per-viewer), 1h server cache. */
         trending: () => ['feed', 'trending'] as const,
+        /** TICKET-101: co-diner follow candidates for the zero-follow empty state. */
+        coDiners: (userId: string) => ['feed', 'coDiners', userId] as const,
     },
 
     // Atlas (geographic lens on a Table's dining history)

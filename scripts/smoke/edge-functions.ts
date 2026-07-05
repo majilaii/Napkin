@@ -232,6 +232,23 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-101: co-diner candidates read path — backs the zero-follow feed
+    // empty state (tier 1). callEdgeFn unwraps { data: [...] } to the array, so
+    // the smoke asserts Array.isArray(data) ONLY — an empty array is the
+    // legitimate tier-2 signal (the smoke user may have no unfollowed co-diners),
+    // never a failure. A 500 here means the fn_co_diner_candidates RPC / union
+    // drifted — exactly what this guard catches.
+    {
+        name: 'user-profile?action=co_diners (TICKET-101 empty state — empty array is legitimate)',
+        method: 'POST',
+        fn: 'user-profile',
+        body: { action: 'co_diners' },
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!Array.isArray(data)) return 'data is not an array';
+            return null;
+        },
+    },
     // TICKET-090: account fn read path — backs the Blocked settings screen and
     // is the same fn that performs account deletion. blocked_list on the smoke
     // user must return the rows envelope (200 + data.rows array).

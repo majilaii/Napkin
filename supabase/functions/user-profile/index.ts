@@ -1656,6 +1656,63 @@ serve(async (req) => {
             return json({ data: { is_following: followRow !== null } });
         }
 
+        // ── co_diners ─────────────────────────────────────────────────────
+        // TICKET-101: co-diner follow candidates for the zero-follow feed empty
+        // state (tier 1). The people the caller has actually eaten with on
+        // Napkin — union of entry/supper/round/table co-attendance — ranked by
+        // meals-together, minus existing follows / either-direction blocks /
+        // self. The SECURITY DEFINER RPC does all the union/dedup/filter in SQL;
+        // this handler just authenticates (caller = p_viewer) and hydrates
+        // profile display fields. Aggregate counts only leave the RPC — never
+        // raw event rows or a source breakdown.
+        // Request: { action: 'co_diners' }
+        // Response: { data: { user_id, display_name, avatar_url, meals_together }[] }
+        //   (an empty array is a legitimate tier-2 signal — nobody they know yet).
+        if (action === 'co_diners') {
+            const { data: candidates, error: rpcErr } = await supabase.rpc(
+                'fn_co_diner_candidates',
+                { p_viewer: user.id, p_limit: 3 },
+            );
+            if (rpcErr) throw rpcErr;
+
+            const rows = (candidates ?? []) as { co_diner_id: string; meals_together: number }[];
+            if (rows.length === 0) return json({ data: [] });
+
+            const ids = rows.map((r) => r.co_diner_id);
+            // Flat profile lookup by id — NOT a PostgREST embed off the RPC, so
+            // no PGRST201 ambiguity (entries has no FK to profiles anyway).
+            const { data: profiles, error: profErr } = await supabase
+                .from('profiles')
+                .select('user_id, display_name, avatar_url')
+                .in('user_id', ids);
+            if (profErr) throw profErr;
+
+            const byId = new Map(
+                ((profiles ?? []) as {
+                    user_id: string;
+                    display_name: string;
+                    avatar_url: string | null;
+                }[]).map((p) => [p.user_id, p]),
+            );
+
+            // Preserve the RPC's meals_together DESC order; drop any candidate
+            // whose profile row vanished (deleted mid-flight).
+            return json({
+                data: rows
+                    .map((r) => {
+                        const p = byId.get(r.co_diner_id);
+                        if (!p) return null;
+                        return {
+                            user_id: p.user_id,
+                            display_name: p.display_name,
+                            avatar_url: p.avatar_url ?? null,
+                            meals_together: Number(r.meals_together ?? 0),
+                        };
+                    })
+                    .filter(Boolean),
+            });
+        }
+
         // ── following_list ────────────────────────────────────────────────
         // Returns the list of users the caller is following (with profile data).
         // Request: { action: 'following_list', limit?: number }
