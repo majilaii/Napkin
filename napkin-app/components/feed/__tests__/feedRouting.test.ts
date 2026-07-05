@@ -1,8 +1,10 @@
 /**
  * TICKET-103 — the feed routing predicate. Prose or photos → note card;
  * bare rating → ledger line. Tested against all four content×photo combos.
+ * TICKET-104 — plus the DiscoveryLedger self-gate: it shows only when the
+ * horizontal rail is hidden, so discovery never renders twice on one screen.
  */
-import { isNoteCard } from '../feedRouting';
+import { isNoteCard, shouldShowDiscoveryLedger } from '../feedRouting';
 
 function row(content: string | null, photos: string[]) {
     return { content, photos };
@@ -33,5 +35,19 @@ describe('isNoteCard', () => {
 
     it('whitespace-only content but has a photo → note card', () => {
         expect(isNoteCard(row('   ', ['p1']))).toBe(true);
+    });
+});
+
+describe('shouldShowDiscoveryLedger', () => {
+    it('hidden rail → ledger shows (it owns discovery for the screen)', () => {
+        expect(shouldShowDiscoveryLedger('hidden')).toBe(true);
+    });
+
+    it('trending rail → ledger stands down (no double discovery)', () => {
+        expect(shouldShowDiscoveryLedger('trending')).toBe(false);
+    });
+
+    it('fallback rail → ledger stands down (no double discovery)', () => {
+        expect(shouldShowDiscoveryLedger('fallback')).toBe(false);
     });
 });

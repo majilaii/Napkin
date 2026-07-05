@@ -3,7 +3,7 @@
  * TICKET-103 to the note-card / ledger-line grammar.
  *
  *   [masthead: italic serif "Feed" + small-caps current date]
- *   [trending rail — only when the feed breathes beneath it (rows > 0, not sparse)]
+ *   [trending rail — always mounted; it self-hides only when it has zero cards]
  *   [date-sectioned friend feed — note cards + ledger rows, keyset paginated]
  *   [sparse tail — "· you're caught up ·" + discovery ledger, on a thin feed]
  *
@@ -11,9 +11,10 @@
  * FeedListItem[] (header/row discriminated union), mirroring JournalList's
  * buildFlatList idiom — so pagination/refresh/footer plumbing is untouched.
  *
- * Rail-vs-ledger exclusivity is structural: the horizontal rail lives ONLY in
- * ListHeaderComponent (mounted iff rows > 0 && !showSparseTail); the vertical
- * discovery ledger lives ONLY in the empty state or the sparse-tail footer.
+ * Discovery renders exactly once (TICKET-104): the horizontal rail lives ONLY in
+ * ListHeaderComponent and is always mounted (its own pickRailMode hides it when
+ * empty); the vertical discovery ledger (empty state / sparse-tail footer)
+ * self-gates against that same rail mode, so the two never appear together.
  */
 import React, { useCallback, useMemo } from 'react';
 import {
@@ -97,9 +98,6 @@ export default function FeedScreen() {
     // Single deterministic gate: caught-up mark + discovery ledger tail whenever
     // the feed reached true end-of-list with a thin set of rows.
     const showSparseTail = shouldShowSparseTail({ rows, hasNextPage: !!hasNextPage, isLoading });
-    // Rail (horizontal) and ledger (vertical) are mutually exclusive by
-    // construction: rail only when the feed breathes and isn't sparse.
-    const showRail = rows.length > 0 && !showSparseTail;
 
     const onEndReached = useCallback(() => {
         if (hasNextPage && !isFetchingNextPage) fetchNextPage();
@@ -128,11 +126,12 @@ export default function FeedScreen() {
                     <Text style={[styles.title, { color: palette.text }]}>Feed</Text>
                     <Text style={[styles.mastDate, { color: palette.textMuted }]}>{mastDate}</Text>
                 </View>
-                {/* Horizontal trending rail — only when the feed breathes beneath it */}
-                {showRail && <TrendingRail />}
+                {/* Horizontal trending rail — always mounted; TrendingRail's own
+                    pickRailMode returns null when it has zero cards (TICKET-104) */}
+                <TrendingRail />
             </View>
         ),
-        [insets.top, palette, mastDate, showRail],
+        [insets.top, palette, mastDate],
     );
 
     return (

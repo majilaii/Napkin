@@ -13,6 +13,11 @@
  * (so a day-one user with zero fallback simply sees the ghost card alone — no
  * dangling "Worth a look" heading).
  *
+ * Self-gate (TICKET-104): the ledger renders ONLY when the horizontal rail is
+ * hidden. It computes `pickRailMode` with the EXACT inputs TrendingRail uses
+ * (`data?.rows`, `data?.fallback`, `savedIds`) and stands down for any mode but
+ * `'hidden'` — discovery never appears twice on one screen.
+ *
  * Google numerals are a labeled SIBLING signal — amber, but never a chip, never
  * a ★, always carrying the "on Google" label. Never dressed as a Napkin rating.
  *
@@ -29,6 +34,8 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useTrending, type FallbackCard } from '@/hooks/feed/useTrending';
 import { useSavedRestaurantIds } from '@/hooks/feed/useSavedRestaurantIds';
 import { visibleFallbackCards } from './fallbackRailGate';
+import { pickRailMode } from './railMode';
+import { shouldShowDiscoveryLedger } from './feedRouting';
 
 const MAX_LEDGER_ROWS = 6;
 
@@ -39,11 +46,18 @@ export function DiscoveryLedger() {
     const { data } = useTrending();
 
     const savedIds = useSavedRestaurantIds(user?.id ?? null);
+    // Self-gate: stand down whenever the horizontal rail is showing — computed
+    // from the SAME inputs TrendingRail passes to pickRailMode (TICKET-104).
+    const railMode = useMemo(
+        () => pickRailMode(data?.rows, data?.fallback, savedIds).mode,
+        [data?.rows, data?.fallback, savedIds],
+    );
     const cards = useMemo(
         () => visibleFallbackCards(data?.fallback, savedIds).slice(0, MAX_LEDGER_ROWS),
         [data?.fallback, savedIds],
     );
 
+    if (!shouldShowDiscoveryLedger(railMode)) return null;
     if (cards.length === 0) return null;
 
     return (
