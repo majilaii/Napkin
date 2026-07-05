@@ -22,3 +22,6 @@ export { RestaurantFloatCard, type RestaurantFloatCardProps, type FloatMember } 
 export { FriendFeedCard } from './FriendFeedCard';
 export { TrendingRail } from './TrendingRail';
 export { InlineStars } from './InlineStars';
+
+// Feed empty-state rescue (TICKET-101)
+export { FeedEmptyState } from './FeedEmptyState';

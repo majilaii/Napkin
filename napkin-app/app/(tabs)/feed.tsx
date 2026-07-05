@@ -26,7 +26,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useFriendsFeed, flattenFriendsFeed } from '@/hooks/feed';
-import { FriendFeedCard, TrendingRail } from '@/components/feed';
+import { FriendFeedCard, TrendingRail, FeedEmptyState } from '@/components/feed';
 import type { FriendFeedRow } from '@/hooks/feed';
 
 export default function FeedScreen() {
@@ -83,9 +83,9 @@ export default function FeedScreen() {
                             color={palette.primary}
                         />
                     ) : (
-                        <Text style={[styles.emptyLine, { color: palette.textMuted }]}>
-                            follow people you eat with
-                        </Text>
+                        // TICKET-101: a designed two-tier empty state (co-diner
+                        // follow cards, or ghost + invite) — never a bare line.
+                        <FeedEmptyState />
                     )
                 }
                 ListFooterComponent={
@@ -125,11 +125,5 @@ const styles = StyleSheet.create({
         fontSize: 26,
         lineHeight: 30,
         paddingTop: Spacing.sm,
-    },
-    emptyLine: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
-        textAlign: 'center',
-        marginTop: Spacing.xxl,
     },
 });

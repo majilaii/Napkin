@@ -217,18 +217,38 @@ const CHECKS: Check[] = [
             return null;
         },
     },
-    // TICKET-098 Phase B: trending rail read path. [ARCH-REVIEW-5] assert
-    // Array.isArray(rows) ONLY — an empty array is the legitimate rail-hidden
-    // state (fewer than 3 qualifying restaurants), so no length/content check.
+    // TICKET-098 Phase B + TICKET-102: two-mode rail read path. [ARCH-REVIEW-5]
+    // assert Array.isArray on BOTH rows AND fallback ONLY — an empty array is the
+    // legitimate below-floor state for each mode (rows: <3 qualifiers; fallback:
+    // nothing passing the quality floor), so no length/content check. Both arrays
+    // live INSIDE data (callEdgeFn strips the outer envelope).
     {
-        name: 'feed-trending (TICKET-098 rail — empty rows is legitimate)',
+        name: 'feed-trending (TICKET-098/102 two-mode rail — empty rows/fallback is legitimate)',
         method: 'POST',
         fn: 'feed-trending',
         body: {},
         shape: (json) => {
-            const data = (json as { data?: { rows?: unknown } }).data;
+            const data = (json as { data?: { rows?: unknown; fallback?: unknown } }).data;
             if (!data) return 'missing data envelope';
             if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (!Array.isArray(data.fallback)) return 'data.fallback is not an array';
+            return null;
+        },
+    },
+    // TICKET-101: co-diner candidates read path — backs the zero-follow feed
+    // empty state (tier 1). callEdgeFn unwraps { data: [...] } to the array, so
+    // the smoke asserts Array.isArray(data) ONLY — an empty array is the
+    // legitimate tier-2 signal (the smoke user may have no unfollowed co-diners),
+    // never a failure. A 500 here means the fn_co_diner_candidates RPC / union
+    // drifted — exactly what this guard catches.
+    {
+        name: 'user-profile?action=co_diners (TICKET-101 empty state — empty array is legitimate)',
+        method: 'POST',
+        fn: 'user-profile',
+        body: { action: 'co_diners' },
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!Array.isArray(data)) return 'data is not an array';
             return null;
         },
     },
