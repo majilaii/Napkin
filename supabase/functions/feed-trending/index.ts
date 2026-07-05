@@ -19,9 +19,13 @@
  *     restaurants; this fn re-gates (<3 → []) so a malformed/stale cache can
  *     never leak a one-card rail. The client gates a third time.
  *
- * GET or POST (no params). Response: { data: { rows: TrendingCard[] } } —
- * rows may legitimately be [] (rail hidden). Smoke asserts Array.isArray only
- * [ARCH-REVIEW-5].
+ * GET or POST (no params). Response:
+ *   { data: { rows: TrendingCard[]; fallback: FallbackCard[] } }
+ * BOTH arrays live INSIDE `data` (callEdgeFn strips the outer { data } envelope —
+ * siblings of `data` get dropped). `rows` is mode-1 trending (may be [] — rail
+ * hidden below 3 qualifiers). `fallback` is TICKET-102 mode-2 (Google-rated,
+ * non-user-derived) — the client renders it ONLY when `rows` is below the floor,
+ * so the rail is never empty in practice. Smoke asserts Array.isArray on both.
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
@@ -34,6 +38,16 @@ interface TrendingPayloadRow {
     neighborhood?: unknown;
     photo_url?: unknown;
     saver_count_7d?: unknown;
+}
+
+interface FallbackPayloadRow {
+    restaurant_id?: unknown;
+    name?: unknown;
+    cuisine?: unknown;
+    neighborhood?: unknown;
+    photo_url?: unknown;
+    google_rating?: unknown;
+    google_rating_count?: unknown;
 }
 
 function fail(code: string, message: string, status = 400) {
@@ -65,10 +79,19 @@ serve(async (req) => {
         const { data: { user }, error: userError } = await supabase.auth.getUser(token);
         if (userError || !user) return fail('UNAUTHORIZED', 'Unauthorized', 401);
 
-        const { data: payload, error: rpcError } = await supabase.rpc('fn_get_trending');
-        if (rpcError) throw rpcError;
+        // Mode 1 (trending) and mode 2 (fallback) recompute independently under
+        // distinct cache keys + advisory locks — fetch both in one round-trip so
+        // the client can flip to the fallback on cold start without a second call
+        // (the exact moment mode 2 fires). The fallback is a ≤1h-cached single-row
+        // read, so computing it even when mode 1 wins is one cheap RPC.
+        const [trendingRes, fallbackRes] = await Promise.all([
+            supabase.rpc('fn_get_trending'),
+            supabase.rpc('fn_get_fallback'),
+        ]);
+        if (trendingRes.error) throw trendingRes.error;
+        if (fallbackRes.error) throw fallbackRes.error;
 
-        const raw: TrendingPayloadRow[] = Array.isArray(payload) ? payload : [];
+        const raw: TrendingPayloadRow[] = Array.isArray(trendingRes.data) ? trendingRes.data : [];
 
         // Defensive whitelist re-projection — restaurant fields + counts only.
         let rows = raw.map((r) => ({
@@ -86,8 +109,27 @@ serve(async (req) => {
         // Hard cap — finite rail, max 10 cards.
         rows = rows.slice(0, 10);
 
+        // Mode 2 (TICKET-102) — Google-rated fallback. Defensive whitelist:
+        // restaurant fields + labeled Google numbers only, NEVER a Napkin number.
+        // google_rating is NUMERIC(2,1) — coerce with Number() defensively.
+        const rawFallback: FallbackPayloadRow[] = Array.isArray(fallbackRes.data) ? fallbackRes.data : [];
+        let fallback = rawFallback.map((r) => ({
+            restaurant_id: String(r.restaurant_id ?? ''),
+            name: typeof r.name === 'string' ? r.name : '',
+            cuisine: typeof r.cuisine === 'string' ? r.cuisine : null,
+            neighborhood: typeof r.neighborhood === 'string' ? r.neighborhood : null,
+            photo_url: typeof r.photo_url === 'string' ? r.photo_url : null,
+            google_rating: Number(r.google_rating ?? 0),
+            google_rating_count: Number(r.google_rating_count ?? 0),
+        })).filter((r) => r.restaurant_id && r.name);
+
+        // Absolute floor: <1 qualifying row → [] (rail hides; clean absence, no
+        // broken partial). Hard cap 10 — finite rail, same as mode 1.
+        if (fallback.length < 1) fallback = [];
+        fallback = fallback.slice(0, 10);
+
         return new Response(
-            JSON.stringify({ data: { rows } }),
+            JSON.stringify({ data: { rows, fallback } }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         );
     } catch (error) {
