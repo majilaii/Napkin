@@ -3,7 +3,7 @@
 **/.DS_Store
 
 # Dependency directories
-node_modules/
+node_modules
 
 # iOS build artifacts
 napkin-app/ios/
