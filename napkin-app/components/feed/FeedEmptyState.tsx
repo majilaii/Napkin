@@ -115,7 +115,6 @@ export function FeedEmptyState() {
             <View style={styles.wrap}>
                 <View style={[styles.slab, { backgroundColor: palette.surfaceJournalLow }]}>
                     <Text style={[styles.kicker, { color: palette.primary }]}>people you&rsquo;ve eaten with</Text>
-                    <Text style={[styles.serifLine, { color: palette.text }]}>follow to fill your feed.</Text>
                     <View style={styles.cardList}>
                         {visible.map((candidate) => (
                             <CoDinerFollowCard
@@ -185,12 +184,6 @@ const styles = StyleSheet.create({
         fontSize: 10,
         letterSpacing: 1.8,
         textTransform: 'uppercase',
-    },
-    serifLine: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 23,
-        lineHeight: 30,
-        marginTop: 10,
     },
     cardList: {
         marginTop: 10,
