@@ -44,6 +44,7 @@ export const Colors = {
     terracottaInk: '#9a3412',        // --terracotta-ink (nib-stroke)
     terracottaScrim: 'rgba(160, 63, 40, 0.05)',
     terracottaBorder: 'rgba(160, 63, 40, 0.10)',
+    terracottaBorderStrong: 'rgba(160, 63, 40, 0.35)', // outline pills (invite / follow CTAs)
 
     // Secondary — olive
     secondary: '#5c614d',            // olive
@@ -128,6 +129,7 @@ export const Colors = {
     terracottaInk: '#ff967d',
     terracottaScrim: 'rgba(255, 180, 163, 0.06)',
     terracottaBorder: 'rgba(255, 180, 163, 0.12)',
+    terracottaBorderStrong: 'rgba(255, 180, 163, 0.35)', // outline pills (invite / follow CTAs)
 
     secondary: '#c4c9b1',
     secondaryContainer: '#444937',
