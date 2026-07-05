@@ -32,6 +32,7 @@ import { useCoDiners } from '@/hooks/feed/useCoDiners';
 import { useFollow } from '@/hooks/users/useFollow';
 import { resolveEmptyState } from './feedEmptyStateGate';
 import { CoDinerFollowCard } from './CoDinerFollowCard';
+import { DiscoveryLedger } from './DiscoveryLedger';
 
 export function FeedEmptyState() {
     const scheme = useColorScheme() ?? 'light';
@@ -112,58 +113,72 @@ export function FeedEmptyState() {
         if (visible.length === 0) return null;
 
         return (
-            <View style={styles.wrap}>
-                <View style={[styles.slab, { backgroundColor: palette.surfaceJournalLow }]}>
-                    <Text style={[styles.kicker, { color: palette.primary }]}>people you&rsquo;ve eaten with</Text>
-                    <View style={styles.cardList}>
-                        {visible.map((candidate) => (
-                            <CoDinerFollowCard
-                                key={candidate.user_id}
-                                candidate={candidate}
-                                followed={followedIds.has(candidate.user_id)}
-                                onFollow={() => handleFollow(candidate.user_id)}
-                                onOpenProfile={() => handleOpenProfile(candidate.user_id)}
-                            />
-                        ))}
+            <View>
+                <View style={styles.wrap}>
+                    <View style={[styles.slab, { backgroundColor: palette.surfaceJournalLow }]}>
+                        <Text style={[styles.kicker, { color: palette.primary }]}>people you&rsquo;ve eaten with</Text>
+                        <View style={styles.cardList}>
+                            {visible.map((candidate) => (
+                                <CoDinerFollowCard
+                                    key={candidate.user_id}
+                                    candidate={candidate}
+                                    followed={followedIds.has(candidate.user_id)}
+                                    onFollow={() => handleFollow(candidate.user_id)}
+                                    onOpenProfile={() => handleOpenProfile(candidate.user_id)}
+                                />
+                            ))}
+                        </View>
                     </View>
+                </View>
+                {/* Discovery holds the tail — the page never dies while the graph is thin */}
+                <View style={styles.ledgerGap}>
+                    <DiscoveryLedger />
                 </View>
             </View>
         );
     }
 
-    // ── Tier 2 — ghost card + invite ─────────────────────────────────────────
+    // ── Tier 2 — ghost card (ghost line + invite pill in ONE card) ────────────
     return (
-        <View style={styles.wrap}>
-            {/* Ghost card: Empty-State Slab / ghost-restaurant fidelity — monogram
-                in place of a photo + a single muted italic em-dash line. Reads as
-                "waiting", never "broken" or "real". */}
-            <View
-                style={[
-                    styles.ghostCard,
-                    { backgroundColor: palette.surfaceNote, borderColor: palette.outlineVariant },
-                ]}
-                accessibilityLabel="Your friends' meals will land here"
-            >
-                <View style={[styles.monogram, { borderColor: palette.outlineVariant }]}>
-                    <Text style={[styles.monogramMark, { color: palette.textMuted }]}>·</Text>
-                </View>
-                <Text style={[styles.ghostLine, { color: palette.textMuted }]}>
-                    — your friends&rsquo; meals land here
-                </Text>
-            </View>
+        <View>
+            <View style={styles.wrap}>
+                {/* One quiet card: monogram + muted italic em-dash line, with the
+                    invite pill living INSIDE the same surface, indented to align
+                    under the text. Reads as "waiting", never "broken" or "real". */}
+                <View
+                    style={[
+                        styles.ghostCard,
+                        { backgroundColor: palette.surfaceNote, borderColor: palette.dividerSoft },
+                    ]}
+                    accessibilityLabel="Your friends' meals will land here"
+                >
+                    <View style={styles.ghostRow}>
+                        <View style={[styles.monogram, { borderColor: palette.dividerSoft }]}>
+                            <Text style={[styles.monogramMark, { color: palette.textMuted }]}>·</Text>
+                        </View>
+                        <Text style={[styles.ghostLine, { color: palette.textMuted }]}>
+                            — your friends&rsquo; meals land here
+                        </Text>
+                    </View>
 
-            {/* Exactly one CTA — invite. Native share sheet, no in-app modal. */}
-            <Pressable
-                onPress={handleInvite}
-                style={({ pressed }) => [
-                    styles.inviteBtn,
-                    { borderColor: 'rgba(160,63,40,0.35)', opacity: pressed ? 0.7 : 1 },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Invite a friend to Napkin"
-            >
-                <Text style={[styles.inviteText, { color: palette.primary }]}>invite a friend</Text>
-            </Pressable>
+                    {/* Exactly one CTA — invite. Native share sheet, no in-app modal. */}
+                    <Pressable
+                        onPress={handleInvite}
+                        style={({ pressed }) => [
+                            styles.inviteBtn,
+                            { borderColor: palette.terracottaBorderStrong, opacity: pressed ? 0.7 : 1 },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Invite a friend to Napkin"
+                    >
+                        <Text style={[styles.inviteText, { color: palette.primary }]}>invite a friend</Text>
+                    </Pressable>
+                </View>
+            </View>
+            {/* "Worth a look" becomes the page body when there's no feed above it */}
+            <View style={styles.ledgerGap}>
+                <DiscoveryLedger />
+            </View>
         </View>
     );
 }
@@ -176,27 +191,31 @@ const styles = StyleSheet.create({
     // Tier 1 slab
     slab: {
         borderRadius: Radius.xl,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: 26,
+        padding: 20,
     },
     kicker: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
+        fontSize: 9.5,
         letterSpacing: 1.8,
         textTransform: 'uppercase',
     },
     cardList: {
         marginTop: 10,
     },
-    // Tier 2 ghost card
+    // Discovery ledger holds the tail of both tiers (its own horizontal padding)
+    ledgerGap: {
+        marginTop: 30,
+    },
+    // Tier 2 ghost card — ghost line + invite pill share ONE surfaceNote card
     ghostCard: {
-        borderRadius: Radius.lg,
+        borderRadius: Radius.xl,
         borderWidth: 1,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: 18,
+        padding: 18,
+    },
+    ghostRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: Spacing.md,
+        gap: 14,
     },
     monogram: {
         width: 44,
@@ -209,8 +228,8 @@ const styles = StyleSheet.create({
     },
     monogramMark: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 26,
-        lineHeight: 28,
+        fontSize: 24,
+        lineHeight: 26,
     },
     ghostLine: {
         flex: 1,
@@ -222,12 +241,13 @@ const styles = StyleSheet.create({
         alignSelf: 'flex-start',
         borderWidth: 1.5,
         borderRadius: Radius.full,
-        paddingHorizontal: 20,
-        paddingVertical: 10,
-        marginTop: Spacing.md,
+        paddingHorizontal: 16,
+        paddingVertical: 7,
+        marginTop: 14,
+        marginLeft: 58,
     },
     inviteText: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
+        fontSize: 12,
     },
 });

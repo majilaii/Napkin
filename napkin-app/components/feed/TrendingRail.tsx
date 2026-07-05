@@ -21,51 +21,13 @@
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 
 import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { queryKeys } from '@/lib/queryKeys';
 import { useTrending, type TrendingCard, type FallbackCard } from '@/hooks/feed/useTrending';
+import { useSavedRestaurantIds } from '@/hooks/feed/useSavedRestaurantIds';
 import { pickRailMode } from './railMode';
-
-/**
- * Restaurant ids already in the viewer's local wishlist + journal caches — read
- * with getQueryData (no new fetch). Used to dedup the fallback rail so it stays
- * new-to-me. Empty on a cold install (nothing to dedup against — fine).
- */
-function useSavedRestaurantIds(viewerId: string | null): Set<string> {
-    const queryClient = useQueryClient();
-    return useMemo(() => {
-        const ids = new Set<string>();
-        if (!viewerId) return ids;
-
-        // Personal wishlist — InfiniteData<{ data: { restaurant?: { id } }[] }>.
-        const wishlist = queryClient.getQueryData<
-            InfiniteData<{ data: Array<{ restaurant?: { id?: string } | null }> }>
-        >(queryKeys.wishlist.personal(viewerId));
-        for (const page of wishlist?.pages ?? []) {
-            for (const item of page?.data ?? []) {
-                const id = item?.restaurant?.id;
-                if (id) ids.add(id);
-            }
-        }
-
-        // Diary — InfiniteData<{ rows: { restaurant_id }[] }> (page envelopes are
-        // { rows }, never page.map — the 5bb6c6d lesson).
-        const diary = queryClient.getQueryData<
-            InfiniteData<{ rows: Array<{ restaurant_id?: string }> }>
-        >(queryKeys.users.diary(viewerId));
-        for (const page of diary?.pages ?? []) {
-            for (const row of page?.rows ?? []) {
-                if (row?.restaurant_id) ids.add(row.restaurant_id);
-            }
-        }
-
-        return ids;
-    }, [queryClient, viewerId]);
-}
 
 export function TrendingRail() {
     const scheme = useColorScheme() ?? 'light';
@@ -149,7 +111,7 @@ function BaseRailCard({
             }
             style={({ pressed }) => [
                 styles.card,
-                Shadow.note,
+                Shadow.subtle,
                 { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.8 : 1 },
             ]}
         >
@@ -170,7 +132,7 @@ const styles = StyleSheet.create({
     label: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 9,
-        letterSpacing: 1.4,
+        letterSpacing: 1.5,
         textTransform: 'uppercase',
         paddingHorizontal: Spacing.lg,
         marginBottom: Spacing.sm,
@@ -180,20 +142,20 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     card: {
-        width: 190,
+        width: 172,
         borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 13,
     },
     name: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 21,
-        marginBottom: 6,
+        fontSize: 16.5,
+        lineHeight: 20,
+        marginBottom: 5,
     },
     meta: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 11,
+        fontSize: 10.5,
         lineHeight: 15,
     },
 });

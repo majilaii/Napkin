@@ -25,3 +25,7 @@ export { InlineStars } from './InlineStars';
 
 // Feed empty-state rescue (TICKET-101)
 export { FeedEmptyState } from './FeedEmptyState';
+
+// Feed re-dress — discovery ledger + sparse tail (TICKET-103)
+export { DiscoveryLedger } from './DiscoveryLedger';
+export { FeedSparseTail } from './FeedSparseTail';
