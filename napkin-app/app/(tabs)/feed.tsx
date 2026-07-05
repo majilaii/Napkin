@@ -52,7 +52,9 @@ function buildFeedList(rows: FriendFeedRow[]): FeedListItem[] {
         const row = rows[i];
         const label = feedSectionLabel(row.sort_date);
         if (label !== lastLabel) {
-            items.push({ _type: 'header', key: `header-${label}`, label });
+            // Keyed by the section's first row id, not the label — bare month
+            // labels ("June") can recur across years on a deep scroll.
+            items.push({ _type: 'header', key: `header-${row.id}`, label });
             lastLabel = label;
         }
         // Tight 13px gap only between two adjacent ledger rows on the same day.
