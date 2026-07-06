@@ -35,6 +35,8 @@ export interface ListEntry {
     restaurant_id: string;
     note: string | null;
     position: number;
+    /** TICKET-115: attribution for table-list adds. Null on personal/legacy rows. */
+    added_by?: string | null;
     created_at: string;
     restaurant: ListEntryRestaurant;
 }
@@ -48,6 +50,8 @@ export interface ListDetail {
     privacy: 'public' | 'private';
     /** TICKET-108: user-chosen emoji. Nullable = default teardrop. */
     emoji: string | null;
+    /** TICKET-115: non-null → shared Table list (member-readable, creator-editable). */
+    table_id?: string | null;
     created_at: string;
     updated_at: string;
 }

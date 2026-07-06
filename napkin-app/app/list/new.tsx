@@ -21,7 +21,7 @@ import {
     Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -35,6 +35,12 @@ export default function NewListScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
+
+    // TICKET-115: optional Table context — "new list in {Table}". When present the
+    // list is shared (table_id) and FORCED private (Tables-never-public), so the
+    // public/private toggle is hidden.
+    const { tableId, tableName } = useLocalSearchParams<{ tableId?: string; tableName?: string }>();
+    const isTableContext = !!tableId;
 
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
@@ -61,8 +67,10 @@ export default function NewListScreen() {
                 title: trimmedTitle,
                 description: description.trim() || undefined,
                 ranked,
-                privacy: isPublic ? 'public' : 'private',
+                // Table lists are always private (server also coerces).
+                privacy: isTableContext ? 'private' : (isPublic ? 'public' : 'private'),
                 emoji,
+                ...(isTableContext ? { table_id: tableId } : {}),
             },
             {
                 onSuccess: (list) => {
@@ -86,7 +94,9 @@ export default function NewListScreen() {
                         <Pressable onPress={() => router.back()} hitSlop={12}>
                             <Text style={[Type.body, { color: palette.primary }]}>Cancel</Text>
                         </Pressable>
-                        <Text style={[Type.titleMedium, { color: palette.text }]}>New list</Text>
+                        <Text style={[Type.titleMedium, { color: palette.text }]}>
+                            {isTableContext && tableName ? `New list · ${tableName}` : 'New list'}
+                        </Text>
                         <View style={{ width: 60 }} />
                     </View>
 
@@ -183,23 +193,35 @@ export default function NewListScreen() {
                             />
                         </View>
 
-                        {/* Privacy */}
-                        <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>
-                            <View>
-                                <Text style={[Type.titleSmall, { color: palette.text }]}>Public</Text>
-                                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
-                                    {isPublic
-                                        ? 'Anyone with the link can view'
-                                        : 'Only you can see this list'}
-                                </Text>
+                        {/* Privacy — hidden in a Table context (table lists are always
+                            private, shared only with members). */}
+                        {isTableContext ? (
+                            <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[Type.titleSmall, { color: palette.text }]}>Shared with the table</Text>
+                                    <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
+                                        Every member can add · private to the table
+                                    </Text>
+                                </View>
                             </View>
-                            <Switch
-                                value={isPublic}
-                                onValueChange={setIsPublic}
-                                trackColor={{ false: palette.outlineVariant, true: palette.primary }}
-                                thumbColor="#fff"
-                            />
-                        </View>
+                        ) : (
+                            <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>
+                                <View>
+                                    <Text style={[Type.titleSmall, { color: palette.text }]}>Public</Text>
+                                    <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
+                                        {isPublic
+                                            ? 'Anyone with the link can view'
+                                            : 'Only you can see this list'}
+                                    </Text>
+                                </View>
+                                <Switch
+                                    value={isPublic}
+                                    onValueChange={setIsPublic}
+                                    trackColor={{ false: palette.outlineVariant, true: palette.primary }}
+                                    thumbColor="#fff"
+                                />
+                            </View>
+                        )}
 
                         {/* Create */}
                         <Pressable

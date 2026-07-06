@@ -182,6 +182,8 @@ serve(async (req) => {
         const supperRpcRows = visibleRpc.filter((r) => r.kind === 'supper');
         // TICKET-095: gathering proposal cards.
         const gatheringRpcRows = visibleRpc.filter((r) => r.kind === 'gathering');
+        // TICKET-115: list_add ledger lines (a member added spot(s) to a table list).
+        const listAddRpcRows = visibleRpc.filter((r) => r.kind === 'list_add');
 
         const entryIds = entryRpcRows.map((r) => r.id);
         const nightIds = nightRpcRows.map((r) => r.id);
@@ -988,6 +990,66 @@ serve(async (req) => {
             }
         }
 
+        // ── TICKET-115: hydrate the list_add ledger line ────────────────────────
+        // Payload rides in the RPC (list_id/list_title/list_emoji/added_by/add_count/
+        // sample_restaurant_ids). Batch-fetch the adder profile + sample restaurant
+        // names — NEVER PostgREST-embed profiles off list_entries (the FK trap:
+        // list_entries.added_by → auth.users, not profiles).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let listAddItems: any[] = [];
+        if (listAddRpcRows.length > 0) {
+            const adderIds = [...new Set(
+                listAddRpcRows.map((r) => (r.payload as any)?.added_by).filter(Boolean),
+            )] as string[];
+            const sampleRestIds = [...new Set(
+                listAddRpcRows.flatMap((r) => ((r.payload as any)?.sample_restaurant_ids as string[]) ?? []),
+            )] as string[];
+
+            const { data: adderProfiles } = adderIds.length > 0
+                ? await supabase.from('profiles').select('user_id, display_name, avatar_url').in('user_id', adderIds)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                : { data: [] as any[] };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const adderProfMap = new Map((adderProfiles ?? []).map((p: any) => [p.user_id, p]));
+
+            const { data: sampleRests } = sampleRestIds.length > 0
+                ? await supabase.from('restaurants').select('id, name').in('id', sampleRestIds)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                : { data: [] as any[] };
+            const restNameMap = new Map(
+                ((sampleRests ?? []) as { id: string; name: string }[]).map((r) => [r.id, r.name]),
+            );
+
+            for (const r of listAddRpcRows) {
+                const p = r.payload as any;
+                const addedBy = p?.added_by ?? null;
+                const sampleIds = (p?.sample_restaurant_ids as string[]) ?? [];
+                const sampleNames = sampleIds
+                    .map((rid) => restNameMap.get(rid))
+                    .filter(Boolean) as string[];
+                listAddItems.push({
+                    id: r.id,
+                    type: 'list_add' as const,
+                    sort_date: r.sort_date,
+                    table_id: tableId,
+                    list_id: p?.list_id ?? null,
+                    list_title: p?.list_title ?? null,
+                    list_emoji: p?.list_emoji ?? null,
+                    added_by: addedBy,
+                    added_by_profile: addedBy
+                        ? {
+                            user_id: addedBy,
+                            display_name: adderProfMap.get(addedBy)?.display_name ?? null,
+                            avatar_url: adderProfMap.get(addedBy)?.avatar_url ?? null,
+                          }
+                        : null,
+                    add_count: p?.add_count ?? sampleNames.length,
+                    sample_restaurant_names: sampleNames,
+                    created_at: r.sort_date,
+                });
+            }
+        }
+
         // ── Reactions ────────────────────────────────────────────────────────
         const myReactionsByTarget = new Map<string, string[]>();
         const targetKey = (targetType: string, targetId: string) => `${targetType}:${targetId}`;
@@ -1055,6 +1117,8 @@ serve(async (req) => {
         const supperById = new Map(supperItems.map((s: any) => [s.id, s]));
         // TICKET-095: map for the gathering card.
         const gatheringById = new Map(gatheringItems.map((g: any) => [g.id, g]));
+        // TICKET-115: map for the list_add ledger line.
+        const listAddById = new Map(listAddItems.map((l: any) => [l.id, l]));
 
         const orderedItems = visibleRpc
             .map((rpcRow) => {
@@ -1085,6 +1149,9 @@ serve(async (req) => {
                 } else if (rpcRow.kind === 'gathering') {
                     item = gatheringById.get(rpcRow.id);
                     // Gathering cards carry RSVPs, not reactions (out of scope v1).
+                } else if (rpcRow.kind === 'list_add') {
+                    item = listAddById.get(rpcRow.id);
+                    // Ledger lines have no reactions — a quiet line, not a card.
                 }
                 if (!item) return null;
                 return {

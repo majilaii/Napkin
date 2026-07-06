@@ -25,6 +25,8 @@ export interface ListEntryResult {
     restaurant_id: string;
     note: string | null;
     position: number;
+    /** TICKET-115: attribution stamped by the server on table-list adds. */
+    added_by?: string | null;
     created_at: string;
 }
 

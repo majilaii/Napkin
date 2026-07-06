@@ -29,3 +29,6 @@ export { FeedEmptyState } from './FeedEmptyState';
 // Feed re-dress — discovery ledger + sparse tail (TICKET-103)
 export { DiscoveryLedger } from './DiscoveryLedger';
 export { FeedSparseTail } from './FeedSparseTail';
+
+// TICKET-115 Table lists — quiet ledger line for table-list adds
+export { ListAddLedgerLine } from './ListAddLedgerLine';

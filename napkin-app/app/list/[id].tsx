@@ -70,6 +70,11 @@ export default function ListDetailScreen() {
     const ownerProfile = result?.data?.owner_profile ?? null;
     const isNotFound = result?.isNotFound ?? false;
     const isOwner = !!user && !!list && list.owner_id === user.id;
+    // TICKET-115: a table list can only *load* for its owner or a table member
+    // (the `get` gate proves it — a non-member never sees a table_id list), so any
+    // viewer of a table_id-bearing list may curate ENTRIES (add/remove/reorder/note).
+    // List-level edits (rename/emoji via the header's onEdit) stay owner-only.
+    const canEditEntries = isOwner || (!!user && !!list && !!list.table_id);
     const existingRestaurantIds = React.useMemo(
         () => entries.map((e) => e.restaurant_id),
         [entries],
@@ -175,7 +180,7 @@ export default function ListDetailScreen() {
                 key={entry.id}
                 entry={entry}
                 rank={list?.ranked ? index + 1 : undefined}
-                isOwner={isOwner}
+                isOwner={canEditEntries}
                 isRanked={list?.ranked ?? false}
                 isDragDisabled={dragDisabled || reorderEntry.isPending}
                 isPinned={pinnedIds.has(entry.restaurant_id)}
@@ -191,7 +196,7 @@ export default function ListDetailScreen() {
                 drag={drag}
             />
         ),
-        [list, isOwner, dragDisabled, reorderEntry.isPending, pinnedIds, router, handleRemove, handleNoteChange, handlePinToWishlist],
+        [list, canEditEntries, dragDisabled, reorderEntry.isPending, pinnedIds, router, handleRemove, handleNoteChange, handlePinToWishlist],
     );
 
     return (
@@ -227,7 +232,7 @@ export default function ListDetailScreen() {
                 {/* Content */}
                 {!isLoading && list && ownerProfile && (
                     <>
-                        {isOwner && list.ranked ? (
+                        {canEditEntries && list.ranked ? (
                             <DraggableFlatList
                                 data={entries}
                                 keyExtractor={(item) => item.id}
@@ -245,7 +250,7 @@ export default function ListDetailScreen() {
                                             })
                                         }
                                         onShare={verifiedCount > 0 ? () => setShareVisible(true) : undefined}
-                                        onAddSpots={isOwner ? () => setImportVisible(true) : undefined}
+                                        onAddSpots={canEditEntries ? () => setImportVisible(true) : undefined}
                                     />
                                 }
                                 renderItem={({ item, getIndex, drag }: RenderItemParams<ListEntry>) =>
@@ -260,7 +265,7 @@ export default function ListDetailScreen() {
                                         <Text style={[Type.headlineItalic, { color: palette.textMuted, textAlign: 'center' }]}>
                                             — no spots yet
                                         </Text>
-                                        {isOwner ? (
+                                        {canEditEntries ? (
                                             <Text style={[Type.bodySmall, { color: palette.textMuted, textAlign: 'center', marginTop: Spacing.sm }]}>
                                                 tap add spots to fill it from your saves
                                             </Text>
@@ -286,7 +291,7 @@ export default function ListDetailScreen() {
                                             })
                                         }
                                         onShare={verifiedCount > 0 ? () => setShareVisible(true) : undefined}
-                                        onAddSpots={isOwner ? () => setImportVisible(true) : undefined}
+                                        onAddSpots={canEditEntries ? () => setImportVisible(true) : undefined}
                                     />
                                 }
                                 renderItem={({ item, index }) => renderEntry(item, index)}
@@ -299,7 +304,7 @@ export default function ListDetailScreen() {
                                         <Text style={[Type.headlineItalic, { color: palette.textMuted, textAlign: 'center' }]}>
                                             — no spots yet
                                         </Text>
-                                        {isOwner ? (
+                                        {canEditEntries ? (
                                             <Text style={[Type.bodySmall, { color: palette.textMuted, textAlign: 'center', marginTop: Spacing.sm }]}>
                                                 tap add spots to fill it from your saves
                                             </Text>

@@ -14,6 +14,9 @@ export interface CreateListInput {
     privacy?: 'public' | 'private';
     /** TICKET-108: optional emoji shown on the Lists row + map pin. */
     emoji?: string | null;
+    /** TICKET-115: create this list inside a Table (shared). Server enforces the
+     * caller is a member and forces privacy='private'. */
+    table_id?: string;
     /** UUID of an already-persisted restaurant to add as the initial entry */
     initial_restaurant_id?: string;
     /** Places ghost payload — server will upsert it then add as initial entry */
@@ -30,6 +33,8 @@ export interface CreatedList {
     privacy: 'public' | 'private';
     /** TICKET-108: user-chosen emoji. Nullable = default teardrop. */
     emoji: string | null;
+    /** TICKET-115: non-null → shared Table list. */
+    table_id?: string | null;
     created_at: string;
     updated_at: string;
 }
