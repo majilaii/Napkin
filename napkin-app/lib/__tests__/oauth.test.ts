@@ -80,11 +80,15 @@ describe('appleIdToken', () => {
 describe('googleIdToken', () => {
     // First test: googleConfigured is module-level and configure() runs ONCE, so
     // this must run before any other googleIdToken() call to observe the call.
-    it('configures GoogleSignin with the web client id from env (once)', async () => {
+    it('configures GoogleSignin with the ios + web client ids from env (once)', async () => {
         process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = 'web-client-123.apps.googleusercontent.com';
+        process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID = 'ios-client-456.apps.googleusercontent.com';
         mockGoogleSignIn.mockResolvedValue({ data: { idToken: 'google.jwt' } });
         await googleIdToken();
+        // iosClientId is REQUIRED on iOS — configure() throws without it (or a
+        // GoogleService-Info.plist), which is what broke Google sign-in.
         expect(mockConfigure).toHaveBeenCalledWith({
+            iosClientId: 'ios-client-456.apps.googleusercontent.com',
             webClientId: 'web-client-123.apps.googleusercontent.com',
         });
     });

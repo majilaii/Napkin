@@ -80,12 +80,20 @@ export async function appleIdToken(): Promise<AppleCredential> {
 let googleConfigured = false;
 
 /**
- * Configure GoogleSignin once (webClientId from EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) and run the
- * native account picker. Returns the ID token. Throws OAuthCancelledError on cancel.
+ * Configure GoogleSignin once and run the native account picker. Returns the ID
+ * token. Throws OAuthCancelledError on cancel.
  *
- * The webClientId must match the Web OAuth client whose id Supabase verifies the
- * token's `aud` against. Until the founder wires the env + dashboard, sign-in
- * no-ops with an opaque error — expected (see the ticket SHIP GATE).
+ * BOTH client ids are required on iOS:
+ *   - `iosClientId` — the native library MUST have this (or a GoogleService-Info
+ *     .plist) or `configure()` throws "failed to determine clientID" and the
+ *     Google sheet never opens (RNGoogleSignin.mm). The reversed form is also the
+ *     iosUrlScheme in app.config.ts, but that only wires the OAuth *redirect* —
+ *     it does NOT give the library the client id.
+ *   - `webClientId` — becomes the token's `serverClientID`/`aud`, which Supabase's
+ *     Google provider verifies against. Without it the token won't exchange.
+ *
+ * Both MUST be EXPO_PUBLIC_-prefixed: Metro only inlines those into the JS bundle;
+ * a bare process.env var is undefined on-device.
  */
 export async function googleIdToken(): Promise<string> {
     // Lazy require — a mis-linked native lib throws HERE, not at auth.tsx load
@@ -96,9 +104,7 @@ export async function googleIdToken(): Promise<string> {
 
     if (!googleConfigured) {
         GoogleSignin.configure({
-            // MUST be EXPO_PUBLIC_-prefixed — Metro only inlines those into the
-            // JS bundle; a bare process.env var is undefined on-device and the
-            // Google token's aud would never verify against Supabase.
+            iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
             webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
         });
         googleConfigured = true;
