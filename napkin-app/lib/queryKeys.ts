@@ -85,6 +85,8 @@ export const queryKeys = {
             ['lists', 'containing', userId, restaurantId] as const,
         /** TICKET-108: all my-list entries w/ coords + emoji for the wishlist map. */
         mapPins: (userId: string) => ['lists', 'mapPins', userId] as const,
+        /** TICKET-106: public-list search results (keyset-paginated). */
+        searchPublic: (q: string) => ['lists', 'searchPublic', q] as const,
     },
 
     // Users (public / merged profile surface — TICKET-020, TICKET-025)

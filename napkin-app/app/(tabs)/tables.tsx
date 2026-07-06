@@ -47,6 +47,7 @@ import {
     type RestaurantFloatActivityItem,
     type SupperCardActivity,
     type GatheringCardActivity,
+    type ListAddActivityItem,
 } from '@/hooks/tables/useTableActivity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
@@ -66,6 +67,7 @@ import {
     EditTop4Sheet,
     StartRoundPill,
     AddMemberSheet,
+    TableListsBlock,
 } from '@/components/tables';
 import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
@@ -80,6 +82,8 @@ import { TableEntryCard } from '@/components/journal';
 import { SupperCard, SupperNudgeBanner } from '@/components/suppers';
 // TICKET-095: the gather-the-table proposal card
 import { GatheringCard } from '@/components/gatherings';
+// TICKET-115: quiet ledger line for table-list adds
+import { ListAddLedgerLine } from '@/components/feed/ListAddLedgerLine';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -477,6 +481,14 @@ export default function TablesScreen() {
             {activeTab === 'wishlist' ? (
                 <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
                     {headerAndControl}
+                    {/* TICKET-115: shared Table lists (create-from-table + open) above
+                        the emergent wishlist overlap. Social tables only. */}
+                    {activeTable && isSocialTable && (
+                        <TableListsBlock
+                            tableId={activeTable.id}
+                            tableName={activeTable.name}
+                        />
+                    )}
                     {activeTable && (
                         <WishlistGrid mode="table" tableId={activeTable.id} />
                     )}
@@ -982,6 +994,18 @@ export default function TablesScreen() {
                                                               key={`gathering-${g.id}`}
                                                               gathering={g}
                                                               viewerId={user?.id}
+                                                          />
+                                                      );
+                                                  }
+                                                  // TICKET-115: table-list add — a quiet ledger line, not a card.
+                                                  if (item.type === 'list_add') {
+                                                      const la = item as ListAddActivityItem;
+                                                      return (
+                                                          <ListAddLedgerLine
+                                                              key={`listadd-${la.id}`}
+                                                              item={la}
+                                                              palette={palette}
+                                                              currentUserId={user?.id}
                                                           />
                                                       );
                                                   }

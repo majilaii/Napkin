@@ -16,6 +16,12 @@ export interface MyList {
     /** TICKET-108: user-chosen emoji shown before the title on the Lists row +
      * on the wishlist map pin. Nullable = default terracotta teardrop. */
     emoji: string | null;
+    /** TICKET-115: non-null → this is a shared Table list (owned by a Table, not
+     * a single user). Personal lists are null. */
+    table_id?: string | null;
+    /** TICKET-115: resolved Table name for badging shared lists (`· {Table}`).
+     * Null on personal lists. */
+    table_name?: string | null;
     entry_count: number;
     /**
      * Count of entries whose restaurant is verified — what a handoff share

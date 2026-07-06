@@ -16,11 +16,19 @@
  *   reorder_entry    — drag-and-drop repositioning for ranked lists
  *   lists_containing — list IDs that contain a given restaurant (drives sheet checkmarks)
  *   map_pins         — all my-list entries with lat/lng + owning list emoji (wishlist map)
+ *   search_public    — TICKET-106: keyset search of publicly available lists (triple-gated)
+ *
+ * TICKET-115 (Table lists): a list can belong to a Table (`table_id`). Members —
+ * not just the owner — can read + add to it; the list stays creator-owned for
+ * rename/delete. Membership is checked via the is_table_member SECDEF helper
+ * (keys on table_members.member_id — the member_id-not-user_id trap). Table lists
+ * are FORCED private (Tables-never-public); the DB coercion trigger backstops it.
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant, type RestaurantInput } from '../_shared/restaurant.ts';
+import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +41,8 @@ interface ListRow {
     privacy: 'public' | 'private';
     /** TICKET-108: user-chosen emoji for the map pin + Lists row. Nullable. */
     emoji: string | null;
+    /** TICKET-115: non-null → this list belongs to a Table (shared). Forced private. */
+    table_id: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -59,6 +69,8 @@ interface ListEntry {
     restaurant_id: string;
     note: string | null;
     position: number;
+    /** TICKET-115: attribution for table-list adds. Null on personal/legacy rows. */
+    added_by: string | null;
     created_at: string;
 }
 
@@ -69,6 +81,48 @@ function jsonResponse(body: unknown, status = 200) {
         status,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+}
+
+/**
+ * TICKET-115: is the caller a member of this Table? The service-role client
+ * bypasses RLS, so membership MUST be enforced in code for every table-list
+ * write/read. The column on table_members is member_id — NOT user_id (the
+ * standing member_id trap). Uses the SECDEF helper so the join lives in one place.
+ */
+async function isTableMember(
+    supabase: any,
+    tableId: string,
+    userId: string,
+): Promise<boolean> {
+    const { data, error } = await supabase.rpc('is_table_member', {
+        p_table_id: tableId,
+        p_user_id: userId,
+    });
+    if (error) throw error;
+    return data === true;
+}
+
+/**
+ * TICKET-115: can the caller ADD to / read this list?
+ * - Personal list (table_id null): must be the owner.
+ * - Table list (table_id set): must be a member of the owning Table.
+ * Returns the list row (id, owner_id, table_id) or null when not permitted.
+ */
+async function fetchWritableList(
+    supabase: any,
+    listId: string,
+    userId: string,
+): Promise<{ id: string; owner_id: string; table_id: string | null } | null> {
+    const { data: list, error } = await supabase
+        .from('lists')
+        .select('id, owner_id, table_id')
+        .eq('id', listId)
+        .maybeSingle();
+    if (error) throw error;
+    if (!list) return null;
+    if (list.owner_id === userId) return list;
+    if (list.table_id && (await isTableMember(supabase, list.table_id, userId))) return list;
+    return null;
 }
 
 /** Resolve restaurant_id from either a UUID or a Places payload. */
@@ -188,9 +242,22 @@ serve(async (req) => {
                 ? String(body.description).slice(0, 140)
                 : null;
             const ranked = !!body.ranked;
-            const privacy = body.privacy === 'private' ? 'private' : 'public';
             // TICKET-108: optional emoji at creation. undefined → omit (column default null).
             const emoji = normalizeEmoji(body.emoji);
+
+            // TICKET-115: table_id → a shared Table list. Caller MUST be a member
+            // (service-role bypasses RLS, so enforce in code — member_id trap).
+            // Table lists are ALWAYS private (Tables-never-public); set it here so
+            // the returned row is truthful (the DB trigger also coerces it).
+            const tableId: string | null =
+                typeof body.table_id === 'string' && body.table_id ? body.table_id : null;
+            let privacy = body.privacy === 'private' ? 'private' : 'public';
+            if (tableId) {
+                if (!(await isTableMember(supabase, tableId, user.id))) {
+                    return jsonResponse({ error: 'Not a member of this table' }, 403);
+                }
+                privacy = 'private';
+            }
 
             const { data: list, error: listErr } = await supabase
                 .from('lists')
@@ -200,6 +267,7 @@ serve(async (req) => {
                     description,
                     ranked,
                     privacy,
+                    ...(tableId ? { table_id: tableId } : {}),
                     ...(emoji !== undefined ? { emoji } : {}),
                 })
                 .select('*')
@@ -220,6 +288,9 @@ serve(async (req) => {
                         restaurant_id: restaurantId,
                         note: body.initial_note ?? null,
                         position: pos,
+                        // TICKET-115: attribution on table lists (no-op on personal lists,
+                        // but harmless — the creator is also the adder).
+                        added_by: user.id,
                     });
                 }
             }
@@ -298,12 +369,54 @@ serve(async (req) => {
 
         // ── list_mine ──────────────────────────────────────────────────────
         if (action === 'list_mine') {
-            const { data: lists, error: listsErr } = await supabase
+            const { data: ownLists, error: listsErr } = await supabase
                 .from('lists')
                 .select('*')
                 .eq('owner_id', user.id)
                 .order('updated_at', { ascending: false });
             if (listsErr) throw listsErr;
+
+            // TICKET-115: also surface the caller's Tables' lists (shared collaborative
+            // lists — the caller may not own them). member_id, NOT user_id (trap).
+            const { data: myMemberships, error: memErr } = await supabase
+                .from('table_members')
+                .select('table_id')
+                .eq('member_id', user.id);
+            if (memErr) throw memErr;
+            const myTableIds = [...new Set(
+                (myMemberships ?? []).map((m: { table_id: string }) => m.table_id),
+            )] as string[];
+
+            let tableLists: ListRow[] = [];
+            const tableNameById = new Map<string, string>();
+            if (myTableIds.length > 0) {
+                const { data: tLists, error: tErr } = await supabase
+                    .from('lists')
+                    .select('*')
+                    .in('table_id', myTableIds)
+                    .order('updated_at', { ascending: false });
+                if (tErr) throw tErr;
+                tableLists = (tLists ?? []) as ListRow[];
+                // Resolve Table names for badging (batch map — NO embed needed).
+                const { data: tableRows } = await supabase
+                    .from('tables')
+                    .select('id, name')
+                    .in('id', myTableIds);
+                for (const t of (tableRows ?? []) as { id: string; name: string }[]) {
+                    tableNameById.set(t.id, t.name);
+                }
+            }
+
+            // Merge: personal lists first, then table lists (already updated_at DESC
+            // within each group). Dedup by id (a table the caller owns won't be
+            // double-listed — owner query + table query could both return it).
+            const seen = new Set<string>();
+            const lists: ListRow[] = [];
+            for (const l of [...((ownLists ?? []) as ListRow[]), ...tableLists]) {
+                if (seen.has(l.id)) continue;
+                seen.add(l.id);
+                lists.push(l);
+            }
 
             // TICKET-074 fix-pass (Codex): verified entry counts for ALL lists in
             // ONE query (no per-list N+1). Share eligibility gates on this — the
@@ -350,6 +463,8 @@ serve(async (req) => {
                         entry_count: count ?? 0,
                         verified_count: verifiedCounts.get(list.id) ?? 0,
                         cover_photo_url: coverPhotoUrl,
+                        // TICKET-115: badge for shared Table lists (null on personal lists).
+                        table_name: list.table_id ? (tableNameById.get(list.table_id) ?? null) : null,
                     };
                 }),
             );
@@ -368,10 +483,32 @@ serve(async (req) => {
                 .eq('id', list_id)
                 .maybeSingle();
             if (listErr) throw listErr;
-
-            // Privacy gate: private lists are "not found" for non-owners
             if (!list) return jsonResponse({ error: 'Not found' }, 404);
-            if (list.privacy === 'private' && list.owner_id !== user.id) {
+
+            // Owner profile — fetched up-front so the account_privacy gate (106)
+            // reuses it (TICKET-020 already selects it for the author-line tap).
+            const { data: ownerProfile } = await supabase
+                .from('profiles')
+                .select('display_name, avatar_url, username, account_privacy')
+                .eq('user_id', list.owner_id)
+                .maybeSingle();
+
+            // ── Read gate — three composed branches (TICKET-115 + TICKET-106) ───
+            //   1. owner           → any privacy
+            //   2. table member    → 115: table_id set AND caller is a member
+            //   3. public list     → 106: privacy='public' AND table_id IS NULL
+            //                         AND owner account is public
+            // A table list is always private, so branch 3's `table_id IS NULL`
+            // guarantees it NEVER loads for a non-member via `get`. Private lists
+            // stay "not found" (indistinguishable from "doesn't exist").
+            const isOwner = list.owner_id === user.id;
+            const isMemberOfTableList =
+                !!list.table_id && (await isTableMember(supabase, list.table_id, user.id));
+            const isPublicNonTable =
+                list.privacy === 'public' &&
+                !list.table_id &&
+                (ownerProfile?.account_privacy === 'public');
+            if (!isOwner && !isMemberOfTableList && !isPublicNonTable) {
                 return jsonResponse({ error: 'Not found' }, 404);
             }
 
@@ -386,6 +523,7 @@ serve(async (req) => {
                     restaurant_id,
                     note,
                     position,
+                    added_by,
                     created_at,
                     restaurant:restaurants (
                         id,
@@ -407,13 +545,6 @@ serve(async (req) => {
                 .order(orderCol, { ascending: orderAsc });
             if (entriesErr) throw entriesErr;
 
-            // Owner profile — username and account_privacy added for TICKET-020 list-detail author tap
-            const { data: ownerProfile } = await supabase
-                .from('profiles')
-                .select('display_name, avatar_url, username, account_privacy')
-                .eq('user_id', list.owner_id)
-                .maybeSingle();
-
             return jsonResponse({
                 data: {
                     list,
@@ -433,14 +564,10 @@ serve(async (req) => {
             const { list_id, note } = body;
             if (!list_id) return jsonResponse({ error: 'list_id is required' }, 400);
 
-            // Verify caller owns the list
-            const { data: list, error: listErr } = await supabase
-                .from('lists')
-                .select('id, owner_id')
-                .eq('id', list_id)
-                .eq('owner_id', user.id)
-                .maybeSingle();
-            if (listErr) throw listErr;
+            // TICKET-115: caller must OWN the list (personal) OR be a MEMBER of its
+            // owning Table (shared list). fetchWritableList centralizes the member_id
+            // check via the SECDEF helper.
+            const list = await fetchWritableList(supabase, list_id, user.id);
             if (!list) return jsonResponse({ error: 'Not found' }, 404);
 
             const restaurantId = await resolveRestaurantId(supabase, {
@@ -472,6 +599,8 @@ serve(async (req) => {
                     restaurant_id: restaurantId,
                     note: note ?? null,
                     position,
+                    // TICKET-115: attribution for the feed ledger line + "added by".
+                    added_by: user.id,
                 })
                 .select('*')
                 .single();
@@ -499,14 +628,8 @@ serve(async (req) => {
             // Dedup the request + cap defensively against a runaway insert.
             const ids = [...new Set(restaurantIds)].slice(0, 200);
 
-            // Verify caller owns the list
-            const { data: list, error: listErr } = await supabase
-                .from('lists')
-                .select('id, owner_id')
-                .eq('id', list_id)
-                .eq('owner_id', user.id)
-                .maybeSingle();
-            if (listErr) throw listErr;
+            // TICKET-115: owner (personal) OR member (table list) may bulk-add.
+            const list = await fetchWritableList(supabase, list_id, user.id);
             if (!list) return jsonResponse({ error: 'Not found' }, 404);
 
             // Validate the ids resolve to REAL restaurants. The bulk insert is one
@@ -528,6 +651,8 @@ serve(async (req) => {
                     restaurant_id: rid,
                     note: null,
                     position: startPos + i * 1024,
+                    // TICKET-115: attribution — each bulk-added spot carries the adder.
+                    added_by: user.id,
                 }));
                 // Atomic idempotency: ON CONFLICT (list_id, restaurant_id) DO NOTHING.
                 // A dupe (concurrent import / double-tap) is skipped, not a 23505 that
@@ -564,13 +689,9 @@ serve(async (req) => {
                 return jsonResponse({ error: 'list_id and restaurant_id are required' }, 400);
             }
 
-            // Verify ownership
-            const { data: list } = await supabase
-                .from('lists')
-                .select('id')
-                .eq('id', list_id)
-                .eq('owner_id', user.id)
-                .maybeSingle();
+            // TICKET-115: owner OR table member may curate a shared list (matches the
+            // list_entries_write RLS + the "collaborative list" intent). [ARCHITECT-REVIEW]
+            const list = await fetchWritableList(supabase, list_id, user.id);
             if (!list) return jsonResponse({ error: 'Not found' }, 404);
 
             const { error: deleteErr } = await supabase
@@ -590,13 +711,8 @@ serve(async (req) => {
                 return jsonResponse({ error: 'list_id and entry_id are required' }, 400);
             }
 
-            // Verify ownership via list
-            const { data: list } = await supabase
-                .from('lists')
-                .select('id')
-                .eq('id', list_id)
-                .eq('owner_id', user.id)
-                .maybeSingle();
+            // TICKET-115: owner OR table member. [ARCHITECT-REVIEW]
+            const list = await fetchWritableList(supabase, list_id, user.id);
             if (!list) return jsonResponse({ error: 'Not found' }, 404);
 
             const noteVal =
@@ -631,13 +747,8 @@ serve(async (req) => {
                 return jsonResponse({ error: 'list_id and entry_id are required' }, 400);
             }
 
-            // Verify ownership
-            const { data: list } = await supabase
-                .from('lists')
-                .select('id')
-                .eq('id', list_id)
-                .eq('owner_id', user.id)
-                .maybeSingle();
+            // TICKET-115: owner OR table member may reorder a shared ranked list. [ARCHITECT-REVIEW]
+            const list = await fetchWritableList(supabase, list_id, user.id);
             if (!list) return jsonResponse({ error: 'Not found' }, 404);
 
             let prevPos: number | null = null;
@@ -737,12 +848,11 @@ serve(async (req) => {
         // metadata only — no per-entry coords). Drives the wishlist map's
         // list-entry pins. Owner-scoped by design.
         //
-        // Cross-Set seam (Set 4 table-lists): if lists can be owned by a Table
-        // rather than a user, this predicate must widen to "my lists + my
-        // Tables' lists". Kept narrow (owner_id = user.id) here — Set 4 widens.
+        // TICKET-115: widened to "my lists + my Tables' lists" so table-list pins
+        // appear on the wishlist map. Table lists the caller can see = lists of any
+        // Table the caller is a member of (member_id, NOT user_id — the trap).
         if (action === 'map_pins') {
-            // My lists first (id + emoji + updated_at), so we can attach the
-            // owning list's emoji/updated_at to each entry client-agnostically.
+            // My own lists (id + emoji + updated_at).
             const { data: myLists, error: myListsErr } = await supabase
                 .from('lists')
                 .select('id, emoji, updated_at')
@@ -753,6 +863,28 @@ serve(async (req) => {
             for (const l of (myLists ?? []) as Array<{ id: string; emoji: string | null; updated_at: string }>) {
                 listMeta.set(l.id, { emoji: l.emoji ?? null, updated_at: l.updated_at });
             }
+
+            // My Tables' lists (may be owned by another member). member_id trap.
+            const { data: myMemberships } = await supabase
+                .from('table_members')
+                .select('table_id')
+                .eq('member_id', user.id);
+            const myTableIds = [...new Set(
+                (myMemberships ?? []).map((m: { table_id: string }) => m.table_id),
+            )] as string[];
+            if (myTableIds.length > 0) {
+                const { data: tLists, error: tErr } = await supabase
+                    .from('lists')
+                    .select('id, emoji, updated_at')
+                    .in('table_id', myTableIds);
+                if (tErr) throw tErr;
+                for (const l of (tLists ?? []) as Array<{ id: string; emoji: string | null; updated_at: string }>) {
+                    if (!listMeta.has(l.id)) {
+                        listMeta.set(l.id, { emoji: l.emoji ?? null, updated_at: l.updated_at });
+                    }
+                }
+            }
+
             const myListIds = [...listMeta.keys()];
             if (myListIds.length === 0) {
                 return jsonResponse({ data: [] });
@@ -801,6 +933,42 @@ serve(async (req) => {
             }
 
             return jsonResponse({ data: pins });
+        }
+
+        // ── search_public (TICKET-106) ─────────────────────────────────────
+        // Keyset search of publicly available lists. The TRIPLE GATE lives in
+        // fn_search_public_lists' SQL WHERE (service-role bypasses RLS):
+        //   privacy='public' AND table_id IS NULL AND owner account_privacy='public'.
+        // Returns the canonical Page<T> envelope. Min 2 chars → empty page.
+        if (action === 'search_public') {
+            const rawQ = typeof body.q === 'string' ? body.q.trim() : '';
+            if (rawQ.length < 2) {
+                return jsonResponse({
+                    data: { rows: [], next_cursor: null, has_more: false },
+                });
+            }
+
+            const PAGE_SIZE = 20;
+            const decoded = decodeCursor(body.cursor ?? null);
+
+            const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_search_public_lists', {
+                q: rawQ,
+                p_cursor_date: decoded?.sort_date ?? null,
+                p_cursor_id: decoded?.id ?? null,
+                p_limit: PAGE_SIZE + 1,
+            });
+            if (rpcErr) throw rpcErr;
+
+            // buildPage detects has_more from limit+1 and encodes the next cursor
+            // from the last KEPT row's (updated_at, id). Never select('*') on lists
+            // here — the RPC returns an explicit column list with no table_id.
+            const page = buildPage(
+                (rpcRows ?? []) as Array<{ id: string; updated_at: string }>,
+                PAGE_SIZE,
+                (r) => ({ sort_date: r.updated_at, id: r.id }),
+            );
+
+            return jsonResponse({ data: page });
         }
 
         return jsonResponse({ error: 'Unknown action' }, 400);

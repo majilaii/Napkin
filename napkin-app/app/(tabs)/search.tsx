@@ -52,6 +52,7 @@ import {
     TierHeader,
     SearchModeTabs,
     PeopleSearchPane,
+    ListsSearchPane,
     selectNearbyPinned,
     filterListsByQuery,
 } from '@/components/search';
@@ -307,9 +308,14 @@ export default function SearchScreen() {
                 <Text style={[styles.screenTitle, { color: palette.text }]}>
                     Search
                 </Text>
-                {!FRIEND_TEST.hidePeopleSearch && (
-                    <SearchModeTabs mode={mode} onModeChange={setMode} />
-                )}
+                {/* TICKET-106: tabs render whenever People OR Lists is available.
+                    Lists is ALWAYS available (decoupled from hidePeopleSearch); when
+                    People is curtained the People tab is dropped but Lists survives. */}
+                <SearchModeTabs
+                    mode={mode}
+                    onModeChange={setMode}
+                    hidePeople={FRIEND_TEST.hidePeopleSearch}
+                />
                 <SearchInput
                     ref={inputRef}
                     value={immediateQuery}
@@ -319,9 +325,16 @@ export default function SearchScreen() {
                 />
             </View>
 
-            {/* People tab — unmounted when Places is active so no stale render.
-                 Entire people path gated behind FRIEND_TEST.hidePeopleSearch. */}
-            {!FRIEND_TEST.hidePeopleSearch && mode === 'people' ? (
+            {/* Lists tab (TICKET-106) — decoupled from hidePeopleSearch; always
+                 available. Unmounted when another mode is active. */}
+            {mode === 'lists' ? (
+                <ListsSearchPane
+                    query={immediateQuery}
+                    debouncedQuery={debouncedQuery}
+                />
+            ) : /* People tab — unmounted when Places is active so no stale render.
+                    Entire people path gated behind FRIEND_TEST.hidePeopleSearch. */
+            !FRIEND_TEST.hidePeopleSearch && mode === 'people' ? (
                 <PeopleSearchPane
                     query={immediateQuery}
                     debouncedQuery={debouncedQuery}
