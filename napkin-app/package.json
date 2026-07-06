@@ -62,7 +62,6 @@
     "@babel/code-frame": "^7.27.1",
     "@bacons/apple-targets": "~4.0.6",
     "@expo/image-utils": "^0.8.13",
-    "@expo/prebuild-config": "^54.0.8",
     "@testing-library/jest-native": "^5.4.3",
     "@testing-library/react-native": "^13.3.3",
     "@types/jest": "^30.0.0",
