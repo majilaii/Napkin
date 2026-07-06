@@ -191,15 +191,13 @@ export default function ShareDetailScreen() {
                         </Text>
                     </View>
 
+                    {/* Text-led restaurant row — NO photo thumbnail/placeholder
+                        (restaurant/Google imagery removed; owner entry photos or
+                        nothing — doctrine locked 2026-07-05). */}
                     <Pressable
                         onPress={() => share.restaurant?.id && router.push(`/restaurant/${share.restaurant.id}`)}
                         style={styles.restaurantRow}
                     >
-                        {share.restaurant?.photo_url ? (
-                            <Image source={{ uri: share.restaurant.photo_url }} style={styles.thumb} />
-                        ) : (
-                            <View style={[styles.thumb, { backgroundColor: palette.surfaceContainerHigh }]} />
-                        )}
                         <View style={{ flex: 1 }}>
                             <Text style={[styles.restaurantName, { color: palette.text }]} numberOfLines={2}>
                                 {share.restaurant?.name ?? 'Unknown restaurant'}
@@ -340,8 +338,7 @@ const styles = StyleSheet.create({
     headerWrap: { paddingHorizontal: 14, paddingBottom: Spacing.md },
     authorRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: Spacing.sm },
     avatar: { width: 26, height: 26, borderRadius: 13 },
-    restaurantRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginBottom: Spacing.sm },
-    thumb: { width: 60, height: 60, borderRadius: Radius.sm, flexShrink: 0 },
+    restaurantRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm },
     restaurantName: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 20, lineHeight: 24 },
     note: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 16, lineHeight: 24, marginBottom: Spacing.md },
     reactionRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },

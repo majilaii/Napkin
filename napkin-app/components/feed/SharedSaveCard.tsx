@@ -3,7 +3,9 @@
  *
  * Table-feed card for a single shared restaurant save ("shared_save" kind).
  * Shows: author avatar + name + "shared" verb, restaurant name (italic Newsreader),
- * city · cuisine, source thumbnail, optional note, and I'm-in reaction control.
+ * city · cuisine, optional note, and I'm-in reaction control.
+ * Text-led: NO restaurant/Google thumbnail (owner entry photos or nothing —
+ * doctrine locked 2026-07-05).
  *
  * Heirloom Journal: warm paper surface, lowercase past-tense "shared",
  * middle-dot separator, no emoji in chrome, ambient shadows.
@@ -29,7 +31,6 @@ export interface SharedSaveCardRestaurant {
     name: string | null;
     city: string | null;
     cuisine: string | null;
-    photo_url: string | null;
     verification?: string;
 }
 
@@ -128,29 +129,15 @@ export function SharedSaveCard({
                 </Text>
             </View>
 
-            {/* Restaurant */}
+            {/* Restaurant — text-led, no thumbnail (no restaurant/Google photos).
+                Owner entry photos or nothing (doctrine locked 2026-07-05). */}
             <Pressable
                 onPress={!isPending ? handleRestaurantTap : undefined}
                 style={styles.restaurantRow}
             >
-                {/* Thumbnail */}
-                {restaurant?.photo_url ? (
-                    <Image
-                        source={{ uri: restaurant.photo_url }}
-                        style={[styles.thumb, { borderRadius: Radius.sm }]}
-                        accessibilityIgnoresInvertColors
-                    />
-                ) : (
-                    <View
-                        style={[
-                            styles.thumb,
-                            { backgroundColor: palette.surfaceContainerHigh, borderRadius: Radius.sm },
-                        ]}
-                    />
-                )}
                 <View style={styles.restaurantText}>
                     {isPending ? (
-                        <Text style={[Type.headlineItalic, { color: palette.textMuted, fontSize: 15 }]}>
+                        <Text style={[Type.headlineItalic, { color: palette.textMuted, fontSize: 17 }]}>
                             reading it...
                         </Text>
                     ) : (
@@ -236,22 +223,14 @@ const styles = StyleSheet.create({
         marginRight: Spacing.xs,
     },
     restaurantRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
         marginBottom: Spacing.xs,
-    },
-    thumb: {
-        width: 52,
-        height: 52,
-        marginRight: Spacing.md,
-        flexShrink: 0,
     },
     restaurantText: {
         flex: 1,
     },
     restaurantName: {
         ...Type.headlineItalic,
-        fontSize: 15,
+        fontSize: 17,
         marginBottom: 2,
     } as any,
     note: {
@@ -262,9 +241,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginTop: Spacing.sm,
-        paddingTop: Spacing.xs,
-        minHeight: 32,
+        marginTop: Spacing.xs,
+        minHeight: 28,
     },
     footerEmojis: {
         fontSize: 14,

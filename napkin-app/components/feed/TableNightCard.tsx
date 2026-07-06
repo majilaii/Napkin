@@ -23,7 +23,6 @@ import {
     Text,
     StyleSheet,
     Pressable,
-    Image,
     findNodeHandle,
     UIManager,
 } from 'react-native';
@@ -73,7 +72,6 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
     // Undefined round_kind = pre-TICKET-044 row -> treat as live.
     const isMerged = item.round_kind === 'merged';
     const isActive = !isMerged && item.status === 'rating';
-    const photoUrl = item.restaurants?.photo_url ?? null;
     const restaurantName = item.restaurants?.name ?? 'Unknown';
     const sub = [item.restaurants?.city].filter(Boolean).join(' · ');
 
@@ -158,27 +156,26 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
                         },
                     ]}
                 >
-                    {/* Hero photo */}
-                    <View style={[styles.hero, { backgroundColor: palette.surfaceContainerHigh }]}>
-                        {photoUrl ? (
-                            <Image
-                                source={{ uri: photoUrl }}
-                                style={StyleSheet.absoluteFill}
-                                resizeMode="cover"
-                            />
-                        ) : null}
-
-                        {/* Pill top-left */}
+                    {/* Header strip — text-led, NO restaurant/Google photo
+                        (owner entry photos or nothing — doctrine locked 2026-07-05).
+                        Carries the Round pill + unseen dot on a slim warm band. */}
+                    <View style={styles.headerStrip}>
+                        {/* Pill */}
                         <View
                             style={[
                                 styles.heroPill,
                                 isActive
                                     ? { backgroundColor: palette.primary }
-                                    : { backgroundColor: 'rgba(252,249,244,0.88)' },
+                                    : { backgroundColor: palette.surfaceJournalHi },
                             ]}
                         >
                             {isActive && <PulseDot size={6} color="#f6ecd9" />}
-                            <Text style={styles.heroPillText}>
+                            <Text
+                                style={[
+                                    styles.heroPillText,
+                                    { color: isActive ? palette.textInverse : palette.text },
+                                ]}
+                            >
                                 {isActive
                                     ? 'LIVE ROUND'
                                     : isMerged
@@ -187,7 +184,7 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
                             </Text>
                         </View>
 
-                        {/* Unseen dot top-right — live rounds only */}
+                        {/* Unseen dot — live rounds only */}
                         {isUnseen && (
                             <View
                                 style={[
@@ -291,14 +288,14 @@ const styles = StyleSheet.create({
         borderRadius: 24,
         overflow: 'hidden',
     },
-    hero: {
-        height: 200,
-        position: 'relative',
+    headerStrip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingTop: 18,
     },
     heroPill: {
-        position: 'absolute',
-        top: 14,
-        left: 14,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
@@ -310,20 +307,16 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
         fontSize: 9,
         letterSpacing: 1.2,
-        color: Colors.light.text,
         textTransform: 'uppercase',
     },
     unseenDot: {
-        position: 'absolute',
-        top: 10,
-        right: 10,
         width: 6,
         height: 6,
         borderRadius: 3,
     },
     content: {
         paddingHorizontal: 20,
-        paddingTop: 18,
+        paddingTop: 12,
         paddingBottom: 20,
     },
     titleRow: {
