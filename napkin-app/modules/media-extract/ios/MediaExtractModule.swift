@@ -97,6 +97,22 @@ public class MediaExtractModule: Module {
       return true
     }
 
+    // ── App-Group shared scalar prefs (TICKET-113 Part B) ──────────────────────
+    // The share EXTENSION can't read AsyncStorage; the app mirrors small prefs
+    // (e.g. the import default mode, key "import.defaultMode") into the app group's
+    // UserDefaults here so the extension can seed its UI at launch. Same suite the
+    // queue uses — no new entitlement.
+    Function("setSharedDefault") { (key: String, value: String) -> Bool in
+      guard let defaults = UserDefaults(suiteName: Self.appGroup) else { return false }
+      defaults.set(value, forKey: key)
+      return true
+    }
+
+    Function("getSharedDefault") { (key: String) -> String? in
+      guard let defaults = UserDefaults(suiteName: Self.appGroup) else { return nil }
+      return defaults.string(forKey: key)
+    }
+
     // The main app publishes a snapshot of the user's collections (lists + tables)
     // so the share EXTENSION can render the destination picker (it can't read the
     // app's cache). Written atomically; the extension reads it directly.

@@ -25,6 +25,7 @@ import {
     listImportManifests,
     writeImportManifest,
     removeImportManifest,
+    setSharedDefault,
 } from '@/modules/media-extract';
 
 const MAX_ATTEMPTS = 3;
@@ -40,6 +41,11 @@ const MAX_ATTEMPTS = 3;
 // choice back into this preference so future jobs inherit it.
 export type ImportMode = 'auto' | 'review';
 const DEFAULT_MODE_KEY = 'napkin.import.defaultMode';
+// TICKET-113 Part B: the KEY for the App-Group shared default read by the iOS
+// share extension. It is the BARE string 'import.defaultMode' — deliberately
+// DISTINCT from the AsyncStorage key above (different stores). This literal MUST
+// stay byte-identical with ShareViewController.swift and MediaExtractModule.swift.
+const SHARED_DEFAULT_MODE_KEY = 'import.defaultMode';
 
 // In-memory mirror so job creation can read the preference synchronously. Primed
 // from AsyncStorage on module load; falls back to 'auto' (today's behavior) until
@@ -71,6 +77,15 @@ export function setDefaultImportMode(mode: ImportMode): void {
     AsyncStorage.setItem(DEFAULT_MODE_KEY, mode).catch(() => {
         /* best-effort — the in-memory mirror still holds for this session */
     });
+    // TICKET-113 Part B: mirror into the App-Group shared default so the iOS share
+    // extension (separate process, can't read AsyncStorage) seeds its auto-save
+    // toggle from it on next launch. Guarded — a missing native module (Android /
+    // unlinked) degrades gracefully; the RN-side pref still holds.
+    try {
+        setSharedDefault(SHARED_DEFAULT_MODE_KEY, mode);
+    } catch {
+        /* native module absent — RN-side pref still holds */
+    }
 }
 
 export type ImportManifestStatus = 'pending' | 'failed';

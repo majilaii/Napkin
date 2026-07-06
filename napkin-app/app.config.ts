@@ -21,6 +21,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ios: {
         supportsTablet: true,
         bundleIdentifier: 'com.majilaii.dining-journal-app',
+        // TICKET-110: emits the com.apple.developer.applesignin entitlement so
+        // expo-apple-authentication's native sheet works. The EAS build with
+        // APPLE_TEAM_ID set manages the provisioning-profile capability.
+        usesAppleSignIn: true,
         // ARCH-REVIEW-1: Set CFBundleDisplayName explicitly on main app so
         // the home-screen icon label reads "Napkin" (not "dining-journal-app").
         infoPlist: {
@@ -79,6 +83,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
     plugins: [
         'expo-router',
+        // TICKET-110: GoogleSignIn v16 pulls in AppCheckCore, whose deps
+        // (GoogleUtilities, RecaptchaInterop) can't integrate as static
+        // libraries without module maps. Static frameworks give them modules.
+        [
+            'expo-build-properties',
+            {
+                ios: { useFrameworks: 'static' },
+            },
+        ],
         [
             'expo-image-picker',
             {
@@ -121,6 +134,22 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         // @bacons/apple-targets auto-discovers targets/ dirs containing
         // expo-target.config.js. No inline config needed.
         '@bacons/apple-targets',
+        // TICKET-110: native Sign in with Apple.
+        'expo-apple-authentication',
+        // TICKET-110: Google sign-in. iosUrlScheme is the REVERSED iOS OAuth
+        // client id (from Google Cloud console); env-driven so the real value
+        // isn't committed. The placeholder lets prebuild/EAS build succeed —
+        // Google sign-in silently no-ops until the founder sets the env + wires
+        // the Supabase dashboard (see ticket SHIP GATE). Coexists with the
+        // napkin:// scheme in CFBundleURLTypes.
+        [
+            '@react-native-google-signin/google-signin',
+            {
+                iosUrlScheme:
+                    process.env.GOOGLE_IOS_URL_SCHEME ??
+                    'com.googleusercontent.apps.REPLACE_ME',
+            },
+        ],
     ],
     experiments: {
         typedRoutes: true,

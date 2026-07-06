@@ -32,7 +32,20 @@ class ShareViewController: UIViewController {
     private var selectedListIds = Set<String>()
     private var selectedTableIds = Set<String>()
     private var newListTitles: [String] = []
-    private var autoSaveOn = true // toggle off → mode "review" (confirm in-app)
+    // TICKET-113 Part B: seed from the app-written shared preference so the
+    // founder's "always review" choice sticks across shares. The RN app mirrors
+    // the import default mode into the app group's UserDefaults under the BARE key
+    // "import.defaultMode" (byte-identical in MediaExtractModule.swift + importQueue.ts).
+    // Fallback true → unchanged first-run behavior when nothing was ever written.
+    // toggle off → mode "review" (confirm in-app).
+    private lazy var autoSaveOn: Bool = {
+        let defaults = UserDefaults(suiteName: appGroup)
+        // Stored as the RN ImportMode string: "review" → toggle OFF, "auto"/absent → ON.
+        if let mode = defaults?.string(forKey: "import.defaultMode") {
+            return mode != "review"
+        }
+        return true
+    }()
 
     // Header (hero) labels — updated as the share resolves
     private let titleLabel = UILabel()

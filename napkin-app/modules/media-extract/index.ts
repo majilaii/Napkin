@@ -23,6 +23,10 @@ type NativeMediaExtract = {
     appGroupFileInfo(path: string): { exists: boolean; size: number };
     deleteAppGroupFile(path: string): boolean;
     writeAppGroupSnapshot(json: string): boolean;
+    // App-Group shared scalar prefs (TICKET-113 Part B) — synchronous KV on the
+    // shared suite, readable by the share extension at launch.
+    setSharedDefault(key: string, value: string): boolean;
+    getSharedDefault(key: string): string | null;
 };
 
 let cached: NativeMediaExtract | null = null;
@@ -97,4 +101,19 @@ export function deleteAppGroupFile(path: string): boolean {
 /** Publish the user's collections (lists + tables) for the share extension's picker. */
 export function writeAppGroupSnapshot(json: string): boolean {
     return getNative().writeAppGroupSnapshot(json);
+}
+
+// ── App-Group shared scalar prefs (TICKET-113 Part B) ───────────────────────
+// Mirror small string prefs (e.g. the import default mode) into the app group so
+// the share extension — a separate process that can't read AsyncStorage — can seed
+// its UI. THROW if the native module is absent; callers guard (see importQueue.ts).
+
+/** Write a scalar pref to the shared App-Group UserDefaults. */
+export function setSharedDefault(key: string, value: string): boolean {
+    return getNative().setSharedDefault(key, value);
+}
+
+/** Read a scalar pref from the shared App-Group UserDefaults (null if unset). */
+export function getSharedDefault(key: string): string | null {
+    return getNative().getSharedDefault(key);
 }
