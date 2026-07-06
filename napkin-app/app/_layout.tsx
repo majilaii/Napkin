@@ -204,7 +204,7 @@ const navStyles = StyleSheet.create({
 });
 
 function RootLayoutNav() {
-  const { session, isLoading } = useAuth();
+  const { session, isLoading, onboardedAt } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -225,6 +225,10 @@ function RootLayoutNav() {
     // it starts signed-out (would bounce to /auth) and setSession() flips to
     // signed-in mid-form (would bounce to /wishlist before the new password).
     const inRecovery = segments[0] === 'reset-password';
+    // TICKET-107: a pending share/handoff resume (auth.tsx redirects to these)
+    // must finish BEFORE onboarding — "import resume wins."
+    const inOnboarding = segments[0] === 'onboarding';
+    const inResume = segments[0] === 'import' || segments[0] === 'handoff';
 
     if (!session && !inAuthGroup && !inRecovery) {
       router.replace('/auth');
@@ -233,8 +237,19 @@ function RootLayoutNav() {
       // account has zero tables, and the capture surface is the product's
       // first-value moment (journal-first positioning).
       router.replace('/wishlist');
+    } else if (
+      session &&
+      // TICKET-107: onboardedAt is TRI-STATE — undefined = not yet known, so
+      // don't route until it resolves (avoids a /wishlist flash then bounce).
+      onboardedAt === null &&
+      !inAuthGroup &&
+      !inRecovery &&
+      !inOnboarding &&
+      !inResume
+    ) {
+      router.replace('/onboarding');
     }
-  }, [session, isLoading, segments, router]);
+  }, [session, isLoading, onboardedAt, segments, router]);
 
   // TICKET-088: app_open on launch + every foreground (D1/D7/D30 cohorts).
   const userId = session?.user?.id;
@@ -256,6 +271,8 @@ function RootLayoutNav() {
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="auth" options={{ headerShown: false }} />
+          {/* TICKET-107: first-sign-in onboarding stack (name · city · teach) */}
+          <Stack.Screen name="onboarding" options={{ headerShown: false }} />
           <Stack.Screen
             name="create-entry"
             options={{ presentation: 'modal', headerShown: false }}

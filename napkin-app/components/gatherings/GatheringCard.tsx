@@ -22,12 +22,13 @@
  * Card body tap → the restaurant page. Cancelled rows never reach the client.
  */
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { InitialsAvatar } from '@/components/suppers';
+import { OwnerActionsSheet } from '@/components/common';
 import { useRsvpGathering, useCancelGathering } from '@/hooks/gatherings';
 import type { GatheringCardActivity, GatheringSeat } from '@/hooks/tables/useTableActivity';
 
@@ -161,6 +162,15 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
     const [changing, setChanging] = useState(false);
     const showControls = isProposed && !isHost && (viewer_response === null || changing);
 
+    // TICKET-111: host long-press → owner sheet (Cancel supper). Replaces the
+    // old inline Alert with the shared warm-paper grammar.
+    const [cancelSheet, setCancelSheet] = useState(false);
+
+    // TICKET-096 fold-in: a dispatched gathering whose supper link is null means
+    // the auto-created supper was cancelled/deleted (supper_id → NULL). Show a
+    // quiet "supper cancelled" state instead of a tap that silently no-ops.
+    const supperCancelled = isDispatched && !supper_id;
+
     const leaf = dateLeaf(gather_on);
     const ins = orderSeats(seats.filter((s) => s.response === 'in'), viewerId);
     const outs = orderSeats(seats.filter((s) => s.response === 'out'), viewerId);
@@ -187,16 +197,13 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
         rsvp.mutate({ gathering_id: id, table_id, response });
     };
 
-    const confirmCancel = () => {
-        Alert.alert('call it off?', undefined, [
-            { text: 'keep it', style: 'cancel' },
-            {
-                text: 'call it off',
-                style: 'destructive',
-                onPress: () => cancel.mutate({ gathering_id: id, table_id }),
-            },
-        ]);
+    const handleCallItOff = () => {
+        setCancelSheet(false);
+        cancel.mutate({ gathering_id: id, table_id });
     };
+
+    // Long-press anywhere on the host's proposed card opens the cancel sheet.
+    const onCardLongPress = isHost && isProposed ? () => setCancelSheet(true) : undefined;
 
     const openRestaurant = () => {
         if (!restaurant?.id) return;
@@ -211,6 +218,8 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
     return (
         <Pressable
             onPress={openRestaurant}
+            onLongPress={onCardLongPress}
+            delayLongPress={350}
             style={({ pressed }) => [styles.pressable, pressed ? { opacity: 0.92 } : undefined]}
             accessibilityRole="button"
             accessibilityLabel={`gathering at ${restaurantName} on ${gather_on}, ${in_count} in`}
@@ -273,7 +282,13 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                 ) : null}
 
                 {isDispatched ? (
-                    isHost || viewer_response === 'in' ? (
+                    supperCancelled ? (
+                        /* TICKET-096: the auto-created supper was cancelled — the
+                           link is dead, so show quiet meta, never a broken tap. */
+                        <Text style={[styles.expired, { color: palette.textMuted }]}>
+                            supper cancelled
+                        </Text>
+                    ) : isHost || viewer_response === 'in' ? (
                         <View style={styles.footerRow}>
                             <Pressable
                                 onPress={openSupper}
@@ -369,7 +384,7 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                 {isProposed && isHost ? (
                     <View style={styles.footerRow}>
                         <Pressable
-                            onPress={confirmCancel}
+                            onPress={() => setCancelSheet(true)}
                             disabled={cancel.isPending}
                             accessibilityRole="button"
                             accessibilityLabel="call it off"
@@ -383,6 +398,15 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                     </View>
                 ) : null}
             </View>
+
+            {/* TICKET-111: host cancel confirm — the shared owner sheet grammar. */}
+            <OwnerActionsSheet
+                visible={cancelSheet}
+                title={restaurantName}
+                subtitle="Call off this gathering?"
+                actions={[{ label: 'Call it off', kind: 'destructive', onPress: handleCallItOff }]}
+                onCancel={() => setCancelSheet(false)}
+            />
         </Pressable>
     );
 }

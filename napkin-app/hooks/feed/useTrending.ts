@@ -23,8 +23,10 @@ export interface TrendingCard {
     cuisine: string | null;
     neighborhood: string | null;
     photo_url: string | null;
-    /** Distinct savers in the last 7 days — "{n} saved this week". */
-    saver_count_7d: number;
+    /** TICKET-114 v2 — 30d distinct-user counts (imports is the headline signal). */
+    imports_30d: number;
+    saves_30d: number;
+    list_adds_30d: number;
 }
 
 /** TICKET-102 mode-2 card — Google-rated fallback, no user-derived data. */

@@ -15,7 +15,9 @@ function card(n: number): TrendingCard {
         cuisine: n % 2 === 0 ? 'Japanese' : null,
         neighborhood: 'Hong Kong',
         photo_url: null,
-        saver_count_7d: 3 + n,
+        imports_30d: 3 + n,
+        saves_30d: n,
+        list_adds_30d: 0,
     };
 }
 

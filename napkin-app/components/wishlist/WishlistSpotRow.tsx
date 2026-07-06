@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors } from '@/constants/theme';
 import { priceTierLabel } from '@/lib/priceLevel';
+import { SwipeToDeleteRow } from '@/components/common';
 import type { PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import type { WishlistSourceHandoff } from '@/lib/types/wishlistSource';
 
@@ -40,9 +41,24 @@ interface Props {
     distanceLabel?: string | null;
     palette: typeof Colors.light;
     onPress: () => void;
+    /**
+     * TICKET-111: owner delete affordances. When `onRemove` is provided the row
+     * gains long-press (→ owner sheet) and a right-swipe reveal (→ trash).
+     * Both call `onRemove`; the caller runs the confirm step.
+     */
+    onLongPress?: () => void;
+    onRemove?: () => void;
 }
 
-export function WishlistSpotRow({ index, item, distanceLabel, palette, onPress }: Props) {
+export function WishlistSpotRow({
+    index,
+    item,
+    distanceLabel,
+    palette,
+    onPress,
+    onLongPress,
+    onRemove,
+}: Props) {
     const r = item.restaurant;
     if (!r) return null;
 
@@ -55,12 +71,14 @@ export function WishlistSpotRow({ index, item, distanceLabel, palette, onPress }
     const rating = r.google_rating != null ? r.google_rating.toFixed(1) : null;
     const link = sourceLink(item.source);
 
-    return (
+    const row = (
         <Pressable
             onPress={onPress}
+            onLongPress={onLongPress}
+            delayLongPress={350}
             style={({ pressed }) => [
                 styles.row,
-                { borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.7 : 1 },
+                { backgroundColor: palette.background, borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.7 : 1 },
             ]}
             accessibilityLabel={`Open ${r.name}`}
         >
@@ -105,6 +123,13 @@ export function WishlistSpotRow({ index, item, distanceLabel, palette, onPress }
                 </View>
             ) : null}
         </Pressable>
+    );
+
+    if (!onRemove) return row;
+    return (
+        <SwipeToDeleteRow enabled onDelete={onRemove}>
+            {row}
+        </SwipeToDeleteRow>
     );
 }
 

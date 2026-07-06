@@ -54,6 +54,9 @@ import { importSourceLabel, relativeTime } from '@/components/wishlist/importSou
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
+import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
+import { OwnerActionsSheet } from '@/components/common';
+import { useToast } from '@/providers/ToastProvider';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { haversineMiles, formatDistance } from '@/lib/geo';
 import { callEdgeFn } from '@/lib/edgeInvoke';
@@ -220,6 +223,10 @@ export default function WishlistScreen() {
 
     const [importSheetVisible, setImportSheetVisible] = useState(false);
     const [correctItem, setCorrectItem] = useState<PersonalWishlistItem | null>(null);
+    // TICKET-111: long-press / swipe → remove-from-wishlist confirm sheet.
+    const [removeItem, setRemoveItem] = useState<PersonalWishlistItem | null>(null);
+    const wishlistRemove = useWishlistRemove(user?.id);
+    const toast = useToast();
     // One HandoffSheet target for both modes: wishlist share (no listId) or a
     // per-list share (listId + frozen listName) — TICKET-074.
     const [shareTarget, setShareTarget] = useState<{
@@ -502,6 +509,18 @@ export default function WishlistScreen() {
         }
     }, [router]);
 
+    // TICKET-111: confirmed remove-from-wishlist (long-press or swipe → sheet).
+    const handleConfirmRemove = useCallback(() => {
+        const item = removeItem;
+        const rid = item?.restaurant?.id;
+        setRemoveItem(null);
+        if (!rid) return;
+        wishlistRemove.mutate(rid, {
+            onSuccess: () => toast.show(`Removed ${item?.restaurant?.name ?? 'spot'}`),
+            onError: () => toast.show('Could not remove that — try again'),
+        });
+    }, [removeItem, wishlistRemove, toast]);
+
     // Switching to map opts into location lazily.
     const handleSelectView = useCallback((mode: 'list' | 'map') => {
         setViewMode(mode);
@@ -731,6 +750,8 @@ export default function WishlistScreen() {
                                         distanceLabel={distanceLabel}
                                         palette={palette}
                                         onPress={() => handlePinnedRowPress(item)}
+                                        onLongPress={() => setRemoveItem(item)}
+                                        onRemove={() => setRemoveItem(item)}
                                     />
                                 ))
                             )}
@@ -813,6 +834,17 @@ export default function WishlistScreen() {
                 onSelect={sheetProps.onSelect}
                 onDismiss={() => setOpenSheet(null)}
                 palette={palette}
+            />
+
+            {/* TICKET-111: remove-from-wishlist confirm (long-press or swipe). */}
+            <OwnerActionsSheet
+                visible={removeItem !== null}
+                title={removeItem?.restaurant?.name ?? 'this spot'}
+                subtitle="Remove from your wishlist?"
+                actions={[
+                    { label: 'Remove from wishlist', kind: 'destructive', onPress: handleConfirmRemove },
+                ]}
+                onCancel={() => setRemoveItem(null)}
             />
         </View>
     );

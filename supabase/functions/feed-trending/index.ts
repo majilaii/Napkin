@@ -37,7 +37,10 @@ interface TrendingPayloadRow {
     cuisine?: unknown;
     neighborhood?: unknown;
     photo_url?: unknown;
-    saver_count_7d?: unknown;
+    // TICKET-114 v2 counts (replaced saver_count_7d).
+    imports_30d?: unknown;
+    saves_30d?: unknown;
+    list_adds_30d?: unknown;
 }
 
 interface FallbackPayloadRow {
@@ -94,13 +97,16 @@ serve(async (req) => {
         const raw: TrendingPayloadRow[] = Array.isArray(trendingRes.data) ? trendingRes.data : [];
 
         // Defensive whitelist re-projection — restaurant fields + counts only.
+        // TICKET-114 v2: three per-restaurant counts (imports headline signal).
         let rows = raw.map((r) => ({
             restaurant_id: String(r.restaurant_id ?? ''),
             name: typeof r.name === 'string' ? r.name : '',
             cuisine: typeof r.cuisine === 'string' ? r.cuisine : null,
             neighborhood: typeof r.neighborhood === 'string' ? r.neighborhood : null,
             photo_url: typeof r.photo_url === 'string' ? r.photo_url : null,
-            saver_count_7d: Number(r.saver_count_7d ?? 0),
+            imports_30d: Number(r.imports_30d ?? 0),
+            saves_30d: Number(r.saves_30d ?? 0),
+            list_adds_30d: Number(r.list_adds_30d ?? 0),
         })).filter((r) => r.restaurant_id && r.name);
 
         // Double-gate the k-floor server-side (SQL already enforces it; a stale

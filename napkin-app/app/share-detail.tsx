@@ -37,6 +37,7 @@ import {
 } from '@/hooks/posts/usePostInteractions';
 import { useRemoveShare } from '@/hooks/posts/useRemoveShare';
 import { CommentRow } from '@/components/posts/CommentRow';
+import { OwnerActionsSheet } from '@/components/common';
 import { safeRandomUUID } from '@/lib/uuid';
 
 const EMOJIS = ['🔥', '😋', '❤️', '💯', '👀'] as const;
@@ -81,6 +82,8 @@ export default function ShareDetailScreen() {
     const [body, setBody] = useState('');
     // TICKET-085: reply target (parentCommentId = thread root; name for the chip).
     const [replyingTo, setReplyingTo] = useState<{ id: string; name: string } | null>(null);
+    // TICKET-111: retract via the shared owner sheet (long-press or the pill).
+    const [retractSheet, setRetractSheet] = useState(false);
     const inputRef = useRef<TextInput>(null);
 
     const myReactions = useMemo(
@@ -118,26 +121,15 @@ export default function ShareDetailScreen() {
     }, [body, addComment, shareId, tableId, replyingTo]);
 
     const handleRemove = useCallback(() => {
+        setRetractSheet(false);
         if (!isOwn || !shareId) return;
-        Alert.alert(
-            'Remove from table?',
-            'This takes your shared restaurant out of the Table feed. Reactions and replies go with it.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Remove',
-                    style: 'destructive',
-                    onPress: () =>
-                        removeShare.mutate(
-                            { shareId },
-                            {
-                                onSuccess: () => router.back(),
-                                onError: (err: any) =>
-                                    Alert.alert('Error', err?.message ?? 'Could not remove this share.'),
-                            },
-                        ),
-                },
-            ],
+        removeShare.mutate(
+            { shareId },
+            {
+                onSuccess: () => router.back(),
+                onError: (err: any) =>
+                    Alert.alert('Error', err?.message ?? 'Could not remove this share.'),
+            },
         );
     }, [isOwn, shareId, removeShare, router]);
 
@@ -196,6 +188,8 @@ export default function ShareDetailScreen() {
                         nothing — doctrine locked 2026-07-05). */}
                     <Pressable
                         onPress={() => share.restaurant?.id && router.push(`/restaurant/${share.restaurant.id}`)}
+                        onLongPress={isOwn ? () => setRetractSheet(true) : undefined}
+                        delayLongPress={350}
                         style={styles.restaurantRow}
                     >
                         <View style={{ flex: 1 }}>
@@ -274,7 +268,7 @@ export default function ShareDetailScreen() {
                 {/* Author retract */}
                 {isOwn && (
                     <Pressable
-                        onPress={handleRemove}
+                        onPress={() => setRetractSheet(true)}
                         disabled={removeShare.isPending}
                         style={({ pressed }) => [styles.removeRow, { opacity: pressed ? 0.6 : 1 }]}
                         accessibilityRole="button"
@@ -328,6 +322,15 @@ export default function ShareDetailScreen() {
                     <Ionicons name="arrow-up" size={18} color={body.trim() ? '#fffdf8' : palette.textMuted} />
                 </Pressable>
             </View>
+
+            {/* TICKET-111: author retract — shared owner sheet grammar. */}
+            <OwnerActionsSheet
+                visible={retractSheet}
+                title={share.restaurant?.name ?? 'this share'}
+                subtitle="Take this out of the Table feed? Reactions and replies go with it."
+                actions={[{ label: 'Retract from table', kind: 'destructive', onPress: handleRemove }]}
+                onCancel={() => setRetractSheet(false)}
+            />
         </KeyboardAvoidingView>
     );
 }

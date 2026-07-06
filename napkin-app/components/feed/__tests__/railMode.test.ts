@@ -15,7 +15,9 @@ function tCard(n: number): TrendingCard {
         cuisine: null,
         neighborhood: 'Central',
         photo_url: null,
-        saver_count_7d: 3 + n,
+        imports_30d: 3 + n,
+        saves_30d: n,
+        list_adds_30d: 0,
     };
 }
 function fCard(n: number): FallbackCard {
@@ -38,14 +40,14 @@ describe('pickRailMode', () => {
             new Set(),
         );
         expect(res.mode).toBe('trending');
-        expect(res.title).toBe('Trending');
+        expect(res.title).toBe('trending right now');
         expect(res.cards.map((c) => c.restaurant_id)).toEqual(['t-1', 't-2', 't-3']);
     });
 
     it('< 3 trending but fallback available → mode fallback', () => {
         const res = pickRailMode([tCard(1)], [fCard(1), fCard(2), fCard(3)], new Set());
         expect(res.mode).toBe('fallback');
-        expect(res.title).toBe('worth a look');
+        expect(res.title).toBe('nearby, well rated');
         expect(res.cards.map((c) => c.restaurant_id)).toEqual(['f-1', 'f-2', 'f-3']);
     });
 

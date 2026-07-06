@@ -22,8 +22,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useMyLists } from '@/hooks/lists/useMyLists';
+import { useMyLists, type MyList } from '@/hooks/lists/useMyLists';
+import { useDeleteList } from '@/hooks/lists/useDeleteList';
 import { ListCard, EmptyListsState, CreateListSheet } from '@/components/lists';
+import { OwnerActionsSheet } from '@/components/common';
+import { useToast } from '@/providers/ToastProvider';
 
 export default function ListsScreen() {
     const scheme = useColorScheme();
@@ -34,6 +37,20 @@ export default function ListsScreen() {
 
     const { data: lists = [], isLoading } = useMyLists(user?.id);
     const [showCreate, setShowCreate] = useState(false);
+    // TICKET-111: long-press a list → owner sheet (Edit · Delete).
+    const [actionList, setActionList] = useState<MyList | null>(null);
+    const deleteList = useDeleteList(user?.id);
+    const toast = useToast();
+
+    const handleDeleteList = () => {
+        const list = actionList;
+        setActionList(null);
+        if (!list) return;
+        deleteList.mutate(list.id, {
+            onSuccess: () => toast.show(`Deleted ${list.title}`),
+            onError: () => toast.show('Could not delete that — try again'),
+        });
+    };
 
     return (
         <>
@@ -66,6 +83,7 @@ export default function ListsScreen() {
                             <ListCard
                                 list={item}
                                 onPress={() => router.push({ pathname: '/list/[id]', params: { id: item.id } })}
+                                onLongPress={() => setActionList(item)}
                             />
                         )}
                     />
@@ -80,6 +98,24 @@ export default function ListsScreen() {
                         router.push({ pathname: '/list/[id]', params: { id: listId } });
                     }}
                     userId={user?.id}
+                />
+
+                {/* TICKET-111: long-press owner sheet — Edit · Delete. */}
+                <OwnerActionsSheet
+                    visible={actionList !== null}
+                    title={actionList?.title ?? 'this list'}
+                    actions={[
+                        {
+                            label: 'Edit list',
+                            onPress: () => {
+                                const id = actionList?.id;
+                                setActionList(null);
+                                if (id) router.push({ pathname: '/list/[id]/edit', params: { id } });
+                            },
+                        },
+                        { label: 'Delete list', kind: 'destructive', onPress: handleDeleteList },
+                    ]}
+                    onCancel={() => setActionList(null)}
                 />
             </View>
         </>

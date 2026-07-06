@@ -1,16 +1,20 @@
 /**
- * TrendingRail — the two-mode feed rail (TICKET-098 Phase B + TICKET-102).
+ * TrendingRail — the two-mode feed rail (TICKET-098 Phase B + TICKET-102 +
+ * TICKET-114 v2 re-dress).
  *
- * Mode 1 (trending, UNCHANGED): finite horizontal carousel of restaurants
- * sourced from wishlist intent (distinct savers — never ratings). Label
- * "Trending"; meta "cuisine · neighborhood · {n} saved this week". Hidden below
- * 3 qualifiers.
+ * Mode 1 (trending): finite horizontal carousel of restaurants sourced from
+ * Napkin intake — imports (TikTok/IG share-to-Napkin) are the HEADLINE signal,
+ * then saves + list adds. Label "trending right now"; signal line (terracotta)
+ * "{n} imported · {m} saved". Hidden below 3 qualifiers.
  *
  * Mode 2 (fallback, TICKET-102): when mode 1 is below the floor, the rail
  * switches SOURCE to restaurants ranked by their stored Google rating. Label
- * "worth a look"; meta "cuisine · city · {rating} on Google" — Google is a
- * labeled SIBLING signal, NEVER a Napkin number. Client-side dedup drops spots
- * already in the viewer's wishlist/journal (with a ~3-card un-hide floor).
+ * "nearby, well rated"; meta "{rating} on Google" — Google is a labeled SIBLING
+ * signal, NEVER a Napkin number.
+ *
+ * Cards NEVER render a restaurant/Google photo (locked doctrine 2026-07-05):
+ * a monogram medallion (first grapheme of the name over a warm-paper chip) is
+ * the only honest option — strangers' entry photos aren't visible to the viewer.
  *
  * Rules (both modes):
  *   - Max 10 cards, then it ends. No infinite scroll, no "load more".
@@ -28,6 +32,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useTrending, type TrendingCard, type FallbackCard } from '@/hooks/feed/useTrending';
 import { useSavedRestaurantIds } from '@/hooks/feed/useSavedRestaurantIds';
 import { pickRailMode } from './railMode';
+import { trendingSignal } from './trendingSignal';
 
 export function TrendingRail() {
     const scheme = useColorScheme() ?? 'light';
@@ -63,42 +68,57 @@ export function TrendingRail() {
     );
 }
 
-// ── Mode 1 — trending card (UNCHANGED grammar) ──────────────────────────────
+// ── Mode 1 — trending card (TICKET-114 v2 — import-count signal) ─────────────
 
 function TrendingRailCard({ card }: { card: TrendingCard }) {
-    const meta = [
-        card.cuisine,
-        card.neighborhood,
-        `${card.saver_count_7d} saved this week`,
-    ]
-        .filter(Boolean)
-        .join(' · ');
-    return <BaseRailCard restaurantId={card.restaurant_id} name={card.name} meta={meta} />;
+    const meta = [card.cuisine, card.neighborhood].filter(Boolean).join(' · ');
+    return (
+        <BaseRailCard
+            restaurantId={card.restaurant_id}
+            name={card.name}
+            meta={meta}
+            signal={trendingSignal(card)}
+        />
+    );
 }
 
 // ── Mode 2 — fallback card (Google as a labeled sibling signal) ─────────────
 
 function FallbackRailCard({ card }: { card: FallbackCard }) {
-    // "cuisine · city · {rating} on Google" — one decimal, source labeled,
-    // NEVER co-displayed with a Napkin number.
-    const meta = [
-        card.cuisine,
-        card.neighborhood,
-        `${card.google_rating.toFixed(1)} on Google`,
-    ]
-        .filter(Boolean)
-        .join(' · ');
-    return <BaseRailCard restaurantId={card.restaurant_id} name={card.name} meta={meta} />;
+    // "cuisine · city" meta + a quiet "{rating} on Google" sibling line —
+    // one decimal, source labeled, NEVER co-displayed with a Napkin number.
+    const meta = [card.cuisine, card.neighborhood].filter(Boolean).join(' · ');
+    return (
+        <BaseRailCard
+            restaurantId={card.restaurant_id}
+            name={card.name}
+            meta={meta}
+            googleLine={`${card.google_rating.toFixed(1)} on Google`}
+        />
+    );
+}
+
+/** First visible grapheme of a name, uppercased, for the monogram medallion. */
+function monogram(name: string): string {
+    const trimmed = name.trim();
+    if (!trimmed) return '·';
+    return Array.from(trimmed)[0].toUpperCase();
 }
 
 function BaseRailCard({
     restaurantId,
     name,
     meta,
+    signal,
+    googleLine,
 }: {
     restaurantId: string;
     name: string;
     meta: string;
+    /** Mode 1: terracotta import/save signal line. */
+    signal?: string;
+    /** Mode 2: quiet Google sibling line. */
+    googleLine?: string;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -112,15 +132,33 @@ function BaseRailCard({
             style={({ pressed }) => [
                 styles.card,
                 Shadow.subtle,
-                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.8 : 1 },
+                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.85 : 1 },
             ]}
         >
+            {/* Monogram medallion — NEVER an <Image> of a restaurant/Google photo. */}
+            <View style={[styles.medallion, { backgroundColor: palette.surfaceContainer }]}>
+                <Text style={[styles.medallionLetter, { color: palette.textSecondary }]}>
+                    {monogram(name)}
+                </Text>
+            </View>
             <Text numberOfLines={2} style={[styles.name, { color: palette.text }]}>
                 {name}
             </Text>
-            <Text numberOfLines={2} style={[styles.meta, { color: palette.textMuted }]}>
-                {meta}
-            </Text>
+            {!!meta && (
+                <Text numberOfLines={1} style={[styles.meta, { color: palette.textMuted }]}>
+                    {meta}
+                </Text>
+            )}
+            {!!signal && (
+                <Text numberOfLines={1} style={[styles.signal, { color: palette.primary }]}>
+                    {signal}
+                </Text>
+            )}
+            {!!googleLine && (
+                <Text numberOfLines={1} style={[styles.google, { color: palette.textMuted }]}>
+                    {googleLine}
+                </Text>
+            )}
         </Pressable>
     );
 }
@@ -139,23 +177,48 @@ const styles = StyleSheet.create({
     },
     railContent: {
         paddingHorizontal: Spacing.lg,
-        gap: 10,
+        gap: 12,
     },
     card: {
-        width: 172,
+        width: 236,
         borderRadius: Radius.lg,
-        paddingHorizontal: 14,
-        paddingVertical: 13,
+        paddingHorizontal: 18,
+        paddingVertical: 18,
+    },
+    medallion: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 12,
+    },
+    medallionLetter: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 20,
+        lineHeight: 24,
     },
     name: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16.5,
-        lineHeight: 20,
-        marginBottom: 5,
+        fontSize: 19,
+        lineHeight: 23,
+        marginBottom: 4,
     },
     meta: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 10.5,
+        fontSize: 11,
         lineHeight: 15,
+    },
+    signal: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11.5,
+        lineHeight: 16,
+        marginTop: 5,
+    },
+    google: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        lineHeight: 15,
+        marginTop: 5,
     },
 });

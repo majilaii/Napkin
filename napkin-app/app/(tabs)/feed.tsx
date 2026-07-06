@@ -33,7 +33,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useFriendsFeed, flattenFriendsFeed } from '@/hooks/feed';
 import { FriendFeedCard, TrendingRail, FeedEmptyState, FeedSparseTail } from '@/components/feed';
 import { shouldShowSparseTail, isNoteCard } from '@/components/feed/feedRouting';
-import { feedSectionLabel, feedMastheadDate } from '@/components/feed/feedDates';
+import { feedSectionLabel } from '@/components/feed/feedDates';
 import type { FriendFeedRow } from '@/hooks/feed';
 
 type FeedListItem =
@@ -93,7 +93,6 @@ export default function FeedScreen() {
 
     const rows = useMemo(() => flattenFriendsFeed(data), [data]);
     const listData = useMemo(() => buildFeedList(rows), [rows]);
-    const mastDate = useMemo(() => feedMastheadDate(), []);
 
     // Single deterministic gate: caught-up mark + discovery ledger tail whenever
     // the feed reached true end-of-list with a thin set of rows.
@@ -124,14 +123,13 @@ export default function FeedScreen() {
             <View>
                 <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
                     <Text style={[styles.title, { color: palette.text }]}>Feed</Text>
-                    <Text style={[styles.mastDate, { color: palette.textMuted }]}>{mastDate}</Text>
                 </View>
                 {/* Horizontal trending rail — always mounted; TrendingRail's own
                     pickRailMode returns null when it has zero cards (TICKET-104) */}
                 <TrendingRail />
             </View>
         ),
-        [insets.top, palette, mastDate],
+        [insets.top, palette],
     );
 
     return (
@@ -192,13 +190,6 @@ const styles = StyleSheet.create({
         fontSize: 26,
         lineHeight: 30,
         paddingTop: Spacing.sm,
-    },
-    mastDate: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9.5,
-        letterSpacing: 1.8,
-        textTransform: 'uppercase',
-        marginTop: 4,
     },
     dateHeader: {
         fontFamily: 'Manrope_700Bold',

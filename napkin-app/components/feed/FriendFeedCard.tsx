@@ -14,7 +14,7 @@
  * isolation); taps route to entry-detail?viewAs=public for others' entries, or
  * the plain owner view for own entries.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
@@ -28,9 +28,13 @@ import { isNoteCard } from './feedRouting';
 import { feedByline } from './feedDates';
 import type { FriendFeedRow } from '@/hooks/feed/useFriendsFeed';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
+import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
+import { OwnerActionsSheet } from '@/components/common';
 
 interface Props {
     row: FriendFeedRow;
+    /** TICKET-111: own cards long-press → owner sheet (Delete). */
+    onLongPress?: () => void;
 }
 
 /** Shared tap + reaction wiring for both grammars. */
@@ -59,16 +63,50 @@ function useRowNav(row: FriendFeedRow) {
             scope: 'public',
         });
 
-    return { rating, onPress, liked, likedEmoji, handleToggleLike };
+    return { rating, onPress, liked, likedEmoji, handleToggleLike, isOwn };
 }
 
 export function FriendFeedCard({ row }: Props) {
-    return isNoteCard(row) ? <NoteCard row={row} /> : <LedgerRow row={row} />;
+    const { user } = useAuth();
+    const isOwn = user?.id === row.user_id;
+    const deleteEntry = useDeleteEntry();
+    const [sheetVisible, setSheetVisible] = useState(false);
+
+    // Only own cards get the delete affordance. Others' cards → report/block
+    // (a separate surface, TICKET-091) — never a delete on content you don't own.
+    const onLongPress = isOwn ? () => setSheetVisible(true) : undefined;
+
+    const handleDelete = () => {
+        setSheetVisible(false);
+        if (!user?.id) return;
+        deleteEntry.mutate({
+            entryId: row.id,
+            userId: user.id,
+            restaurantId: row.restaurant?.id ?? null,
+        });
+    };
+
+    return (
+        <>
+            {isNoteCard(row) ? (
+                <NoteCard row={row} onLongPress={onLongPress} />
+            ) : (
+                <LedgerRow row={row} onLongPress={onLongPress} />
+            )}
+            <OwnerActionsSheet
+                visible={sheetVisible}
+                title={row.restaurant?.name ?? 'this entry'}
+                subtitle="Delete this from your journal?"
+                actions={[{ label: 'Delete entry', kind: 'destructive', onPress: handleDelete }]}
+                onCancel={() => setSheetVisible(false)}
+            />
+        </>
+    );
 }
 
 // ── Note card — prose and/or photos ────────────────────────────────────────────
 
-function NoteCard({ row }: Props) {
+function NoteCard({ row, onLongPress }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const { rating, onPress, liked, likedEmoji, handleToggleLike } = useRowNav(row);
@@ -81,6 +119,8 @@ function NoteCard({ row }: Props) {
     return (
         <Pressable
             onPress={onPress}
+            onLongPress={onLongPress}
+            delayLongPress={350}
             style={({ pressed }) => [
                 {
                     backgroundColor: palette.surfaceNote,
@@ -170,7 +210,7 @@ function NoteCard({ row }: Props) {
 
 // ── Ledger row — a bare rating, one line, no chrome ─────────────────────────────
 
-function LedgerRow({ row }: Props) {
+function LedgerRow({ row, onLongPress }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const { rating, onPress } = useRowNav(row);
@@ -180,6 +220,8 @@ function LedgerRow({ row }: Props) {
     return (
         <Pressable
             onPress={onPress}
+            onLongPress={onLongPress}
+            delayLongPress={350}
             style={({ pressed }) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
