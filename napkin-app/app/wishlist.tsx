@@ -483,8 +483,8 @@ export default function WishlistScreen() {
     // displayedRows. The same city/cuisine/price filters apply to BOTH sources.
     //
     // Precedence (spec decision 3): key by restaurant id; seed with wishlist
-    // saves (plain teardrop); then fold list pins ordered by list updated_at DESC
-    // so the NEWEST emoji'd list wins, and an emoji ALWAYS overwrites a plain save
+    // saves (plain teardrop); then fold list pins ordered by list updated_at ASC
+    // (newest written last, so it wins), and an emoji ALWAYS overwrites a plain save
     // (more specific). One pin per restaurant — matches Google Maps' one-icon rule.
     const { mapItems, unmappableCount } = useMemo(() => {
         const saves = pinnedRows

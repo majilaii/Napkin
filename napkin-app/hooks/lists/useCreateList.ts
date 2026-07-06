@@ -52,6 +52,8 @@ export function useCreateList(userId: string | null | undefined) {
                     queryClient.invalidateQueries({
                         queryKey: queryKeys.lists.containing(userId, initialRestaurantId),
                     });
+                    // A new list seeded with a restaurant adds an emoji pin (TICKET-108).
+                    queryClient.invalidateQueries({ queryKey: queryKeys.lists.mapPins(userId) });
                 }
             }
         },

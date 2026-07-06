@@ -30,6 +30,9 @@ export function useUpdateList(userId: string | null | undefined) {
             queryClient.invalidateQueries({ queryKey: queryKeys.lists.detail(list.id) });
             if (userId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.lists.mine(userId) });
+                // The wishlist map derives emoji pins from map_pins — an emoji or
+                // membership edit must refresh it (TICKET-108).
+                queryClient.invalidateQueries({ queryKey: queryKeys.lists.mapPins(userId) });
             }
         },
     });
