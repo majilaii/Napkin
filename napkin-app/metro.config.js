@@ -19,8 +19,13 @@ const config = getDefaultConfig(projectRoot);
 // Watch the supabase/ tree so _shared/* files are part of the bundle graph.
 config.watchFolders = [path.resolve(repoRoot, 'supabase')];
 
-// Resolve dependencies from napkin-app/node_modules only — supabase/ has no deps.
+// Resolve dependencies from napkin-app/node_modules — supabase/ has no deps.
+// We keep Metro's DEFAULT hierarchical lookup (no `disableHierarchicalLookup`
+// override): there is no ancestor node_modules in the repo or the EAS build
+// sandbox, so pinning nodeModulesPaths alone gives identical resolution — and
+// NOT overriding the flag keeps expo-doctor's Metro-config check green (its
+// newer builds fail the ENTIRE build on that "expected false, got true"
+// mismatch, which broke the pipeline once we picked up a newer doctor).
 config.resolver.nodeModulesPaths = [path.resolve(projectRoot, 'node_modules')];
-config.resolver.disableHierarchicalLookup = true;
 
 module.exports = config;
