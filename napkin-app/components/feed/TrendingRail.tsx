@@ -12,9 +12,9 @@
  * "nearby, well rated"; meta "{rating} on Google" — Google is a labeled SIBLING
  * signal, NEVER a Napkin number.
  *
- * Cards NEVER render a restaurant/Google photo (locked doctrine 2026-07-05):
- * a monogram medallion (first grapheme of the name over a warm-paper chip) is
- * the only honest option — strangers' entry photos aren't visible to the viewer.
+ * Cards are PURELY typographic — no photo, no monogram chip (locked doctrine
+ * 2026-07-05 + founder call 2026-07-06): strangers' entry photos aren't visible
+ * to the viewer, and a placeholder graphic reads as clutter. Name + signal only.
  *
  * Rules (both modes):
  *   - Max 10 cards, then it ends. No infinite scroll, no "load more".
@@ -98,13 +98,6 @@ function FallbackRailCard({ card }: { card: FallbackCard }) {
     );
 }
 
-/** First visible grapheme of a name, uppercased, for the monogram medallion. */
-function monogram(name: string): string {
-    const trimmed = name.trim();
-    if (!trimmed) return '·';
-    return Array.from(trimmed)[0].toUpperCase();
-}
-
 function BaseRailCard({
     restaurantId,
     name,
@@ -135,12 +128,7 @@ function BaseRailCard({
                 { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.85 : 1 },
             ]}
         >
-            {/* Monogram medallion — NEVER an <Image> of a restaurant/Google photo. */}
-            <View style={[styles.medallion, { backgroundColor: palette.surfaceContainer }]}>
-                <Text style={[styles.medallionLetter, { color: palette.textSecondary }]}>
-                    {monogram(name)}
-                </Text>
-            </View>
+            {/* Type-led — no photo, no monogram chip. Just the name and its signal. */}
             <Text numberOfLines={2} style={[styles.name, { color: palette.text }]}>
                 {name}
             </Text>
@@ -180,23 +168,10 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     card: {
-        width: 236,
+        width: 210,
         borderRadius: Radius.lg,
-        paddingHorizontal: 18,
-        paddingVertical: 18,
-    },
-    medallion: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 12,
-    },
-    medallionLetter: {
-        fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 20,
-        lineHeight: 24,
+        paddingHorizontal: 16,
+        paddingVertical: 15,
     },
     name: {
         fontFamily: 'Newsreader_400Regular_Italic',
