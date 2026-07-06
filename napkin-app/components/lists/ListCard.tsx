@@ -56,6 +56,11 @@ export function ListCard({ list, onPress, onLongPress }: Props) {
         >
             <View style={styles.content}>
                 <View style={styles.titleRow}>
+                    {list.emoji ? (
+                        <Text style={styles.emoji} numberOfLines={1}>
+                            {list.emoji}{' '}
+                        </Text>
+                    ) : null}
                     <Text
                         style={[styles.title, { color: palette.text, flex: 1 }]}
                         numberOfLines={1}
@@ -101,6 +106,10 @@ const styles = StyleSheet.create({
     title: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 18,
+        lineHeight: 22,
+    },
+    emoji: {
+        fontSize: 16,
         lineHeight: 22,
     },
     meta: {

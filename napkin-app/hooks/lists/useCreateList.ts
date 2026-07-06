@@ -12,6 +12,8 @@ export interface CreateListInput {
     description?: string;
     ranked?: boolean;
     privacy?: 'public' | 'private';
+    /** TICKET-108: optional emoji shown on the Lists row + map pin. */
+    emoji?: string | null;
     /** UUID of an already-persisted restaurant to add as the initial entry */
     initial_restaurant_id?: string;
     /** Places ghost payload — server will upsert it then add as initial entry */
@@ -26,6 +28,8 @@ export interface CreatedList {
     description: string | null;
     ranked: boolean;
     privacy: 'public' | 'private';
+    /** TICKET-108: user-chosen emoji. Nullable = default teardrop. */
+    emoji: string | null;
     created_at: string;
     updated_at: string;
 }

@@ -21,6 +21,7 @@ import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUpdateList } from '@/hooks/lists/useUpdateList';
 import { useDeleteList } from '@/hooks/lists/useDeleteList';
+import { ListEmojiPicker } from './ListEmojiPicker';
 import type { ListDetail } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
@@ -41,6 +42,7 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
     const [description, setDescription] = useState(list.description ?? '');
     const [ranked, setRanked] = useState(list.ranked);
     const [isPublic, setIsPublic] = useState(list.privacy === 'public');
+    const [emoji, setEmoji] = useState<string | null>(list.emoji ?? null);
 
     const updateList = useUpdateList(userId);
     const deleteList = useDeleteList(userId);
@@ -49,7 +51,8 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
         title.trim() !== list.title ||
         description.trim() !== (list.description ?? '') ||
         ranked !== list.ranked ||
-        isPublic !== (list.privacy === 'public');
+        isPublic !== (list.privacy === 'public') ||
+        emoji !== (list.emoji ?? null);
 
     const handleSave = () => {
         const trimmedTitle = title.trim();
@@ -65,6 +68,7 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
                 description: description.trim() || null,
                 ranked,
                 privacy: isPublic ? 'public' : 'private',
+                emoji,
             },
             {
                 onSuccess: () => onDone(),
@@ -154,6 +158,9 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
                     {description.length}/140
                 </Text>
             </View>
+
+            {/* Icon (emoji) — differentiates lists on the map */}
+            <ListEmojiPicker value={emoji} onChange={setEmoji} palette={palette} />
 
             {/* Ranked toggle */}
             <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>

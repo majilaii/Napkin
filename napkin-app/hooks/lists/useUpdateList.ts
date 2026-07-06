@@ -12,6 +12,8 @@ export interface UpdateListInput {
     description?: string | null;
     ranked?: boolean;
     privacy?: 'public' | 'private';
+    /** TICKET-108: emoji — explicit null clears back to the default teardrop. */
+    emoji?: string | null;
 }
 
 async function updateList(input: UpdateListInput): Promise<CreatedList> {

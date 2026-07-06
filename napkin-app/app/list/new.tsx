@@ -27,6 +27,7 @@ import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCreateList } from '@/hooks/lists/useCreateList';
+import { ListEmojiPicker } from '@/components/lists';
 
 export default function NewListScreen() {
     const scheme = useColorScheme();
@@ -40,6 +41,7 @@ export default function NewListScreen() {
     const [ranked, setRanked] = useState(false);
     const [isPublic, setIsPublic] = useState(true);
     const [showDescription, setShowDescription] = useState(false);
+    const [emoji, setEmoji] = useState<string | null>(null);
 
     const createList = useCreateList(user?.id);
 
@@ -60,6 +62,7 @@ export default function NewListScreen() {
                 description: description.trim() || undefined,
                 ranked,
                 privacy: isPublic ? 'public' : 'private',
+                emoji,
             },
             {
                 onSuccess: (list) => {
@@ -160,6 +163,9 @@ export default function NewListScreen() {
                                 </Text>
                             </Pressable>
                         )}
+
+                        {/* Icon (emoji) — differentiates lists on the map */}
+                        <ListEmojiPicker value={emoji} onChange={setEmoji} palette={palette} />
 
                         {/* Ranked */}
                         <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>

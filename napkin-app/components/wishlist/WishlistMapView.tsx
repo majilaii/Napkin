@@ -48,6 +48,12 @@ export interface WishlistMapItem {
     cuisine: string | null;
     lat: number;
     lng: number;
+    /**
+     * TICKET-108: owning-list emoji, rendered in place of the pin's cream dot.
+     * OPTIONAL — dining-map (the other WishlistMapView consumer) omits it, so
+     * its pins stay plain teardrops. Absent/null → the default cream dot.
+     */
+    emoji?: string | null;
 }
 
 type LocationStatus = 'idle' | 'pending' | 'granted' | 'denied';
@@ -91,8 +97,19 @@ function openDirections(item: WishlistMapItem) {
 // ── WishlistPin ─────────────────────────────────────────────────────────────────
 // Terracotta teardrop, cream interior dot. Selected = larger + cream ring.
 
-function WishlistPin({ selected, palette }: { selected: boolean; palette: typeof Colors.light }) {
-    const size = selected ? 22 : 16;
+function WishlistPin({
+    selected,
+    palette,
+    emoji,
+}: {
+    selected: boolean;
+    palette: typeof Colors.light;
+    emoji?: string | null;
+}) {
+    const hasEmoji = !!emoji;
+    // Emoji pins are a touch larger so the glyph reads ≥14pt inside the teardrop
+    // (AC: pin legibility at default zoom). Plain-dot pins keep the tight size.
+    const size = hasEmoji ? (selected ? 30 : 26) : selected ? 22 : 16;
     return (
         <View style={pinStyles.wrap}>
             <View
@@ -108,17 +125,25 @@ function WishlistPin({ selected, palette }: { selected: boolean; palette: typeof
                     },
                 ]}
             >
-                <View
-                    style={[
-                        pinStyles.dot,
-                        {
-                            width: size * 0.4,
-                            height: size * 0.4,
-                            borderRadius: (size * 0.4) / 2,
-                            backgroundColor: CREAM,
-                        },
-                    ]}
-                />
+                {hasEmoji ? (
+                    // Emoji sits in place of the cream dot, counter-rotated +45°
+                    // so it stays upright against the teardrop body's -45°.
+                    <Text style={[pinStyles.emoji, { fontSize: selected ? 17 : 15 }]}>
+                        {emoji}
+                    </Text>
+                ) : (
+                    <View
+                        style={[
+                            pinStyles.dot,
+                            {
+                                width: size * 0.4,
+                                height: size * 0.4,
+                                borderRadius: (size * 0.4) / 2,
+                                backgroundColor: CREAM,
+                            },
+                        ]}
+                    />
+                )}
             </View>
         </View>
     );
@@ -143,6 +168,12 @@ const pinStyles = StyleSheet.create({
     },
     dot: {
         transform: [{ rotate: '45deg' }], // counter-rotate so the dot stays upright
+    },
+    emoji: {
+        // Counter-rotate +45° so the glyph stays upright vs. the teardrop's -45°.
+        transform: [{ rotate: '45deg' }],
+        textAlign: 'center',
+        includeFontPadding: false,
     },
 });
 
@@ -180,7 +211,7 @@ function WishlistMarker({ item, selected, palette, onPress }: WishlistMarkerProp
             stopPropagation
             onPress={onPress}
         >
-            <WishlistPin selected={selected} palette={palette} />
+            <WishlistPin selected={selected} palette={palette} emoji={item.emoji} />
         </Marker>
     );
 }

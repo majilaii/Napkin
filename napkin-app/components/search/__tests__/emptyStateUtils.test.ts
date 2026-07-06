@@ -49,6 +49,7 @@ function list(id: string, title: string, description: string | null = null): MyL
         description,
         ranked: false,
         privacy: 'public',
+        emoji: null,
         entry_count: 3,
         cover_photo_url: null,
         created_at: '2026-06-01T00:00:00Z',

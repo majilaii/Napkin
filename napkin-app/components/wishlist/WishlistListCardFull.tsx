@@ -44,7 +44,7 @@ export function WishlistListCardFull({ list, palette, onPress }: Props) {
         >
             <View style={styles.titleRow}>
                 <Text style={[styles.title, { color: palette.text }]} numberOfLines={1}>
-                    {list.title}
+                    {list.emoji ? `${list.emoji} ` : ''}{list.title}
                 </Text>
                 <Text style={[styles.count, { color: palette.primary }]}>
                     {`${count} ${count === 1 ? 'spot' : 'spots'}`}
