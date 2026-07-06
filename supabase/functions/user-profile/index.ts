@@ -1407,6 +1407,37 @@ serve(async (req) => {
             return json({ data: updated });
         }
 
+        // ── complete_onboarding ───────────────────────────────────────────
+        // TICKET-107: the atomic finish of the onboarding stack — writes name +
+        // home_city and STAMPS onboarded_at in one update so the gate can never
+        // be left half-set (name saved but onboarded_at NULL). home_city is the
+        // FREE-TEXT profiles column (NOT set_user_home_city / claimed cities);
+        // it's optional (skip on S2), capped, trimmed-to-null.
+        if (action === 'complete_onboarding') {
+            const updates: Record<string, unknown> = { onboarded_at: new Date().toISOString() };
+
+            if (typeof body.display_name === 'string') {
+                const name = body.display_name.trim();
+                if (!name || name.length > 80) return fail('display_name must be 1–80 chars', 400);
+                updates.display_name = name;
+            }
+            // home_city is optional (skip) — trim to null, cap at 120 chars.
+            if (body.home_city !== undefined) {
+                const city = body.home_city == null ? '' : String(body.home_city).trim();
+                updates.home_city = city ? city.slice(0, 120) : null;
+            }
+
+            const { data: updated, error } = await supabase
+                .from('profiles')
+                .update(updates)
+                .eq('user_id', user.id)
+                .select('user_id, username, display_name, bio, avatar_url, home_city, onboarded_at, account_privacy, allow_public_replies')
+                .single();
+            if (error) throw error;
+
+            return json({ data: updated });
+        }
+
         // ── update_username ───────────────────────────────────────────────
         if (action === 'update_username') {
             const { username } = body;

@@ -217,13 +217,16 @@ const CHECKS: Check[] = [
             return null;
         },
     },
-    // TICKET-098 Phase B + TICKET-102: two-mode rail read path. [ARCH-REVIEW-5]
-    // assert Array.isArray on BOTH rows AND fallback ONLY — an empty array is the
-    // legitimate below-floor state for each mode (rows: <3 qualifiers; fallback:
-    // nothing passing the quality floor), so no length/content check. Both arrays
-    // live INSIDE data (callEdgeFn strips the outer envelope).
+    // TICKET-098 Phase B + TICKET-102 + TICKET-114 v2: two-mode rail read path.
+    // [ARCH-REVIEW-5] assert Array.isArray on BOTH rows AND fallback ONLY — an
+    // empty array is the legitimate below-floor state for each mode (rows: <3
+    // qualifiers; fallback: nothing passing the quality floor), so no
+    // length/content check. Both arrays live INSIDE data (callEdgeFn strips the
+    // outer envelope). TICKET-114: when rows is NON-empty, assert the v2 count
+    // fields are numbers (imports_30d/saves_30d/list_adds_30d) so a shape drift
+    // back to the old saver_count_7d payload is caught. Lenient on empty rows.
     {
-        name: 'feed-trending (TICKET-098/102 two-mode rail — empty rows/fallback is legitimate)',
+        name: 'feed-trending (TICKET-098/102/114 two-mode rail — empty rows/fallback is legitimate)',
         method: 'POST',
         fn: 'feed-trending',
         body: {},
@@ -232,6 +235,12 @@ const CHECKS: Check[] = [
             if (!data) return 'missing data envelope';
             if (!Array.isArray(data.rows)) return 'data.rows is not an array';
             if (!Array.isArray(data.fallback)) return 'data.fallback is not an array';
+            if (data.rows.length > 0) {
+                const r = data.rows[0] as Record<string, unknown>;
+                if (typeof r.imports_30d !== 'number') return 'rows[0].imports_30d is not a number';
+                if (typeof r.saves_30d !== 'number') return 'rows[0].saves_30d is not a number';
+                if (typeof r.list_adds_30d !== 'number') return 'rows[0].list_adds_30d is not a number';
+            }
             return null;
         },
     },
