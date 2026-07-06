@@ -80,7 +80,7 @@ export async function appleIdToken(): Promise<AppleCredential> {
 let googleConfigured = false;
 
 /**
- * Configure GoogleSignin once (webClientId from GOOGLE_WEB_CLIENT_ID) and run the
+ * Configure GoogleSignin once (webClientId from EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) and run the
  * native account picker. Returns the ID token. Throws OAuthCancelledError on cancel.
  *
  * The webClientId must match the Web OAuth client whose id Supabase verifies the
@@ -96,7 +96,10 @@ export async function googleIdToken(): Promise<string> {
 
     if (!googleConfigured) {
         GoogleSignin.configure({
-            webClientId: process.env.GOOGLE_WEB_CLIENT_ID,
+            // MUST be EXPO_PUBLIC_-prefixed — Metro only inlines those into the
+            // JS bundle; a bare process.env var is undefined on-device and the
+            // Google token's aud would never verify against Supabase.
+            webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
         });
         googleConfigured = true;
     }

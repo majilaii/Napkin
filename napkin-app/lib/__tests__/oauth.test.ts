@@ -81,7 +81,7 @@ describe('googleIdToken', () => {
     // First test: googleConfigured is module-level and configure() runs ONCE, so
     // this must run before any other googleIdToken() call to observe the call.
     it('configures GoogleSignin with the web client id from env (once)', async () => {
-        process.env.GOOGLE_WEB_CLIENT_ID = 'web-client-123.apps.googleusercontent.com';
+        process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = 'web-client-123.apps.googleusercontent.com';
         mockGoogleSignIn.mockResolvedValue({ data: { idToken: 'google.jwt' } });
         await googleIdToken();
         expect(mockConfigure).toHaveBeenCalledWith({
