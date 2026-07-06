@@ -35,7 +35,8 @@ import MapView, {
 } from 'react-native-maps';
 import type MapViewType from 'react-native-maps';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Radius, Shadow } from '@/constants/theme';
+import { heirloomMapStyle } from '@/constants/mapStyle';
 import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/geo';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -276,31 +277,51 @@ export function WishlistMapView({
 
     return (
         <View style={styles.fill}>
-            <MapView
-                ref={mapRef}
-                style={StyleSheet.absoluteFillObject}
-                provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
-                mapType="standard"
-                initialRegion={initialRegion}
-                showsPointsOfInterest={false}
-                showsCompass={false}
-                showsMyLocationButton={false}
-                showsBuildings={false}
-                pitchEnabled={false}
-                rotateEnabled={false}
-                showsUserLocation={locationStatus === 'granted'}
-                onPress={() => setSelectedId(null)}
+            {/* Rounded, ambient-shadowed map container with a hairline warm rule at
+                the top edge — the map reads as a framed plate on the warm page, not
+                an edge-to-edge system raster. Theme tokens only. */}
+            <View
+                style={[
+                    styles.mapFrame,
+                    { backgroundColor: palette.surfaceContainerLow },
+                    Shadow.ambient,
+                ]}
             >
-                {items.map((item) => (
-                    <WishlistMarker
-                        key={item.id}
-                        item={item}
-                        selected={selectedId === item.id}
-                        palette={palette}
-                        onPress={() => setSelectedId(item.id)}
-                    />
-                ))}
-            </MapView>
+                <MapView
+                    ref={mapRef}
+                    style={StyleSheet.absoluteFillObject}
+                    provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
+                    // iOS (Apple Maps) ignores customMapStyle → mutedStandard desaturates
+                    // the tiles toward paper. Android (Google) honors customMapStyle.
+                    mapType={Platform.OS === 'ios' ? 'mutedStandard' : 'standard'}
+                    customMapStyle={Platform.OS === 'android' ? heirloomMapStyle : undefined}
+                    initialRegion={initialRegion}
+                    showsPointsOfInterest={false}
+                    showsCompass={false}
+                    showsMyLocationButton={false}
+                    showsBuildings={false}
+                    pitchEnabled={false}
+                    rotateEnabled={false}
+                    showsUserLocation={locationStatus === 'granted'}
+                    onPress={() => setSelectedId(null)}
+                >
+                    {items.map((item) => (
+                        <WishlistMarker
+                            key={item.id}
+                            item={item}
+                            selected={selectedId === item.id}
+                            palette={palette}
+                            onPress={() => setSelectedId(item.id)}
+                        />
+                    ))}
+                </MapView>
+
+                {/* Hairline warm rule at the top edge (ghosted, not a 1px border). */}
+                <View
+                    style={[styles.topRule, { backgroundColor: palette.ruleInkSoft }]}
+                    pointerEvents="none"
+                />
+            </View>
 
             {/* Unmappable murmur — top-left, quiet. The map area already begins
                 below the header, so this is a small offset from the map's own top,
@@ -453,6 +474,22 @@ function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen }: P
 
 const styles = StyleSheet.create({
     fill: { flex: 1 },
+    // Framed map plate — rounded top corners, ambient shadow, overflow-clipped so
+    // the raster respects the radius. Sits on the warm page as a discrete surface.
+    mapFrame: {
+        ...StyleSheet.absoluteFillObject,
+        borderTopLeftRadius: Radius.lg,
+        borderTopRightRadius: Radius.lg,
+        overflow: 'hidden',
+    },
+    // Hairline warm rule hugging the top edge (ghosted, not a solid border).
+    topRule: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: StyleSheet.hairlineWidth,
+    },
     emptyWrap: {
         alignItems: 'center',
         justifyContent: 'center',

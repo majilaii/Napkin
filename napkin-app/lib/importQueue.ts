@@ -19,6 +19,7 @@
  * Native calls throw when the module isn't linked; every accessor is wrapped so
  * the queue degrades to "empty / no-op" rather than crashing.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { safeRandomUUID } from './uuid';
 import {
     listImportManifests,
@@ -27,6 +28,50 @@ import {
 } from '@/modules/media-extract';
 
 const MAX_ATTEMPTS = 3;
+
+// ── Default import mode preference (TICKET-113) ────────────────────────────────
+// The founder always opts to review imports; that choice should stick so the NEXT
+// share defaults the same way — without a settings screen. We persist the mode the
+// user last explicitly chose and seed every new RN-created job (doEnqueue) from it.
+//
+// Cross-process note: the iOS share EXTENSION writes its own manifest directly (it
+// can't read AsyncStorage), carrying the mode from its in-extension "auto-save"
+// toggle. Those manifests keep their authored mode; the drain records that explicit
+// choice back into this preference so future jobs inherit it.
+export type ImportMode = 'auto' | 'review';
+const DEFAULT_MODE_KEY = 'napkin.import.defaultMode';
+
+// In-memory mirror so job creation can read the preference synchronously. Primed
+// from AsyncStorage on module load; falls back to 'auto' (today's behavior) until
+// primed and whenever nothing was ever stored.
+let cachedDefaultMode: ImportMode = 'auto';
+
+// Prime the cache once at module load (best-effort; a miss leaves 'auto').
+AsyncStorage.getItem(DEFAULT_MODE_KEY)
+    .then((raw) => {
+        if (raw === 'review' || raw === 'auto') cachedDefaultMode = raw;
+    })
+    .catch(() => {
+        /* storage unavailable — keep the 'auto' fallback */
+    });
+
+/** The mode new imports should default to. Synchronous (in-memory mirror). */
+export function getDefaultImportMode(): ImportMode {
+    return cachedDefaultMode;
+}
+
+/**
+ * Remember the user's explicit mode choice so future imports default to it.
+ * No-op write when the preference is unchanged. Fire-and-forget persist.
+ */
+export function setDefaultImportMode(mode: ImportMode): void {
+    if (mode !== 'auto' && mode !== 'review') return;
+    if (cachedDefaultMode === mode) return; // unchanged — nothing to persist
+    cachedDefaultMode = mode;
+    AsyncStorage.setItem(DEFAULT_MODE_KEY, mode).catch(() => {
+        /* best-effort — the in-memory mirror still holds for this session */
+    });
+}
 
 export type ImportManifestStatus = 'pending' | 'failed';
 
@@ -211,7 +256,8 @@ async function doEnqueue(videoPath: string): Promise<ImportManifest> {
         createdAt: Date.now(),
         attempts: 0,
         status: 'pending',
-        mode: 'auto',
+        // TICKET-113: seed from the remembered preference (fallback 'auto').
+        mode: getDefaultImportMode(),
         destinations: { ...DEFAULT_DESTINATIONS },
     };
     writeManifest(manifest);

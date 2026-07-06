@@ -112,16 +112,16 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 14,
-        paddingVertical: 17,
+        gap: 10,
+        paddingVertical: 10,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     num: {
-        width: 24,
+        width: 20,
         textAlign: 'center',
         paddingTop: 2,
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 19,
+        fontSize: 15,
     },
     textBlock: {
         flex: 1,
@@ -129,22 +129,22 @@ const styles = StyleSheet.create({
     },
     name: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
+        fontSize: 18,
         letterSpacing: -0.3,
     },
     meta: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 13,
-        marginTop: 4,
+        fontSize: 12,
+        marginTop: 2,
     },
     rightCol: {
         alignItems: 'flex-end',
         flexShrink: 0,
     },
     sourceBtn: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
         alignSelf: 'center',
@@ -152,12 +152,12 @@ const styles = StyleSheet.create({
     },
     rating: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
-        lineHeight: 24,
+        fontSize: 18,
+        lineHeight: 20,
     },
     distance: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 11,
-        marginTop: 5,
+        marginTop: 3,
     },
 });

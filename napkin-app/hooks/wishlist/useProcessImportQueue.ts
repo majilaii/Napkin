@@ -41,6 +41,7 @@ import {
     removeImport,
     setImportSpots,
     setImportDiagnostics,
+    setDefaultImportMode,
     bumpImportAttempt,
     acquireDrainLock,
     releaseDrainLock,
@@ -154,6 +155,15 @@ export function useProcessImportQueue() {
             if (!spots || spots.length === 0) {
                 freshlyResolved = true;
                 let candidates: ResolvedCandidate[] = [];
+
+                // TICKET-113: this is the first time the app sees this import's
+                // authored mode — the user's explicit per-share choice (the iOS
+                // extension "auto-save" toggle). Remember it so the NEXT import
+                // defaults the same way. Recorded ONCE per fresh manifest — a
+                // re-drain has `spots` set and skips this. Deliberately NOT the
+                // import-review drain-release (that flips to 'auto' as a mechanism,
+                // not a preference — decision 4).
+                setDefaultImportMode(m.mode);
 
                 if (m.kind === 'url') {
                     // TICKET-086/086b/086c extraction for TikTok links — FUSE
