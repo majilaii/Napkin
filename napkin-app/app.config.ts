@@ -83,6 +83,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
     plugins: [
         'expo-router',
+        // TICKET-110: GoogleSignIn v16 pulls in AppCheckCore, whose deps
+        // (GoogleUtilities, RecaptchaInterop) can't integrate as static
+        // libraries without module maps. Static frameworks give them modules.
+        [
+            'expo-build-properties',
+            {
+                ios: { useFrameworks: 'static' },
+            },
+        ],
         [
             'expo-image-picker',
             {
