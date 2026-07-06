@@ -84,7 +84,7 @@ export default function OnboardingTeachScreen() {
                     accessibilityRole="button"
                 >
                     {complete.isPending ? (
-                        <ActivityIndicator color="#fff" />
+                        <ActivityIndicator color={palette.textInverse} />
                     ) : (
                         <Text style={s.primaryBtnText}>Done</Text>
                     )}
@@ -120,9 +120,12 @@ const styles = StyleSheet.create({
         letterSpacing: 0.2,
     },
     sentence: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
-        lineHeight: 26,
+        // Instruction, not a brand moment → Manrope (copy-economy doctrine:
+        // decorative serif italic reads as atmosphere, not direction). The one
+        // serif line on this screen is the brandLine above.
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 14,
+        lineHeight: 20,
         textAlign: 'center',
     },
 });

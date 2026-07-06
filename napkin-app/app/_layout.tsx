@@ -233,16 +233,19 @@ function RootLayoutNav() {
     if (!session && !inAuthGroup && !inRecovery) {
       router.replace('/auth');
     } else if (session && inAuthGroup) {
-      // Launch-readiness (2026-07-03): land on Wishlist, not Tables — a new
-      // account has zero tables, and the capture surface is the product's
-      // first-value moment (journal-first positioning).
-      router.replace('/wishlist');
+      // TICKET-107: onboardedAt is TRI-STATE (undefined = still loading). Wait
+      // for it to resolve before redirecting so a fresh signup routes straight
+      // to /onboarding instead of flashing /wishlist then bouncing. AuthProvider
+      // always resolves it to null-or-string (read errors fall back to
+      // "onboarded"), so this never strands a user on /auth.
+      if (onboardedAt !== undefined) {
+        // Launch-readiness (2026-07-03): onboarded users land on Wishlist, not
+        // Tables — the capture surface is the product's first-value moment.
+        router.replace(onboardedAt === null ? '/onboarding' : '/wishlist');
+      }
     } else if (
       session &&
-      // TICKET-107: onboardedAt is TRI-STATE — undefined = not yet known, so
-      // don't route until it resolves (avoids a /wishlist flash then bounce).
       onboardedAt === null &&
-      !inAuthGroup &&
       !inRecovery &&
       !inOnboarding &&
       !inResume

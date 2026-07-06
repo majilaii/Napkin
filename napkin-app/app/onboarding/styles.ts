@@ -4,7 +4,7 @@
  * brand/content moments only — never for prompts or field labels.
  */
 import { StyleSheet } from 'react-native';
-import { Spacing } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 
 export const onboardingStyles = StyleSheet.create({
     root: {
@@ -61,6 +61,6 @@ export const onboardingStyles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
         fontSize: 15,
         letterSpacing: 0.3,
-        color: '#fff',
+        color: Colors.light.textInverse,
     },
 });
