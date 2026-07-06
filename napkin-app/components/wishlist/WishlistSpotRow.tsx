@@ -113,7 +113,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: 10,
-        paddingVertical: 10,
+        paddingVertical: 8,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     num: {

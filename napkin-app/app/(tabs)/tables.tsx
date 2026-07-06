@@ -843,11 +843,6 @@ export default function TablesScreen() {
                                                               >
                                                                   <SubsetCard
                                                                       id={tn.id}
-                                                                      photoUrl={
-                                                                          tn.restaurants
-                                                                              ?.photo_url ??
-                                                                          null
-                                                                      }
                                                                       restaurantName={
                                                                           tn.restaurants
                                                                               ?.name ??

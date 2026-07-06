@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors, Spacing } from '@/constants/theme';
 
@@ -16,7 +16,6 @@ type Palette = typeof Colors.light;
 
 interface SubsetCardProps {
     id: string;
-    photoUrl: string | null;
     restaurantName: string;
     subLabel?: string; // "Nolita · Spanish"
     date: string; // "Thu 20 Mar"
@@ -28,7 +27,6 @@ interface SubsetCardProps {
 
 export function SubsetCard({
     id,
-    photoUrl,
     restaurantName,
     subLabel,
     date,
@@ -59,19 +57,10 @@ export function SubsetCard({
                     },
                 ]}
             >
-                <View
-                    style={[
-                        styles.hero,
-                        !photoUrl && { backgroundColor: palette.primaryMuted },
-                    ]}
-                >
-                    {photoUrl ? (
-                        <Image
-                            source={{ uri: photoUrl }}
-                            style={StyleSheet.absoluteFill}
-                            resizeMode="cover"
-                        />
-                    ) : null}
+                {/* Header strip \u2014 text-led, NO restaurant/Google photo (owner entry
+                    photos or nothing \u2014 doctrine locked 2026-07-05). The olive SUBSET
+                    badge carries the state on a slim warm band, mirroring TableNightCard. */}
+                <View style={styles.headerStrip}>
                     <View
                         style={[
                             styles.badge,
@@ -152,15 +141,13 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         borderWidth: 1,
     },
-    hero: {
-        height: 110,
-        justifyContent: 'center',
+    headerStrip: {
+        flexDirection: 'row',
         alignItems: 'center',
+        paddingHorizontal: 14,
+        paddingTop: 14,
     },
     badge: {
-        position: 'absolute',
-        top: 10,
-        left: 10,
         paddingHorizontal: 8,
         paddingVertical: 3,
         borderRadius: 3,
@@ -172,7 +159,9 @@ const styles = StyleSheet.create({
         color: '#f2f5e8',
     },
     content: {
-        padding: 14,
+        paddingHorizontal: 14,
+        paddingTop: 12,
+        paddingBottom: 14,
     },
     titleRow: {
         flexDirection: 'row',
