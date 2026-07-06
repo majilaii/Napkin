@@ -13,6 +13,9 @@ export interface MyList {
     description: string | null;
     ranked: boolean;
     privacy: 'public' | 'private';
+    /** TICKET-108: user-chosen emoji shown before the title on the Lists row +
+     * on the wishlist map pin. Nullable = default terracotta teardrop. */
+    emoji: string | null;
     entry_count: number;
     /**
      * Count of entries whose restaurant is verified — what a handoff share

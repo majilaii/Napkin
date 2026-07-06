@@ -24,6 +24,9 @@ export interface ListEntryRestaurant {
      * pre-074-fix server; treat absent as not verified.
      */
     verification?: 'verified' | 'unverified';
+    /** TICKET-108: coordinates for the list-detail map/future use. Nullable. */
+    lat?: number | null;
+    lng?: number | null;
 }
 
 export interface ListEntry {
@@ -43,6 +46,8 @@ export interface ListDetail {
     description: string | null;
     ranked: boolean;
     privacy: 'public' | 'private';
+    /** TICKET-108: user-chosen emoji. Nullable = default teardrop. */
+    emoji: string | null;
     created_at: string;
     updated_at: string;
 }

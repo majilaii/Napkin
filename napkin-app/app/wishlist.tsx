@@ -53,6 +53,8 @@ import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
+import { useListMapPins } from '@/hooks/lists/useListMapPins';
+import { buildMapPins } from '@/components/wishlist/mapPinsUtils';
 import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import { OwnerActionsSheet } from '@/components/common';
@@ -242,6 +244,10 @@ export default function WishlistScreen() {
     // entry points (settings row, ProfileScreenBody palate section). Same pattern
     // as TopFour on the profile tab.
     const { data: myLists } = useMyLists(user?.id);
+
+    // TICKET-108: list-entry pins for the map — every restaurant across my lists
+    // with coords + the owning list's emoji. Unioned into `mapItems` below.
+    const { data: listMapPins } = useListMapPins(user?.id);
 
     // ── The import slot — ONE card, ever (review > running > failed > recent).
     // Active states route to the imports hub; a recently-saved batch (48h,
@@ -471,33 +477,32 @@ export default function WishlistScreen() {
         return decorated;
     }, [pinnedRows, cityFilter, cuisineFilter, priceFilter, sortMode, coords]);
 
-    // Map view: cuisine-filtered saved spots, split by whether they carry coords.
-    // Sort is irrelevant on a map (position is the signal), so this reads from
-    // pinnedRows directly rather than the distance-decorated displayedRows.
+    // Map view: filtered union of (A) wishlist saves + (B) my-list entries
+    // (TICKET-108). Sort is irrelevant on a map (position is the signal), so
+    // this reads from pinnedRows/listMapPins directly, not the distance-decorated
+    // displayedRows. The same city/cuisine/price filters apply to BOTH sources.
+    //
+    // Precedence (spec decision 3): key by restaurant id; seed with wishlist
+    // saves (plain teardrop); then fold list pins ordered by list updated_at ASC
+    // (newest written last, so it wins), and an emoji ALWAYS overwrites a plain save
+    // (more specific). One pin per restaurant — matches Google Maps' one-icon rule.
     const { mapItems, unmappableCount } = useMemo(() => {
-        let rows = pinnedRows;
-        if (cityFilter) {
-            rows = rows.filter((i) => i.restaurant?.city?.trim() === cityFilter);
-        }
-        if (cuisineFilter) {
-            rows = rows.filter((i) => i.restaurant?.cuisine?.trim() === cuisineFilter);
-        }
-        if (priceFilter) {
-            // The price pill shows on the map too (2026-07-03) — it must apply.
-            rows = rows.filter((i) => String(i.restaurant?.price_level ?? '') === priceFilter);
-        }
-        const mappable: WishlistMapItem[] = [];
-        let missing = 0;
-        for (const i of rows) {
-            const r = i.restaurant;
-            if (r && r.lat != null && r.lng != null) {
-                mappable.push({ id: r.id, name: r.name, city: r.city, cuisine: r.cuisine, lat: r.lat, lng: r.lng });
-            } else {
-                missing += 1;
-            }
-        }
-        return { mapItems: mappable, unmappableCount: missing };
-    }, [pinnedRows, cityFilter, cuisineFilter, priceFilter]);
+        const saves = pinnedRows
+            .map((i) => i.restaurant)
+            .filter((r): r is NonNullable<typeof r> => r != null)
+            .map((r) => ({
+                id: r.id, name: r.name, city: r.city, cuisine: r.cuisine,
+                price_level: r.price_level ?? null,
+                // lat/lng may be absent → buildMapPins counts them as unmappable.
+                lat: r.lat ?? null, lng: r.lng ?? null,
+            }));
+        const { items, unmappableSaves } = buildMapPins(saves, listMapPins ?? [], {
+            city: cityFilter,
+            cuisine: cuisineFilter,
+            price: priceFilter,
+        });
+        return { mapItems: items as WishlistMapItem[], unmappableCount: unmappableSaves };
+    }, [pinnedRows, listMapPins, cityFilter, cuisineFilter, priceFilter]);
 
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);

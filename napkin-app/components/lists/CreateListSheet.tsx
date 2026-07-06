@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useCreateList } from '@/hooks/lists/useCreateList';
+import { ListEmojiPicker } from './ListEmojiPicker';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
 type Palette = typeof Colors.light;
@@ -55,6 +56,7 @@ export function CreateListSheet({
     const [isPublic, setIsPublic] = useState(true);
     const [description, setDescription] = useState('');
     const [showDescription, setShowDescription] = useState(false);
+    const [emoji, setEmoji] = useState<string | null>(null);
 
     const createList = useCreateList(userId);
 
@@ -75,6 +77,7 @@ export function CreateListSheet({
                 description: description.trim() || undefined,
                 ranked,
                 privacy: isPublic ? 'public' : 'private',
+                emoji,
                 initial_restaurant_id: restaurantId,
                 initial_restaurant: restaurantPayload,
             },
@@ -85,6 +88,7 @@ export function CreateListSheet({
                     setIsPublic(true);
                     setDescription('');
                     setShowDescription(false);
+                    setEmoji(null);
                     onCreated(list.id);
                 },
                 onError: () => Alert.alert("Couldn't create list", 'Try again'),
@@ -98,6 +102,7 @@ export function CreateListSheet({
         setIsPublic(true);
         setDescription('');
         setShowDescription(false);
+        setEmoji(null);
         onClose();
     };
 
@@ -210,6 +215,11 @@ export function CreateListSheet({
                             </Pressable>
                         )}
 
+                        {/* Icon (emoji) — differentiates lists on the map */}
+                        <View style={styles.emojiField}>
+                            <ListEmojiPicker value={emoji} onChange={setEmoji} palette={palette} />
+                        </View>
+
                         {/* Ranked toggle */}
                         <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>
                             <View>
@@ -306,6 +316,9 @@ const styles = StyleSheet.create({
     field: {
         paddingHorizontal: Spacing.lg,
         marginBottom: Spacing.md,
+    },
+    emojiField: {
+        paddingLeft: Spacing.lg,
     },
     input: {
         borderWidth: 1,

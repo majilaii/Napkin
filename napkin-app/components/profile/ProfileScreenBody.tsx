@@ -302,6 +302,10 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                     cityCount={taste.cityCount}
                     countryCount={taste.countryCount}
                     palette={palette}
+                    // TICKET-112: own profile → tappable drill-in. Non-empty
+                    // guard is TasteBand's own (it returns null on empty), so
+                    // wiring the handler here is enough.
+                    onPress={isSelf ? () => router.push('/taste') : undefined}
                 />
             )}
             {hasPalateAccess && (

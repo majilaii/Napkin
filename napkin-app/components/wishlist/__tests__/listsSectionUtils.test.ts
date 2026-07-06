@@ -19,6 +19,7 @@ function makeList(overrides: Partial<MyList>): MyList {
         description: null,
         ranked: false,
         privacy: 'public',
+        emoji: null,
         entry_count: 3,
         verified_count: 3,
         cover_photo_url: null,

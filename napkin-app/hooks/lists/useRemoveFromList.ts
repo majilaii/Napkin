@@ -91,6 +91,8 @@ export function useRemoveFromList(userId: string | null | undefined) {
             // TICKET-036 P1-3: only refetch list detail; onMutate already patched
             // containing + mine and re-invalidating them races with the patch.
             queryClient.invalidateQueries({ queryKey: queryKeys.lists.detail(list_id) });
+            // Removing a spot drops its map pin — refresh (TICKET-108).
+            if (userId) queryClient.invalidateQueries({ queryKey: queryKeys.lists.mapPins(userId) });
         },
     });
 }

@@ -305,6 +305,10 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
+            name="taste"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
             name="list/[id]"
             options={{ headerShown: false }}
           />

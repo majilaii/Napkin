@@ -15,6 +15,7 @@
  *   update_entry     — edit the per-entry note
  *   reorder_entry    — drag-and-drop repositioning for ranked lists
  *   lists_containing — list IDs that contain a given restaurant (drives sheet checkmarks)
+ *   map_pins         — all my-list entries with lat/lng + owning list emoji (wishlist map)
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
@@ -30,8 +31,26 @@ interface ListRow {
     description: string | null;
     ranked: boolean;
     privacy: 'public' | 'private';
+    /** TICKET-108: user-chosen emoji for the map pin + Lists row. Nullable. */
+    emoji: string | null;
     created_at: string;
     updated_at: string;
+}
+
+/**
+ * TICKET-108: validate + normalize an incoming emoji value.
+ * Returns `undefined` (leave column untouched), `null` (clear), or a ≤8-char
+ * string. The client picker is the real constraint (curated set + 1-grapheme
+ * free entry); this is the server-side length backstop mirroring the CHECK.
+ */
+function normalizeEmoji(raw: unknown): string | null | undefined {
+    if (raw === undefined) return undefined;
+    if (raw === null) return null;
+    if (typeof raw !== 'string') return undefined;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    // char_length <= 8 backstop (matches the column CHECK). Reject longer.
+    return [...trimmed].slice(0, 8).join('');
 }
 
 interface ListEntry {
@@ -170,6 +189,8 @@ serve(async (req) => {
                 : null;
             const ranked = !!body.ranked;
             const privacy = body.privacy === 'private' ? 'private' : 'public';
+            // TICKET-108: optional emoji at creation. undefined → omit (column default null).
+            const emoji = normalizeEmoji(body.emoji);
 
             const { data: list, error: listErr } = await supabase
                 .from('lists')
@@ -179,6 +200,7 @@ serve(async (req) => {
                     description,
                     ranked,
                     privacy,
+                    ...(emoji !== undefined ? { emoji } : {}),
                 })
                 .select('*')
                 .single();
@@ -240,6 +262,11 @@ serve(async (req) => {
             }
             if (body.privacy === 'public' || body.privacy === 'private') {
                 updates.privacy = body.privacy;
+            }
+            // TICKET-108: emoji — explicit null clears it back to the teardrop.
+            const emojiUpdate = normalizeEmoji(body.emoji);
+            if (emojiUpdate !== undefined) {
+                updates.emoji = emojiUpdate;
             }
 
             const { data: updated, error: updateErr } = await supabase
@@ -371,7 +398,9 @@ serve(async (req) => {
                         google_rating,
                         price_level,
                         external_id,
-                        verification
+                        verification,
+                        lat,
+                        lng
                     )
                 `)
                 .eq('list_id', list_id)
@@ -700,6 +729,78 @@ serve(async (req) => {
 
             const listIds = (entries ?? []).map((e: any) => e.list_id as string);
             return jsonResponse({ data: listIds });
+        }
+
+        // ── map_pins ──────────────────────────────────────────────────────
+        // TICKET-108: every restaurant across the caller's OWN lists, with the
+        // owning list's emoji + updated_at, in ONE round-trip (list_mine returns
+        // metadata only — no per-entry coords). Drives the wishlist map's
+        // list-entry pins. Owner-scoped by design.
+        //
+        // Cross-Set seam (Set 4 table-lists): if lists can be owned by a Table
+        // rather than a user, this predicate must widen to "my lists + my
+        // Tables' lists". Kept narrow (owner_id = user.id) here — Set 4 widens.
+        if (action === 'map_pins') {
+            // My lists first (id + emoji + updated_at), so we can attach the
+            // owning list's emoji/updated_at to each entry client-agnostically.
+            const { data: myLists, error: myListsErr } = await supabase
+                .from('lists')
+                .select('id, emoji, updated_at')
+                .eq('owner_id', user.id);
+            if (myListsErr) throw myListsErr;
+
+            const listMeta = new Map<string, { emoji: string | null; updated_at: string }>();
+            for (const l of (myLists ?? []) as Array<{ id: string; emoji: string | null; updated_at: string }>) {
+                listMeta.set(l.id, { emoji: l.emoji ?? null, updated_at: l.updated_at });
+            }
+            const myListIds = [...listMeta.keys()];
+            if (myListIds.length === 0) {
+                return jsonResponse({ data: [] });
+            }
+
+            // Join entries → restaurants (single FK, unambiguous), coords only.
+            const { data: rows, error: rowsErr } = await supabase
+                .from('list_entries')
+                .select(`
+                    list_id,
+                    restaurant:restaurants (
+                        id,
+                        name,
+                        city,
+                        cuisine,
+                        price_level,
+                        lat,
+                        lng
+                    )
+                `)
+                .in('list_id', myListIds)
+                .not('restaurant.lat', 'is', null)
+                .not('restaurant.lng', 'is', null);
+            if (rowsErr) throw rowsErr;
+
+            const pins = [];
+            for (const row of (rows ?? []) as Array<{ list_id: string; restaurant: any }>) {
+                const r = row.restaurant;
+                // The inner-embed lat/lng filter can still return rows with a
+                // null restaurant embed on some PostgREST versions — belt-and-
+                // braces: skip anything without coords.
+                if (!r || r.lat == null || r.lng == null) continue;
+                const meta = listMeta.get(row.list_id);
+                pins.push({
+                    restaurant_id: r.id as string,
+                    name: r.name as string,
+                    city: (r.city ?? null) as string | null,
+                    cuisine: (r.cuisine ?? null) as string | null,
+                    price_level: (r.price_level ?? null) as number | null,
+                    lat: r.lat as number,
+                    lng: r.lng as number,
+                    list_id: row.list_id,
+                    emoji: meta?.emoji ?? null,
+                    list_updated_at: meta?.updated_at ?? null,
+                });
+            }
+
+            return jsonResponse({ data: pins });
         }
 
         return jsonResponse({ error: 'Unknown action' }, 400);

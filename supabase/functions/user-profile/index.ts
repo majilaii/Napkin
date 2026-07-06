@@ -1351,6 +1351,68 @@ serve(async (req) => {
             return json({ data: page });
         }
 
+        // ── taste (read) — TICKET-112: category + cuisine taste drill-in ──────
+        // Owner-only in v1. Public taste is a later ticket once TICKET-093
+        // aggregate semantics extend to summarised numbers; until then a
+        // non-owner gets the uniform not_found (no existence leak).
+        if (action === 'taste') {
+            const { identifier } = body as { identifier?: string };
+            if (!identifier || typeof identifier !== 'string') {
+                return fail('identifier is required', 400);
+            }
+
+            const targetProfile = await resolveProfile(supabase, identifier);
+            if (!targetProfile) return notFound();
+
+            const callerId = user.id;
+            const targetId = targetProfile.user_id;
+            const isSelf = callerId === targetId;
+            // v1: owner-only. Anything else is not_found (matches the palate gate's
+            // no-existence-leak posture, but stricter — no stranger read at all yet).
+            if (!isSelf) return notFound();
+
+            const { data: rows, error: tasteErr } = await supabase.rpc('fn_user_taste', {
+                p_user_id: targetId,
+            });
+            if (tasteErr) throw tasteErr;
+
+            // The fn returns exactly one row (aggregate over the user's entries —
+            // empty set still yields one row with entry_count 0).
+            const row = Array.isArray(rows) ? rows[0] : rows;
+            if (!row) {
+                // Defensive — should never happen, but never 500 the drill-in.
+                return json({
+                    data: {
+                        entry_count: 0,
+                        overall_avg: null,
+                        categories: {
+                            flavor: { avg: null, n: 0 },
+                            service: { avg: null, n: 0 },
+                            value: { avg: null, n: 0 },
+                            vibe: { avg: null, n: 0 },
+                        },
+                        top_cuisines: [],
+                        bottom_cuisines: [],
+                    },
+                });
+            }
+
+            return json({
+                data: {
+                    entry_count: row.entry_count ?? 0,
+                    overall_avg: row.overall_avg ?? null,
+                    categories: {
+                        flavor: { avg: row.flavor_avg ?? null, n: row.flavor_n ?? 0 },
+                        service: { avg: row.service_avg ?? null, n: row.service_n ?? 0 },
+                        value: { avg: row.value_avg ?? null, n: row.value_n ?? 0 },
+                        vibe: { avg: row.vibe_avg ?? null, n: row.vibe_n ?? 0 },
+                    },
+                    top_cuisines: row.top_cuisines ?? [],
+                    bottom_cuisines: row.bottom_cuisines ?? [],
+                },
+            });
+        }
+
         // ── check_username ────────────────────────────────────────────────
         if (action === 'check_username') {
             const { username } = body;
