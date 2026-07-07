@@ -1365,6 +1365,7 @@ serve(async (req) => {
                 entry_id: string;
                 rating: number | null;
                 note_snippet: string | null;
+                has_review: boolean;
                 others_count: number;
             }[];
             if (rows.length === 0) return json({ data: { pins: [] } });
@@ -1391,7 +1392,7 @@ serve(async (req) => {
                 const p = byId.get(r.author_id);
                 return {
                     restaurant_id: r.restaurant_id,
-                    name: r.name,
+                    name: r.name ?? null,
                     city: r.city ?? null,
                     cuisine: r.cuisine ?? null,
                     lat: r.lat,
@@ -1404,6 +1405,9 @@ serve(async (req) => {
                     entry_id: r.entry_id,
                     rating: r.rating ?? null,
                     note: r.note_snippet ?? null,
+                    // Routes the peek tap: true → the followee's review (entry-detail
+                    // viewAs=public); false → the restaurant page. Never dead-ends.
+                    has_review: r.has_review ?? false,
                     others_count: Number(r.others_count ?? 0),
                 };
             });

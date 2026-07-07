@@ -291,6 +291,11 @@ const CHECKS: Check[] = [
     // zero-follow / no-network-log state, never a failure. A 500 here means the
     // fn_network_map_pins RPC (follow-set fan-out, block/public gates, window +
     // GROUP BY) drifted — exactly what this guard catches.
+    // NOTE: the CI smoke fixture user follows no one, so this exercises the EMPTY
+    // path ONLY — it catches a hard 500 (SQL drift), NOT a mis-shaped pin. The
+    // join / ROW_NUMBER / others_count / has_review shaping is only covered by the
+    // manual iOS passes (a fixture with a coord-bearing followee log would be
+    // needed to guard the populated shape). Behavior left as-is intentionally.
     {
         name: 'user-profile?action=network_map_pins (TICKET-124 — empty array is legitimate)',
         method: 'POST',

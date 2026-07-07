@@ -32,6 +32,14 @@ export interface NetworkMapItem {
     rating: number | null;
     /** Short note snippet; may be null — the peek card degrades gracefully. */
     note: string | null;
+    /**
+     * True iff the primary entry clears the public-engagement gate (rating +
+     * >=20-char content). Routes the peek tap: true → the followee's review
+     * (entry-detail, viewAs public); false → the restaurant page — so a thin log
+     * the looser network predicate includes never dead-ends on a review screen
+     * that can't render it.
+     */
+    has_review: boolean;
     /** Other distinct followees who also logged here; ≥0 → "+N others". */
     others_count: number;
 }

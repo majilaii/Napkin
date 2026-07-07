@@ -7,10 +7,13 @@
 -- predicate — the SAME predicate each followee's own /dining-map already
 -- exposes (DECISION 1) — join `restaurants` for non-null coords, and collapse
 -- to ONE row per restaurant carrying that restaurant's most-recent eligible log
--- (primary author + rating + note snippet + entry_id) plus a count of the OTHER
--- distinct followees who also logged it (others_count → "+N others" in the peek
--- card). Capped at 500 rows (mirror fetchSpots), ordered by most-recent network
--- activity.
+-- (primary author + rating + note snippet + entry_id + a has_review flag) plus a
+-- count of the OTHER distinct followees who also logged it (others_count →
+-- "+N others" in the peek card). has_review = the primary entry clears the
+-- public-engagement gate (rating + >=20-char content); it routes the peek tap —
+-- reviews go to entry-detail, thin logs to the restaurant page — so the tap never
+-- dead-ends on a log entry-detail's public-view can't render. Capped at 500 rows
+-- (mirror fetchSpots), ordered by most-recent network activity.
 --
 -- Predicate = diary/spots (looser), intentionally NOT fn_public_eligible_entries
 -- (the stricter feed gate). No rating/content requirement: the network map is
@@ -45,6 +48,7 @@ RETURNS TABLE (
     entry_id      uuid,
     rating        double precision,
     note_snippet  text,
+    has_review    boolean,
     others_count  int,
     sort_date     timestamptz
 )
@@ -114,6 +118,14 @@ AS $$
         rk.entry_id,
         rk.rating,
         NULLIF(left(trim(COALESCE(rk.content, '')), 140), '') AS note_snippet,
+        -- has_review: does the PRIMARY entry clear the public-engagement gate
+        -- (is_entry_publicly_eligible: rating + >=20-char content)? Drives the
+        -- peek tap route — true → the followee's review (entry-detail, viewAs
+        -- public, which RLS + the is_entry_publicly_eligible pre-check both admit);
+        -- false → the restaurant page (the thin/rating-only logs the looser
+        -- diary/spots predicate deliberately includes but entry-detail can't show).
+        (rk.rating IS NOT NULL
+             AND char_length(trim(COALESCE(rk.content, ''))) >= 20) AS has_review,
         (ra.author_count - 1)::int                            AS others_count,
         rk.sort_date
     FROM ranked rk

@@ -5,9 +5,10 @@
  *
  * TICKET-124: on the SELF view (no userId param, or it's your own id), a
  * mine ↔ network segmented toggle switches the pins between your own logged
- * spots and restaurants logged by people you FOLLOW. Network pins peek to the
- * followee's review (not directions). Viewing someone else's map stays their
- * spots only — no toggle.
+ * spots and restaurants logged by people you FOLLOW. A network peek taps through
+ * by data: a review-eligible log → the followee's review (entry-detail, public
+ * scope); a thin/rating-only log → the restaurant page. Viewing someone else's
+ * map stays their spots only — no toggle.
  */
 import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -73,6 +74,7 @@ export default function DiningMapScreen() {
                 rating: p.rating,
                 note: p.note,
                 entryId: p.entry_id,
+                hasReview: p.has_review,
                 othersCount: p.others_count,
             })),
         [networkPins],

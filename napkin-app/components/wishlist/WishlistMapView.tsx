@@ -67,6 +67,14 @@ export interface WishlistMapItem {
     note?: string | null;
     /** The followee's entry id → entry-detail. Presence = network pin. */
     entryId?: string;
+    /**
+     * TICKET-124: does the primary entry clear the public-engagement gate (rating
+     * + >=20-char content)? Routes the peek tap — true → the followee's review
+     * (entry-detail, viewAs public); false/absent → the restaurant page. Keeps the
+     * one body affordance while never dead-ending on a thin log entry-detail's
+     * public view can't render.
+     */
+    hasReview?: boolean;
     /** Other distinct followees who also logged here; >0 → "+N others". */
     othersCount?: number;
 }
@@ -552,21 +560,34 @@ function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen, onO
     );
 
     // ── Network variant — a followee's LOG (TICKET-124) ─────────────────────────
-    // Gated on entryId (presence = network pin) AND a handler. Review-first, NOT
-    // directions-first: the body taps through to their review. Degrades
-    // gracefully — no note → rating-only meta → name-only (no empty pull-quote).
-    if (item.entryId != null && onOpenReview) {
+    // Gated on entryId (presence = network pin). ONE body affordance, routed by
+    // data: a review-eligible primary entry (hasReview) taps through to their
+    // review (entry-detail, viewAs public); a thin/rating-only log — which the
+    // looser network predicate deliberately includes — taps to the restaurant page
+    // instead, since entry-detail's public view can't render it (it fails the
+    // is_entry_publicly_eligible pre-check). Degrades gracefully — no note →
+    // rating-only meta → name-only (no empty pull-quote).
+    if (item.entryId != null) {
         const authorName = item.author?.name ?? 'Someone';
         const others = item.othersCount ?? 0;
-        const attribution = others > 0 ? `${authorName} +${others} others` : authorName;
+        const attribution =
+            others > 0
+                ? `${authorName} +${others} ${others === 1 ? 'other' : 'others'}`
+                : authorName;
         const meta = [attribution, distanceLabel, item.city].filter(Boolean).join(' · ');
         const note = item.note?.trim() || null;
+        const opensReview = !!item.hasReview && !!onOpenReview;
+        const onPressBody = opensReview ? () => onOpenReview!(item.entryId!) : onOpen;
         return shell(
             <>
                 <Pressable
                     style={styles.peekBody}
-                    onPress={() => onOpenReview(item.entryId!)}
-                    accessibilityLabel={`Open ${authorName}'s review of ${item.name}`}
+                    onPress={onPressBody}
+                    accessibilityLabel={
+                        opensReview
+                            ? `Open ${authorName}'s review of ${item.name}`
+                            : `Open ${item.name}`
+                    }
                 >
                     <View style={styles.peekNameRow}>
                         <Text style={[styles.peekName, styles.peekNameFlex, { color: palette.text }]} numberOfLines={1}>
