@@ -21,8 +21,9 @@
  * Google numerals are a labeled SIBLING signal — amber, but never a chip, never
  * a ★, always carrying the "on Google" label. Never dressed as a Napkin rating.
  *
- * One implementation, three mount points: both FeedEmptyState tiers + the
- * sparse-feed tail (per the "one discovery ledger, not three" doctrine).
+ * TICKET-125: re-homed to the For You mode as its "discovery" block (the tail of
+ * the explore scroll). Following no longer carries it — its sparse tail is just
+ * the caught-up mark now.
  */
 import React, { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';

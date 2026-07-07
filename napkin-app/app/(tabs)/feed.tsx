@@ -1,184 +1,85 @@
 /**
- * Feed tab — TICKET-098 friends-only reviews feed + trending rail, re-dressed in
- * TICKET-103 to the note-card / ledger-line grammar.
+ * Feed tab — For You / Following modes (TICKET-125).
  *
- *   [masthead: italic serif "Feed" + small-caps current date]
- *   [trending rail — always mounted; it self-hides only when it has zero cards]
- *   [date-sectioned friend feed — note cards + ledger rows, keyset paginated]
- *   [sparse tail — "· you're caught up ·" + discovery ledger, on a thin feed]
+ * The tab is a mode orchestrator. It owns the single useFriendsFeed subscription
+ * (both the Following body's data AND the "which mode by default" signal) and a
+ * `mode` state, then swaps between two bodies that share one FeedHeader masthead:
  *
- * The list stays a single FlatList; date headers are interleaved into a memoized
- * FeedListItem[] (header/row discriminated union), mirroring JournalList's
- * buildFlatList idiom — so pagination/refresh/footer plumbing is untouched.
+ *   For You   → the explore surface: public lists, trending, people, discovery
+ *   Following → pure chronological reviews from people you follow, nothing else
  *
- * Discovery renders exactly once (TICKET-104): the horizontal rail lives ONLY in
- * ListHeaderComponent and is always mounted (its own pickRailMode hides it when
- * empty); the vertical discovery ledger (empty state / sparse-tail footer)
- * self-gates against that same rail mode, so the two never appear together.
+ * Default (locked decision 1): Following when the follow graph has content
+ * (≥1 followed user with ≥1 visible entry — i.e. the first friends-feed page has
+ * rows), For You when empty. Resolved ONCE per mount via `mode: FeedMode | null`
+ * + a resolvedRef guard, so a manual toggle after resolution is never overridden.
+ * While `mode === null` we render the masthead + a spinner with NO tabs — the
+ * anti-flicker mechanism (tabs never paint in a provisional active state).
+ *
+ * Two separate FlatLists (not one union list): Following is keyset-paginated
+ * date-sectioned rows; For You is a fixed ~4-block scroll. A mode switch remounts
+ * the body (acceptable — no shared scroll position wanted).
  */
-import React, { useCallback, useMemo } from 'react';
-import {
-    View,
-    Text,
-    FlatList,
-    ActivityIndicator,
-    RefreshControl,
-    StyleSheet,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useFriendsFeed, flattenFriendsFeed } from '@/hooks/feed';
-import { FriendFeedCard, TrendingRail, FeedEmptyState, FeedSparseTail } from '@/components/feed';
-import { ErrorState } from '@/components/ErrorState';
-import { shouldShowSparseTail, isNoteCard } from '@/components/feed/feedRouting';
-import { feedSectionLabel } from '@/components/feed/feedDates';
-import type { FriendFeedRow } from '@/hooks/feed';
-
-type FeedListItem =
-    | { _type: 'header'; key: string; label: string }
-    | { _type: 'row'; key: string; row: FriendFeedRow; marginBottom: number };
-
-/**
- * Interleave a date-section header before the first row of each day boundary.
- * Consecutive ledger rows stack tight (13px — they're the mortar); everything
- * else gets 16px. The header carries its own top margin, so trailing spacing
- * is harmless below a section break.
- */
-function buildFeedList(rows: FriendFeedRow[]): FeedListItem[] {
-    const items: FeedListItem[] = [];
-    let lastLabel = '';
-    for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const label = feedSectionLabel(row.sort_date);
-        if (label !== lastLabel) {
-            // Keyed by the section's first row id, not the label — bare month
-            // labels ("June") can recur across years on a deep scroll.
-            items.push({ _type: 'header', key: `header-${row.id}`, label });
-            lastLabel = label;
-        }
-        // Tight 13px gap only between two adjacent ledger rows on the same day.
-        const next = rows[i + 1];
-        const bothLedger =
-            !!next &&
-            !isNoteCard(row) &&
-            !isNoteCard(next) &&
-            feedSectionLabel(next.sort_date) === label;
-        items.push({
-            _type: 'row',
-            key: `row-${row.id}`,
-            row,
-            marginBottom: bothLedger ? 13 : 16,
-        });
-    }
-    return items;
-}
+import { FeedHeader, FollowingFeed, ForYouFeed } from '@/components/feed';
+import type { FeedMode } from '@/components/feed';
 
 export default function FeedScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const insets = useSafeAreaInsets();
     const { user } = useAuth();
 
-    const {
-        data,
-        isLoading,
-        isError,
-        refetch,
-        isRefetching,
-        fetchNextPage,
-        hasNextPage,
-        isFetchingNextPage,
-    } = useFriendsFeed(user?.id);
-
+    // Single subscription — feeds the Following body AND the default-mode signal.
+    const feedQuery = useFriendsFeed(user?.id);
+    const { data, isPending } = feedQuery;
     const rows = useMemo(() => flattenFriendsFeed(data), [data]);
-    const listData = useMemo(() => buildFeedList(rows), [rows]);
 
-    // Single deterministic gate: caught-up mark + discovery ledger tail whenever
-    // the feed reached true end-of-list with a thin set of rows.
-    const showSparseTail = shouldShowSparseTail({ rows, hasNextPage: !!hasNextPage, isLoading });
+    // Default resolves once off the first friends-feed page. `null` until then.
+    const [mode, setMode] = useState<FeedMode | null>(null);
+    const resolvedRef = useRef(false);
 
-    const onEndReached = useCallback(() => {
-        if (hasNextPage && !isFetchingNextPage) fetchNextPage();
-    }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+    useEffect(() => {
+        if (resolvedRef.current) return;
+        // Gate on isPending (not isLoading): isPending stays true both while the
+        // query is DISABLED (user id not hydrated yet — a disabled useInfiniteQuery
+        // reports isLoading=false, which would resolve prematurely) AND while page 1
+        // is still fetching. It flips false only once page 1 settles (success OR
+        // error). The row count is then the "graph has content" signal — feed-friends
+        // already filters to public-eligible entries authored by the follow set, so
+        // rows > 0 ⇔ ≥1 followed user with ≥1 visible entry.
+        if (isPending) return;
+        resolvedRef.current = true;
+        setMode(rows.length > 0 ? 'following' : 'for-you');
+    }, [isPending, rows.length]);
 
-    const renderItem = useCallback(
-        ({ item }: { item: FeedListItem }) => {
-            if (item._type === 'header') {
-                return (
-                    <Text style={[styles.dateHeader, { color: palette.textMuted }]}>{item.label}</Text>
-                );
-            }
-            return (
-                <View style={[styles.rowSlot, { marginBottom: item.marginBottom }]}>
-                    <FriendFeedCard row={item.row} />
-                </View>
-            );
-        },
-        [palette],
-    );
-
-    const ListHeader = useMemo(
-        () => (
-            <View>
-                <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
-                    <Text style={[styles.title, { color: palette.text }]}>Feed</Text>
-                </View>
-                {/* Horizontal trending rail — always mounted; TrendingRail's own
-                    pickRailMode returns null when it has zero cards (TICKET-104) */}
-                <TrendingRail />
+    // While resolving: masthead only (no tabs) + spinner. No flicker.
+    if (mode === null) {
+        return (
+            <View style={[styles.root, { backgroundColor: palette.background }]}>
+                <FeedHeader mode={null} onModeChange={setMode} />
+                <ActivityIndicator style={{ marginTop: Spacing.xl }} color={palette.primary} />
             </View>
-        ),
-        [insets.top, palette],
-    );
+        );
+    }
+
+    const header = <FeedHeader mode={mode} onModeChange={setMode} />;
 
     return (
         <View style={[styles.root, { backgroundColor: palette.background }]}>
-            <FlatList
-                data={listData}
-                keyExtractor={(item) => item.key}
-                renderItem={renderItem}
-                ListHeaderComponent={ListHeader}
-                ListEmptyComponent={
-                    isLoading ? (
-                        <ActivityIndicator
-                            style={{ marginTop: Spacing.xl }}
-                            color={palette.primary}
-                        />
-                    ) : isError ? (
-                        // TICKET-121: only reachable with zero rows to render —
-                        // cached pages keep rendering as today.
-                        <ErrorState onRetry={refetch} />
-                    ) : (
-                        // TICKET-101: a designed two-tier empty state (co-diner
-                        // follow cards, or ghost + invite) + discovery ledger.
-                        <FeedEmptyState />
-                    )
-                }
-                ListFooterComponent={
-                    isFetchingNextPage ? (
-                        <ActivityIndicator
-                            style={{ marginVertical: Spacing.lg }}
-                            color={palette.primary}
-                        />
-                    ) : showSparseTail ? (
-                        <FeedSparseTail />
-                    ) : null
-                }
-                onEndReached={onEndReached}
-                onEndReachedThreshold={0.4}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={isRefetching}
-                        onRefresh={refetch}
-                        tintColor={palette.primary}
-                    />
-                }
-            />
+            {mode === 'following' ? (
+                <FollowingFeed
+                    feedQuery={feedQuery}
+                    ListHeaderComponent={header}
+                    onSwitchToForYou={() => setMode('for-you')}
+                />
+            ) : (
+                <ForYouFeed ListHeaderComponent={header} onSwitchToFollowing={() => setMode('following')} />
+            )}
         </View>
     );
 }
@@ -186,27 +87,5 @@ export default function FeedScreen() {
 const styles = StyleSheet.create({
     root: {
         flex: 1,
-    },
-    header: {
-        paddingHorizontal: Spacing.lg,
-        paddingBottom: Spacing.sm,
-    },
-    title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 26,
-        lineHeight: 30,
-        paddingTop: Spacing.sm,
-    },
-    dateHeader: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.8,
-        textTransform: 'uppercase',
-        paddingHorizontal: Spacing.lg,
-        marginTop: 22,
-        marginBottom: 12,
-    },
-    rowSlot: {
-        paddingHorizontal: Spacing.lg,
     },
 });

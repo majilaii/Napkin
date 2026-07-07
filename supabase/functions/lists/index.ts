@@ -17,6 +17,7 @@
  *   lists_containing — list IDs that contain a given restaurant (drives sheet checkmarks)
  *   map_pins         — all my-list entries with lat/lng + owning list emoji (wishlist map)
  *   search_public    — TICKET-106: keyset search of publicly available lists (triple-gated)
+ *   browse_public    — TICKET-125: For You feed block — recent public lists, no query (triple-gated)
  *
  * TICKET-115 (Table lists): a list can belong to a Table (`table_id`). Members —
  * not just the owner — can read + add to it; the list stays creator-owned for
@@ -970,6 +971,37 @@ serve(async (req) => {
             );
 
             return jsonResponse({ data: page });
+        }
+
+        // ── browse_public (TICKET-125) ─────────────────────────────────────
+        // The For You feed's public-lists block: recent public lists with NO
+        // search query. Reuses fn_search_public_lists — SAME TRIPLE GATE in SQL
+        // (privacy='public' AND table_id IS NULL AND owner account_privacy='public').
+        //
+        // COUPLING NOTE (load-bearing): we pass q='' on purpose. The RPC's
+        // predicate is `title ILIKE '%'||q||'%' OR description ILIKE '%'||q||'%'`,
+        // which with q='' collapses to `ILIKE '%%'` — matches ALL public lists,
+        // already ordered `updated_at DESC` (recency) by the RPC. If a future edit
+        // to fn_search_public_lists changes that WHERE (e.g. drops the ILIKE, or
+        // makes an empty q short-circuit to nothing), browse silently empties.
+        // The browse test (asserts non-empty rows with q='') is the guard.
+        //
+        // Non-paginated: cap 6, single page, NO cursor. "see more" hands off to
+        // the search tab's Lists segment (locked decision 5). No limit+1, no
+        // buildPage — the client hook consumes { rows } directly.
+        if (action === 'browse_public') {
+            const BROWSE_CAP = 6;
+            const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_search_public_lists', {
+                q: '',
+                p_cursor_date: null,
+                p_cursor_id: null,
+                p_limit: BROWSE_CAP,
+            });
+            if (rpcErr) throw rpcErr;
+
+            // The RPC returns an explicit column list (no table_id) already
+            // recency-ordered and capped at p_limit — return the rows verbatim.
+            return jsonResponse({ data: { rows: rpcRows ?? [] } });
         }
 
         return jsonResponse({ error: 'Unknown action' }, 400);

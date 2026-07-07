@@ -87,6 +87,8 @@ export const queryKeys = {
         mapPins: (userId: string) => ['lists', 'mapPins', userId] as const,
         /** TICKET-106: public-list search results (keyset-paginated). */
         searchPublic: (q: string) => ['lists', 'searchPublic', q] as const,
+        /** TICKET-125: For You browse block — recent public lists, global (not per-viewer). */
+        browsePublic: () => ['lists', 'browsePublic'] as const,
     },
 
     // Users (public / merged profile surface — TICKET-020, TICKET-025)
