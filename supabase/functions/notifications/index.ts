@@ -23,6 +23,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
+import { emitImportDone } from '../_shared/notify.ts';
 import { encodeCursor, decodeCursor, type CursorTuple } from '../_shared/pagination.ts';
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ type HydratedNotification =
     | FriendLoggedNotification
     | TopFourSwapNotification
     | TableInviteNotification
+    | ImportDoneNotification
     | PassthroughNotification;
 
 interface BaseHydrated {
@@ -78,6 +80,13 @@ interface TableInviteNotification extends BaseHydrated {
     actor: { id: string; name: string; avatarUrl: string | null };
     tableName: string;
     tableId: string;
+}
+
+interface ImportDoneNotification extends BaseHydrated {
+    type: 'import_done';
+    count: number;
+    outcome: 'saved' | 'review' | 'failed';
+    jobId?: string;
 }
 
 interface PassthroughNotification extends BaseHydrated {
@@ -340,6 +349,32 @@ async function hydrate(
                 break;
             }
 
+            case 'import_done': {
+                // TICKET-123: self-directed (actor-less) import lifecycle row.
+                // No joins — count/outcome/job_id ride in subject_meta straight
+                // from the producer (server save_spots or the emit_self action).
+                const meta = (r.subject_meta ?? {}) as {
+                    job_id?: string | null;
+                    count?: number;
+                    outcome?: string;
+                };
+                const outcome =
+                    meta.outcome === 'saved' || meta.outcome === 'review' || meta.outcome === 'failed'
+                        ? meta.outcome
+                        : 'saved';
+                out.push({
+                    id: r.id,
+                    type: 'import_done',
+                    read: !!r.read_at,
+                    createdAt: r.created_at,
+                    timeLabel: formatTimeLabel(r.created_at),
+                    count: typeof meta.count === 'number' ? meta.count : 0,
+                    outcome,
+                    jobId: meta.job_id ?? undefined,
+                });
+                break;
+            }
+
             case 'friend_pinned':
             case 'claim_city':
             case 'reservation_reminder':
@@ -592,6 +627,58 @@ serve(async (req) => {
             }
             return new Response(
                 JSON.stringify({ data: { updated: count ?? 0 } }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+            );
+        }
+
+        // ── emit_self (TICKET-123) ─────────────────────────────────────────────
+        // The client import drain has no service-role INSERT of its own, so it
+        // calls this to write its OWN `import_done` row at the review-hold and
+        // poison checkpoints (the auto-save path rides resolve-url?save_spots
+        // instead). Security is by construction: the only reachable write is an
+        // import_done row in the caller's OWN inbox with a null actor —
+        //   • recipient is FORCED to the authenticated token user (never the body),
+        //   • kind is hard-pinned to 'import_done' (no social kind is forgeable),
+        //   • outcome is whitelisted, count/job_id are coerced before the insert.
+        // No field of the request can redirect the write to another user or forge
+        // a social kind. The notifications_lock_columns trigger still bars any
+        // post-hoc mutation beyond read_at.
+        if (action === 'emit_self') {
+            const kind: string = body.kind ?? '';
+            if (kind !== 'import_done') {
+                return new Response(
+                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: "kind must be 'import_done'" } }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
+
+            const meta = (body.subject_meta ?? {}) as {
+                job_id?: unknown;
+                count?: unknown;
+                outcome?: unknown;
+            };
+            const outcome = meta.outcome;
+            if (outcome !== 'saved' && outcome !== 'review' && outcome !== 'failed') {
+                return new Response(
+                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'outcome must be saved|review|failed' } }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
+            const rawCount = Number(meta.count);
+            const count = Number.isFinite(rawCount) && rawCount > 0 ? Math.floor(rawCount) : 0;
+            const jobId = typeof meta.job_id === 'string' ? meta.job_id : null;
+
+            // Recipient FORCED to the token user; DRY via the shared emitter (the
+            // same insert shape the server auto path uses). Best-effort — a failed
+            // insert never throws, so a flaky row never fails the caller's import.
+            await emitImportDone(supabase, {
+                recipientUserId: user.id,
+                jobId,
+                count,
+                outcome,
+            });
+            return new Response(
+                JSON.stringify({ data: { ok: true } }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
             );
         }

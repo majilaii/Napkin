@@ -250,6 +250,15 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
         case 'reservation_reminder':
             router.push('/create-entry');
             return;
+        case 'import_done':
+            // saved → the batch detail (server job_id); review/failed → the hub.
+            // Hierarchical nav is sacred: never deep-link past /import-progress.
+            if (n.outcome === 'saved' && n.jobId) {
+                router.push({ pathname: '/imports/[jobId]', params: { jobId: n.jobId } });
+            } else {
+                router.push('/import-progress' as any);
+            }
+            return;
     }
 }
 
@@ -357,6 +366,37 @@ function NotificationRow({
                     }
                 />
             );
+        case 'import_done': {
+            // Self-directed (null actor) → glyph leading, no avatar. Amber tone
+            // matches the other self-directed nudge (claim_city); reuses an
+            // accent already on this screen (no new color). Count numeral for
+            // saved/review; an attention mark for the count-less failure.
+            const spotWord = n.count === 1 ? 'spot' : 'spots';
+            return (
+                <NotifRow
+                    tone={tone}
+                    onPress={onPress}
+                    leading={
+                        <NotifGlyph tone="amber">
+                            {n.outcome === 'failed' ? '!' : n.count}
+                        </NotifGlyph>
+                    }
+                    title={
+                        n.outcome === 'saved' ? (
+                            <>
+                                {`${n.count} ${spotWord} pinned from `}
+                                <I>TikTok</I>
+                            </>
+                        ) : n.outcome === 'review' ? (
+                            `${n.count} ${spotWord} ready to review`
+                        ) : (
+                            'an import needs attention'
+                        )
+                    }
+                    time={n.timeLabel}
+                />
+            );
+        }
         case 'claim_city':
             return (
                 <NotifRow

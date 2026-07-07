@@ -374,6 +374,18 @@ export function useProcessImportQueue() {
                             body: 'tap to confirm your import',
                         });
                     }
+                    // TICKET-123: write the SILENT durable inbox row (outcome
+                    // 'review'). Always — never AppState-gated (the loud channel
+                    // above is; the row is the quiet always-on third). The drain
+                    // has no service-role INSERT, so it emits via the self-directed
+                    // notifications action. Fire-and-forget — never fail the import.
+                    callEdgeFn('notifications', {
+                        action: 'emit_self',
+                        body: {
+                            kind: 'import_done',
+                            subject_meta: { job_id: m.jobId, count: n, outcome: 'review' },
+                        },
+                    }).catch(() => {});
                     if (userId) {
                         queryClient.invalidateQueries({
                             queryKey: queryKeys.importJobs.all(userId),
@@ -419,17 +431,26 @@ export function useProcessImportQueue() {
                     table_client_nonce:
                         s.table_shares?.[t] ?? (s.table_id === t ? s.table_client_nonce : null),
                 }));
+            // TICKET-123: the WISHLIST-BASE call carries notify_done so the server
+            // writes the durable `import_done` row (outcome 'saved') off its own
+            // savedCount — set on the single no-tables call AND the i===0 fan-out
+            // call ONLY. Never on tables 2..N, which would double-emit the row.
             let result: SaveImportSpotsResult | undefined;
             if (tableIds.length === 0) {
                 result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                     action: 'save_spots',
-                    body: { import_nonce: m.importNonce, spots, source },
+                    body: { import_nonce: m.importNonce, spots, source, notify_done: true },
                 });
             } else {
                 for (let i = 0; i < tableIds.length; i++) {
                     const r = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                         action: 'save_spots',
-                        body: { import_nonce: m.importNonce, spots: spotsForTable(tableIds[i]), source },
+                        body: {
+                            import_nonce: m.importNonce,
+                            spots: spotsForTable(tableIds[i]),
+                            source,
+                            notify_done: i === 0,
+                        },
                     });
                     if (i === 0) result = r; // first call pinned the wishlist + did routing
                 }
@@ -559,6 +580,17 @@ export function useProcessImportQueue() {
                                 body: 'tap to try again',
                             });
                         }
+                        // TICKET-123: SILENT durable inbox row (outcome 'failed',
+                        // count 0). Always written regardless of AppState; the row
+                        // is the quiet always-on record so a decliner/missed-banner
+                        // user can still catch it. Fire-and-forget.
+                        callEdgeFn('notifications', {
+                            action: 'emit_self',
+                            body: {
+                                kind: 'import_done',
+                                subject_meta: { job_id: m.jobId, count: 0, outcome: 'failed' },
+                            },
+                        }).catch(() => {});
                         // Keep the .mov: a poisoned manifest stays for "try again" in
                         // the progress hub (re-OCR needs the source). The .mov is
                         // deleted on success (processOne) or when the user discards.

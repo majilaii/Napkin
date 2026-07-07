@@ -673,7 +673,16 @@ class ShareViewController: UIViewController {
             do { try data.write(to: tmp); try FileManager.default.moveItem(at: tmp, to: final) }
             catch { try? FileManager.default.removeItem(at: tmp) }
         }
-        complete()
+        // TICKET-123: a brief confirmation beat before we dismiss back to the host
+        // app — otherwise the sheet vanishes with zero acknowledgement that Napkin
+        // captured the share. Copy + a ~0.8s delay only; the drain (in the app)
+        // does the real work later. The early "nothing captured" guards above stay
+        // immediate — they call complete() and return before reaching here.
+        subtitleLabel.text = "got it — spots will be ready in Napkin"
+        doneButton.isEnabled = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.complete()
+        }
     }
 
     private func complete() {

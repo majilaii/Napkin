@@ -42,6 +42,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
+import { emitImportDone } from '../_shared/notify.ts';
 import { validateUrl } from '../_shared/urlValidation.ts';
 import type { WishlistSourceTikTok } from '../_shared/wishlistSource.ts';
 import { captionToNote } from '../_shared/captionToNote.ts';
@@ -1436,6 +1437,21 @@ async function handleSaveSpots(
         /* link is optional — never fail the save over it */
     }
 
+    // TICKET-123: the auto-save path rides this server round-trip to write the
+    // durable `import_done` inbox row (outcome 'saved'). Only when the client
+    // opts in (notify_done) AND real pins landed — an all-already_pinned re-drain
+    // emits nothing (matches TICKET-120's `saved > 0` banner gate). Uses the
+    // server batchJobId so the inbox tap deep-links to /imports/[jobId].
+    // Best-effort — never fails the save over a notification.
+    if (body['notify_done'] === true && savedCount > 0) {
+        await emitImportDone(supabase, {
+            recipientUserId: user.id,
+            jobId: batchJobId,
+            count: savedCount,
+            outcome: 'saved',
+        });
+    }
+
     return jsonResponse({
         data: {
             results,
@@ -2180,6 +2196,8 @@ serve(async (req) => {
         spots?: unknown[];
         source?: unknown;
         note?: string;
+        /** TICKET-123: opt-in — write the durable import_done inbox row on this save. */
+        notify_done?: boolean;
     };
     try {
         body = await req.json();
