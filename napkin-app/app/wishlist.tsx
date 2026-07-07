@@ -50,6 +50,7 @@ import {
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
+import { useHasImported } from '@/hooks/wishlist/useHasImported';
 import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
@@ -254,6 +255,8 @@ export default function WishlistScreen() {
     // latest only) routes straight into its fix/prune screen. Never stacks.
     const { data: recentImports } = useRecentImports(user?.id, 4);
     const activeImports = useActiveImports();
+    // Collapses the empty-state activation hub to compact once a first import lands.
+    const hasImported = useHasImported(user?.id);
     const importSlot = useMemo(() => {
         const review = activeImports.filter((m) => m.phase === 'review');
         const working = activeImports.filter((m) => m.phase === 'reading' || m.phase === 'saving');
@@ -637,6 +640,8 @@ export default function WishlistScreen() {
                         palette={palette}
                         onImport={() => setImportSheetVisible(true)}
                         onSearch={() => router.push('/search' as any)}
+                        hasImported={hasImported}
+                        onImportsHub={() => router.push('/import-progress' as any)}
                     />
                 ) : viewMode === 'map' ? (
                     <View style={styles.mapMode}>

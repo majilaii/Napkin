@@ -39,6 +39,7 @@ import {
     endBackgroundTask,
 } from '@/modules/media-extract';
 import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
+import { markImportCompleted } from '@/lib/importActivation';
 import {
     listPendingImports,
     removeImport,
@@ -465,6 +466,9 @@ export function useProcessImportQueue() {
             const done = saved + already;
             // TICKET-088: the capture funnel's terminal event (fire-and-forget).
             track('import_completed', { spot_count: done, source_type: source.type });
+            // TICKET-122: first completed import flips the activation-hub signal so
+            // the empty-state hub collapses full→compact. Idempotent, best-effort.
+            if (done > 0) markImportCompleted();
             // Extraction is fallible by nature — the toast carries a "review"
             // action so a wrong pin is taps away from corrected. Routes via the
             // imports HUB (hierarchical back-nav is sacred — never deep-link
