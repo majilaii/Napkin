@@ -220,6 +220,15 @@ export default function TablesScreen() {
     // Atlas data — only fetched when the active table is a social table
     // is_personal is a runtime DB field not reflected in the Table type
     const isSocialTable = activeTable && !(activeTable as any).is_personal;
+
+    // Lists/Atlas segments only exist on social tables — clamp back to
+    // Activity when the active table can't show the current segment, so the
+    // tab row never renders with no segment underlined.
+    useEffect(() => {
+        if (!isSocialTable && (activeTab === 'lists' || activeTab === 'atlas')) {
+            setActiveTab('activity');
+        }
+    }, [isSocialTable, activeTab]);
     const {
         data: atlasData,
         isLoading: atlasLoading,
