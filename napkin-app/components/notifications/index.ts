@@ -9,3 +9,4 @@ export { NotifAvatar } from './NotifAvatar';
 export { NotifGlyph } from './NotifGlyph';
 export { NotifAction } from './NotifAction';
 export { NotifBell } from './NotifBell';
+export { NotifPermissionSheet } from './NotifPermissionSheet';

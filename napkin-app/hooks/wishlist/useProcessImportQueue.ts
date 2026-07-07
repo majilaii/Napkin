@@ -35,7 +35,10 @@ import {
     isVideoImportAvailable,
     appGroupFileInfo,
     deleteAppGroupFile,
+    beginBackgroundTask,
+    endBackgroundTask,
 } from '@/modules/media-extract';
+import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
 import {
     listPendingImports,
     removeImport,
@@ -330,6 +333,15 @@ export function useProcessImportQueue() {
                 if (freshlyResolved) {
                     const n = spots.length;
                     toast.show(`${n} ${n === 1 ? 'spot' : 'spots'} ready to review`);
+                    // TICKET-120: the toast is invisible if the user backgrounded the
+                    // app mid-import — post a local notification instead. Foreground
+                    // stays toast-only (never double-announce).
+                    if (AppState.currentState !== 'active') {
+                        presentImportNotification({
+                            title: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review`,
+                            body: 'tap to confirm your import',
+                        });
+                    }
                     if (userId) {
                         queryClient.invalidateQueries({
                             queryKey: queryKeys.importJobs.all(userId),
@@ -431,6 +443,15 @@ export function useProcessImportQueue() {
                       : "couldn't import that",
                 reviewAction,
             );
+            // TICKET-120: mirror the "pinned N" success to a local notification when
+            // backgrounded (only on a fresh save — an already-pinned re-drain stays
+            // silent). Foreground = toast-only.
+            if (saved > 0 && AppState.currentState !== 'active') {
+                presentImportNotification({
+                    title: `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`,
+                    body: 'tap to fix anything',
+                });
+            }
 
             if (userId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.wishlist.personal(userId) });
@@ -456,6 +477,17 @@ export function useProcessImportQueue() {
         if (!isVideoImportAvailable()) return;
         if (!acquireDrainLock()) return;
 
+        // TICKET-120: iOS suspends JS a few seconds after backgrounding; a background
+        // task buys ~30s so an import that finishes while backgrounded can post its
+        // completion notification. Guarded (absent module → -1 → release no-ops).
+        // Ended in finally; the Swift expiration handler is a backstop.
+        let bgTask = -1;
+        try {
+            bgTask = beginBackgroundTask();
+        } catch {
+            /* native module absent — no-op */
+        }
+
         try {
             const pending = listPendingImports().filter(
                 // Review-mode manifests ARE drained — they get resolved (OCR/caption)
@@ -464,6 +496,11 @@ export function useProcessImportQueue() {
                 // skipped (their destinations belong to the other user).
                 (m) => !(m.userId && m.userId !== userId),
             );
+            // TICKET-120: actively draining ≥1 import while the user is here is the
+            // demonstrated-value beat to (quietly, cadence-gated) offer notifications.
+            if (pending.length > 0 && AppState.currentState === 'active') {
+                maybeOfferNotifPrompt();
+            }
             for (const m of pending) {
                 if (!session) break;
                 try {
@@ -473,6 +510,14 @@ export function useProcessImportQueue() {
                     const updated = bumpImportAttempt(m.jobId);
                     if (updated?.status === 'failed') {
                         toast.show("couldn't import that");
+                        // TICKET-120: notify the poison too when backgrounded (the
+                        // toast is invisible then). Foreground = toast-only.
+                        if (AppState.currentState !== 'active') {
+                            presentImportNotification({
+                                title: "couldn't import that",
+                                body: 'tap to try again',
+                            });
+                        }
                         // Keep the .mov: a poisoned manifest stays for "try again" in
                         // the progress hub (re-OCR needs the source). The .mov is
                         // deleted on success (processOne) or when the user discards.
@@ -481,6 +526,14 @@ export function useProcessImportQueue() {
             }
         } finally {
             releaseDrainLock();
+            // TICKET-120: release the background-task grant (safe on an invalid id).
+            if (bgTask >= 0) {
+                try {
+                    endBackgroundTask(bgTask);
+                } catch {
+                    /* best-effort */
+                }
+            }
         }
     }, [userId, session, processOne, toast]);
 

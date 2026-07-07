@@ -23,7 +23,7 @@ import {
 } from '@expo-google-fonts/manrope';
 import * as SplashScreen from 'expo-splash-screen';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, View, Pressable, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +32,13 @@ import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
 import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
 import { usePublishCollectionsSnapshot } from '@/hooks/wishlist/usePublishCollectionsSnapshot';
+import { NotifPermissionSheet } from '@/components/notifications';
+import {
+  configureNotifications,
+  addNotificationResponseListener,
+  getInitialNotificationUrl,
+  onNotifPromptRequest,
+} from '@/lib/localNotify';
 import { Colors } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -216,6 +223,24 @@ function RootLayoutNav() {
   // Publish lists + tables to the App Group so the share extension's destination
   // picker can render them (separate process — can't read the app's cache).
   usePublishCollectionsSnapshot();
+
+  // TICKET-120: local import-completion notifications. Configure the foreground
+  // handler + Android channel once, and route a tap — both the live listener and
+  // the cold-start last-response — to the imports hub. All calls degrade to no-ops
+  // when expo-notifications is absent (Expo Go / web / unlinked).
+  const [notifSheetVisible, setNotifSheetVisible] = useState(false);
+  useEffect(() => {
+    configureNotifications();
+    const unsub = addNotificationResponseListener((url) => router.push(url as any));
+    getInitialNotificationUrl().then((url) => {
+      if (url) router.push(url as any);
+    });
+    return unsub;
+  }, [router]);
+
+  // The drain raises this when an import is in flight, permission isn't granted, and
+  // the cadence gate allows — render the soft pre-permission sheet.
+  useEffect(() => onNotifPromptRequest(() => setNotifSheetVisible(true)), []);
 
   useEffect(() => {
     if (isLoading) return;
@@ -410,6 +435,11 @@ function RootLayoutNav() {
         </Stack>
         </ErrorBoundary>
         <BottomNavBar />
+        {/* TICKET-120: soft pre-permission sheet, event-triggered by the drain. */}
+        <NotifPermissionSheet
+          visible={notifSheetVisible}
+          onClose={() => setNotifSheetVisible(false)}
+        />
       </View>
       <StatusBar style="auto" />
     </ThemeProvider>
