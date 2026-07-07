@@ -21,7 +21,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import { useActiveImports, type ActiveImport } from '@/hooks/wishlist/useActiveImports';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
-import { importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
+import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue } from '@/lib/importQueue';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 
@@ -223,7 +223,7 @@ export default function ImportProgressScreen() {
                                 accessibilityLabel={`open import of ${b.item_count} spots`}
                             >
                                 <Ionicons
-                                    name={b.source?.type === 'tiktok' ? 'logo-tiktok' : 'download-outline'}
+                                    name={importSourceIcon(b.source)}
                                     size={16}
                                     color={palette.textSecondary}
                                 />

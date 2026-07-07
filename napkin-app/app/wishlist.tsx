@@ -50,7 +50,7 @@ import {
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
-import { importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
+import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useListMapPins } from '@/hooks/lists/useListMapPins';
@@ -292,7 +292,7 @@ export default function WishlistScreen() {
         );
         if (latest) {
             return {
-                icon: latest.source?.type === 'tiktok' ? ('logo-tiktok' as const) : ('download-outline' as const),
+                icon: importSourceIcon(latest.source),
                 title: `${latest.item_count} ${latest.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(latest.source)}`,
                 sublabel: `${relativeTime(latest.created_at)} · fix or prune in imports`,
                 // Hierarchical back-nav is sacred: EVERY state of this card goes
