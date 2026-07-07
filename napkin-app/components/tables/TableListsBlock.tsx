@@ -1,10 +1,10 @@
 /**
  * TableListsBlock — TICKET-115 "Table lists".
  *
- * The Table's shared collaborative lists, surfaced on the Table's Wishlist tab
- * (curation surface). Reuses ListCard (one grammar — no new list surface). A
- * "+ new list" row routes to the create screen with the Table context so the
- * new list is shared + forced private.
+ * The Table's shared collaborative lists, surfaced on the Table's Lists tab.
+ * Reuses ListCard (one grammar — no new list surface). A "+ new list" row
+ * routes to the create screen with the Table context so the new list is
+ * shared + forced private.
  *
  * Data comes from useMyLists (which now includes the caller's Tables' lists);
  * we filter to this Table by table_id. Empty → a single quiet invitation line.
@@ -25,9 +25,11 @@ type Palette = typeof Colors.light;
 interface Props {
     tableId: string;
     tableName: string | null | undefined;
+    /** The section label is redundant when the block IS the Lists tab. */
+    hideLabel?: boolean;
 }
 
-export function TableListsBlock({ tableId, tableName }: Props) {
+export function TableListsBlock({ tableId, tableName, hideLabel }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
     const router = useRouter();
@@ -48,8 +50,10 @@ export function TableListsBlock({ tableId, tableName }: Props) {
 
     return (
         <View style={styles.container}>
-            <View style={styles.headerRow}>
-                <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>Lists</Text>
+            <View style={[styles.headerRow, hideLabel && { justifyContent: 'flex-end' }]}>
+                {!hideLabel && (
+                    <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>Lists</Text>
+                )}
                 <Pressable onPress={handleNewList} hitSlop={8} style={styles.newBtn}>
                     <Ionicons name="add" size={16} color={palette.primary} />
                     <Text style={[Type.bodySmall, { color: palette.primary }]}>new list</Text>
