@@ -315,6 +315,9 @@ function AvatarPin({
                         style={{ width: inner, height: inner, borderRadius: inner / 2 }}
                         contentFit="cover"
                         onLoad={onAvatarLoad}
+                        // A 404ing avatar must still settle tracksViewChanges,
+                        // or this marker re-snapshots every frame forever.
+                        onError={onAvatarLoad}
                     />
                 ) : (
                     <Text style={[avatarPinStyles.initial, { color: palette.text, fontSize: size * 0.4 }]}>
@@ -458,17 +461,18 @@ export function WishlistMapView({
     // palette reference is the render-truth either way).
     const isDark = palette !== Colors.light;
 
-    // TICKET-131: key-gated Google-on-iOS flip. app.config only carries
-    // ios.config.googleMapsApiKey when GOOGLE_MAPS_IOS_KEY was set at build time;
-    // when present the native Google pods are compiled in and we can style the
-    // tiles with heirloomMapStyle directly (no wash needed). Android is already
-    // Google + heirloom style.
-    const iosGoogleKey =
-        Platform.OS === 'ios' ? Constants.expoConfig?.ios?.config?.googleMapsApiKey : undefined;
-    const googleTiles = Platform.OS === 'android' || !!iosGoogleKey;
+    // TICKET-131: key-gated Google-on-iOS flip. The runtime manifest STRIPS
+    // ios.config, so the key can never be read from there (cold-review P1,
+    // 2026-07-08 — the old read was permanently undefined). app.config mirrors
+    // the key's PRESENCE into extra.hasGoogleMapsIosKey; the same env var
+    // compiles the native Google pods in at prebuild, so this flag ⇔ native
+    // support by construction. Android is already Google + heirloom style.
+    const iosGoogleTiles =
+        Platform.OS === 'ios' && Constants.expoConfig?.extra?.hasGoogleMapsIosKey === true;
+    const googleTiles = Platform.OS === 'android' || iosGoogleTiles;
     // Vellum wash — Apple-Maps-only warm tint (TICKET-057 idiom), light scheme
     // only (dark tiles don't want a cream veil).
-    const showVellumWash = Platform.OS === 'ios' && !iosGoogleKey && !isDark;
+    const showVellumWash = Platform.OS === 'ios' && !iosGoogleTiles && !isDark;
 
     // Frost family for the floating chrome. Light = scrimFrost token; dark pair
     // is inline by design (no new theme tokens — TICKET-131).
@@ -509,6 +513,33 @@ export function WishlistMapView({
         }, 300);
         return () => clearTimeout(timer);
     }, [items, locationStatus, userCoords]);
+
+    // Cold-review P2 fix (2026-07-08): a layer SWITCH re-frames to the new
+    // layer's pins — without this, a Been/Network layer whose spots live in
+    // another part of town renders entirely off-screen. The initial layer keeps
+    // the user-centric framing above; only a CHANGE of sources.value fits, and
+    // only once its pins have arrived (lazy layers load on first select). Item
+    // churn on the same layer (filters, refetch) never re-frames.
+    const framedSourceRef = useRef(sources?.value);
+    useEffect(() => {
+        if (!sources || sources.value === framedSourceRef.current) return;
+        if (items.length === 0) return; // layer still loading — wait for pins
+        framedSourceRef.current = sources.value;
+        const timer = setTimeout(() => {
+            if (items.length === 1) {
+                mapRef.current?.animateCamera(
+                    { center: { latitude: items[0].lat, longitude: items[0].lng }, zoom: 14 },
+                    { duration: 350 },
+                );
+            } else {
+                mapRef.current?.fitToCoordinates(
+                    items.slice(0, 50).map((i) => ({ latitude: i.lat, longitude: i.lng })),
+                    { edgePadding: { top: 120, right: 60, bottom: 200, left: 60 }, animated: true },
+                );
+            }
+        }, 350); // let a remounting MapView (empty→loaded flip) attach first
+        return () => clearTimeout(timer);
+    }, [sources, items]);
 
     const initialRegion: Region | undefined = useMemo(() => {
         if (items.length === 0) return undefined;
@@ -574,7 +605,60 @@ export function WishlistMapView({
             </View>
         ) : null;
 
-    // ── Empty (per-layer copy; pills stay so you can switch back) ─────────────
+    // ── Filter chip — top-right, frosted; opens the screen-owned tabbed filter
+    // sheet. Rendered in BOTH branches (cold-review P2, 2026-07-08: filtering a
+    // layer down to zero must leave a way to reopen the sheet and clear it).
+    const renderFilterChip = () =>
+        onOpenFilters ? (
+            <Pressable
+                onPress={onOpenFilters}
+                style={[
+                    styles.filterChip,
+                    { backgroundColor: frostBg, top: chromeTop },
+                    Shadow.ambient,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="filters"
+            >
+                <Ionicons
+                    name="options-outline"
+                    size={14}
+                    color={filtersActive ? palette.primary : palette.textSecondary}
+                />
+                <Text
+                    style={[
+                        styles.filterChipText,
+                        { color: filtersActive ? palette.primary : palette.textSecondary },
+                    ]}
+                >
+                    Filter
+                </Text>
+                {filtersActive ? (
+                    <View style={[styles.filterChipDot, { backgroundColor: palette.primary }]} />
+                ) : null}
+            </Pressable>
+        ) : null;
+
+    // ── List pill — bottom-left, frosted. Also in both branches (same review
+    // finding: an empty layer must not strand you on the map).
+    const renderListPill = (visible: boolean) =>
+        visible && onSwitchToList ? (
+            <Pressable
+                onPress={onSwitchToList}
+                style={[
+                    styles.listToggle,
+                    { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE },
+                    Shadow.ambient,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="list view"
+            >
+                <Ionicons name="list" size={15} color={palette.primary} />
+                <Text style={[styles.listToggleText, { color: palette.primary }]}>List</Text>
+            </Pressable>
+        ) : null;
+
+    // ── Empty (per-layer copy; pills/chip/List stay so you can always leave) ──
     if (items.length === 0) {
         const emptyCopy =
             sources?.value === 'network'
@@ -589,6 +673,8 @@ export function WishlistMapView({
                     <Text style={[styles.emptyText, { color: palette.textMuted }]}>{emptyCopy}</Text>
                 </View>
                 {renderSourcePills(true)}
+                {renderFilterChip()}
+                {renderListPill(true)}
             </View>
         );
     }
@@ -656,37 +742,8 @@ export function WishlistMapView({
             {/* Source pills — top-left, frosted. Hidden while a peek is up. */}
             {renderSourcePills(!selected)}
 
-            {/* Filter chip — top-right, frosted; opens the screen-owned tabbed
-                filter sheet. Only rendered when the screen wires it (wishlist). */}
-            {onOpenFilters ? (
-                <Pressable
-                    onPress={onOpenFilters}
-                    style={[
-                        styles.filterChip,
-                        { backgroundColor: frostBg, top: chromeTop },
-                        Shadow.ambient,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="filters"
-                >
-                    <Ionicons
-                        name="options-outline"
-                        size={14}
-                        color={filtersActive ? palette.primary : palette.textSecondary}
-                    />
-                    <Text
-                        style={[
-                            styles.filterChipText,
-                            { color: filtersActive ? palette.primary : palette.textSecondary },
-                        ]}
-                    >
-                        Filter
-                    </Text>
-                    {filtersActive ? (
-                        <View style={[styles.filterChipDot, { backgroundColor: palette.primary }]} />
-                    ) : null}
-                </Pressable>
-            ) : null}
+            {/* Filter chip — top-right, frosted (shared with the empty branch). */}
+            {renderFilterChip()}
 
             {/* Unmappable murmur — saved layer only (parents pass 0 otherwise),
                 frost family, tucked below the source pills. */}
@@ -730,22 +787,8 @@ export function WishlistMapView({
             ) : null}
 
             {/* List pill — bottom-LEFT, frosted, same elevation as the FAB.
-                Hidden while a peek card is up. */}
-            {!selected && onSwitchToList ? (
-                <Pressable
-                    onPress={onSwitchToList}
-                    style={[
-                        styles.listToggle,
-                        { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE },
-                        Shadow.ambient,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="list view"
-                >
-                    <Ionicons name="list" size={15} color={palette.primary} />
-                    <Text style={[styles.listToggleText, { color: palette.primary }]}>List</Text>
-                </Pressable>
-            ) : null}
+                Hidden while a peek card is up (shared with the empty branch). */}
+            {renderListPill(!selected)}
 
             {/* Peek card — rises when a pin is tapped */}
             {selected ? (

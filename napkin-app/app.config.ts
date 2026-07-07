@@ -197,5 +197,11 @@ export default ({ config }: ConfigContext): ExpoConfig =>
         eas: {
             projectId: '21d56495-18b4-46c9-9a81-673649cc1dca',
         },
+        // TICKET-131 cold-review P1 fix: the runtime manifest STRIPS ios.config,
+        // so WishlistMapView can never read the key from there. Mirror the key's
+        // PRESENCE (never the key itself) into extra, which survives into
+        // Constants.expoConfig. Same env var gates the native pods at prebuild,
+        // so flag ⇔ native Google support by construction.
+        hasGoogleMapsIosKey: !!process.env.GOOGLE_MAPS_IOS_KEY,
     },
 });
