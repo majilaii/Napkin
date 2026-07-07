@@ -99,26 +99,28 @@ describe('buildInitialTicked — pre-ticks ALL candidates (TICKET-082)', () => {
 // ── note TextInput visibility logic ──────────────────────────────────────────
 
 describe('note TextInput visible only at exactly one ticked (fix-pass-1 item 10)', () => {
+    // `: number` widens the literal so tsc doesn't flag the === 1 comparisons
+    // as impossible (TS2367) — the point IS comparing across the whole range.
     it('zero ticked → note hidden', () => {
-        const tickedCount = 0;
+        const tickedCount: number = 0;
         const isSingleTicked = tickedCount === 1;
         expect(isSingleTicked).toBe(false);
     });
 
     it('exactly one ticked → note visible', () => {
-        const tickedCount = 1;
+        const tickedCount: number = 1;
         const isSingleTicked = tickedCount === 1;
         expect(isSingleTicked).toBe(true);
     });
 
     it('two ticked → note hidden', () => {
-        const tickedCount = 2;
+        const tickedCount: number = 2;
         const isSingleTicked = tickedCount === 1;
         expect(isSingleTicked).toBe(false);
     });
 
     it('three ticked → note hidden', () => {
-        const tickedCount = 3;
+        const tickedCount: number = 3;
         const isSingleTicked = tickedCount === 1;
         expect(isSingleTicked).toBe(false);
     });

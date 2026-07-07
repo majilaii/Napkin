@@ -56,6 +56,13 @@ import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useListMapPins } from '@/hooks/lists/useListMapPins';
 import { buildMapPins } from '@/components/wishlist/mapPinsUtils';
+import {
+    spotsToMapItems,
+    networkPinsToMapItems,
+    filterItemsByCuisine,
+} from '@/components/wishlist/mapItems';
+import { useUserSpots } from '@/hooks/users/useUserSpots';
+import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import { OwnerActionsSheet } from '@/components/common';
@@ -343,6 +350,23 @@ export default function WishlistScreen() {
     // TICKET-124: one sheet, four tabs — replaces the per-key openSheet state.
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+
+    // ── TICKET-131: map source layers — Saved · Been · Network ────────────────
+    // Saved = the existing wishlist∪lists union; Been = your logged spots
+    // (useUserSpots); Network = follows' logs (useNetworkMapPins). The extra
+    // layers fetch LAZILY: their hooks stay disabled (null identifier) until the
+    // pill is first selected, then stay armed so switching back is instant.
+    const [mapSource, setMapSource] = useState<'saved' | 'been' | 'network'>('saved');
+    const [beenArmed, setBeenArmed] = useState(false);
+    const [networkArmed, setNetworkArmed] = useState(false);
+    const handleMapSource = useCallback((key: string) => {
+        const next = key as 'saved' | 'been' | 'network';
+        setMapSource(next);
+        if (next === 'been') setBeenArmed(true);
+        if (next === 'network') setNetworkArmed(true);
+    }, []);
+    const { data: beenSpots } = useUserSpots(beenArmed ? user?.id : null);
+    const { data: networkPins } = useNetworkMapPins(networkArmed ? user?.id : null);
     // Watch position live while sorting by nearest or viewing the map, so distances
     // re-rank as you walk (Amsterdam-stroll fix) instead of freezing until restart.
     const { coords, status: locationStatus, request: requestLocation } = useNearbyLocation({
@@ -496,6 +520,20 @@ export default function WishlistScreen() {
         return { mapItems: items as WishlistMapItem[], unmappableCount: unmappableSaves };
     }, [pinnedRows, listMapPins, cityFilter, cuisineFilter, priceFilter]);
 
+    // Been / Network layers (TICKET-131): shared mappers + the active cuisine
+    // filter (the one filter that applies to whichever layer is active — price/
+    // sort semantics stay saved-only). Unmappable murmur is saved-layer only.
+    const beenItems = useMemo(
+        () => filterItemsByCuisine(spotsToMapItems(beenSpots), cuisineFilter),
+        [beenSpots, cuisineFilter],
+    );
+    const networkItems = useMemo(
+        () => filterItemsByCuisine(networkPinsToMapItems(networkPins), cuisineFilter),
+        [networkPins, cuisineFilter],
+    );
+    const activeMapItems =
+        mapSource === 'been' ? beenItems : mapSource === 'network' ? networkItems : mapItems;
+
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);
     }, []);
@@ -540,8 +578,9 @@ export default function WishlistScreen() {
     // mode, the near sort) is engaged — the tabbed sheet carries the detail.
     const filtersActive = hasActiveFilters || (viewMode === 'list' && sortMode === 'near');
 
-    // One trigger replaces the pill-per-sheet strip (list + map modes). Mutually
-    // exclusive branches, so reusing the element in both is safe.
+    // One trigger replaces the pill-per-sheet strip. List mode only since
+    // TICKET-131 — map mode's trigger is the frosted Filter chip floating on the
+    // map itself (WishlistMapView's onOpenFilters), opening the same sheet.
     const filtersTriggerRow = (
         <View style={styles.rFilterBar}>
             <Pressable
@@ -645,19 +684,39 @@ export default function WishlistScreen() {
                     />
                 ) : viewMode === 'map' ? (
                     <View style={styles.mapMode}>
-                        {/* Same filter state as the list — toggling views must not
-                            lose the filters (founder, 2026-07-03). One "Filters"
-                            trigger; the sheet hides its Sort tab in map mode
-                            (position is the signal). */}
-                        {filtersTriggerRow}
+                        {/* Full-bleed map (TICKET-131): the Filter chip floats
+                            top-right ON the map and opens the same tabbed sheet —
+                            same filter state as the list, so toggling views must
+                            not lose the filters (founder, 2026-07-03). The sheet
+                            hides its Sort tab in map mode (position is the
+                            signal). Source pills: Saved · Been · Network. */}
                         <WishlistMapView
-                            items={mapItems}
-                            unmappableCount={unmappableCount}
+                            items={activeMapItems}
+                            unmappableCount={mapSource === 'saved' ? unmappableCount : 0}
                             userCoords={coords}
                             locationStatus={locationStatus}
                             onRequestLocation={requestLocation}
                             onOpenRestaurant={(id) => router.push(('/restaurant/' + id) as any)}
+                            // Network pins tap through to the followee's review
+                            // (public scope) when the log clears the review gate.
+                            onOpenReview={(entryId) =>
+                                router.push({
+                                    pathname: '/entry-detail',
+                                    params: { entryId, viewAs: 'public' },
+                                })
+                            }
                             onSwitchToList={() => handleSelectView('list')}
+                            sources={{
+                                options: [
+                                    { key: 'saved', label: 'Saved' },
+                                    { key: 'been', label: 'Been' },
+                                    { key: 'network', label: 'Network' },
+                                ],
+                                value: mapSource,
+                                onChange: handleMapSource,
+                            }}
+                            onOpenFilters={() => setFiltersOpen(true)}
+                            filtersActive={filtersActive}
                             palette={palette}
                         />
                     </View>
