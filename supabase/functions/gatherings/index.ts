@@ -14,6 +14,12 @@
  *   cancel — the host calls it off (proposed only). Soft state flip to
  *     'cancelled'; fn_table_activity_page excludes cancelled rows.
  *
+ *   delete — the host clears a dead gathering off the table for good: hard
+ *     DELETE (rsvps cascade). Allowed for proposed / expired / cancelled and
+ *     for a dispatched row whose supper link died (supper_id null). The ONE
+ *     block: dispatched with a live supper — that history belongs to the
+ *     supper; cancel the supper first.
+ *
  * All writes are service-role (gatherings/gathering_rsvps have NO client write
  * policy) — membership is validated here against table_members.member_id
  * (NEVER tm.user_id — CLAUDE.md doctrine).
@@ -125,6 +131,9 @@ serve(async (req) => {
         }
         if (action === 'cancel') {
             return await handleCancel(supabase, user, body);
+        }
+        if (action === 'delete') {
+            return await handleDelete(supabase, user, body);
         }
 
         return err('UNKNOWN_ACTION', `Unknown action: ${action}`, 400);
@@ -315,4 +324,52 @@ async function handleCancel(
     }
 
     return json({ cancelled: true });
+}
+
+// ── Action: delete ────────────────────────────────────────────────────────────
+
+async function handleDelete(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: any,
+    user: { id: string },
+    body: Record<string, unknown>,
+): Promise<Response> {
+    const gatheringId = body.gathering_id;
+    if (typeof gatheringId !== 'string' || !UUID_RE.test(gatheringId)) {
+        return err('INVALID_INPUT', 'gathering_id is required');
+    }
+
+    const { data: gathering, error: gatheringErr } = await supabase
+        .from('gatherings')
+        .select('id, host_user_id, status, supper_id')
+        .eq('id', gatheringId)
+        .maybeSingle();
+    if (gatheringErr) throw gatheringErr;
+    if (!gathering) {
+        return err('NOT_FOUND', 'Gathering not found', 404);
+    }
+    if (gathering.host_user_id !== user.id) {
+        return err('NOT_HOST', 'Only the host can clear this', 403);
+    }
+    if (gathering.status === 'dispatched' && gathering.supper_id) {
+        return err('GATHERING_LOCKED', 'This gathering became a supper — cancel the supper instead', 409);
+    }
+
+    // Guarded hard delete (rsvps cascade). The .or() re-asserts the live-supper
+    // block so a dispatch that wins the race between the read above and this
+    // call can't have its supper history erased (dispatch holds FOR UPDATE row
+    // locks, so this delete waits and then re-evaluates against the new state).
+    const { data: deletedRows, error: deleteErr } = await supabase
+        .from('gatherings')
+        .delete()
+        .eq('id', gatheringId)
+        .eq('host_user_id', user.id)
+        .or('status.neq.dispatched,supper_id.is.null')
+        .select('id');
+    if (deleteErr) throw deleteErr;
+    if (!deletedRows || deletedRows.length === 0) {
+        return err('GATHERING_LOCKED', 'This gathering became a supper — cancel the supper instead', 409);
+    }
+
+    return json({ deleted: true });
 }

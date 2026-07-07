@@ -6,3 +6,6 @@ export type { RsvpGatheringInput, RsvpGatheringResult } from './useRsvpGathering
 
 export { useCancelGathering } from './useCancelGathering';
 export type { CancelGatheringInput, CancelGatheringResult } from './useCancelGathering';
+
+export { useDeleteGathering, isGatheringDrift } from './useDeleteGathering';
+export type { DeleteGatheringInput, DeleteGatheringResult } from './useDeleteGathering';
