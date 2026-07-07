@@ -60,7 +60,7 @@ export function NotifPermissionSheet({ visible, onClose }: NotifPermissionSheetP
                     ]}
                     onStartShouldSetResponder={() => true}
                 >
-                    <View style={styles.handle} />
+                    <View style={[styles.handle, { backgroundColor: palette.outlineVariant }]} />
 
                     <Text style={[styles.headline, { color: palette.text }]}>
                         know when your spots are ready
@@ -113,7 +113,6 @@ const styles = StyleSheet.create({
         width: 36,
         height: 4,
         borderRadius: 2,
-        backgroundColor: 'rgba(0,0,0,0.15)',
         alignSelf: 'center',
         marginBottom: Spacing.lg,
     },

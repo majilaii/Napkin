@@ -150,13 +150,31 @@ function urlFromResponse(response: unknown): string | null {
     return typeof url === 'string' ? url : null;
 }
 
+// A launching tap surfaces through BOTH paths — getLastNotificationResponseAsync
+// AND a replay to the live listener — so each response id is claimed once, shared
+// across both. Without this, /import-progress gets pushed twice and back lands on
+// a duplicate hub (hierarchical back-nav is sacred).
+const claimedResponseIds = new Set<string>();
+
+function claimResponseUrl(response: unknown): string | null {
+    const url = urlFromResponse(response);
+    if (!url) return null;
+    const id = (response as { notification?: { request?: { identifier?: unknown } } } | null)
+        ?.notification?.request?.identifier;
+    if (typeof id === 'string') {
+        if (claimedResponseIds.has(id)) return null;
+        claimedResponseIds.add(id);
+    }
+    return url;
+}
+
 /** Subscribe to notification taps → hands back the `data.url`. Returns an unsub. */
 export function addNotificationResponseListener(handler: (url: string) => void): () => void {
     const N = getNotif();
     if (!N) return () => {};
     try {
         const sub = N.addNotificationResponseReceivedListener((response) => {
-            const url = urlFromResponse(response);
+            const url = claimResponseUrl(response);
             if (url) handler(url);
         });
         return () => {
@@ -177,7 +195,7 @@ export async function getInitialNotificationUrl(): Promise<string | null> {
     if (!N) return null;
     try {
         const response = await N.getLastNotificationResponseAsync();
-        return urlFromResponse(response);
+        return claimResponseUrl(response);
     } catch {
         return null;
     }
