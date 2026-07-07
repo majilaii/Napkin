@@ -182,6 +182,7 @@ export interface SharedSaveCardShapeForDigest {
     note?: string | null;
     extractionStatus?: string | null;
     reactionCount: number;
+    commentCount?: number;
     topEmojis: string[];
     myReactions?: string[];
     createdAt: string;
