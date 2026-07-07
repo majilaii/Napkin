@@ -13,9 +13,10 @@ function shouldSkip(err: unknown): boolean {
     return !!(err as { __napkinReported?: boolean } | null)?.__napkinReported;
 }
 
-function report(err: unknown, context: string): void {
+function report(err: unknown, buildContext: () => string): void {
     try {
         if (shouldSkip(err)) return;
+        const context = buildContext();
         trackError(err, context);
         captureError(err, { context });
     } catch {
@@ -26,13 +27,15 @@ function report(err: unknown, context: string): void {
 export const queryClient = new QueryClient({
     queryCache: new QueryCache({
         onError: (err, query) => {
-            report(err, `query:${JSON.stringify(query.queryKey).slice(0, 120)}`);
+            report(err, () => `query:${JSON.stringify(query.queryKey).slice(0, 120)}`);
         },
     }),
     mutationCache: new MutationCache({
-        onError: (err, _variables, _context, mutation) => {
-            const key = mutation.options.mutationKey;
-            report(err, `mutation:${key ? JSON.stringify(key).slice(0, 120) : 'anonymous'}`);
+        onError: (err, _variables, _onMutateResult, mutation) => {
+            report(err, () => {
+                const key = mutation.options.mutationKey;
+                return `mutation:${key ? JSON.stringify(key).slice(0, 120) : 'anonymous'}`;
+            });
         },
     }),
     defaultOptions: {

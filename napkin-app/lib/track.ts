@@ -8,6 +8,8 @@
  * — see scripts/metrics.sql).
  *
  * Rules (ticket): no PII in props, no third-party SDK.
+ * (TICKET-121 sanctioned exception: Sentry, wired separately in lib/sentry.ts —
+ * track.ts itself still imports no SDK.)
  */
 import { AppState } from 'react-native';
 import Constants from 'expo-constants';
