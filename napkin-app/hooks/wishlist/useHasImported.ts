@@ -25,8 +25,10 @@ export function useHasImported(userId: string | null | undefined): boolean {
     // prior import (no full→compact flash).
     const [flag, setFlag] = useState<boolean>(() => getImportCompletedCached());
 
-    // Only one import is needed to prove the signal — ask for the smallest page.
-    const { data: recent } = useRecentImports(userId, 1);
+    // Default page size on purpose: the query key is limit-agnostic, so a limit-1
+    // fetch here could replace (truncate) the cached list other consumers render.
+    // Sharing the default keeps one cache entry; one row is still proof enough.
+    const { data: recent } = useRecentImports(userId);
 
     useEffect(() => {
         let cancelled = false;

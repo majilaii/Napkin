@@ -66,8 +66,9 @@ export function TeachShareSheetDemo({ palette }: { palette: Palette }) {
         if (reduced) return;
         intro.value = withTiming(1, { duration: 350, easing: Easing.out(Easing.cubic) });
         scan.value = withRepeat(withTiming(1, { duration: 900, easing: Easing.inOut(Easing.quad) }), -1, false);
-        const t1 = setTimeout(() => setBeat(1), BEAT_TIMINGS_MS.beat1To2);
-        const t2 = setTimeout(() => setBeat(2), BEAT_TIMINGS_MS.beat2To3);
+        // Monotonic: a tap-ahead must never be yanked back by a stale timer.
+        const t1 = setTimeout(() => setBeat((b) => Math.max(b, 1)), BEAT_TIMINGS_MS.beat1To2);
+        const t2 = setTimeout(() => setBeat((b) => Math.max(b, 2)), BEAT_TIMINGS_MS.beat2To3);
         timers.current.push(t1, t2);
         return () => {
             timers.current.forEach(clearTimeout);
