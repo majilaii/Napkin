@@ -19,7 +19,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
     ios: {
-        supportsTablet: true,
+        // App Store v1 ships iPhone-only: the layout has never been tested on
+        // iPad, and iPhone-only avoids the 13" iPad screenshot set + an extra
+        // review surface. iPads still run it in compatibility mode.
+        supportsTablet: false,
         bundleIdentifier: 'com.majilaii.dining-journal-app',
         // TICKET-110: emits the com.apple.developer.applesignin entitlement so
         // expo-apple-authentication's native sheet works. The EAS build with
