@@ -60,6 +60,7 @@ import {
     deleteCachedTikTokVideo,
 } from '@/lib/tiktokPerception';
 import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
+import { isMapsShareUrl } from '@/lib/mapsShare';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
 import type { SaveImportSpotsResult } from './useSaveImportSpots';
 
@@ -159,6 +160,7 @@ export function useProcessImportQueue() {
             if (!spots || spots.length === 0) {
                 freshlyResolved = true;
                 let candidates: ResolvedCandidate[] = [];
+                let resolvedSourceType: string | null = null;
 
                 // TICKET-113: this is the first time the app sees this import's
                 // authored mode — the user's explicit per-share choice (the iOS
@@ -270,6 +272,7 @@ export function useProcessImportQueue() {
                         body: extractedText ? { extracted_text: extractedText } : { url: m.url },
                     });
                     candidates = resolved?.candidates ?? [];
+                    resolvedSourceType = resolved?.source_type ?? null;
                     // Instagram's url tier is a login-walled constant (zero
                     // candidates + ig_nudge, which this queue ignores) — the
                     // fallback would burn a resolve_url rate slot for nothing.
@@ -278,6 +281,7 @@ export function useProcessImportQueue() {
                             body: { url: m.url },
                         });
                         candidates = fallback?.candidates ?? [];
+                        resolvedSourceType = fallback?.source_type ?? resolvedSourceType;
                     }
                 } else {
                     let info = { exists: true, size: 1 };
@@ -313,6 +317,13 @@ export function useProcessImportQueue() {
                 // override; in auto mode they're dropped here.
                 if (m.mode === 'auto') {
                     candidates = candidates.filter((c) => c.stance !== 'warned');
+                }
+                // google_maps 'low' candidates are ALTERNATIVE Places matches
+                // for the same spot (single-place: [exact, low, low]), not
+                // additional spots — auto-saving them pins duplicates/wrong
+                // places. Review mode keeps them for the picker.
+                if (m.mode === 'auto' && resolvedSourceType === 'google_maps') {
+                    candidates = candidates.filter((c) => c.confidence !== 'low');
                 }
 
                 if (candidates.length === 0) {
@@ -377,8 +388,9 @@ export function useProcessImportQueue() {
             // Save (idempotent on import_nonce + per-spot client_nonce). Wishlist is
             // the base destination; per-spot table_id fans out to the Table.
             // Provenance: a tiktok link gets a 'tiktok' source so the restaurant
-            // page shows "saved from tiktok" + taps out to that exact video; other
-            // links → 'web'; a shared file → 'video' (no URL to deep-link).
+            // page shows "saved from tiktok" + taps out to that exact video; a
+            // maps link → 'google_maps' (list/place share); other links → 'web';
+            // a shared file → 'video' (no URL to deep-link).
             // Instagram deliberately saves as 'web' (still taps out to the reel):
             // the wishlist_items_source_shape DB CHECK whitelists source types, so
             // a first-class 'instagram' variant needs a migration — separate ticket.
@@ -386,7 +398,9 @@ export function useProcessImportQueue() {
                 m.kind === 'url' && m.url
                     ? /tiktok\.com/i.test(m.url)
                         ? { type: 'tiktok', url: m.url }
-                        : { type: 'web', url: m.url }
+                        : isMapsShareUrl(m.url)
+                            ? { type: 'google_maps', url: m.url }
+                            : { type: 'web', url: m.url }
                     : { type: 'video' };
 
             // Multi-table fan-out: one save_spots call per destination table (same
