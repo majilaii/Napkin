@@ -119,7 +119,8 @@ export function useSetTableTopFour() {
     return useMutation<TableTopFourData, Error, SetTableTopFourInput>({
         mutationFn: ({ table_id, slots }) =>
             callEdgeFn<TableTopFourData>('table-management', {
-                action: 'top_four_set',
+                method: 'POST',
+                params: { action: 'top_four_set' },
                 body: { table_id, slots },
             }),
 
