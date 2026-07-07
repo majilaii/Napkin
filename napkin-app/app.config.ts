@@ -1,6 +1,25 @@
 import type { ExpoConfig, ConfigContext } from 'expo/config';
+import { withEntitlementsPlist, type ConfigPlugin } from 'expo/config-plugins';
 
-export default ({ config }: ConfigContext): ExpoConfig => ({
+// TICKET-120: notifications are device-LOCAL only — no APNs, ever (remote push is
+// explicitly deferred). expo-notifications' plugin unconditionally adds the
+// aps-environment (remote push) entitlement, which our provisioning profiles don't
+// carry — the first TICKET-120 TestFlight build died on exactly that mismatch.
+// Local notifications need NO entitlement, so strip it at prebuild.
+//
+// Ordering note: entitlements mods execute in REVERSE registration order (each
+// wrapper runs its action, then delegates to the previously registered chain — see
+// @expo/config-plugins withMod). Wrapping the exported config registers this mod
+// BEFORE the plugins array compiles, so it runs LAST and wins over
+// expo-notifications. Delete this when remote push actually ships.
+const withLocalOnlyNotifications: ConfigPlugin = (config) =>
+    withEntitlementsPlist(config, (c) => {
+        delete c.modResults['aps-environment'];
+        return c;
+    });
+
+export default ({ config }: ConfigContext): ExpoConfig =>
+    withLocalOnlyNotifications({
     ...config,
     // ARCH-REVIEW-1: Keep name as 'dining-journal-app' (Expo project identity /
     // EAS dashboard / slug-derived identifiers). CFBundleDisplayName is set
