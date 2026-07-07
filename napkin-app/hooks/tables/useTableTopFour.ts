@@ -62,7 +62,8 @@ export function useTableTopFour(tableId: string | null | undefined) {
         queryKey: queryKeys.tables.topFour(tableId ?? ''),
         queryFn: () =>
             callEdgeFn<TableTopFourData>('table-management', {
-                action: 'top_four_get',
+                method: 'POST',
+                params: { action: 'top_four_get' },
                 body: { table_id: tableId },
             }),
         enabled: !!tableId,
