@@ -15,7 +15,9 @@
  * insets (no KeyboardAvoidingView reflow) and constant border widths — focus
  * changes colour only, never width, so tapping a field never shifts layout.
  *
- * "Invite by link" is faint Phase-2 — no link backend yet, so Copy is inert.
+ * "Invite by link" is live: it creates the table (seating any picked mutuals),
+ * mints a real invite code, opens the native share sheet, then lands on the
+ * founded masthead — the same destination as Create table.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -29,6 +31,7 @@ import {
     Animated,
     ActivityIndicator,
     Alert,
+    Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -39,6 +42,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCreateTable } from '@/hooks/tables/useCreateTable';
 import { useAddMember } from '@/hooks/tables/useAddMember';
+import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
+import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { useUserSearch, type UserSearchResult } from '@/hooks/users/useUserSearch';
 import { Avatar } from '@/components/feed/Avatar';
 
@@ -70,6 +75,8 @@ export default function CreateTableScreen() {
 
     const createTable = useCreateTable(user?.id);
     const addMember = useAddMember(user?.id);
+    const createInvite = useCreateInvite();
+    const nameInputRef = useRef<TextInput>(null);
 
     // Debounce the search query (250ms).
     useEffect(() => {
@@ -105,37 +112,70 @@ export default function CreateTableScreen() {
         setPicked((prev) => prev.filter((p) => p.user_id !== userId));
     }, []);
 
+    // Create the table + best-effort seat each picked mutual. Shared by the
+    // Create-table CTA and the Invite-by-link row. A single add failure
+    // (e.g. follow changed since search) must not block the table.
+    const runCreate = useCallback(async () => {
+        const table = await createTable.mutateAsync({ name: nameTrimmed });
+        if (picked.length > 0) {
+            const outcomes = await Promise.allSettled(
+                picked.map((p) =>
+                    addMember.mutateAsync({ tableId: table.id, targetUserId: p.user_id }),
+                ),
+            );
+            const failed = outcomes.filter((o) => o.status === 'rejected').length;
+            if (failed > 0) {
+                Alert.alert(
+                    'Table created',
+                    failed === 1
+                        ? "One person couldn't be added — you can invite them again from the table."
+                        : `${failed} people couldn't be added — you can invite them again from the table.`,
+                );
+            }
+        }
+        return table;
+    }, [createTable, nameTrimmed, picked, addMember]);
+
     const handleCreate = useCallback(async () => {
         if (!canCreate) return;
         setCreating(true);
         try {
-            const table = await createTable.mutateAsync({ name: nameTrimmed });
-
-            // Best-effort: add each invited mutual-follow. A single failure
-            // (e.g. follow changed since search) must not block the table.
-            if (picked.length > 0) {
-                const outcomes = await Promise.allSettled(
-                    picked.map((p) =>
-                        addMember.mutateAsync({ tableId: table.id, targetUserId: p.user_id }),
-                    ),
-                );
-                const failed = outcomes.filter((o) => o.status === 'rejected').length;
-                if (failed > 0) {
-                    Alert.alert(
-                        'Table created',
-                        failed === 1
-                            ? "One person couldn't be added — you can invite them again from the table."
-                            : `${failed} people couldn't be added — you can invite them again from the table.`,
-                    );
-                }
-            }
-
+            const table = await runCreate();
             router.replace({ pathname: '/(tabs)/tables', params: { selected: table.id } });
         } catch {
             setCreating(false);
             Alert.alert('Could not create table', 'Please try again in a moment.');
         }
-    }, [canCreate, createTable, nameTrimmed, picked, addMember, router]);
+    }, [canCreate, runCreate, router]);
+
+    // Invite-by-link: create the table, mint a real invite code, open the share
+    // sheet, then land on the founded masthead (same destination as Create).
+    const handleInviteByLink = useCallback(async () => {
+        if (creating) return;
+        if (!nameTrimmed) {
+            nameInputRef.current?.focus();
+            return;
+        }
+        setCreating(true);
+        try {
+            const table = await runCreate();
+            // A failed mint/share must not strand the user — the table exists.
+            try {
+                const { join_url } = await createInvite.mutateAsync(table.id);
+                await Share.share({
+                    message: TESTFLIGHT_INVITE_URL
+                        ? `join "${nameTrimmed}" on Napkin — ${join_url}\n\n${TESTFLIGHT_INVITE_URL}`
+                        : `join "${nameTrimmed}" on Napkin — ${join_url}`,
+                });
+            } catch {
+                // no-op — table already created; fall through to routing.
+            }
+            router.replace({ pathname: '/(tabs)/tables', params: { selected: table.id } });
+        } catch {
+            setCreating(false);
+            Alert.alert('Could not create table', 'Please try again in a moment.');
+        }
+    }, [creating, nameTrimmed, runCreate, createInvite, router]);
 
     // ── Render ───────────────────────────────────────────────────────────────
     return (
@@ -167,6 +207,7 @@ export default function CreateTableScreen() {
                         ]}
                     >
                         <TextInput
+                            ref={nameInputRef}
                             value={name}
                             onChangeText={setName}
                             onFocus={() => setNameFocused(true)}
@@ -269,12 +310,13 @@ export default function CreateTableScreen() {
                                 <Text style={[styles.linkTitle, { color: palette.text }]}>Invite by link</Text>
                             </View>
                             <Pressable
-                                onPress={() => Alert.alert('Coming soon', 'Invite links for friends not yet on Napkin are on the way.')}
+                                onPress={handleInviteByLink}
+                                disabled={creating}
                                 hitSlop={8}
                                 accessibilityRole="button"
-                                accessibilityLabel="Copy invite link"
+                                accessibilityLabel="Share invite link"
                             >
-                                <Text style={[styles.copy, { color: palette.primary }]}>Copy</Text>
+                                <Text style={[styles.copy, { color: palette.primary, opacity: creating ? 0.4 : 1 }]}>Share</Text>
                             </Pressable>
                         </View>
                     )}

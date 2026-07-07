@@ -22,6 +22,8 @@ export interface UserSearchResult {
     avatar_url: string | null;
     /** Present when returned from people-search (TICKET-028). Undefined for companion picker usage. */
     is_following?: boolean;
+    /** Present only when request was made with mutualOnly=true (TICKET-029): target→caller. */
+    follows_caller?: boolean;
     /** Present only when request was made with mutualOnly=true (TICKET-029). */
     is_mutual?: boolean;
 }

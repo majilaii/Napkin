@@ -67,6 +67,14 @@ function resumeAfterAuth(
         } as any);
         return true; // RootLayoutNav redirect now harmless — segments[0] === 'handoff'
     }
+    if (winner?.kind === 'invite') {
+        // Table invite: redeem the code in the join-table receive screen.
+        router.replace({
+            pathname: '/join-table',
+            params: { code: winner.code },
+        } as any);
+        return true; // RootLayoutNav redirect now harmless — segments[0] === 'join-table'
+    }
     return false; // No pending stash — RootLayoutNav handles the redirect.
 }
 

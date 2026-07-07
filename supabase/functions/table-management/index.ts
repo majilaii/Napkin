@@ -7,6 +7,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { emitTableInvite, emitTopFourSwap } from '../_shared/notify.ts';
+import { mintShareToken } from '../_shared/handoffToken.ts';
+
+// Invite codes are minted by mintShareToken() → 22-char base64url (no padding).
+// Reject anything else on redemption (uniform INVITE_INVALID — no oracle).
+const INVITE_CODE_RE = /^[A-Za-z0-9_-]{22}$/;
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -929,6 +934,266 @@ serve(async (req) => {
             );
         }
 
+        // POST ?action=create_invite — mint (or return) the live invite code for a table.
+        // Any member may mint; one live code per table (existing live code reused).
+        if (req.method === 'POST' && action === 'create_invite') {
+            const body = await req.json();
+            const { table_id: targetTableId } = body;
+
+            if (!targetTableId || typeof targetTableId !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Any member may mint an invite (not just the owner).
+            const { data: membership, error: memberErr } = await supabase
+                .from('table_members')
+                .select('member_id')
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id)
+                .maybeSingle();
+
+            if (memberErr) throw memberErr;
+            if (!membership) {
+                return new Response(
+                    JSON.stringify({ error: 'Not a member of this table', error_code: 'NOT_MEMBER' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Reuse the existing live code if there is one (one active code per table).
+            const { data: existing, error: existErr } = await supabase
+                .from('table_invites')
+                .select('code')
+                .eq('table_id', targetTableId)
+                .is('revoked_at', null)
+                .order('created_at', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+
+            if (existErr) throw existErr;
+
+            let code: string | null = existing?.code ?? null;
+
+            if (!code) {
+                // Mint with ≤3 retry on unique violation — mirrors handoff.
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    const candidate = mintShareToken();
+                    const { error: insertErr } = await supabase
+                        .from('table_invites')
+                        .insert({ table_id: targetTableId, code: candidate, created_by: user.id })
+                        .select('id')
+                        .single();
+
+                    if (!insertErr) {
+                        code = candidate;
+                        break;
+                    }
+                    if ((insertErr as any).code === '23505') {
+                        // Either the live-per-table unique index (concurrent mint —
+                        // reuse the winner) or a code collision (retry fresh).
+                        const { data: winner } = await supabase
+                            .from('table_invites')
+                            .select('code')
+                            .eq('table_id', targetTableId)
+                            .is('revoked_at', null)
+                            .limit(1)
+                            .maybeSingle();
+                        if (winner?.code) {
+                            code = winner.code;
+                            break;
+                        }
+                        continue;
+                    }
+                    throw insertErr;
+                }
+            }
+
+            if (!code) {
+                return new Response(
+                    JSON.stringify({ error: 'Could not mint a unique invite code' }),
+                    { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Join URL = the Vercel proxy that serves the public invite page with a
+            // real text/html content-type (Supabase edge fns force text/plain on
+            // *.supabase.co). Mirrors handoff's SHARE_WEB_BASE mechanism, path /j/<code>.
+            const shareWebBase = Deno.env.get('SHARE_WEB_BASE') ?? 'https://napkinshare.vercel.app';
+            const joinUrl = `${shareWebBase}/j/${code}`;
+
+            return new Response(
+                JSON.stringify({ data: { code, join_url: joinUrl } }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=join_by_invite — redeem a code → seat the caller as a member.
+        if (req.method === 'POST' && action === 'join_by_invite') {
+            const body = await req.json();
+            const { code } = body as { code?: unknown };
+
+            const badInvite = () => new Response(
+                JSON.stringify({ error: 'This invite is no longer live', error_code: 'INVITE_INVALID' }),
+                { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+
+            if (typeof code !== 'string' || !INVITE_CODE_RE.test(code)) {
+                return badInvite();
+            }
+
+            const { data: invite, error: inviteErr } = await supabase
+                .from('table_invites')
+                .select('id, table_id, revoked_at, uses')
+                .eq('code', code)
+                .maybeSingle();
+
+            if (inviteErr) throw inviteErr;
+            if (!invite || (invite as any).revoked_at !== null) {
+                return badInvite();
+            }
+
+            const inviteTableId = (invite as any).table_id as string;
+
+            // Seat the caller. PK is (table_id, member_id) → 23505 = already a member.
+            let alreadyMember = false;
+            const { error: joinErr } = await supabase
+                .from('table_members')
+                .insert({ table_id: inviteTableId, member_id: user.id, role: 'member' });
+
+            if (joinErr) {
+                if ((joinErr as any).code === '23505') {
+                    alreadyMember = true;
+                } else {
+                    throw joinErr;
+                }
+            }
+
+            // Best-effort redemption counter — never blocks the join.
+            if (!alreadyMember) {
+                try {
+                    await supabase
+                        .from('table_invites')
+                        .update({ uses: ((invite as any).uses ?? 0) + 1 })
+                        .eq('id', (invite as any).id);
+                } catch (usesErr) {
+                    console.error('[join_by_invite] uses increment failed:', usesErr);
+                }
+            }
+
+            const { data: table } = await supabase
+                .from('tables')
+                .select('name')
+                .eq('id', inviteTableId)
+                .maybeSingle();
+
+            return new Response(
+                JSON.stringify({
+                    data: {
+                        table_id: inviteTableId,
+                        table_name: table?.name ?? null,
+                        already_member: alreadyMember,
+                    },
+                }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=revoke_invite — owner-only; retire all live codes for a table.
+        // No client UI in v1 (server-side affordance only).
+        if (req.method === 'POST' && action === 'revoke_invite') {
+            const body = await req.json();
+            const { table_id: targetTableId } = body;
+
+            if (!targetTableId || typeof targetTableId !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { data: table, error: tableErr } = await supabase
+                .from('tables')
+                .select('owner_id')
+                .eq('id', targetTableId)
+                .maybeSingle();
+
+            if (tableErr) throw tableErr;
+            if (!table) {
+                return new Response(
+                    JSON.stringify({ error: 'Table not found' }),
+                    { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+            if (table.owner_id !== user.id) {
+                return new Response(
+                    JSON.stringify({ error: 'Only the table owner can revoke invites', error_code: 'NOT_OWNER' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { error: revokeErr } = await supabase
+                .from('table_invites')
+                .update({ revoked_at: new Date().toISOString() })
+                .eq('table_id', targetTableId)
+                .is('revoked_at', null);
+
+            if (revokeErr) throw revokeErr;
+
+            return new Response(
+                JSON.stringify({ data: { revoked: true } }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=delete_table — owner-only hard delete. FK graph cascades
+        // safely (entries.table_id SET NULL — logged meals survive; 20260704000000).
+        if (req.method === 'POST' && action === 'delete_table') {
+            const body = await req.json();
+            const { table_id: targetTableId } = body;
+
+            if (!targetTableId || typeof targetTableId !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { data: table, error: tableErr } = await supabase
+                .from('tables')
+                .select('owner_id')
+                .eq('id', targetTableId)
+                .maybeSingle();
+
+            if (tableErr) throw tableErr;
+            if (!table) {
+                return new Response(
+                    JSON.stringify({ error: 'Table not found' }),
+                    { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+            if (table.owner_id !== user.id) {
+                return new Response(
+                    JSON.stringify({ error: 'Only the table owner can delete the table', error_code: 'NOT_OWNER' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { error: deleteErr } = await supabase
+                .from('tables')
+                .delete()
+                .eq('id', targetTableId);
+
+            if (deleteErr) throw deleteErr;
+
+            return new Response(
+                JSON.stringify({ data: { deleted: true } }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
         // POST - Create table
         if (req.method === 'POST') {
             const body = await req.json();
@@ -983,20 +1248,10 @@ serve(async (req) => {
             );
         }
 
-        // DELETE /:id - Delete table
-        if (req.method === 'DELETE' && tableId) {
-            const { error } = await supabase
-                .from('tables')
-                .delete()
-                .eq('id', tableId);
-
-            if (error) throw error;
-
-            return new Response(
-                JSON.stringify({ success: true }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
-        }
+        // NOTE: the former raw `DELETE /:id` handler was removed — it deleted ANY
+        // table by id under the service-role key with no ownership check, and
+        // nothing called it. Table deletion now goes through the owner-gated
+        // `action=delete_table` POST above.
 
         return new Response(
             JSON.stringify({ error: 'Method not allowed' }),

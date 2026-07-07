@@ -34,6 +34,7 @@ import { FRIEND_TEST } from '@/constants/flags';
 import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { track } from '@/lib/track';
 import { useTables } from '@/hooks/tables/useTables';
+import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
 import { useLastSeenAt, useMarkSeen } from '@/hooks/tables/useLastSeenAt';
 import {
     useTableActivity,
@@ -165,6 +166,7 @@ export default function TablesScreen() {
     // Unseen dot system (TICKET-010)
     const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
     const markSeen = useMarkSeen();
+    const createInvite = useCreateInvite();
 
     // Fire mark_seen when the tab gains focus or activeTable changes.
     // The 30s debounce in useMarkSeen collapses rapid tab-switches.
@@ -583,21 +585,31 @@ export default function TablesScreen() {
                             foundedAt={activeTable.created_at}
                             palette={palette}
                             memberCount={members?.length ?? 0}
-                            onInvite={() => {
+                            onInvite={async () => {
                                 // One invite flow (2026-07-03): the AddMemberSheet
                                 // seats mutuals directly and carries the share-link
                                 // row for friends not on Napkin yet. Founder = owner
-                                // on a brand-new table; share-sheet fallback otherwise.
+                                // on a brand-new table; non-owner members mint + share
+                                // the real join link (any member can mint).
                                 if (activeTable.owner_id === user?.id) {
                                     setShowAddMember(true);
                                     return;
                                 }
                                 track('invite_sent', { surface: 'founded_hero' });
-                                void Share.share({
-                                    message: TESTFLIGHT_INVITE_URL
-                                        ? `come join "${tableName}" on Napkin — ${TESTFLIGHT_INVITE_URL}`
-                                        : `come join "${tableName}" on Napkin`,
-                                });
+                                try {
+                                    const { join_url } = await createInvite.mutateAsync(activeTable.id);
+                                    await Share.share({
+                                        message: TESTFLIGHT_INVITE_URL
+                                            ? `join "${tableName}" on Napkin — ${join_url}\n\n${TESTFLIGHT_INVITE_URL}`
+                                            : `join "${tableName}" on Napkin — ${join_url}`,
+                                    });
+                                } catch {
+                                    void Share.share({
+                                        message: TESTFLIGHT_INVITE_URL
+                                            ? `come join "${tableName}" on Napkin — ${TESTFLIGHT_INVITE_URL}`
+                                            : `come join "${tableName}" on Napkin`,
+                                    });
+                                }
                             }}
                             onEditTopFour={FRIEND_TEST.hideTopFours ? undefined : () => handleOpenEditTopFour()}
                         />
@@ -1118,6 +1130,7 @@ export default function TablesScreen() {
                     tableId={activeTable.id}
                     palette={palette}
                     userId={user?.id}
+                    tableName={tableName}
                 />
             ) : null}
         </View>

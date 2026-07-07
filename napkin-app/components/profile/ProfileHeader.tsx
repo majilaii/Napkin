@@ -18,6 +18,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type {
     Calibration,
+    SocialCounts,
     UserProfileRow,
     UserStats,
     ViewerRelationship,
@@ -34,8 +35,16 @@ interface Props {
     isSelf: boolean;
     relationship: ViewerRelationship;
     stats?: UserStats | null;
+    /**
+     * Follower/following counts when `stats` is withheld (private tablemate).
+     * Falls back through stats → social → placeholder so a real count never
+     * renders as a lying 0.
+     */
+    social?: SocialCounts | null;
     /** Whether the viewing user is currently following the target. Used for the Follow button. */
     isFollowingViewer?: boolean;
+    /** Whether the target follows the viewing user back. Drives the relationship meta line. */
+    followsViewer?: boolean;
     /**
      * Calibration result from user-profile endpoint.
      * undefined = still loading, null = hidden (insufficient overlap / Tablemate / error).
@@ -59,7 +68,7 @@ function initials(displayName: string): string {
     return displayName.slice(0, 1).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowingViewer = false, calibration, viewerRatedEntryCount, onSafetyMenu }: Props) {
+export function ProfileHeader({ profile, isSelf, relationship, stats, social, isFollowingViewer = false, followsViewer = false, calibration, viewerRatedEntryCount, onSafetyMenu }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -74,8 +83,28 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
 
     const totalLogs = stats?.total_logs ?? 0;
     const totalPlaces = stats?.total_restaurants ?? 0;
-    const followersCount = stats?.followers_count ?? 0;
-    const followingCount = stats?.following_count ?? 0;
+    // Social counts fall back stats → social → null. null renders a '·' placeholder
+    // (older cache, genuinely unknown) rather than a lying 0.
+    const followersCount: number | null = stats
+        ? stats.followers_count
+        : social
+          ? social.followers_count
+          : null;
+    const followingCount: number | null = stats
+        ? stats.following_count
+        : social
+          ? social.following_count
+          : null;
+
+    // One terse relationship meta line (non-self only). 'follows you' wins when
+    // the target follows back; otherwise flag an unreciprocated outbound follow.
+    const relationshipNote = isSelf
+        ? null
+        : followsViewer
+          ? 'follows you'
+          : isFollowingViewer
+            ? "doesn't follow you back yet"
+            : null;
 
     const openFollowList = (kind: 'followers' | 'following') =>
         router.push({
@@ -107,6 +136,11 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                     {profile.bio ? (
                         <Text style={[styles.bio, { color: palette.textSecondary }]}>
                             {profile.bio}
+                        </Text>
+                    ) : null}
+                    {relationshipNote ? (
+                        <Text style={[styles.relationshipNote, { color: palette.textMuted }]}>
+                            {relationshipNote}
                         </Text>
                     ) : null}
                 </View>
@@ -211,15 +245,18 @@ function StatCell({
     palette,
     onPress,
 }: {
+    /** null → count genuinely unknown (withheld / older cache): render '·', not 0. */
+    value: number | null;
     label: string;
-    value: number;
     palette: typeof Colors.light;
     onPress?: () => void;
 }) {
+    const dimmed = value === null || value === 0;
+    const display = value === null ? '·' : value === 0 ? '—' : value;
     const body = (
         <>
-            <Text style={[styles.statValue, { color: palette.text, opacity: value === 0 ? 0.4 : 1 }]}>
-                {value === 0 ? '—' : value}
+            <Text style={[styles.statValue, { color: palette.text, opacity: dimmed ? 0.4 : 1 }]}>
+                {display}
             </Text>
             <Text style={[styles.statLabel, { color: palette.textMuted }]}>{label}</Text>
         </>
@@ -230,7 +267,7 @@ function StatCell({
             onPress={onPress}
             style={({ pressed }) => [styles.statCell, { opacity: pressed ? 0.7 : 1 }]}
             accessibilityRole="button"
-            accessibilityLabel={`${value} ${label}`}
+            accessibilityLabel={`${value ?? 0} ${label}`}
         >
             {body}
         </Pressable>
@@ -284,6 +321,12 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginTop: 8,
         lineHeight: 19,
+    },
+    relationshipNote: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        marginTop: 6,
+        letterSpacing: 0.2,
     },
     gear: {
         width: 32,

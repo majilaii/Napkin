@@ -161,12 +161,19 @@ export function useFollow() {
             }
         },
 
-        onSuccess: () => {
+        onSuccess: (_data, { targetUserId }) => {
             // P1-8: cache is already correct from the optimistic patch (search +
             // both profiles + counts). Refetch only the follow-list pages, since
             // those carry server-side ordering / cursors we can't reproduce
-            // client-side. Don't touch ['users', 'profile'] — that prefix nukes
-            // every cached profile across the session.
+            // client-side. Never invalidate the ['users', 'profile'] PREFIX —
+            // that nukes every cached profile across the session.
+            //
+            // Narrow exception (Scope B): re-fetch ONLY the target's own profile
+            // by its single-id key. The optimistic patch flips is_following_viewer
+            // and bumps followers_count, but it can't synthesize follows_viewer
+            // (target→caller) — a private tablemate's real followers_count/social
+            // counts only come from the server. Single id, never the prefix.
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
         },
@@ -250,9 +257,12 @@ export function useUnfollow() {
             }
         },
 
-        onSuccess: () => {
+        onSuccess: (_data, { targetUserId }) => {
             // P1-8: same scoping as useFollow.onSuccess — narrow follow-list
-            // refetch only; profiles + counts are already patched.
+            // refetch plus a single-id re-fetch of the target's profile so
+            // follows_viewer + real social counts reconcile. Never the
+            // ['users', 'profile'] prefix.
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
         },

@@ -304,6 +304,30 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // Table invite links: table-invite-page is the second public (verify_jwt=false)
+    // HTML endpoint — same guard as share-page. A bogus code must render the 410
+    // tombstone, proving both that verify_jwt=false took effect (no 401) and that
+    // the table_invites read path is alive.
+    {
+        name: 'table-invite-page?c=<bogus> unauthenticated → 410 tombstone',
+        method: 'GET',
+        fn: 'table-invite-page',
+        query: 'c=ZZZbogusZZZbogusZZZbXA',   // 22 chars, valid base64url format, unknown code → DB-miss → 410
+        expectedStatus: 410,
+        noAuth: true,
+        rawShape: (body, contentType) => {
+            if (!contentType.includes('text/html') && !contentType.includes('text/plain')) {
+                return `expected text/html or text/plain, got: ${contentType}`;
+            }
+            if (body.includes('Internal Server Error') || body.includes('stack') || body.includes('Error:')) {
+                return 'tombstone must not expose raw error or stack trace';
+            }
+            if (!body.includes('folded away')) {
+                return 'tombstone body should include journal-voice copy ("folded away")';
+            }
+            return null;
+        },
+    },
 ];
 
 // post-interactions read-path guard. This endpoint backs every reaction/comment

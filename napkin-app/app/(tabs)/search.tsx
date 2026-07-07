@@ -26,6 +26,7 @@ import {
     Platform,
     KeyboardAvoidingView,
     ScrollView,
+    Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -279,6 +280,12 @@ export default function SearchScreen() {
         setDebouncedQuery('');
     }, []);
 
+    // Switching mode drops the keyboard so the bottom nav / new pane is reachable.
+    const handleModeChange = useCallback((next: SearchMode) => {
+        Keyboard.dismiss();
+        setMode(next);
+    }, []);
+
     const renderItem = useCallback(
         ({ item }: { item: FlatItem }) => {
             if (item._type === 'header') {
@@ -313,7 +320,7 @@ export default function SearchScreen() {
                     People is curtained the People tab is dropped but Lists survives. */}
                 <SearchModeTabs
                     mode={mode}
-                    onModeChange={setMode}
+                    onModeChange={handleModeChange}
                     hidePeople={FRIEND_TEST.hidePeopleSearch}
                 />
                 <SearchInput
@@ -350,6 +357,7 @@ export default function SearchScreen() {
                         style={styles.emptyContainer}
                         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
                         keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="on-drag"
                     >
                         <SearchEmptyState
                             recentQueries={recentQueries}
@@ -362,10 +370,14 @@ export default function SearchScreen() {
                         />
                     </ScrollView>
                 ) : isLoading && !hasResults ? (
-                    // Loading state
-                    <View style={styles.centeredState}>
+                    // Loading state — tap to drop the keyboard (covers the bottom nav).
+                    <Pressable
+                        style={styles.centeredState}
+                        onPress={Keyboard.dismiss}
+                        accessible={false}
+                    >
                         <ActivityIndicator color={palette.primary} />
-                    </View>
+                    </Pressable>
                 ) : (
                     // Results (or error overlay)
                     <FlatList
@@ -374,6 +386,7 @@ export default function SearchScreen() {
                         keyExtractor={(item) => item.key}
                         renderItem={renderItem}
                         keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="on-drag"
                         onScroll={handleScroll}
                         scrollEventThrottle={16}
                         onContentSizeChange={() => {

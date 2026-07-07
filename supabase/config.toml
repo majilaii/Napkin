@@ -12,6 +12,10 @@ major_version = 17
 # Public URL renderer — no JWT required (iMessage/WhatsApp unfurl bots, browsers)
 verify_jwt = false
 
+[functions.table-invite-page]
+# Public table-invite landing page — no JWT required (browsers, unfurl bots)
+verify_jwt = false
+
 [auth]
 # TICKET-090: password-recovery emails 302 to these deep links. Without the
 # allowlist entry Supabase falls back to site_url and the link dead-ends.

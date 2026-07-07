@@ -43,6 +43,7 @@ import { SearchInput } from '@/components/search/SearchInput';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useUserSearch, type UserSearchResult } from '@/hooks/users/useUserSearch';
 import { useAddMember, AddMemberError } from '@/hooks/tables/useAddMember';
+import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
 
 type Palette = typeof Colors.light;
 
@@ -52,6 +53,8 @@ interface AddMemberSheetProps {
     tableId: string;
     palette: Palette;
     userId: string | null | undefined;
+    /** Table name — woven into the invite-link share message. */
+    tableName?: string;
 }
 
 const DRAG_DISMISS_THRESHOLD = 80;
@@ -73,8 +76,19 @@ interface MutualResultRowProps {
     isAdding: boolean;
 }
 
+/** Why a row is non-mutual — uses the directional fields when the server sent them. */
+function nonMutualReason(row: UserSearchResult): string {
+    if (row.is_following === undefined || row.follows_caller === undefined) {
+        return 'needs to follow you back';
+    }
+    if (!row.is_following && row.follows_caller) return 'follow them back to add';
+    if (!row.is_following && !row.follows_caller) return "you don't follow each other yet";
+    return 'needs to follow you back';
+}
+
 function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: MutualResultRowProps) {
     const isMutual = row.is_mutual === true;
+    const reason = isMutual ? null : nonMutualReason(row);
 
     return (
         <Pressable
@@ -93,7 +107,7 @@ function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: Mu
             accessibilityLabel={
                 isMutual
                     ? `Add ${row.display_name}`
-                    : `${row.display_name} — needs to follow you back`
+                    : `${row.display_name} — ${reason}`
             }
         >
             {/* Avatar */}
@@ -116,9 +130,9 @@ function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: Mu
                 >
                     {row.display_name}
                 </Text>
-                {!isMutual && (
+                {reason != null && (
                     <Text style={[styles.rowSub, { color: palette.textMuted }]}>
-                        Needs to follow you back
+                        {reason}
                     </Text>
                 )}
             </View>
@@ -145,6 +159,7 @@ export function AddMemberSheet({
     tableId,
     palette,
     userId,
+    tableName,
 }: AddMemberSheetProps) {
     const insets = useSafeAreaInsets();
     const router = useRouter();
@@ -163,6 +178,7 @@ export function AddMemberSheet({
     });
 
     const addMember = useAddMember(userId);
+    const createInvite = useCreateInvite();
 
     // Reset state when sheet opens
     useEffect(() => {
@@ -364,15 +380,26 @@ export function AddMemberSheet({
                     />
                 )}
 
-                {/* Not on Napkin yet? The share sheet covers them (2026-07-03). */}
+                {/* Not on Napkin yet? Mint a real invite link and share it. */}
                 <Pressable
-                    onPress={() => {
+                    onPress={async () => {
                         track('invite_sent', { surface: 'add_member_sheet' });
-                        void Share.share({
-                            message: TESTFLIGHT_INVITE_URL
-                                ? `come join our table on Napkin — ${TESTFLIGHT_INVITE_URL}`
-                                : 'come join our table on Napkin',
-                        });
+                        const label = tableName ? `"${tableName}"` : 'our table';
+                        try {
+                            const { join_url } = await createInvite.mutateAsync(tableId);
+                            await Share.share({
+                                message: TESTFLIGHT_INVITE_URL
+                                    ? `join ${label} on Napkin — ${join_url}\n\n${TESTFLIGHT_INVITE_URL}`
+                                    : `join ${label} on Napkin — ${join_url}`,
+                            });
+                        } catch {
+                            // Mint failed — share a bare install nudge rather than nothing.
+                            void Share.share({
+                                message: TESTFLIGHT_INVITE_URL
+                                    ? `come join ${label} on Napkin — ${TESTFLIGHT_INVITE_URL}`
+                                    : `come join ${label} on Napkin`,
+                            });
+                        }
                     }}
                     style={({ pressed }) => [styles.shareRow, { opacity: pressed ? 0.7 : 1 }]}
                     accessibilityRole="button"

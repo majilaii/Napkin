@@ -14,6 +14,7 @@ import {
     Pressable,
     StyleSheet,
     ActivityIndicator,
+    Keyboard,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -91,19 +92,19 @@ export function ListsSearchPane({ query, debouncedQuery }: Props) {
     // Min-2-char gate — a single quiet line (copy economy).
     if (query.trim().length < 2) {
         return (
-            <View style={styles.centered}>
+            <Pressable style={styles.centered} onPress={Keyboard.dismiss} accessible={false}>
                 <Text style={[Type.body, { color: palette.textMuted }]}>
                     Search public lists
                 </Text>
-            </View>
+            </Pressable>
         );
     }
 
     if (isLoading && results.length === 0) {
         return (
-            <View style={styles.centered}>
+            <Pressable style={styles.centered} onPress={Keyboard.dismiss} accessible={false}>
                 <ActivityIndicator color={palette.primary} />
-            </View>
+            </Pressable>
         );
     }
 
@@ -112,6 +113,7 @@ export function ListsSearchPane({ query, debouncedQuery }: Props) {
             data={results}
             keyExtractor={(item) => item.id}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             renderItem={({ item }) => (
                 <ResultRow list={item} palette={palette} onPress={handlePress} />
             )}
