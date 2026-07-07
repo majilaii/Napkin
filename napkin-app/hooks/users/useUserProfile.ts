@@ -131,9 +131,27 @@ export type DiaryEntryRow = {
     round_average_rating?: number | null;
 };
 
+/**
+ * Social counts (follower/following) that ride a sibling field when `stats` is
+ * withheld — e.g. a private tablemate (relationship='tables_in_common') whose
+ * palate stays hidden but whose social graph is public metadata. Optional/nullable
+ * because palate-bearing responses carry the same counts inside `stats`, and older
+ * cached payloads predate this field entirely.
+ */
+export type SocialCounts = {
+    followers_count: number;
+    following_count: number;
+};
+
 export type UserProfileData = {
     profile: UserProfileRow;
     stats: UserStats | null;
+    /**
+     * Present only when `stats` is null but the counts are still knowable
+     * (tables_in_common). Absent on palate-bearing branches (read from `stats`)
+     * and on older cached payloads (render a placeholder, never a lying 0).
+     */
+    social?: SocialCounts | null;
     public_lists: ProfileListSummary[] | null;
     recently_logged: RestaurantTile[] | null;
     tables_in_common: TablePreview[];
@@ -142,6 +160,11 @@ export type UserProfileData = {
     is_self: boolean;
     /** True if the viewing user is following the target. False for self, false for unauthenticated. */
     is_following_viewer: boolean;
+    /**
+     * True if the target follows the viewing user back (target→caller). False for self.
+     * Optional: absent on payloads from a pre-2026-07-07 fn or stale caches — treat as false.
+     */
+    follows_viewer?: boolean;
     viewer_target_relationship: ViewerRelationship;
     /** Taste calibration — present only when viewer_target_relationship === 'public_only'. */
     calibration?: Calibration | null;

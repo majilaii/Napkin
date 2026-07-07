@@ -1063,6 +1063,7 @@ serve(async (req) => {
                         regulars_preview: regularsPreview,
                         is_self: true,
                         is_following_viewer: false, // self never follows self
+                        follows_viewer: false, // self never follows self
                         viewer_target_relationship: 'self' as ViewerRelationship,
                     },
                 });
@@ -1085,6 +1086,7 @@ serve(async (req) => {
                         regulars_preview: [],
                         is_self: false,
                         is_following_viewer: false,
+                        follows_viewer: false,
                         viewer_target_relationship: 'none' as ViewerRelationship,
                         blocked_by_viewer: true,
                     },
@@ -1098,22 +1100,53 @@ serve(async (req) => {
             // 3. 'none' → return not_found, stop here
             if (relationship === 'none') return notFound();
 
-            // 4. Check if the caller is already following the target
-            const { data: followRow } = await supabase
-                .from('follows')
-                .select('follower_id')
-                .eq('follower_id', callerId)
-                .eq('following_id', targetId)
-                .maybeSingle();
-            const isFollowingViewer = followRow !== null;
+            // 4. Resolve both follow directions in one round-trip:
+            //    isFollowingViewer = caller → target (viewer follows this profile)
+            //    followsViewer     = target → caller (this profile follows viewer back)
+            const [followRowRes, followsViewerRowRes] = await Promise.all([
+                supabase
+                    .from('follows')
+                    .select('follower_id')
+                    .eq('follower_id', callerId)
+                    .eq('following_id', targetId)
+                    .maybeSingle(),
+                supabase
+                    .from('follows')
+                    .select('follower_id')
+                    .eq('follower_id', targetId)
+                    .eq('following_id', callerId)
+                    .maybeSingle(),
+            ]);
+            const isFollowingViewer = followRowRes.data !== null;
+            const followsViewer = followsViewerRowRes.data !== null;
 
-            // 5. 'tables_in_common' only — no palate access
+            // 5. 'tables_in_common' only — no palate access. Follower/following
+            //    counts ARE social metadata, not palate, so a private tablemate's
+            //    real counts surface here. Run ONLY the two count(*) queries — never
+            //    the full stats fetch — so no logs/avg/review data leaks.
             if (relationship === 'tables_in_common') {
-                const tablePreviews = await fetchTablePreviews(supabase, targetId, sharedTableIds, 'other');
+                const [tablePreviews, followersRes, followingRes] = await Promise.all([
+                    fetchTablePreviews(supabase, targetId, sharedTableIds, 'other'),
+                    supabase
+                        .from('follows')
+                        .select('follower_id', { count: 'exact', head: true })
+                        .eq('following_id', targetId),
+                    supabase
+                        .from('follows')
+                        .select('following_id', { count: 'exact', head: true })
+                        .eq('follower_id', targetId),
+                ]);
                 return json({
                     data: {
                         profile: targetProfile,
+                        // stats stays null (palate withheld); social counts ride
+                        // a sibling field so the client can distinguish
+                        // "counts present, palate withheld" from "palate present".
                         stats: null,
+                        social: {
+                            followers_count: followersRes.count ?? 0,
+                            following_count: followingRes.count ?? 0,
+                        },
                         public_lists: null,
                         recently_logged: null,
                         tables_in_common: tablePreviews,
@@ -1121,6 +1154,7 @@ serve(async (req) => {
                         regulars_preview: [],
                         is_self: false,
                         is_following_viewer: isFollowingViewer,
+                        follows_viewer: followsViewer,
                         viewer_target_relationship: relationship,
                     },
                 });
@@ -1174,6 +1208,7 @@ serve(async (req) => {
                     regulars_preview: regularsPreview,
                     is_self: false,
                     is_following_viewer: isFollowingViewer,
+                    follows_viewer: followsViewer,
                     viewer_target_relationship: relationship,
                     calibration,
                     viewer_rated_entry_count: viewerRatedEntryCount,
@@ -1609,8 +1644,9 @@ serve(async (req) => {
         // Used by CompanionPickerSheet (TICKET-027) and PeopleSearchPane (TICKET-028).
         // Request: { action: 'search', q: string, limit?: number, mutual_only?: boolean }
         // Response (default): { data: { user_id, display_name, avatar_url, is_following }[] }
-        // Response (mutual_only=true): all rows include is_mutual: boolean.
-        //   mutuals sort first; non-mutuals still returned but flagged is_mutual=false.
+        // Response (mutual_only=true): all rows include is_mutual + is_following
+        //   (caller→row) + follows_caller (row→caller), so callers can explain the
+        //   non-mutual reason. mutuals sort first; non-mutuals still returned.
         // Order: followed/mutual users first, then by profiles.created_at DESC, then display_name ASC
         if (action === 'search') {
             const { q, limit: rawLimit, mutual_only: mutualOnly } = body as {
@@ -1684,11 +1720,15 @@ serve(async (req) => {
                 });
 
                 return json({
+                    // Both direction sets are already in hand — surface them per
+                    // row so send-surfaces can explain WHY someone is non-mutual
+                    // (you don't follow them / they don't follow you back).
                     data: sorted.map((r) => ({
                         user_id: r.user_id,
                         display_name: r.display_name,
                         avatar_url: r.avatar_url ?? null,
                         is_following: followingSet.has(r.user_id),
+                        follows_caller: followsCallerSet.has(r.user_id),
                         is_mutual: isMutual(r.user_id),
                     })),
                 });

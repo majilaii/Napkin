@@ -60,6 +60,7 @@ function makeProfile(userId: string, isFollowing: boolean, followersCount: numbe
             regulars_preview: [],
             is_self: false,
             is_following_viewer: isFollowing,
+            follows_viewer: false,
             viewer_target_relationship: 'public_only',
         },
         isNotFound: false,

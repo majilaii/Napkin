@@ -228,7 +228,7 @@ function RootLayoutNav() {
     // TICKET-107: a pending share/handoff resume (auth.tsx redirects to these)
     // must finish BEFORE onboarding — "import resume wins."
     const inOnboarding = segments[0] === 'onboarding';
-    const inResume = segments[0] === 'import' || segments[0] === 'handoff';
+    const inResume = segments[0] === 'import' || segments[0] === 'handoff' || segments[0] === 'join-table';
 
     if (!session && !inAuthGroup && !inRecovery) {
       router.replace('/auth');
@@ -400,6 +400,11 @@ function RootLayoutNav() {
           {/* TICKET-072: wishlist handoff receive screen */}
           <Stack.Screen
             name="handoff"
+            options={{ headerShown: false, presentation: 'card' }}
+          />
+          {/* Table invite receive screen */}
+          <Stack.Screen
+            name="join-table"
             options={{ headerShown: false, presentation: 'card' }}
           />
         </Stack>

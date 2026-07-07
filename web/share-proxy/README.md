@@ -12,5 +12,8 @@ in the Supabase `share-page` function — this only fixes the content-type.
   `…supabase.co/functions/v1/share-page?t=<token>`.
 - The `handoff` edge fn returns this base via `SHARE_WEB_BASE`
   (default `https://napkinshare.vercel.app`).
+- Table invite links: `https://napkinshare.vercel.app/j/<code>` → proxies
+  `…supabase.co/functions/v1/table-invite-page?c=<code>`. The `table-management`
+  edge fn composes this base via the same `SHARE_WEB_BASE` env, path `/j/<code>`.
 - Deployment Protection is OFF on this project (the pages must be public).
 - Redeploy: `cd web/share-proxy && npx vercel deploy --prod --yes`.

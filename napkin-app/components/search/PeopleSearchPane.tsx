@@ -17,6 +17,7 @@ import {
     Linking,
     Pressable,
     ActivityIndicator,
+    Keyboard,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -128,7 +129,7 @@ export function PeopleSearchPane({ query, debouncedQuery }: Props) {
 
     if (!hasQuery) {
         return (
-            <View style={styles.pane}>
+            <Pressable style={styles.pane} onPress={Keyboard.dismiss} accessible={false}>
                 {suggestedPeople.length > 0 && (
                     <Text style={[styles.sectionHeader, { color: palette.textMuted }]}>
                         Suggested
@@ -149,7 +150,7 @@ export function PeopleSearchPane({ query, debouncedQuery }: Props) {
                         Search for people on Napkin
                     </Text>
                 )}
-            </View>
+            </Pressable>
         );
     }
 
@@ -157,9 +158,9 @@ export function PeopleSearchPane({ query, debouncedQuery }: Props) {
 
     if (isSearchLoading) {
         return (
-            <View style={styles.centered}>
+            <Pressable style={styles.centered} onPress={Keyboard.dismiss} accessible={false}>
                 <ActivityIndicator color={palette.primary} />
-            </View>
+            </Pressable>
         );
     }
 
@@ -167,9 +168,9 @@ export function PeopleSearchPane({ query, debouncedQuery }: Props) {
 
     if (!searchResults || searchResults.length === 0) {
         return (
-            <View style={styles.pane}>
+            <Pressable style={styles.pane} onPress={Keyboard.dismiss} accessible={false}>
                 <InviteViaSmsRow query={debouncedQuery} />
-            </View>
+            </Pressable>
         );
     }
 
@@ -189,6 +190,7 @@ export function PeopleSearchPane({ query, debouncedQuery }: Props) {
                 />
             )}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             style={styles.list}
         />
     );
