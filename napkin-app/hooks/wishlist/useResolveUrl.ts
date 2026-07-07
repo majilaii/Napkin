@@ -10,6 +10,7 @@
 import { useRef, useCallback, useState } from 'react';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { fetchTikTokPerception, isTikTokUrl } from '@/lib/tiktokPerception';
+import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
 import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -128,6 +129,17 @@ export function useResolveUrl() {
                 const perception = await fetchTikTokPerception(url);
                 if (myId !== currentRequestIdRef.current) return;
                 if (perception?.hasTranscript) tierText = perception.text;
+            }
+            // Instagram: the server branch is login-walled by design (returns
+            // only an ig_nudge), so the on-device caption IS the resolve tier.
+            // Carousel/photo listicles carry the list in the caption; zero
+            // candidates still falls through to the url tier → ig_nudge, the
+            // pre-existing behavior. (The heavy video-OCR tier stays in the
+            // background queue — too slow for a spinner.)
+            if (!tierText && !imagePath && url && isInstagramUrl(url)) {
+                const perception = await fetchInstagramPerception(url);
+                if (myId !== currentRequestIdRef.current) return;
+                if (perception?.text) tierText = perception.text;
             }
 
             // Proven contract (video path): extracted_text rides alone.
