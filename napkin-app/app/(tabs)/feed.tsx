@@ -54,8 +54,11 @@ export default function FeedScreen() {
         // rows > 0 ⇔ ≥1 followed user with ≥1 visible entry.
         if (isPending) return;
         resolvedRef.current = true;
-        setMode(rows.length > 0 ? 'following' : 'for-you');
-    }, [isPending, rows.length]);
+        // Error ≠ empty graph: a settled page-1 error resolves to Following (its
+        // body owns the retryable error state) instead of stranding the user on
+        // For You for the session.
+        setMode(feedQuery.isError || rows.length > 0 ? 'following' : 'for-you');
+    }, [isPending, rows.length, feedQuery.isError]);
 
     // While resolving: masthead only (no tabs) + spinner. No flicker.
     if (mode === null) {
