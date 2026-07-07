@@ -76,6 +76,9 @@ export function WishlistSpotRow({
             onPress={onPress}
             onLongPress={onLongPress}
             delayLongPress={350}
+            // Hold off the pressed state so a swipe or scroll that starts on the
+            // row doesn't flicker the opacity dim before the gesture claims it.
+            unstable_pressDelay={100}
             style={({ pressed }) => [
                 styles.row,
                 { backgroundColor: palette.background, borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.7 : 1 },
