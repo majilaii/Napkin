@@ -2,8 +2,8 @@
  * SharedSaveCard — TICKET-060.
  *
  * Table-feed card for a single shared restaurant save ("shared_save" kind).
- * Shows: author avatar + name + "shared" verb, restaurant name (italic Newsreader),
- * city · cuisine, optional note, and I'm-in reaction control.
+ * Compact: author line + restaurant name (italic Newsreader) + city · cuisine,
+ * optional note, reply affordance. Author gets a ⋯ menu to retract the share.
  * Text-led: NO restaurant/Google thumbnail (owner entry photos or nothing —
  * doctrine locked 2026-07-05).
  *
@@ -13,6 +13,7 @@
  */
 import React, { useCallback } from 'react';
 import {
+    Alert,
     View,
     Text,
     Pressable,
@@ -23,6 +24,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useRemoveShare } from '@/hooks/posts/useRemoveShare';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -50,6 +52,8 @@ export interface SharedSaveCardProps {
     topEmojis: string[];
     myReactions?: string[];
     createdAt: string;
+    /** Viewer id — enables the author-only ⋯ retract menu. */
+    currentUserId?: string | null;
     onCorrect?: () => void;
 }
 
@@ -69,11 +73,15 @@ export function SharedSaveCard({
     topEmojis,
     myReactions = [],
     createdAt,
+    currentUserId,
     onCorrect,
 }: SharedSaveCardProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const router = useRouter();
+    const removeShare = useRemoveShare();
+
+    const isOwn = !!currentUserId && author.user_id === currentUserId;
 
     // Open the share thread — react with any emoji + reply ("let's go"). Replaces
     // the old single-👀 "I'm in" toggle with a real post.
@@ -94,6 +102,24 @@ export function SharedSaveCard({
             router.push(`/restaurant/${restaurant.id}`);
         }
     }, [router, restaurant]);
+
+    const handleRemove = useCallback(() => {
+        Alert.alert('remove this spot?', 'it disappears from the table.', [
+            { text: 'cancel', style: 'cancel' },
+            {
+                text: 'remove',
+                style: 'destructive',
+                onPress: () =>
+                    removeShare.mutate(
+                        { shareId },
+                        {
+                            onError: (err: any) =>
+                                Alert.alert('Error', err?.message ?? 'Could not remove this share.'),
+                        },
+                    ),
+            },
+        ]);
+    }, [removeShare, shareId]);
 
     const cityLine = [restaurant?.city, restaurant?.cuisine].filter(Boolean).join(' · ');
     const isPending = extractionStatus === 'pending' || !restaurant?.id;
@@ -123,10 +149,22 @@ export function SharedSaveCard({
                         ]}
                     />
                 )}
-                <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
+                <Text style={[Type.caption, styles.authorLabel, { color: palette.textMuted }]} numberOfLines={1}>
                     <Text style={{ color: palette.text }}>{author.display_name ?? 'someone'}</Text>
                     {' shared'}
                 </Text>
+                {isOwn ? (
+                    <Pressable
+                        onPress={handleRemove}
+                        disabled={removeShare.isPending}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel="remove this share"
+                        style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+                    >
+                        <Ionicons name="ellipsis-horizontal" size={16} color={palette.textMuted} />
+                    </Pressable>
+                ) : null}
             </View>
 
             {/* Restaurant — text-led, no thumbnail (no restaurant/Google photos).
@@ -150,7 +188,7 @@ export function SharedSaveCard({
                             </Text>
                             {cityLine ? (
                                 <Text
-                                    style={[Type.bodySmall, { color: palette.textMuted }]}
+                                    style={[Type.caption, { color: palette.textMuted }]}
                                     numberOfLines={1}
                                 >
                                     {cityLine}
@@ -208,22 +246,26 @@ export function SharedSaveCard({
 const styles = StyleSheet.create({
     card: {
         borderRadius: Radius.md,
-        padding: Spacing.md,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: 12,
         marginBottom: Spacing.sm,
     },
     authorRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: Spacing.sm,
+        marginBottom: 6,
+    },
+    authorLabel: {
+        flex: 1,
     },
     avatar: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        marginRight: Spacing.xs,
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        marginRight: Spacing.xs + 2,
     },
     restaurantRow: {
-        marginBottom: Spacing.xs,
+        marginBottom: 0,
     },
     restaurantText: {
         flex: 1,
@@ -231,18 +273,18 @@ const styles = StyleSheet.create({
     restaurantName: {
         ...Type.headlineItalic,
         fontSize: 17,
-        marginBottom: 2,
+        lineHeight: 22,
+        marginBottom: 1,
     } as any,
     note: {
-        marginBottom: Spacing.sm,
-        marginTop: Spacing.xs,
+        marginTop: 6,
     },
     footer: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginTop: Spacing.xs,
-        minHeight: 28,
+        marginTop: 8,
+        minHeight: 20,
     },
     footerEmojis: {
         fontSize: 14,
@@ -254,4 +296,3 @@ const styles = StyleSheet.create({
         marginLeft: 'auto',
     },
 });
-

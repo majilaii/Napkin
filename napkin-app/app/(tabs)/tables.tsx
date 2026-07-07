@@ -940,6 +940,7 @@ export default function TablesScreen() {
                                                               topEmojis={s.top_emojis ?? []}
                                                               myReactions={s.my_reactions ?? []}
                                                               createdAt={s.created_at ?? s.sort_date}
+                                                              currentUserId={user?.id}
                                                           />
                                                       );
                                                   }
@@ -955,6 +956,7 @@ export default function TablesScreen() {
                                                               childIds={d.child_ids ?? []}
                                                               childShares={d.childShares}
                                                               createdAt={d.sort_date}
+                                                              currentUserId={user?.id}
                                                           />
                                                       );
                                                   }

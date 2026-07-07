@@ -1,44 +1,59 @@
 /**
- * useRemoveShare — author retracts their own shared_save card from a Table feed.
+ * useRemoveShare — author retracts their own shared_save card(s) from a Table feed.
  *
  * Calls the table-shares `remove_share` action (author-only soft-delete; the server
- * gate is authoritative). Optimistically removes the shared_save row from the Table
- * activity cache so the card disappears immediately; rolls back on error.
- *
- * This is the orphaned-share fix: a share posted from a wishlist import had no
- * un-share path, so delisting left the card forever. Now the author can remove it.
+ * gate is authoritative). Accepts a single `shareId` or a `shareIds` batch — the
+ * "dropped N spots" digest retract sends all its child ids at once. Optimistically
+ * prunes the shared_save rows AND patches/removes affected share_digest rows in the
+ * Table activity cache so cards disappear immediately; rolls back on error.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface RemoveShareInput {
-    shareId: string;
+    shareId?: string;
+    shareIds?: string[];
 }
 
-/** Drop a shared_save row (matched by shareId) from an infinite { pages:[{rows}] }
- *  table-activity cache. */
-function removeShareFromInfinite(data: any, shareId: string): any {
+function inputIds(input: RemoveShareInput): string[] {
+    if (input.shareIds && input.shareIds.length > 0) return input.shareIds;
+    return input.shareId ? [input.shareId] : [];
+}
+
+/** Drop removed shared_save rows and patch share_digest rows in an infinite
+ *  { pages:[{rows}] } table-activity cache. A digest whose children are ALL
+ *  removed disappears; a partially-removed digest keeps its remaining children
+ *  with corrected count (the onSettled refetch reconciles server-side buckets). */
+function pruneSharesFromInfinite(data: any, ids: Set<string>): any {
     if (!data?.pages) return data;
     return {
         ...data,
-        pages: data.pages.map((p: any) =>
-            p?.rows
-                ? {
-                      ...p,
-                      // Only prune the single-share card. A share_digest may contain
-                      // OTHER live children, so removing one child must not drop the
-                      // whole digest — the onSettled refetch reconciles it correctly.
-                      rows: p.rows.filter(
-                          (r: any) =>
-                              !(
-                                  r?.type === 'shared_save' &&
-                                  (r?.shareId === shareId || r?.id === shareId)
-                              ),
-                      ),
-                  }
-                : p,
-        ),
+        pages: data.pages.map((p: any) => {
+            if (!p?.rows) return p;
+            const rows = p.rows
+                .map((r: any) => {
+                    if (r?.type === 'shared_save' && (ids.has(r?.shareId) || ids.has(r?.id))) {
+                        return null;
+                    }
+                    if (r?.type === 'share_digest' && Array.isArray(r?.child_ids)) {
+                        const remaining = r.child_ids.filter((cid: string) => !ids.has(cid));
+                        if (remaining.length === r.child_ids.length) return r;
+                        if (remaining.length === 0) return null;
+                        return {
+                            ...r,
+                            child_ids: remaining,
+                            share_count: remaining.length,
+                            childShares: Array.isArray(r.childShares)
+                                ? r.childShares.filter((c: any) => !ids.has(c?.shareId))
+                                : r.childShares,
+                        };
+                    }
+                    return r;
+                })
+                .filter(Boolean);
+            return { ...p, rows };
+        }),
     };
 }
 
@@ -46,19 +61,23 @@ export function useRemoveShare() {
     const qc = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ shareId }: RemoveShareInput) => {
+        mutationFn: async (input: RemoveShareInput) => {
+            const ids = inputIds(input);
+            if (ids.length === 0) throw new Error('shareId or shareIds is required');
             return callEdgeFn('table-shares', {
                 action: 'remove_share',
-                body: { share_id: shareId },
+                // Single-id calls keep the legacy share_id body for deploy skew.
+                body: ids.length === 1 ? { share_id: ids[0] } : { share_ids: ids },
             });
         },
 
-        onMutate: async ({ shareId }: RemoveShareInput) => {
+        onMutate: async (input: RemoveShareInput) => {
+            const ids = new Set(inputIds(input));
             const activityKey = queryKeys.tables.activityAll();
             await qc.cancelQueries({ queryKey: activityKey });
             const prev = qc.getQueriesData({ queryKey: activityKey });
             qc.setQueriesData<any>({ queryKey: activityKey }, (d: any) =>
-                removeShareFromInfinite(d, shareId),
+                pruneSharesFromInfinite(d, ids),
             );
             return { prev };
         },
