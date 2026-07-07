@@ -343,7 +343,7 @@ Explicitly out of scope until a ticket says otherwise:
 - Share to Instagram Stories
 - Table Wrapped annual stats
 - Privacy settings matrix (friends/table/both visibility)
-- Push notifications (deferred)
+- Remote push notifications (APNs/FCM tokens, server-driven push) still deferred. Device-LOCAL notifications shipped for import completion only (TICKET-120) — `expo-notifications`, no tokens, no server involvement.
 - Map pins / embedded maps on restaurant pages (a `directions` deep-link out to Google Maps is allowed — see TICKET-081)
 - A real menu surface — Google Places exposes no menu data. The restaurant page surfaces `website` only (never a "menu" affordance that implies a real menu). Menu remains out until a real source is found.
 

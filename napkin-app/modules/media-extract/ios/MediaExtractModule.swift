@@ -2,6 +2,7 @@ import ExpoModulesCore
 import AVFoundation
 import Vision
 import Speech
+import UIKit
 
 // On-device extraction of text from a video:
 //   • frames sampled across the whole clip → Vision OCR (the on-screen overlay
@@ -129,6 +130,30 @@ public class MediaExtractModule: Module {
       } catch {
         return false
       }
+    }
+
+    // ── Background-runtime grant (TICKET-120) ─────────────────────────────────
+    // iOS suspends JS a few seconds after backgrounding. The import drain asks for
+    // ~30s more here so a job that finished while suspended can post its completion
+    // notification. Returns the task's raw id (the JS wrapper is guarded — an absent
+    // module degrades to no-op). The expiration handler MUST end the task itself or
+    // iOS kills the app.
+    Function("beginBackgroundTask") { () -> Int in
+      var taskId: UIBackgroundTaskIdentifier = .invalid
+      taskId = UIApplication.shared.beginBackgroundTask(withName: "napkin.import-drain") {
+        // iOS is reclaiming the time — end the task so the app isn't killed.
+        UIApplication.shared.endBackgroundTask(taskId)
+        taskId = .invalid
+      }
+      return taskId.rawValue
+    }
+
+    // Release a grant. No-op-safe on an invalid/already-ended id.
+    Function("endBackgroundTask") { (taskId: Int) -> Bool in
+      let identifier = UIBackgroundTaskIdentifier(rawValue: taskId)
+      guard identifier != .invalid else { return false }
+      UIApplication.shared.endBackgroundTask(identifier)
+      return true
     }
   }
 

@@ -132,6 +132,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
             },
         ],
         'expo-web-browser',
+        // TICKET-120: device-LOCAL import-completion notifications (no APNs/remote
+        // push, no token). Defaults — no custom notification icon/sound/color.
+        'expo-notifications',
         // TICKET-075: native month-calendar date picker for the logger WHEN row.
         '@react-native-community/datetimepicker',
         // @bacons/apple-targets auto-discovers targets/ dirs containing
