@@ -18,8 +18,9 @@ import { priceTierLabel } from '@/lib/priceLevel';
 import { SwipeToDeleteRow } from '@/components/common';
 import type { PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import type { WishlistSourceHandoff } from '@/lib/types/wishlistSource';
+import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 
-/** Tappable origin of a save: the TikTok you saved it from (or maps/web link). */
+/** Tappable origin of a save: the TikTok/Instagram you saved it from (or web link). */
 function sourceLink(
     source: PersonalWishlistItem['source'],
 ): { url: string; icon: keyof typeof Ionicons.glyphMap; label: string } | null {
@@ -28,6 +29,11 @@ function sourceLink(
         return { url: source.url, icon: 'logo-tiktok', label: 'open the TikTok this came from' };
     }
     if (source.type === 'web' && source.url) {
+        // Instagram rides type 'web' (no first-class variant in the source
+        // CHECK) — the host tells it apart.
+        if (isInstagramSource(source)) {
+            return { url: source.url, icon: 'logo-instagram', label: 'open the Instagram post this came from' };
+        }
         return { url: source.url, icon: 'link-outline', label: 'open the page this came from' };
     }
     return null;

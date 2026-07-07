@@ -4,6 +4,7 @@
  *
  * Now handles every import source, not just TikTok:
  *   • tiktok → "saved from tiktok · @handle"  → taps out to the video
+ *   • web + instagram URL → "saved from instagram" → taps out to the reel/post
  *   • web    → "saved from a link"            → taps out to the link
  *   • video  → "saved from a video"           → no link (you shared the file)
  *
@@ -16,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WishlistSource } from '@/lib/types/wishlistSource';
+import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 
 interface SavedFromSourcePanelProps {
     source: WishlistSource;
@@ -34,6 +36,11 @@ function describe(source: WishlistSource): { glyph: Glyph; label: string; url: s
             };
         }
         case 'web':
+            // Instagram rides type 'web' (no first-class variant in the source
+            // CHECK) — detect from the URL so reels read as instagram.
+            if (isInstagramSource(source)) {
+                return { glyph: 'logo-instagram', label: 'saved from instagram', url: source.url ?? null };
+            }
             return { glyph: 'link-outline', label: 'saved from a link', url: source.url ?? null };
         case 'video':
             return { glyph: 'videocam-outline', label: 'saved from a video', url: null };
