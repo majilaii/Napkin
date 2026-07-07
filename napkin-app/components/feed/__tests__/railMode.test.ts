@@ -40,7 +40,7 @@ describe('pickRailMode', () => {
             new Set(),
         );
         expect(res.mode).toBe('trending');
-        expect(res.title).toBe('trending right now');
+        expect(res.title).toBe('trending this week');
         expect(res.cards.map((c) => c.restaurant_id)).toEqual(['t-1', 't-2', 't-3']);
     });
 

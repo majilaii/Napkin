@@ -1,42 +1,45 @@
 /**
- * TrendingRail — the two-mode feed rail (TICKET-098 Phase B + TICKET-102 +
- * TICKET-114 v2 re-dress).
+ * TrendingRail — the two-mode trending block (TICKET-098 Phase B + TICKET-102 +
+ * TICKET-130 "Gazette mix" re-dress: horizontal cards → RANKED LEDGER).
  *
- * Mode 1 (trending): finite horizontal carousel of restaurants sourced from
- * Napkin intake — imports (TikTok/IG share-to-Napkin) are the HEADLINE signal,
- * then saves + list adds. Label "trending right now"; signal line (terracotta)
+ * Mode 1 (trending): vertical ranked ledger of restaurants sourced from Napkin
+ * intake — imports (TikTok/IG share-to-Napkin) are the HEADLINE signal, then
+ * saves + list adds. Kicker "trending this week"; signal line (terracotta)
  * "{n} imported · {m} saved". Hidden below 3 qualifiers.
  *
- * Mode 2 (fallback, TICKET-102): when mode 1 is below the floor, the rail
- * switches SOURCE to restaurants ranked by their stored Google rating. Label
+ * Mode 2 (fallback, TICKET-102): when mode 1 is below the floor, the ledger
+ * switches SOURCE to restaurants ranked by their stored Google rating. Kicker
  * "nearby, well rated"; meta "{rating} on Google" — Google is a labeled SIBLING
- * signal, NEVER a Napkin number.
+ * signal, NEVER a Napkin number, and stays MUTED (never terracotta).
  *
- * Cards are PURELY typographic — no photo, no monogram chip (locked doctrine
- * 2026-07-05 + founder call 2026-07-06): strangers' entry photos aren't visible
- * to the viewer, and a placeholder graphic reads as clutter. Name + signal only.
+ * Rows are pictureless — rank numeral + engraved GlyphChip (line-art Ionicons
+ * outline glyph on a tinted plate, NOT a photo) + name/meta/signal. No photos
+ * anywhere (founder-locked 2026-07-07).
  *
  * Rules (both modes):
- *   - Max 10 cards, then it ends. No infinite scroll, no "load more".
+ *   - Max 5 rows, then it ends. No scroll, no "load more".
  *   - Exactly one mode renders — never mixed grammars (enforced by pickRailMode).
  *   - Hidden ENTIRELY when neither mode has cards (clean absence).
  *   - Tap → restaurant/[id].
  */
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTrending, type TrendingCard, type FallbackCard } from '@/hooks/feed/useTrending';
 import { useSavedRestaurantIds } from '@/hooks/feed/useSavedRestaurantIds';
 import { pickRailMode } from './railMode';
 import { trendingSignal } from './trendingSignal';
+import { SectionKicker } from './SectionKicker';
+import { GlyphChip } from './GlyphChip';
+
+/** Ranked ledger cap — 01–05, no scroll (TICKET-130). */
+const MAX_LEDGER_ROWS = 5;
 
 export function TrendingRail() {
-    const scheme = useColorScheme() ?? 'light';
-    const palette = Colors[scheme];
     const { user } = useAuth();
     const { data } = useTrending();
 
@@ -49,32 +52,34 @@ export function TrendingRail() {
     if (rail.mode === 'hidden') return null;
 
     return (
-        <View style={styles.wrap}>
-            <Text style={[styles.label, { color: palette.textMuted }]}>{rail.title}</Text>
-            <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.railContent}
-            >
+        <View>
+            <SectionKicker>{rail.title}</SectionKicker>
+            <View style={styles.rows}>
                 {rail.mode === 'trending'
-                    ? rail.cards.map((card) => (
-                          <TrendingRailCard key={card.restaurant_id} card={card} />
-                      ))
-                    : rail.cards.map((card) => (
-                          <FallbackRailCard key={card.restaurant_id} card={card} />
-                      ))}
-            </ScrollView>
+                    ? rail.cards
+                          .slice(0, MAX_LEDGER_ROWS)
+                          .map((card, i) => (
+                              <TrendingLedgerRow key={card.restaurant_id} card={card} index={i} />
+                          ))
+                    : rail.cards
+                          .slice(0, MAX_LEDGER_ROWS)
+                          .map((card, i) => (
+                              <FallbackLedgerRow key={card.restaurant_id} card={card} index={i} />
+                          ))}
+            </View>
         </View>
     );
 }
 
-// ── Mode 1 — trending card (TICKET-114 v2 — import-count signal) ─────────────
+// ── Mode 1 — trending row (TICKET-114 import-count signal, terracotta) ───────
 
-function TrendingRailCard({ card }: { card: TrendingCard }) {
+function TrendingLedgerRow({ card, index }: { card: TrendingCard; index: number }) {
     const meta = [card.cuisine, card.neighborhood].filter(Boolean).join(' · ');
     return (
-        <BaseRailCard
+        <BaseLedgerRow
             restaurantId={card.restaurant_id}
+            index={index}
+            cuisine={card.cuisine}
             name={card.name}
             meta={meta}
             signal={trendingSignal(card)}
@@ -82,15 +87,15 @@ function TrendingRailCard({ card }: { card: TrendingCard }) {
     );
 }
 
-// ── Mode 2 — fallback card (Google as a labeled sibling signal) ─────────────
+// ── Mode 2 — fallback row (Google as a labeled sibling signal, muted) ────────
 
-function FallbackRailCard({ card }: { card: FallbackCard }) {
-    // "cuisine · city" meta + a quiet "{rating} on Google" sibling line —
-    // one decimal, source labeled, NEVER co-displayed with a Napkin number.
+function FallbackLedgerRow({ card, index }: { card: FallbackCard; index: number }) {
     const meta = [card.cuisine, card.neighborhood].filter(Boolean).join(' · ');
     return (
-        <BaseRailCard
+        <BaseLedgerRow
             restaurantId={card.restaurant_id}
+            index={index}
+            cuisine={card.cuisine}
             name={card.name}
             meta={meta}
             googleLine={`${card.google_rating.toFixed(1)} on Google`}
@@ -98,102 +103,108 @@ function FallbackRailCard({ card }: { card: FallbackCard }) {
     );
 }
 
-function BaseRailCard({
+function BaseLedgerRow({
     restaurantId,
+    index,
+    cuisine,
     name,
     meta,
     signal,
     googleLine,
 }: {
     restaurantId: string;
+    index: number;
+    cuisine: string | null;
     name: string;
     meta: string;
     /** Mode 1: terracotta import/save signal line. */
     signal?: string;
-    /** Mode 2: quiet Google sibling line. */
+    /** Mode 2: quiet Google sibling line — muted, never terracotta. */
     googleLine?: string;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
 
+    const rank = String(index + 1).padStart(2, '0');
+
     return (
         <Pressable
             onPress={() =>
                 router.push({ pathname: '/restaurant/[id]', params: { id: restaurantId } })
             }
-            style={({ pressed }) => [
-                styles.card,
-                Shadow.subtle,
-                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.85 : 1 },
-            ]}
+            style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={name}
         >
-            {/* Type-led — no photo, no monogram chip. Just the name and its signal. */}
-            <Text numberOfLines={2} style={[styles.name, { color: palette.text }]}>
-                {name}
-            </Text>
-            {!!meta && (
-                <Text numberOfLines={1} style={[styles.meta, { color: palette.textMuted }]}>
-                    {meta}
+            <Text style={[styles.rank, { color: palette.primary }]}>{rank}</Text>
+            <GlyphChip cuisine={cuisine} seed={restaurantId} />
+            <View style={styles.middle}>
+                <Text numberOfLines={1} style={[styles.name, { color: palette.text }]}>
+                    {name}
                 </Text>
-            )}
-            {!!signal && (
-                <Text numberOfLines={1} style={[styles.signal, { color: palette.primary }]}>
-                    {signal}
-                </Text>
-            )}
-            {!!googleLine && (
-                <Text numberOfLines={1} style={[styles.google, { color: palette.textMuted }]}>
-                    {googleLine}
-                </Text>
-            )}
+                {!!meta && (
+                    <Text numberOfLines={1} style={[styles.meta, { color: palette.textMuted }]}>
+                        {meta}
+                    </Text>
+                )}
+                {!!signal && (
+                    <Text numberOfLines={1} style={[styles.signal, { color: palette.primary }]}>
+                        {signal}
+                    </Text>
+                )}
+                {!!googleLine && (
+                    <Text numberOfLines={1} style={[styles.google, { color: palette.textMuted }]}>
+                        {googleLine}
+                    </Text>
+                )}
+            </View>
         </Pressable>
     );
 }
 
 const styles = StyleSheet.create({
-    wrap: {
-        paddingBottom: Spacing.sm,
-    },
-    label: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1.5,
-        textTransform: 'uppercase',
+    rows: {
         paddingHorizontal: Spacing.lg,
-        marginBottom: Spacing.sm,
+        gap: Spacing.md,
     },
-    railContent: {
-        paddingHorizontal: Spacing.lg,
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
         gap: 12,
     },
-    card: {
-        width: 210,
-        borderRadius: Radius.lg,
-        paddingHorizontal: 16,
-        paddingVertical: 15,
+    rank: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 24,
+        opacity: 0.85,
+        minWidth: 34,
+        flexShrink: 0,
+    },
+    middle: {
+        flex: 1,
+        minWidth: 0,
     },
     name: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 19,
+        fontSize: 18.5,
         lineHeight: 23,
-        marginBottom: 4,
     },
     meta: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 11,
-        lineHeight: 15,
+        fontSize: 10.5,
+        lineHeight: 14,
+        marginTop: 1,
     },
     signal: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 11.5,
-        lineHeight: 16,
-        marginTop: 5,
+        fontSize: 11,
+        lineHeight: 15,
+        marginTop: 3,
     },
     google: {
         fontFamily: 'Manrope_400Regular',
         fontSize: 11,
         lineHeight: 15,
-        marginTop: 5,
+        marginTop: 3,
     },
 });

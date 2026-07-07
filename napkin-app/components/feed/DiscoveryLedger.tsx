@@ -24,6 +24,9 @@
  * TICKET-125: re-homed to the For You mode as its "discovery" block (the tail of
  * the explore scroll). Following no longer carries it — its sparse tail is just
  * the caught-up mark now.
+ *
+ * TICKET-130: header re-dressed to the shared big kicker ("worth a look",
+ * Newsreader italic — no uppercase micro-label). Rows unchanged.
  */
 import React, { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -37,12 +40,11 @@ import { useSavedRestaurantIds } from '@/hooks/feed/useSavedRestaurantIds';
 import { visibleFallbackCards } from './fallbackRailGate';
 import { pickRailMode } from './railMode';
 import { shouldShowDiscoveryLedger } from './feedRouting';
+import { SectionKicker } from './SectionKicker';
 
 const MAX_LEDGER_ROWS = 6;
 
 export function DiscoveryLedger() {
-    const scheme = useColorScheme() ?? 'light';
-    const palette = Colors[scheme];
     const { user } = useAuth();
     const { data } = useTrending();
 
@@ -62,8 +64,8 @@ export function DiscoveryLedger() {
     if (cards.length === 0) return null;
 
     return (
-        <View style={styles.wrap}>
-            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>Worth a look</Text>
+        <View>
+            <SectionKicker>worth a look</SectionKicker>
             <View style={styles.rows}>
                 {cards.map((card, i) => (
                     <DiscoveryRow key={card.restaurant_id} card={card} index={i} />
@@ -110,17 +112,8 @@ function DiscoveryRow({ card, index }: { card: FallbackCard; index: number }) {
 }
 
 const styles = StyleSheet.create({
-    wrap: {
-        paddingHorizontal: Spacing.lg,
-    },
-    sectionLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1.5,
-        textTransform: 'uppercase',
-    },
     rows: {
-        marginTop: Spacing.md,
+        paddingHorizontal: Spacing.lg,
         gap: 19,
     },
     row: {

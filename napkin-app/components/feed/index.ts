@@ -38,3 +38,7 @@ export { PeopleToFollowBlock } from './PeopleToFollowBlock';
 
 // TICKET-115 Table lists — quiet ledger line for table-list adds
 export { ListAddLedgerLine } from './ListAddLedgerLine';
+
+// TICKET-130 Gazette mix — shared big kicker + engraved cuisine chip
+export { SectionKicker } from './SectionKicker';
+export { GlyphChip, chipTint } from './GlyphChip';

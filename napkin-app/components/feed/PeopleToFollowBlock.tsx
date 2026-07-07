@@ -1,25 +1,29 @@
 /**
- * PeopleToFollowBlock — the For You feed's "taste buds" people block (TICKET-125).
+ * PeopleToFollowBlock — the For You feed's "taste buds" people block
+ * (TICKET-125 + TICKET-130 "Gazette mix" re-dress: slab rows → AVATAR RAIL on
+ * the page ground, no slab background).
  *
  *   people you've eaten with
- *   [avatar]  Clara            [ follow ]
- *             3 meals together
+ *   ( avatar )  ( avatar )  ( avatar )   → horizontal scroll
+ *     Clara       Thomas      Julian
+ *   3 meals together  ·  [ follow ] pill under each
  *
  * v1 source: co-diners — people the viewer has actually eaten with on Napkin but
  * doesn't follow yet (useCoDiners, ranked by meals-together). Taste-calibrated
  * stranger suggestions (Ring-2) are DEFERRED (decision 3) — this block is
- * co-diners only. Extracted from the old FeedEmptyState tier-1 slab; it OWNS the
- * CoDinerFollowCard optimistic-follow contract (TICKET-126 adapts, never forks).
+ * co-diners only.
  *
- * One tap follows via the shipped useFollow (optimistic snapshot→patch→rollback);
- * the card owns a local `followed` flag so the tap "does something" instantly,
- * then is removed on success and the friends feed is invalidated so a switch to
- * Following shows the newly-followed author. Self-hides (renders null) when there
- * are no co-diners left to show — For You's own empty fallback owns the
- * all-empty case, and the ghost/invite lives in Following, not here.
+ * Mechanics are UNCHANGED from TICKET-125 (restyle only): one tap follows via
+ * the shipped useFollow (optimistic snapshot→patch→rollback); the block owns
+ * local followed/removed sets so the tap "does something" instantly, then the
+ * card is removed on success and queryKeys.feed.friends(viewerId) is
+ * invalidated so a switch to Following shows the newly-followed author.
+ * PersonRailCard is a rail-shaped SIBLING of CoDinerFollowCard — the row card
+ * stays untouched for its other consumers (TICKET-126 onboarding). Self-hides
+ * (renders null) when there are no co-diners left to show.
  */
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import Animated, { FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
@@ -28,10 +32,13 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { queryKeys } from '@/lib/queryKeys';
-import { useCoDiners } from '@/hooks/feed/useCoDiners';
+import { useCoDiners, type CoDinerCandidate } from '@/hooks/feed/useCoDiners';
 import { useFollow } from '@/hooks/users/useFollow';
 import { resolveEmptyState } from './feedEmptyStateGate';
-import { CoDinerFollowCard } from './CoDinerFollowCard';
+import { SectionKicker } from './SectionKicker';
+import { Avatar } from './Avatar';
+
+type Palette = typeof Colors.light;
 
 export function PeopleToFollowBlock() {
     const scheme = useColorScheme() ?? 'light';
@@ -94,47 +101,136 @@ export function PeopleToFollowBlock() {
     if (visible.length === 0) return null;
 
     return (
-        <View style={styles.wrap}>
-            <View style={[styles.slab, { backgroundColor: palette.surfaceJournalLow }]}>
-                <Text style={[styles.kicker, { color: palette.primary }]}>
-                    people you&rsquo;ve eaten with
+        <View>
+            <SectionKicker>people you&rsquo;ve eaten with</SectionKicker>
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.railContent}
+            >
+                {visible.map((candidate) => (
+                    <Animated.View
+                        key={candidate.user_id}
+                        exiting={FadeOut.duration(200)}
+                        layout={LinearTransition.duration(200)}
+                    >
+                        <PersonRailCard
+                            candidate={candidate}
+                            palette={palette}
+                            followed={followedIds.has(candidate.user_id)}
+                            onFollow={() => handleFollow(candidate.user_id)}
+                            onOpenProfile={() => handleOpenProfile(candidate.user_id)}
+                        />
+                    </Animated.View>
+                ))}
+            </ScrollView>
+        </View>
+    );
+}
+
+/**
+ * PersonRailCard — vertical rail item (avatar over name over meals-count over
+ * an outline follow pill). Same contract as CoDinerFollowCard, rail-shaped.
+ */
+function PersonRailCard({
+    candidate,
+    palette,
+    followed,
+    onFollow,
+    onOpenProfile,
+}: {
+    candidate: CoDinerCandidate;
+    palette: Palette;
+    followed: boolean;
+    onFollow: () => void;
+    onOpenProfile: () => void;
+}) {
+    const meals = candidate.meals_together;
+    const metaLine = `${meals} ${meals === 1 ? 'meal' : 'meals'} together`;
+
+    return (
+        <View style={styles.person}>
+            <Avatar
+                name={candidate.display_name}
+                url={candidate.avatar_url}
+                size={54}
+                palette={palette}
+                onPress={onOpenProfile}
+            />
+            <Pressable
+                onPress={onOpenProfile}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${candidate.display_name}'s profile`}
+            >
+                <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
+                    {candidate.display_name}
                 </Text>
-                <View style={styles.cardList}>
-                    {visible.map((candidate) => (
-                        <Animated.View
-                            key={candidate.user_id}
-                            exiting={FadeOut.duration(200)}
-                            layout={LinearTransition.duration(200)}
-                        >
-                            <CoDinerFollowCard
-                                candidate={candidate}
-                                followed={followedIds.has(candidate.user_id)}
-                                onFollow={() => handleFollow(candidate.user_id)}
-                                onOpenProfile={() => handleOpenProfile(candidate.user_id)}
-                            />
-                        </Animated.View>
-                    ))}
-                </View>
-            </View>
+                <Text style={[styles.meals, { color: palette.textMuted }]} numberOfLines={1}>
+                    {metaLine}
+                </Text>
+            </Pressable>
+            <Pressable
+                onPress={followed ? undefined : onFollow}
+                disabled={followed}
+                hitSlop={6}
+                style={({ pressed }) => [
+                    styles.followBtn,
+                    followed
+                        ? { borderColor: palette.outlineVariant }
+                        : { borderColor: palette.terracottaBorderStrong, opacity: pressed ? 0.7 : 1 },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={
+                    followed
+                        ? `Following ${candidate.display_name}`
+                        : `Follow ${candidate.display_name}`
+                }
+            >
+                <Text
+                    style={[
+                        styles.followText,
+                        { color: followed ? palette.textMuted : palette.primary },
+                    ]}
+                >
+                    {followed ? 'following' : 'follow'}
+                </Text>
+            </Pressable>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    wrap: {
+    railContent: {
         paddingHorizontal: Spacing.lg,
+        gap: Spacing.md,
     },
-    slab: {
-        borderRadius: Radius.xl,
-        padding: 20,
+    person: {
+        width: 104,
+        alignItems: 'center',
     },
-    kicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9.5,
-        letterSpacing: 1.8,
-        textTransform: 'uppercase',
+    name: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        marginTop: 8,
+        textAlign: 'center',
+        maxWidth: 100,
     },
-    cardList: {
-        marginTop: 10,
+    meals: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 9,
+        marginTop: 2,
+        textAlign: 'center',
+        maxWidth: 100,
+    },
+    followBtn: {
+        borderWidth: 1.5,
+        borderRadius: Radius.full,
+        paddingHorizontal: 14,
+        paddingVertical: 5,
+        marginTop: 8,
+    },
+    followText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
     },
 });

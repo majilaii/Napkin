@@ -2,12 +2,14 @@
  * ForYouFeed — the For You body of the Feed tab (TICKET-125).
  *
  * The app's one discovery home: a fixed, ordered stack of already-shipped
- * discovery surfaces (no new ranking engine, no stranger review content):
+ * discovery surfaces (no new ranking engine, no stranger review content).
+ * TICKET-130 "Gazette mix" order:
  *
- *   1. public lists   — recent public lists (net-new browse surface)
- *   2. trending       — TrendingRail (import/save intent OR Google-rated fallback)
- *   3. people         — co-diners you've eaten with (follow suggestions)
- *   4. discovery      — DiscoveryLedger "Worth a look" (Google-rated, demoted tail)
+ *   1. trending       — TrendingRail ranked ledger (import/save intent OR
+ *                       Google-rated fallback)
+ *   2. public lists   — poster rail of recent public lists
+ *   3. people         — co-diners you've eaten with (avatar rail, follow)
+ *   4. discovery      — DiscoveryLedger "worth a look" (Google-rated, demoted tail)
  *
  * Composition is central: `visibleForYouBlocks(flags)` computes which blocks
  * render, so the "everything empty" case has one clean answer (empty array ⇒
