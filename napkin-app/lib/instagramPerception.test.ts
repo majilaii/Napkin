@@ -47,6 +47,7 @@ describe('extractInstagramShortcode', () => {
 
     it('returns null for /share/ indirection + profiles', () => {
         expect(extractInstagramShortcode('https://www.instagram.com/share/reel/_abcDEF')).toBe(null);
+        expect(extractInstagramShortcode('https://instagr.am/share/reel/_abcDEF')).toBe(null);
         expect(extractInstagramShortcode('https://www.instagram.com/topjaw/')).toBe(null);
     });
 });
@@ -79,12 +80,22 @@ describe('parseInstagramEmbed', () => {
         );
     });
 
-    it('extracts the caption with handles/hashtags kept and comments stripped', () => {
+    it('extracts the caption EXACTLY — no markup residue, comments stripped', () => {
         const { caption } = parseInstagramEmbed(EMBED_CAPTION_FRAGMENT);
-        expect(caption).toContain('topjaw');
-        expect(caption).toContain('@jamiedemetriou');
-        expect(caption).toContain('Part 2 Best of #London');
-        expect(caption).not.toContain('View all 126 comments');
+        expect(caption).toBe(
+            'topjaw\nThere’s no way we could’ve fit @jamiedemetriou into one reel… Part 2 Best of #London',
+        );
+    });
+
+    it('cuts cleanly at a Footer boundary when there is no comments block', () => {
+        const html =
+            '<div class="Caption"><a class="CaptionUsername" href="/x/">chef</a><br />best pasta 🍝 in <a href="/explore/tags/rome/">#rome</a><div class="Footer"><a>footer junk</a></div></div>';
+        expect(parseInstagramEmbed(html).caption).toBe('chef\nbest pasta 🍝 in #rome');
+    });
+
+    it('survives out-of-range numeric entities without throwing', () => {
+        const html = '<div class="Caption">ok &#x110000; fine<div class="Footer">';
+        expect(parseInstagramEmbed(html).caption).toBe('ok fine');
     });
 
     it('returns nulls on markup with neither field', () => {

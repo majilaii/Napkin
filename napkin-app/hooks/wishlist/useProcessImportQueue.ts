@@ -267,7 +267,10 @@ export function useProcessImportQueue() {
                         body: extractedText ? { extracted_text: extractedText } : { url: m.url },
                     });
                     candidates = resolved?.candidates ?? [];
-                    if (candidates.length === 0 && extractedText) {
+                    // Instagram's url tier is a login-walled constant (zero
+                    // candidates + ig_nudge, which this queue ignores) — the
+                    // fallback would burn a resolve_url rate slot for nothing.
+                    if (candidates.length === 0 && extractedText && provider !== 'instagram') {
                         const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
                             body: { url: m.url },
                         });

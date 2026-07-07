@@ -59,7 +59,7 @@ export function isInstagramUrl(url: string | null | undefined): boolean {
  */
 export function extractInstagramShortcode(url: string): string | null {
     // /share/reel/{token} tokens are NOT shortcodes — force the redirect path.
-    if (/instagram\.com\/share\//i.test(url)) return null;
+    if (/(instagram\.com|instagr\.am)\/share\//i.test(url)) return null;
     const m = url.match(/\/(?:reels?|p|tv)\/([A-Za-z0-9_-]{5,})/);
     return m ? m[1] : null;
 }
@@ -84,9 +84,12 @@ function unescapeJsonLayers(raw: string): string | null {
 
 /** Decode the handful of HTML entities Instagram markup actually emits. */
 function decodeEntities(s: string): string {
+    // Clamp to the valid code-point range — fromCodePoint THROWS past 0x10FFFF
+    // and a hostile caption must degrade, not take the whole perception down.
+    const cp = (n: number) => (n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : '');
     return s
-        .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-        .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, h) => cp(parseInt(h, 16)))
+        .replace(/&#(\d+);/g, (_, d) => cp(parseInt(d, 10)))
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
@@ -127,19 +130,18 @@ export function parseInstagramEmbed(html: string): {
         if (decoded && decoded.startsWith('http')) videoUrl = decoded;
     }
 
-    // Caption: the .Caption div, minus the trailing CaptionComments block and
-    // the leading CaptionUsername anchor (keep the handle text — it can carry
-    // the city signal).
+    // Caption: the .Caption div's inner markup — slice from AFTER the opening
+    // tag's '>' and cut BEFORE the next block's opening '<div' so neither tag
+    // remnant survives the strip. Keep the username anchor's text — the handle
+    // can carry the city signal.
     let caption: string | null = null;
-    const capStart = html.indexOf('class="Caption"');
-    if (capStart >= 0) {
-        const capEndRel = html.slice(capStart).search(/class="(CaptionComments|Footer)"/);
-        const fragment = html.slice(
-            capStart,
-            capEndRel >= 0 ? capStart + capEndRel : capStart + 4000,
-        );
-        const text = captionMarkupToText(fragment).replace(/^Caption"?>?\s*/, '');
-        caption = text || null;
+    const capTag = html.indexOf('class="Caption"');
+    const capOpen = capTag >= 0 ? html.indexOf('>', capTag) : -1;
+    if (capOpen >= 0) {
+        const inner = html.slice(capOpen + 1);
+        const endRel = inner.search(/<div[^>]*class="(CaptionComments|Footer)"/);
+        const fragment = endRel >= 0 ? inner.slice(0, endRel) : inner.slice(0, 4000);
+        caption = captionMarkupToText(fragment) || null;
     }
 
     return { caption, videoUrl };
@@ -161,6 +163,10 @@ export function parseOgDescriptionCaption(html: string): string | null {
 }
 
 async function fetchHtml(url: string): Promise<{ html: string; finalUrl: string } | null> {
+    // Deadline per fetch: the interactive resolver runs this behind a spinner,
+    // and iOS's 60s default would hold "reading the post…" hostage on a stall.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
     try {
         const res = await fetch(url, {
             headers: {
@@ -168,11 +174,14 @@ async function fetchHtml(url: string): Promise<{ html: string; finalUrl: string 
                 Accept: 'text/html,application/xhtml+xml',
                 'Accept-Language': 'en-GB,en;q=0.9',
             },
+            signal: controller.signal,
         });
         if (!res.ok) return null;
         return { html: await res.text(), finalUrl: res.url || url };
     } catch {
         return null;
+    } finally {
+        clearTimeout(timer);
     }
 }
 
