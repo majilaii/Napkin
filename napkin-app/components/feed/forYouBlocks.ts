@@ -9,9 +9,10 @@
  * answer: `visibleForYouBlocks(flags)` returns `[]` ⇒ the For You empty
  * fallback renders. Blocks still self-guard defensively inside their components.
  *
- * Fixed order: public lists → trending → people → discovery. Trending and
- * discovery are MUTUALLY EXCLUSIVE (the existing pickRailMode arbiter owns that
- * split): `railVisible` and `hasDiscovery` are never both true for one render.
+ * Fixed order (TICKET-130 Gazette mix): trending → public lists → people →
+ * discovery. Trending and discovery are MUTUALLY EXCLUSIVE (the existing
+ * pickRailMode arbiter owns that split): `railVisible` and `hasDiscovery` are
+ * never both true for one render.
  *
  * IMPORTANT: For You renders NO `entry` cards — only list-, restaurant-, and
  * person-level rows. It therefore introduces no public-scope reaction/comment
@@ -40,8 +41,8 @@ export interface ForYouFlags {
 /** Fixed order; only visible blocks are included. Empty array ⇒ For You empty. */
 export function visibleForYouBlocks(f: ForYouFlags): ForYouBlock[] {
     const out: ForYouBlock[] = [];
-    if (f.hasPublicLists) out.push({ _type: 'public_lists' });
     if (f.railVisible) out.push({ _type: 'trending' });
+    if (f.hasPublicLists) out.push({ _type: 'public_lists' });
     if (f.hasCoDiners) out.push({ _type: 'people' });
     if (f.hasDiscovery) out.push({ _type: 'discovery' });
     return out;

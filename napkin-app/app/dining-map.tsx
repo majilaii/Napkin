@@ -1,14 +1,15 @@
 /**
  * /dining-map — everywhere a user has eaten, as geography (TICKET-092).
- * Reuses WishlistMapView (terracotta pins, peek card, lazy location) with the
- * list toggle omitted — back chevron is the way out.
+ * Reuses WishlistMapView (rec'd-shaped chrome, peek card, lazy location) with
+ * the List pill omitted — back chevron is the way out.
  *
- * TICKET-124: on the SELF view (no userId param, or it's your own id), a
- * mine ↔ network segmented toggle switches the pins between your own logged
- * spots and restaurants logged by people you FOLLOW. A network peek taps through
- * by data: a review-eligible log → the followee's review (entry-detail, public
+ * TICKET-124/131: on the SELF view (no userId param, or it's your own id),
+ * Mine · Network source pills (floating top-left, below the title row) switch
+ * the pins between your own logged spots (olive teardrops) and restaurants
+ * logged by people you FOLLOW (avatar pins). A network peek taps through by
+ * data: a review-eligible log → the followee's review (entry-detail, public
  * scope); a thin/rating-only log → the restaurant page. Viewing someone else's
- * map stays their spots only — no toggle.
+ * map stays their spots only — no pills.
  */
 import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -16,13 +17,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { WishlistMapView, type WishlistMapItem } from '@/components/wishlist/WishlistMapView';
+import { spotsToMapItems, networkPinsToMapItems } from '@/components/wishlist/mapItems';
 
 export default function DiningMapScreen() {
     const { userId } = useLocalSearchParams<{ userId?: string }>();
@@ -44,39 +46,11 @@ export default function DiningMapScreen() {
     const { data: networkPins } = useNetworkMapPins(isSelf ? user?.id : null);
     const { coords, status, request } = useNearbyLocation();
 
-    const mineItems: WishlistMapItem[] = useMemo(
-        () =>
-            (spots ?? [])
-                .filter((s) => s.lat != null && s.lng != null)
-                .map((s) => ({
-                    id: s.restaurant_id,
-                    name: s.name,
-                    city: s.city,
-                    cuisine: s.cuisine,
-                    lat: s.lat!,
-                    lng: s.lng!,
-                })),
-        [spots],
-    );
-
-    // Network pins already carry non-null coords (RPC filters them); map to the
-    // WishlistMapItem network shape (author/rating/note/entryId → peek variant).
+    // Shared mappers (TICKET-131, components/wishlist/mapItems.ts): logged spots
+    // → olive "been" pins; network pins → avatar pins (entryId = network variant).
+    const mineItems: WishlistMapItem[] = useMemo(() => spotsToMapItems(spots), [spots]);
     const networkItems: WishlistMapItem[] = useMemo(
-        () =>
-            (networkPins ?? []).map((p) => ({
-                id: p.restaurant_id,
-                name: p.name,
-                city: p.city,
-                cuisine: p.cuisine,
-                lat: p.lat,
-                lng: p.lng,
-                author: p.author,
-                rating: p.rating,
-                note: p.note,
-                entryId: p.entry_id,
-                hasReview: p.has_review,
-                othersCount: p.others_count,
-            })),
+        () => networkPinsToMapItems(networkPins),
         [networkPins],
     );
 
@@ -101,7 +75,20 @@ export default function DiningMapScreen() {
                 onOpenReview={(entryId) =>
                     router.push({ pathname: '/entry-detail', params: { entryId, viewAs: 'public' } })
                 }
-                sourceToggle={isSelf ? { value: source, onChange: setSource } : undefined}
+                sources={
+                    isSelf
+                        ? {
+                              options: [
+                                  { key: 'mine', label: 'Mine' },
+                                  { key: 'network', label: 'Network' },
+                              ],
+                              value: source,
+                              onChange: (k) => setSource(k as 'mine' | 'network'),
+                          }
+                        : undefined
+                }
+                // Pills sit below the frosted back chevron + title chip row.
+                chromeTopOffset={insets.top + 56}
                 palette={palette}
             />
 

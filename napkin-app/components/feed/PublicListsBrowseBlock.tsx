@@ -1,30 +1,35 @@
 /**
- * PublicListsBrowseBlock — the For You feed's public-lists block (TICKET-125).
+ * PublicListsBrowseBlock — the For You feed's public-lists block (TICKET-125 +
+ * TICKET-130 "Gazette mix" re-dress: vertical rows → horizontal POSTER RAIL).
  *
- *   Lists worth reading
- *   🍜  best late-night ramen        ← lead (RPC recency order)
- *       12 spots · by Clara
- *   📓  everywhere in Lisbon
- *       8 spots · by Thomas
- *   see more →                        ← hands off to search's Lists segment
+ *   lists worth reading
+ *   ┌ tinted poster ┐ ┌ tinted poster ┐
+ *   │ 🍜            │ │ 📓            │
+ *   │ best late-    │ │ everywhere    │  → horizontal scroll
+ *   │ night ramen   │ │ in Lisbon     │
+ *   │ 12 spots · by │ │ 8 spots · by  │
+ *   └───────────────┘ └───────────────┘
+ *   see more →                            ← hands off to search's Lists segment
  *
- * Typographic per locked doctrine (TICKET-084 / decision 4): NO thumbnails, no
- * photo covers. Row presentation is cloned from ListsSearchPane.ResultRow —
- * emoji · italic-serif title · "N spots · by {author}". The first row is the
- * lead purely by recency order (no editorial/featured treatment — decision 5).
+ * Pictureless per locked doctrine (TICKET-084 / decision 4): NO thumbnails, no
+ * photo covers — the poster is emoji + type on a tinted paper plate (tint
+ * seeded per list id from the same three tokens as GlyphChip). The first card
+ * is the lead purely by recency order (no editorial treatment — decision 5).
  *
- * Rows tap out to /list/[id] (viewer mode). "see more" routes to the search tab
- * with the Lists segment active (hierarchical: For You → the search Lists hub).
- * Self-hides when there are no rows.
+ * Cards tap out to /list/[id] (viewer mode). "see more" routes to the search
+ * tab with the Lists segment active (hierarchical: For You → the search Lists
+ * hub). Self-hides when there are no rows.
  */
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { PublicListResult } from '@/hooks/lists/useSearchPublicLists';
+import { SectionKicker } from './SectionKicker';
+import { chipTint } from './GlyphChip';
 
 type Palette = typeof Colors.light;
 
@@ -32,7 +37,7 @@ interface Props {
     lists: PublicListResult[];
 }
 
-function ListBrowseRow({
+function ListPosterCard({
     list,
     palette,
     onPress,
@@ -46,19 +51,21 @@ function ListBrowseRow({
     return (
         <Pressable
             onPress={() => onPress(list)}
-            style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
+            style={({ pressed }) => [
+                styles.poster,
+                { backgroundColor: chipTint(list.id, palette) },
+                pressed && { opacity: 0.8 },
+            ]}
             accessibilityRole="button"
             accessibilityLabel={list.title}
         >
             {list.emoji ? <Text style={styles.emoji}>{list.emoji}</Text> : null}
-            <View style={styles.rowText}>
-                <Text style={[styles.title, { color: palette.text }]} numberOfLines={1}>
-                    {list.title}
-                </Text>
-                <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
-                    {meta}
-                </Text>
-            </View>
+            <Text style={[styles.title, { color: palette.text }]} numberOfLines={2}>
+                {list.title}
+            </Text>
+            <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
+                {meta}
+            </Text>
         </Pressable>
     );
 }
@@ -83,20 +90,22 @@ export function PublicListsBrowseBlock({ lists }: Props) {
     if (lists.length === 0) return null;
 
     return (
-        <View style={styles.wrap}>
-            <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
-                Lists worth reading
-            </Text>
-            <View style={styles.rows}>
+        <View>
+            <SectionKicker>lists worth reading</SectionKicker>
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.railContent}
+            >
                 {lists.map((list) => (
-                    <ListBrowseRow
+                    <ListPosterCard
                         key={list.id}
                         list={list}
                         palette={palette}
                         onPress={handlePress}
                     />
                 ))}
-            </View>
+            </ScrollView>
             <Pressable
                 onPress={handleSeeMore}
                 style={({ pressed }) => [styles.seeMore, pressed && { opacity: 0.7 }]}
@@ -111,46 +120,37 @@ export function PublicListsBrowseBlock({ lists }: Props) {
 }
 
 const styles = StyleSheet.create({
-    wrap: {
+    railContent: {
         paddingHorizontal: Spacing.lg,
+        gap: 10,
     },
-    sectionLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1.5,
-        textTransform: 'uppercase',
-        marginBottom: Spacing.md,
-    },
-    rows: {
-        gap: 18,
-    },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.sm,
+    poster: {
+        minWidth: 150,
+        maxWidth: 172,
+        borderRadius: 16,
+        padding: 13,
     },
     emoji: {
-        fontSize: 20,
-    },
-    rowText: {
-        flex: 1,
-        minWidth: 0,
+        fontSize: 24,
+        marginBottom: 10,
     },
     title: {
         fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 18,
-        lineHeight: 22,
+        fontSize: 15,
+        lineHeight: 19,
     },
     meta: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
-        marginTop: 2,
+        fontSize: 10,
+        marginTop: 4,
     },
     seeMore: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 2,
-        marginTop: 16,
+        marginTop: 12,
+        paddingHorizontal: Spacing.lg,
+        alignSelf: 'flex-start',
     },
     seeMoreText: {
         fontFamily: 'Manrope_600SemiBold',

@@ -7,16 +7,17 @@
  *   - fallback  else, iff any fallback cards survive the client dedup/floor
  *   - hidden    else
  *
- * The title switches with the mode: mode-1 says 'trending right now' (TICKET-114);
- * mode-2 says 'nearby, well rated' (lowercase — never claims a popularity it
- * lacks). Cards are a union type; the component branches on `mode` to pick the
- * meta formatter, so a fallback card is never rendered with a trending signal line.
+ * The title switches with the mode: mode-1 says 'trending this week'
+ * (TICKET-130 kicker copy — founder-locked); mode-2 says 'nearby, well rated'
+ * (lowercase — never claims a popularity it lacks). Cards are a union type; the
+ * component branches on `mode` to pick the meta formatter, so a fallback card
+ * is never rendered with a trending signal line.
  */
 import type { TrendingCard, FallbackCard } from '@/hooks/feed/useTrending';
 import { visibleTrendingCards } from './trendingRailGate';
 import { visibleFallbackCards } from './fallbackRailGate';
 
-export const TRENDING_TITLE = 'trending right now';
+export const TRENDING_TITLE = 'trending this week';
 export const FALLBACK_TITLE = 'nearby, well rated';
 
 export type RailMode =

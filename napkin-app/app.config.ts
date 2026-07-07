@@ -77,6 +77,15 @@ export default ({ config }: ConfigContext): ExpoConfig =>
         },
         // Read from env var; unset = plugin warns but prebuild still works for sim.
         ...(process.env.APPLE_TEAM_ID ? { appleTeamId: process.env.APPLE_TEAM_ID } : {}),
+        // TICKET-131: key-gated Google-on-iOS map tiles. The entry exists ONLY
+        // when GOOGLE_MAPS_IOS_KEY is set at build time — an empty/undefined
+        // config.googleMapsApiKey would still trigger the Google Maps pods at
+        // prebuild. Keyless builds stay Apple Maps (PROVIDER_DEFAULT + vellum
+        // wash); WishlistMapView reads Constants.expoConfig.ios.config to flip
+        // to PROVIDER_GOOGLE + heirloomMapStyle at runtime.
+        ...(process.env.GOOGLE_MAPS_IOS_KEY
+            ? { config: { googleMapsApiKey: process.env.GOOGLE_MAPS_IOS_KEY } }
+            : {}),
     },
     android: {
         adaptiveIcon: {
@@ -196,5 +205,11 @@ export default ({ config }: ConfigContext): ExpoConfig =>
         eas: {
             projectId: '21d56495-18b4-46c9-9a81-673649cc1dca',
         },
+        // TICKET-131 cold-review P1 fix: the runtime manifest STRIPS ios.config,
+        // so WishlistMapView can never read the key from there. Mirror the key's
+        // PRESENCE (never the key itself) into extra, which survives into
+        // Constants.expoConfig. Same env var gates the native pods at prebuild,
+        // so flag ⇔ native Google support by construction.
+        hasGoogleMapsIosKey: !!process.env.GOOGLE_MAPS_IOS_KEY,
     },
 });
