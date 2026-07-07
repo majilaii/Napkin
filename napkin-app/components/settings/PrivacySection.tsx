@@ -19,7 +19,7 @@ export function PrivacySection() {
     const { user } = useAuth();
 
     const { data: result } = useUserProfile(user?.id);
-    const privacy = result?.data?.profile?.account_privacy ?? 'private';
+    const privacy = result?.data?.profile?.account_privacy ?? 'public';
 
     const secondaryText =
         privacy === 'public'
