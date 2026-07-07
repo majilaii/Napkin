@@ -36,6 +36,10 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { track, trackError, flushNow } from '@/lib/track';
+import { initSentry, captureError, wrapRootComponent } from '@/lib/sentry';
+
+// TICKET-121: before any render. No-op until EXPO_PUBLIC_SENTRY_DSN exists.
+initSentry();
 
 SplashScreen.preventAutoHideAsync();
 
@@ -50,6 +54,7 @@ if (!(globalThis as { __napkinFatalHook?: boolean }).__napkinFatalHook) {
     try {
       if (isFatal) {
         trackError(error, 'fatal');
+        captureError(error, { context: 'fatal' });
         flushNow(); // best-effort — the debounce would never fire before the crash
       }
     } catch {
@@ -270,7 +275,13 @@ function RootLayoutNav() {
       <View style={{ flex: 1 }}>
         {/* Root catch: a render error anywhere used to white-screen the whole
             app with zero trace (only entry-detail was wrapped). */}
-        <ErrorBoundary screen="root" onError={(e) => trackError(e, 'root-boundary')}>
+        <ErrorBoundary
+          screen="root"
+          onError={(e) => {
+            trackError(e, 'root-boundary');
+            captureError(e, { context: 'root-boundary' });
+          }}
+        >
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="auth" options={{ headerShown: false }} />
@@ -416,7 +427,7 @@ function RootLayoutNav() {
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   const [fontsLoaded] = useFonts({
     Newsreader_400Regular,
     Newsreader_400Regular_Italic,
@@ -458,3 +469,6 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+// TICKET-121: Sentry.wrap when the DSN is live; plain export otherwise.
+export default wrapRootComponent(RootLayout);

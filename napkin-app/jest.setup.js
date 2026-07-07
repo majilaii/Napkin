@@ -32,6 +32,15 @@ jest.mock('@react-native-async-storage/async-storage', () =>
     require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
 
+// @sentry/react-native ships ESM dist (not in transformIgnorePatterns) — mock
+// globally so any module importing lib/sentry.ts parses in node tests.
+jest.mock('@sentry/react-native', () => ({
+    init: jest.fn(),
+    wrap: jest.fn((component) => component),
+    captureException: jest.fn(),
+    addBreadcrumb: jest.fn(),
+}));
+
 jest.mock('expo-linking', () => ({
     createURL: jest.fn(),
     parse: jest.fn(),
