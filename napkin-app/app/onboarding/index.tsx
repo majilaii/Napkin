@@ -1,7 +1,8 @@
 /**
- * Onboarding S1 — Name (TICKET-107).
+ * Onboarding S1 — Name (TICKET-107; v2 TICKET-126).
  * A single Manrope-labelled input, prefilled from the signup display_name.
- * No prose (copy-economy doctrine). Next → S2 (home city), carrying the name.
+ * No prose (copy-economy doctrine). Next → S2 (photo), writing the name to the
+ * onboarding draft (state now lives in OnboardingDraftContext, not route params).
  */
 import React, { useState } from 'react';
 import {
@@ -19,6 +20,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { onboardingStyles as s } from './styles';
+import { useOnboardingDraft } from './OnboardingDraftContext';
 
 export default function OnboardingNameScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -26,10 +28,12 @@ export default function OnboardingNameScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
+    const { draft, patch } = useOnboardingDraft();
 
     const initial =
-        (user?.user_metadata?.display_name as string | undefined) ??
-        (user?.user_metadata?.full_name as string | undefined) ??
+        draft.display_name ||
+        (user?.user_metadata?.display_name as string | undefined) ||
+        (user?.user_metadata?.full_name as string | undefined) ||
         '';
     const [name, setName] = useState(initial);
 
@@ -37,7 +41,8 @@ export default function OnboardingNameScreen() {
 
     const next = () => {
         if (!canContinue) return;
-        router.push({ pathname: '/onboarding/city', params: { name: name.trim() } });
+        patch({ display_name: name.trim() });
+        router.push('/onboarding/photo');
     };
 
     return (

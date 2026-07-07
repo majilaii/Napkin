@@ -1588,8 +1588,20 @@ serve(async (req) => {
         // be left half-set (name saved but onboarded_at NULL). home_city is the
         // FREE-TEXT profiles column (NOT set_user_home_city / claimed cities);
         // it's optional (skip on S2), capped, trimmed-to-null.
+        //
+        // TICKET-126: also carries the uploaded avatar_url (optional/nullable),
+        // and UNCONDITIONALLY stamps terms_accepted_at (13+ / Terms acceptance —
+        // every new user passes through this) and account_privacy='public'
+        // (doctrine 2026-04-20: public-by-default with opt-out in settings). This
+        // is written directly (not via update_privacy) so it deliberately
+        // bypasses the "username required to go public" guard — onboarding
+        // captures no username; opt-out and handle-claim live in settings.
         if (action === 'complete_onboarding') {
-            const updates: Record<string, unknown> = { onboarded_at: new Date().toISOString() };
+            const updates: Record<string, unknown> = {
+                onboarded_at: new Date().toISOString(),
+                terms_accepted_at: new Date().toISOString(),
+                account_privacy: 'public',
+            };
 
             if (typeof body.display_name === 'string') {
                 const name = body.display_name.trim();
@@ -1601,12 +1613,17 @@ serve(async (req) => {
                 const city = body.home_city == null ? '' : String(body.home_city).trim();
                 updates.home_city = city ? city.slice(0, 120) : null;
             }
+            // avatar_url is optional (skip) — trim to null, cap at 500 chars.
+            if (body.avatar_url !== undefined) {
+                const avatar = body.avatar_url == null ? '' : String(body.avatar_url).trim();
+                updates.avatar_url = avatar ? avatar.slice(0, 500) : null;
+            }
 
             const { data: updated, error } = await supabase
                 .from('profiles')
                 .update(updates)
                 .eq('user_id', user.id)
-                .select('user_id, username, display_name, bio, avatar_url, home_city, onboarded_at, account_privacy, allow_public_replies')
+                .select('user_id, username, display_name, bio, avatar_url, home_city, onboarded_at, terms_accepted_at, account_privacy, allow_public_replies')
                 .single();
             if (error) throw error;
 

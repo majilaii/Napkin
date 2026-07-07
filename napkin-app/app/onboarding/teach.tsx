@@ -7,7 +7,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
@@ -15,6 +15,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCompleteOnboarding } from '@/hooks/onboarding/useCompleteOnboarding';
 import { onboardingStyles as s } from './styles';
+import { useOnboardingDraft } from './OnboardingDraftContext';
 
 export default function OnboardingTeachScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -22,17 +23,21 @@ export default function OnboardingTeachScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
-    const { name, city } = useLocalSearchParams<{ name?: string; city?: string }>();
+    const { draft } = useOnboardingDraft();
     const complete = useCompleteOnboarding();
 
     const finish = () => {
         if (complete.isPending) return;
         const display_name =
-            (name && name.trim()) ||
+            (draft.display_name && draft.display_name.trim()) ||
             (user?.user_metadata?.display_name as string | undefined) ||
             'New User';
         complete.mutate(
-            { display_name, home_city: city && city.trim() ? city.trim() : null },
+            {
+                display_name,
+                home_city: draft.home_city && draft.home_city.trim() ? draft.home_city.trim() : null,
+                avatar_url: draft.avatar_url,
+            },
             {
                 // The gate is flipped optimistically in onMutate, so navigate
                 // immediately; a failure rolls the gate back to null and

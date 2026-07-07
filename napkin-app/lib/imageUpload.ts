@@ -1,18 +1,25 @@
 /**
  * imageUpload.ts
  *
- * Client-side image compression + Supabase Storage upload for entry photos.
- * All binary data stays on device — the edge function only receives a URL string.
+ * Client-side image compression + Supabase Storage upload. All binary data stays
+ * on device — the edge function only receives a URL string.
  *
- * Storage path: entry-photos/{userId}/{timestamp}.jpg
- * Bucket: entry-photos (public read, authenticated write to own folder)
+ * Two callers, two buckets (different visibility models, never shared):
+ *   - compressAndUpload       → entry-photos/{userId}/{ts}.jpg — meal photos,
+ *                               longest edge ≤ 1024.
+ *   - compressAndUploadAvatar → avatars/{userId}/{ts}.jpg — profile photos,
+ *                               square-cropped to 512² (TICKET-126).
+ * Both share the upload tail (size guard → decode → upload → public URL) via
+ * uploadJpegBase64; the compression strategy is the only difference.
  */
 
 import * as ImageManipulator from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 import { supabase } from '@/lib/supabase';
+import { pickAvatarResize, computeCenterCrop } from '@/lib/avatarCrop';
 
 const BUCKET = 'entry-photos';
+const AVATAR_BUCKET = 'avatars';
 const MAX_DIMENSION = 1024;
 const JPEG_QUALITY = 0.8;
 const MAX_BYTES_POST_COMPRESSION = 5 * 1024 * 1024; // 5 MB
@@ -31,7 +38,50 @@ export class PhotoUploadError extends Error {
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Shared upload tail ──────────────────────────────────────────────────────
+
+/**
+ * Size-guard a compressed base64 JPEG, decode it, upload to `{bucket}/{userId}/{ts}.jpg`
+ * (own-folder RLS), and return the public URL. Shared by both compression paths.
+ */
+async function uploadJpegBase64(
+    base64: string,
+    bucket: string,
+    userId: string,
+): Promise<string> {
+    // ── Size guard ────────────────────────────────────────────────────────
+    const byteLength = (base64.length * 3) / 4; // approximate
+    if (byteLength > MAX_BYTES_POST_COMPRESSION) {
+        throw new PhotoUploadError(
+            'too_large',
+            `Photo is too large after compression (${(byteLength / (1024 * 1024)).toFixed(1)} MB). Max is 5 MB.`
+        );
+    }
+
+    // ── Upload ────────────────────────────────────────────────────────────
+    const filename = `${userId}/${Date.now()}.jpg`;
+    const arrayBuffer = decode(base64);
+
+    const { error: uploadError } = await supabase.storage
+        .from(bucket)
+        .upload(filename, arrayBuffer, {
+            contentType: 'image/jpeg',
+            upsert: false,
+        });
+
+    if (uploadError) {
+        throw new PhotoUploadError(
+            'upload_failed',
+            `Upload failed: ${uploadError.message}`
+        );
+    }
+
+    // ── Return public URL ─────────────────────────────────────────────────
+    const { data } = supabase.storage.from(bucket).getPublicUrl(filename);
+    return data.publicUrl;
+}
+
+// ── Entry photos ────────────────────────────────────────────────────────────
 
 /**
  * Compress a local image URI to at most MAX_DIMENSION on its longest edge,
@@ -76,38 +126,57 @@ export async function compressAndUpload(uri: string, userId: string): Promise<st
         );
     }
 
-    const base64 = compressed.base64;
+    return uploadJpegBase64(compressed.base64, BUCKET, userId);
+}
 
-    // ── Size guard ────────────────────────────────────────────────────────
-    const byteLength = (base64.length * 3) / 4; // approximate
-    if (byteLength > MAX_BYTES_POST_COMPRESSION) {
+// ── Avatars (TICKET-126) ─────────────────────────────────────────────────────
+
+/**
+ * Compress + square-crop a local image URI to AVATAR_SIZE² JPEG, then upload to
+ * the `avatars` bucket. Resizes the shortest edge to AVATAR_SIZE first (native,
+ * aspect-preserving), reads the ACTUAL result dimensions, then centre-crops off
+ * those (see avatarCrop.ts) so a native rounding drift can't crop past the edge.
+ *
+ * @param uri      Local file URI (e.g. from expo-image-picker)
+ * @param userId   The authenticated user's UUID — determines storage path
+ * @returns        Public URL of the uploaded avatar
+ */
+export async function compressAndUploadAvatar(uri: string, userId: string): Promise<string> {
+    let cropped: ImageManipulator.ImageResult;
+    try {
+        const probe = await ImageManipulator.manipulateAsync(uri, [], {});
+        // 1) Resize shortest edge → AVATAR_SIZE (aspect preserved).
+        const resized = await ImageManipulator.manipulateAsync(
+            uri,
+            [{ resize: pickAvatarResize(probe.width, probe.height) }],
+            {}
+        );
+        // 2) Centre-crop a square off the REAL resized dimensions.
+        const crop = computeCenterCrop(resized.width, resized.height);
+        cropped = await ImageManipulator.manipulateAsync(
+            resized.uri,
+            [{ crop }],
+            {
+                compress: JPEG_QUALITY,
+                format: ImageManipulator.SaveFormat.JPEG,
+                base64: true,
+            }
+        );
+    } catch (err) {
         throw new PhotoUploadError(
-            'too_large',
-            `Photo is too large after compression (${(byteLength / (1024 * 1024)).toFixed(1)} MB). Max is 5 MB.`
+            'compression_failed',
+            `Avatar compression failed: ${String(err)}`
         );
     }
 
-    // ── Upload ────────────────────────────────────────────────────────────
-    const filename = `${userId}/${Date.now()}.jpg`;
-    const arrayBuffer = decode(base64);
-
-    const { error: uploadError } = await supabase.storage
-        .from(BUCKET)
-        .upload(filename, arrayBuffer, {
-            contentType: 'image/jpeg',
-            upsert: false,
-        });
-
-    if (uploadError) {
+    if (!cropped.base64) {
         throw new PhotoUploadError(
-            'upload_failed',
-            `Upload failed: ${uploadError.message}`
+            'compression_failed',
+            'Cropped avatar did not return base64 data'
         );
     }
 
-    // ── Return public URL ─────────────────────────────────────────────────
-    const { data } = supabase.storage.from(BUCKET).getPublicUrl(filename);
-    return data.publicUrl;
+    return uploadJpegBase64(cropped.base64, AVATAR_BUCKET, userId);
 }
 
 /**

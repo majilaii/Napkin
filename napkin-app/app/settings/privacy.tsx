@@ -255,11 +255,13 @@ export default function PrivacyScreen() {
                         returnKeyType="done"
                     />
 
-                    {/* Username */}
+                    {/* Username. TICKET-126: onboarding completes accounts public
+                        with no handle — a handleless public account still needs a
+                        way to claim one (make-public doubles as the claim flow). */}
                     <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.md }]}>
                         Username {profile.username ? `(@${profile.username})` : '(not set)'}
                     </Text>
-                    {profile.username && (
+                    {profile.username ? (
                         <Pressable
                             onPress={() => router.push('/settings/privacy/make-public')}
                             style={{ marginTop: 2 }}
@@ -268,7 +270,16 @@ export default function PrivacyScreen() {
                                 Change username →
                             </Text>
                         </Pressable>
-                    )}
+                    ) : isPublic ? (
+                        <Pressable
+                            onPress={() => router.push('/settings/privacy/make-public')}
+                            style={{ marginTop: 2 }}
+                        >
+                            <Text style={[Type.caption, { color: palette.primary }]}>
+                                Set a username →
+                            </Text>
+                        </Pressable>
+                    ) : null}
 
                     {/* Avatar URL */}
                     <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.md }]}>
