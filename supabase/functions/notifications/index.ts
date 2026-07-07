@@ -658,9 +658,11 @@ serve(async (req) => {
                 outcome?: unknown;
             };
             const outcome = meta.outcome;
-            if (outcome !== 'saved' && outcome !== 'review' && outcome !== 'failed') {
+            // 'saved' is server-emitted only (rides resolve-url save_spots) — the
+            // client path may not forge a "pinned" row into its own inbox.
+            if (outcome !== 'review' && outcome !== 'failed') {
                 return new Response(
-                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'outcome must be saved|review|failed' } }),
+                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'outcome must be review|failed' } }),
                     { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
                 );
             }
