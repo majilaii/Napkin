@@ -22,6 +22,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { renderPage, renderTombstone } from './render.ts';
+import { reportError } from '../_shared/report.ts';
 
 // A valid invite code is exactly 22 base64url chars (mintShareToken output).
 const CODE_RE = /^[A-Za-z0-9_-]{22}$/;
@@ -94,6 +95,7 @@ serve(async (req) => {
     } catch (err) {
         // Never expose internals — always tombstone.
         console.error('[table-invite-page] error:', err);
+        reportError(err, { fn: 'table-invite-page' });
         return tombstone();
     }
 });

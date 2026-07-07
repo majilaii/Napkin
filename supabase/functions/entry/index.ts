@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { errorResponse, mapPgError } from '../_shared/errors.ts';
 import { emitFriendLogged } from '../_shared/notify.ts';
@@ -1769,6 +1770,7 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('entry function error:', error);
+        reportError(error, { fn: 'entry' });
         // Serialize real error info — String(PostgrestError) is "[object Object]",
         // which made the 2026-06-11 RPC-ambiguity outage undiagnosable from the client.
         const detail = (error as any)?.message

@@ -17,6 +17,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 
 // ── Pagination helpers (inline, P2-1) ─────────────────────────────────────────
 
@@ -262,6 +263,7 @@ serve(async (req) => {
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error('[critics-admin] Unexpected error:', message);
+        reportError(err, { fn: 'critics-admin' });
         return errResponse('INTERNAL_ERROR', 'An unexpected error occurred', 500);
     }
 });

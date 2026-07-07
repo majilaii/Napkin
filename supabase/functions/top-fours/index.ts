@@ -21,6 +21,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -758,6 +759,7 @@ serve(async (req) => {
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error('[top-fours] Unexpected error:', message);
+        reportError(err, { fn: 'top-fours' });
         return errResponse('INTERNAL_ERROR', 'An unexpected error occurred', 500);
     }
 });

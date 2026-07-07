@@ -27,6 +27,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant, type RestaurantInput } from '../_shared/restaurant.ts';
 import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 
@@ -975,6 +976,7 @@ serve(async (req) => {
 
     } catch (err) {
         console.error('lists error:', err);
+        reportError(err, { fn: 'lists' });
         return jsonResponse({ error: 'Internal Server Error', details: String(err) }, 500);
     }
 });

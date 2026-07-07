@@ -22,6 +22,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { projectRound } from '../_shared/round_projection.ts';
 
@@ -1104,6 +1105,7 @@ serve(async (req) => {
     } catch (err) {
         const msg = err instanceof Error ? err.message : JSON.stringify(err);
         console.error('restaurant-history error:', msg, err);
+        reportError(err, { fn: 'restaurant-history' });
         return json(
             { error: 'Internal Server Error', details: msg },
             500,

@@ -13,6 +13,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { errorResponse, mapPgError } from '../_shared/errors.ts';
 
@@ -575,6 +576,7 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('table-night error:', error);
+        reportError(error, { fn: 'table-night' });
         const message = error instanceof Error ? error.message : JSON.stringify(error);
         return new Response(
             JSON.stringify({ error: { code: 'INTERNAL', message: 'Internal Server Error', details: message } }),
