@@ -50,7 +50,7 @@ export function reportError(
         };
 
         // Fire-and-forget: the response must never wait on Sentry.
-        fetch(
+        const p = fetch(
             `https://${host}/api/${projectId}/store/?sentry_key=${key}&sentry_version=7`,
             {
                 method: 'POST',
@@ -60,6 +60,19 @@ export function reportError(
         ).catch(() => {
             // Swallow — reporting failures must never surface to the caller.
         });
+
+        // TICKET-121 fix-pass: the edge isolate can tear down right after the
+        // response is returned, dropping the in-flight fetch. Supabase's edge
+        // runtime exposes EdgeRuntime.waitUntil to keep the isolate alive
+        // until the send settles WITHOUT delaying the response. Not available
+        // everywhere (local deno, tests) — fall back silently to plain
+        // fire-and-forget.
+        try {
+            // deno-lint-ignore no-explicit-any
+            (globalThis as any).EdgeRuntime?.waitUntil?.(p);
+        } catch {
+            // ignore — plain fire-and-forget still stands.
+        }
     } catch {
         // reportError must never throw, full stop.
     }

@@ -21,7 +21,10 @@
  *
  *   TICKET-121: also guarantees the smoke user belongs to ≥1 table (created
  *   through table-management, the app write path) so the table-activity and
- *   member-profile smoke checks can self-discover a table id at runtime.
+ *   member-profile smoke checks can self-discover a table id at runtime, and
+ *   that the smoke profile is account_privacy='public' (flipped via
+ *   user-profile action=update_privacy) so the scope=public post-interactions
+ *   check can never 403 on a fresh/reset account.
  *
  * Required env (same set as the smoke step in prod-deploy.yml):
  *   SUPABASE_URL, SUPABASE_ANON_KEY
@@ -144,6 +147,54 @@ async function ensureTable(token: string): Promise<void> {
     console.log(`  ✓ table ${created.id} created`);
 }
 
+// ── TICKET-121 fix-pass: the activated post-interactions scope=public smoke
+// check requires is_entry_publicly_eligible, which requires the smoke profile
+// to be account_privacy='public' — the DB default is 'private', so a fresh (or
+// founder-reset) smoke account would 403 that check. Self-heal through the
+// user-profile edge fn (app write path, never direct DB). Idempotent: no-op
+// once public. The first flip to public atomically requires a username in the
+// same call; send a fixed deterministic one only when the profile has none.
+// The server excludes self from the taken check, so re-running with an
+// already-owned name succeeds; if another user ever claims it, fall back to a
+// user-id-derived name (lowercase hex — always passes the username format).
+async function ensureProfilePublic(token: string, userId: string): Promise<void> {
+    const prof = await edge(token, 'user-profile', { action: 'profile', identifier: userId });
+    const profile = prof?.profile;
+    if (!profile) {
+        throw new Error(`own profile lookup returned no profile: ${JSON.stringify(prof).slice(0, 200)}`);
+    }
+    if (profile.account_privacy === 'public') {
+        console.log('✓ smoke profile already public — nothing to change');
+        return;
+    }
+
+    console.log('→ smoke profile is private — flipping to public via user-profile…');
+    const candidates: (string | undefined)[] = profile.username
+        ? [undefined]  // already has a username — the flip needs no new one
+        : ['napkin_smoke', `smoke_${userId.replace(/-/g, '').slice(0, 8)}`];
+    let lastErr: Error | null = null;
+    for (const username of candidates) {
+        try {
+            const updated = await edge(token, 'user-profile', {
+                action: 'update_privacy',
+                account_privacy: 'public',
+                ...(username ? { username } : {}),
+            });
+            if (updated?.account_privacy !== 'public') {
+                throw new Error(`update_privacy did not stick: ${JSON.stringify(updated).slice(0, 200)}`);
+            }
+            console.log(`  ✓ profile now public${username ? ` (username ${username})` : ''}`);
+            return;
+        } catch (e) {
+            lastErr = e as Error;
+            // Username taken by ANOTHER user → HTTP 409: try the derived
+            // fallback. Anything else (format, 500, …) won't improve on retry.
+            if (!String(lastErr.message).includes('HTTP 409')) break;
+        }
+    }
+    throw lastErr ?? new Error('update_privacy failed');
+}
+
 async function main() {
     const { token, userId } = await signIn();
     const have = await reviewsCount(token, userId);
@@ -171,6 +222,10 @@ async function main() {
 
     // TICKET-121: table floor — always checked, independent of the entry floor.
     await ensureTable(token);
+
+    // TICKET-121 fix-pass: public-profile floor — the scope=public
+    // post-interactions check depends on it.
+    await ensureProfilePublic(token, userId);
 }
 
 main().catch((e) => {

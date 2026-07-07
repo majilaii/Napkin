@@ -384,7 +384,11 @@ if (Deno.env.get('PLACES_SMOKE') === '1') {
             if (data.length === 0) return 'no places returned for a fixed well-known query';
             const first = data[0] as Record<string, unknown>;
             if (typeof first.id !== 'string') return 'places[0].id is not a string';
-            if (typeof first.name !== 'string') return 'places[0].name is not a string';
+            // sanitizePlace maps name to displayName?.text ?? null — a degraded
+            // Places payload can legitimately carry null, so string OR null.
+            if (typeof first.name !== 'string' && first.name !== null) {
+                return 'places[0].name is not a string or null';
+            }
             return null;
         },
     });
