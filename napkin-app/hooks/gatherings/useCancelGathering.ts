@@ -10,6 +10,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import { isGatheringDrift } from './useDeleteGathering';
 
 export interface CancelGatheringInput {
     gathering_id: string;
@@ -33,6 +34,14 @@ export function useCancelGathering() {
         onSuccess: (_result, input) => {
             // invalidate: cancelled rows drop server-side; narrow to this table.
             qc.invalidateQueries({ queryKey: queryKeys.tables.activityForTable(input.table_id) });
+        },
+        onError: (error, input) => {
+            // GATHERING_CLOSED = the card's 'proposed' was stale (dispatch or
+            // expiry won). No patch to roll back — resync so the card re-renders
+            // in its true state (where the clear affordance takes over).
+            if (isGatheringDrift(error)) {
+                qc.invalidateQueries({ queryKey: queryKeys.tables.activityForTable(input.table_id) });
+            }
         },
     });
 }

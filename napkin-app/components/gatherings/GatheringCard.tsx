@@ -17,19 +17,22 @@
  *   dispatched — the day came: footer becomes "gathered — see the table →"
  *                (routes to the auto-created supper; non-confirmed viewers get
  *                a plain "gathered" — the supper roster would 404 them).
- *   expired    — muted single line "didn't come together".
+ *   expired    — muted "didn't come together"; the host gets a quiet "clear"
+ *                pill (long-press works too) that hard-deletes the dead card
+ *                via the `delete` action. Same affordance on a dispatched card
+ *                whose supper link died ("supper cancelled").
  *
  * Card body tap → the restaurant page. Cancelled rows never reach the client.
  */
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { InitialsAvatar } from '@/components/suppers';
 import { OwnerActionsSheet } from '@/components/common';
-import { useRsvpGathering, useCancelGathering } from '@/hooks/gatherings';
+import { useRsvpGathering, useCancelGathering, useDeleteGathering } from '@/hooks/gatherings';
 import type { GatheringCardActivity, GatheringSeat } from '@/hooks/tables/useTableActivity';
 
 type Palette = typeof Colors.light;
@@ -137,6 +140,7 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
 
     const rsvp = useRsvpGathering();
     const cancel = useCancelGathering();
+    const del = useDeleteGathering();
 
     const {
         id,
@@ -164,12 +168,16 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
 
     // TICKET-111: host long-press → owner sheet (Cancel supper). Replaces the
     // old inline Alert with the shared warm-paper grammar.
-    const [cancelSheet, setCancelSheet] = useState(false);
+    const [ownerSheet, setOwnerSheet] = useState(false);
 
     // TICKET-096 fold-in: a dispatched gathering whose supper link is null means
     // the auto-created supper was cancelled/deleted (supper_id → NULL). Show a
     // quiet "supper cancelled" state instead of a tap that silently no-ops.
     const supperCancelled = isDispatched && !supper_id;
+
+    // A dead card the host can clear for good: expired ("didn't come together")
+    // or dispatched whose supper link died. Proposed keeps the soft cancel.
+    const canClear = isHost && (isExpired || supperCancelled);
 
     const leaf = dateLeaf(gather_on);
     const ins = orderSeats(seats.filter((s) => s.response === 'in'), viewerId);
@@ -198,12 +206,27 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
     };
 
     const handleCallItOff = () => {
-        setCancelSheet(false);
-        cancel.mutate({ gathering_id: id, table_id });
+        setOwnerSheet(false);
+        cancel.mutate(
+            { gathering_id: id, table_id },
+            // Drift (already expired/dispatched) resyncs the card via the hook;
+            // the alert keeps the failure from being silent.
+            { onError: () => Alert.alert("Couldn't call it off", 'Try again.') },
+        );
     };
 
-    // Long-press anywhere on the host's proposed card opens the cancel sheet.
-    const onCardLongPress = isHost && isProposed ? () => setCancelSheet(true) : undefined;
+    const handleClear = () => {
+        setOwnerSheet(false);
+        del.mutate(
+            { gathering_id: id, table_id },
+            { onError: () => Alert.alert("Couldn't clear it", 'Try again.') },
+        );
+    };
+
+    // Long-press anywhere on the host's card opens the owner sheet — call it
+    // off while proposed, clear it for good once the card is dead.
+    const onCardLongPress =
+        (isHost && isProposed) || canClear ? () => setOwnerSheet(true) : undefined;
 
     const openRestaurant = () => {
         if (!restaurant?.id) return;
@@ -276,18 +299,51 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
 
                 {/* ── Footer zone ────────────────────────────────────────────── */}
                 {isExpired ? (
-                    <Text style={[styles.expired, { color: palette.textMuted }]}>
-                        didn&apos;t come together
-                    </Text>
+                    <View style={styles.footerRow}>
+                        <Text style={[styles.expired, styles.footerMeta, { color: palette.textMuted }]}>
+                            didn&apos;t come together
+                        </Text>
+                        {canClear ? (
+                            <Pressable
+                                onPress={() => setOwnerSheet(true)}
+                                disabled={del.isPending}
+                                accessibilityRole="button"
+                                accessibilityLabel="clear this gathering"
+                                style={({ pressed }) => [
+                                    styles.ghostPill,
+                                    { borderColor: palette.ruleInkSoft, opacity: del.isPending ? 0.5 : pressed ? 0.7 : 1 },
+                                ]}
+                            >
+                                <Text style={[styles.ghostPillText, { color: palette.textMuted }]}>clear</Text>
+                            </Pressable>
+                        ) : null}
+                    </View>
                 ) : null}
 
                 {isDispatched ? (
                     supperCancelled ? (
                         /* TICKET-096: the auto-created supper was cancelled — the
-                           link is dead, so show quiet meta, never a broken tap. */
-                        <Text style={[styles.expired, { color: palette.textMuted }]}>
-                            supper cancelled
-                        </Text>
+                           link is dead, so show quiet meta, never a broken tap.
+                           The host can clear the dead card for good. */
+                        <View style={styles.footerRow}>
+                            <Text style={[styles.expired, styles.footerMeta, { color: palette.textMuted }]}>
+                                supper cancelled
+                            </Text>
+                            {canClear ? (
+                                <Pressable
+                                    onPress={() => setOwnerSheet(true)}
+                                    disabled={del.isPending}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="clear this gathering"
+                                    style={({ pressed }) => [
+                                        styles.ghostPill,
+                                        { borderColor: palette.ruleInkSoft, opacity: del.isPending ? 0.5 : pressed ? 0.7 : 1 },
+                                    ]}
+                                >
+                                    <Text style={[styles.ghostPillText, { color: palette.textMuted }]}>clear</Text>
+                                </Pressable>
+                            ) : null}
+                        </View>
                     ) : isHost || viewer_response === 'in' ? (
                         <View style={styles.footerRow}>
                             <Pressable
@@ -384,7 +440,7 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                 {isProposed && isHost ? (
                     <View style={styles.footerRow}>
                         <Pressable
-                            onPress={() => setCancelSheet(true)}
+                            onPress={() => setOwnerSheet(true)}
                             disabled={cancel.isPending}
                             accessibilityRole="button"
                             accessibilityLabel="call it off"
@@ -399,13 +455,18 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                 ) : null}
             </View>
 
-            {/* TICKET-111: host cancel confirm — the shared owner sheet grammar. */}
+            {/* TICKET-111 grammar: one owner sheet — call it off while proposed,
+                clear it for good once the card is dead. */}
             <OwnerActionsSheet
-                visible={cancelSheet}
+                visible={ownerSheet}
                 title={restaurantName}
-                subtitle="Call off this gathering?"
-                actions={[{ label: 'Call it off', kind: 'destructive', onPress: handleCallItOff }]}
-                onCancel={() => setCancelSheet(false)}
+                subtitle={isProposed ? 'Call off this gathering?' : 'Clear this from the table?'}
+                actions={
+                    isProposed
+                        ? [{ label: 'Call it off', kind: 'destructive', onPress: handleCallItOff }]
+                        : [{ label: 'Clear it', kind: 'destructive', onPress: handleClear }]
+                }
+                onCancel={() => setOwnerSheet(false)}
             />
         </Pressable>
     );
@@ -509,6 +570,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
+    },
+    footerMeta: {
+        flex: 1,
     },
     stateChip: {
         flexDirection: 'row',
