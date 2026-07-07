@@ -156,6 +156,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
                     'com.googleusercontent.apps.REPLACE_ME',
             },
         ],
+        // TICKET-121: crash reporting. No org/project args — source-map upload
+        // stays disabled (SENTRY_DISABLE_AUTO_UPLOAD in eas.json) until the
+        // founder creates a Sentry account and sets SENTRY_AUTH_TOKEN.
+        '@sentry/react-native/expo',
     ],
     experiments: {
         typedRoutes: true,

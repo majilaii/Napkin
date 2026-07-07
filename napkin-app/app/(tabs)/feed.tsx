@@ -32,6 +32,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useFriendsFeed, flattenFriendsFeed } from '@/hooks/feed';
 import { FriendFeedCard, TrendingRail, FeedEmptyState, FeedSparseTail } from '@/components/feed';
+import { ErrorState } from '@/components/ErrorState';
 import { shouldShowSparseTail, isNoteCard } from '@/components/feed/feedRouting';
 import { feedSectionLabel } from '@/components/feed/feedDates';
 import type { FriendFeedRow } from '@/hooks/feed';
@@ -84,6 +85,7 @@ export default function FeedScreen() {
     const {
         data,
         isLoading,
+        isError,
         refetch,
         isRefetching,
         fetchNextPage,
@@ -145,6 +147,10 @@ export default function FeedScreen() {
                             style={{ marginTop: Spacing.xl }}
                             color={palette.primary}
                         />
+                    ) : isError ? (
+                        // TICKET-121: only reachable with zero rows to render —
+                        // cached pages keep rendering as today.
+                        <ErrorState onRetry={refetch} />
                     ) : (
                         // TICKET-101: a designed two-tier empty state (co-diner
                         // follow cards, or ghost + invite) + discovery ledger.
