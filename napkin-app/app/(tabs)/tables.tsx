@@ -85,6 +85,8 @@ import { SupperCard, SupperNudgeBanner } from '@/components/suppers';
 import { GatheringCard } from '@/components/gatherings';
 // TICKET-115: quiet ledger line for table-list adds
 import { ListAddLedgerLine } from '@/components/feed/ListAddLedgerLine';
+// TICKET-121: murmur + retry when a primary query fails with no cached data
+import { ErrorState } from '@/components/ErrorState';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -146,7 +148,12 @@ export default function TablesScreen() {
     const { user } = useAuth();
 
     // Real data
-    const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
+    const {
+        data: tables,
+        isLoading: tablesLoading,
+        isError: tablesError,
+        refetch: tablesRefetch,
+    } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'lists' | 'atlas'>('activity');
 
@@ -184,6 +191,7 @@ export default function TablesScreen() {
     const {
         data: activityData,
         isLoading: feedLoading,
+        isError: feedError,
         isRefetching,
         refetch,
     } = useTableActivity(activeTable?.id);
@@ -324,6 +332,13 @@ export default function TablesScreen() {
     }
 
     if (!activeTable) {
+        if (tablesError && !tables) {
+            return (
+                <View style={[styles.center, { backgroundColor: palette.background }]}>
+                    <ErrorState onRetry={tablesRefetch} />
+                </View>
+            );
+        }
         // Launch-readiness (2026-07-03): this was a dead end — copy with no
         // affordance, and every create-table entry point unreachable at zero
         // tables. One quiet CTA; solo stays a complete product (emergence arc).
@@ -578,6 +593,8 @@ export default function TablesScreen() {
                             color={palette.primary}
                             style={{ marginTop: Spacing.xxl }}
                         />
+                    ) : feedError && items.length === 0 ? (
+                        <ErrorState onRetry={refetch} />
                     ) : isFoundedEmpty ? (
                         /* Brand-new table — founding moment */
                         <FoundedHero

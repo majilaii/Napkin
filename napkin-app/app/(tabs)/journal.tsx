@@ -28,6 +28,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useMySoloEntries } from '@/hooks/entries';
 import type { SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { JournalList, getEstMonth } from '@/components/journal';
+import { ErrorState } from '@/components/ErrorState';
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ export default function JournalScreen() {
     const router = useRouter();
     const { user } = useAuth();
 
-    const { data: entries, isLoading, isRefetching, refetch } = useMySoloEntries(user?.id);
+    const { data: entries, isLoading, isError, isRefetching, refetch } = useMySoloEntries(user?.id);
 
     const sortedEntries: SoloShareActivity[] = useMemo(() => {
         if (!entries) return [];
@@ -87,6 +88,15 @@ export default function JournalScreen() {
             <View style={[styles.root, { backgroundColor: palette.background }]}>
                 {ListHeader}
                 <ActivityIndicator style={{ marginTop: Spacing.xl }} color={palette.primary} />
+            </View>
+        );
+    }
+
+    if (isError && !entries) {
+        return (
+            <View style={[styles.root, { backgroundColor: palette.background }]}>
+                {ListHeader}
+                <ErrorState onRetry={refetch} />
             </View>
         );
     }
