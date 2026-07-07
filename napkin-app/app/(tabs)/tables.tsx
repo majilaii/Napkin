@@ -147,7 +147,7 @@ export default function TablesScreen() {
     // Real data
     const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
-    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'atlas'>('activity');
+    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'lists' | 'atlas'>('activity');
 
     // Deep-link: notifications screen passes `selected` (tableId) when tapping a
     // table_invite row. Auto-select the matching table on mount/focus.
@@ -429,16 +429,18 @@ export default function TablesScreen() {
                 />
             )}
 
-            {/* Activity | Wishlist | Atlas — editorial section-label style.
+            {/* Activity | Wishlist | Lists | Atlas — editorial section-label style.
                 Atlas hidden during friend-test. */}
             <View style={styles.tabRow}>
-                {(['activity', 'wishlist', ...(!FRIEND_TEST.hideAtlas && isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'atlas')[]).map((tab) => {
+                {(['activity', 'wishlist', ...(isSocialTable ? ['lists'] : []), ...(!FRIEND_TEST.hideAtlas && isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'lists' | 'atlas')[]).map((tab) => {
                     const isActive = activeTab === tab;
                     const tabLabel =
                         tab === 'activity'
                             ? 'Activity'
                             : tab === 'wishlist'
                             ? 'Wishlist'
+                            : tab === 'lists'
+                            ? 'Lists'
                             : 'Atlas';
                     return (
                         <Pressable
@@ -481,17 +483,25 @@ export default function TablesScreen() {
             {activeTab === 'wishlist' ? (
                 <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
                     {headerAndControl}
-                    {/* TICKET-115: shared Table lists (create-from-table + open) above
-                        the emergent wishlist overlap. Social tables only. */}
-                    {activeTable && isSocialTable && (
-                        <TableListsBlock
-                            tableId={activeTable.id}
-                            tableName={activeTable.name}
-                        />
-                    )}
                     {activeTable && (
                         <WishlistGrid mode="table" tableId={activeTable.id} />
                     )}
+                </View>
+            ) : activeTab === 'lists' && activeTable && isSocialTable ? (
+                /* Lists tab — TICKET-115 shared Table lists. Social tables only;
+                   switching to a personal table falls through to activity. */
+                <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
+                    {headerAndControl}
+                    <ScrollView
+                        showsVerticalScrollIndicator={false}
+                        contentContainerStyle={{ paddingTop: Spacing.sm, paddingBottom: 100 }}
+                    >
+                        <TableListsBlock
+                            tableId={activeTable.id}
+                            tableName={activeTable.name}
+                            hideLabel
+                        />
+                    </ScrollView>
                 </View>
             ) : !FRIEND_TEST.hideAtlas && activeTab === 'atlas' ? (
                 /* Atlas tab — AtlasCityIndex owns its own ScrollView */
