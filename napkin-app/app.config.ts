@@ -175,10 +175,18 @@ export default ({ config }: ConfigContext): ExpoConfig =>
                     'com.googleusercontent.apps.REPLACE_ME',
             },
         ],
-        // TICKET-121: crash reporting. No org/project args — source-map upload
-        // stays disabled (SENTRY_DISABLE_AUTO_UPLOAD in eas.json) until the
-        // founder creates a Sentry account and sets SENTRY_AUTH_TOKEN.
-        '@sentry/react-native/expo',
+        // TICKET-121: crash reporting. org/project/url identify where source
+        // maps upload (EU data region → de.sentry.io). Auth is via the
+        // SENTRY_AUTH_TOKEN build env (secret, never committed); production
+        // enables upload by dropping SENTRY_DISABLE_AUTO_UPLOAD in eas.json.
+        [
+            '@sentry/react-native/expo',
+            {
+                organization: 'napkin-h7',
+                project: 'react-native',
+                url: 'https://de.sentry.io/',
+            },
+        ],
     ],
     experiments: {
         typedRoutes: true,

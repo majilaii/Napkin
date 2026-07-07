@@ -32,8 +32,7 @@
                 "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "547533746714-7h0rrl40efr3ldg6e3gmba864c6hl8gt.apps.googleusercontent.com",
                 "GOOGLE_IOS_URL_SCHEME": "com.googleusercontent.apps.547533746714-7h0rrl40efr3ldg6e3gmba864c6hl8gt",
                 "EXPO_PUBLIC_SENTRY_DSN": "https://b2212b655c8d7f5be0dbeca190391f03@o4511695654092800.ingest.de.sentry.io/4511696306831440",
-                "EXPO_DOCTOR_SKIP_DEPENDENCY_VERSION_CHECK": "1",
-                "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+                "EXPO_DOCTOR_SKIP_DEPENDENCY_VERSION_CHECK": "1"
             }
         }
     },
