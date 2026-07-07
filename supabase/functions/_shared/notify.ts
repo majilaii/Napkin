@@ -1,3 +1,5 @@
+// Redeploy marker (2026-07-07): run 28898737691 failed at db push BEFORE deploying
+// the #159 fleet — this _shared touch makes the next run redeploy every function.
 /**
  * TICKET-048: Best-effort notification fan-out helpers.
  *
