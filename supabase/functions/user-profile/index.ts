@@ -1613,10 +1613,21 @@ serve(async (req) => {
                 const city = body.home_city == null ? '' : String(body.home_city).trim();
                 updates.home_city = city ? city.slice(0, 120) : null;
             }
-            // avatar_url is optional (skip) — trim to null, cap at 500 chars.
+            // avatar_url is optional (skip) — trim to null. Defense-in-depth:
+            // onboarding only ever produces our own storage URL, so pin it to the
+            // caller's OWN avatars folder (blocks a crafted client persisting an
+            // external tracking URL or another user's path through this action).
             if (body.avatar_url !== undefined) {
                 const avatar = body.avatar_url == null ? '' : String(body.avatar_url).trim();
-                updates.avatar_url = avatar ? avatar.slice(0, 500) : null;
+                if (avatar) {
+                    const ownPrefix = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/avatars/${user.id}/`;
+                    if (avatar.length > 500 || !avatar.startsWith(ownPrefix)) {
+                        return fail('avatar_url must be an uploaded avatar', 400);
+                    }
+                    updates.avatar_url = avatar;
+                } else {
+                    updates.avatar_url = null;
+                }
             }
 
             const { data: updated, error } = await supabase

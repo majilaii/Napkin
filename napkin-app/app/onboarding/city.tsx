@@ -55,8 +55,13 @@ export default function OnboardingCityScreen() {
         if (!coDiners.isFetched) {
             setBranching(true);
             try {
-                const r = await coDiners.refetch();
-                candidates = r.data ?? [];
+                // 4s cap: a hung network must never wedge onboarding — on timeout
+                // fall through to teach (worst case: the follows step is skipped).
+                const r = await Promise.race([
+                    coDiners.refetch(),
+                    new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+                ]);
+                candidates = r?.data ?? [];
             } catch {
                 candidates = [];
             } finally {

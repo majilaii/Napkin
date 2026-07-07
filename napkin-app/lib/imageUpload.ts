@@ -185,13 +185,22 @@ export async function compressAndUploadAvatar(uri: string, userId: string): Prom
  * Silently no-ops if the URL is not in the expected format.
  */
 export async function removeUploadedPhoto(publicUrl: string): Promise<void> {
+    return removeFromBucket(publicUrl, BUCKET);
+}
+
+/** Avatar variant of removeUploadedPhoto — same URL parsing, avatars bucket. */
+export async function removeUploadedAvatar(publicUrl: string): Promise<void> {
+    return removeFromBucket(publicUrl, AVATAR_BUCKET);
+}
+
+async function removeFromBucket(publicUrl: string, bucket: string): Promise<void> {
     // Public URL shape: {supabaseUrl}/storage/v1/object/public/{bucket}/{path}
-    const marker = `/object/public/${BUCKET}/`;
+    const marker = `/object/public/${bucket}/`;
     const idx = publicUrl.indexOf(marker);
     if (idx === -1) return;
 
     const storagePath = publicUrl.slice(idx + marker.length);
     if (!storagePath) return;
 
-    await supabase.storage.from(BUCKET).remove([storagePath]);
+    await supabase.storage.from(bucket).remove([storagePath]);
 }

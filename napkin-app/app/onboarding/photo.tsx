@@ -17,7 +17,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { Avatar } from '@/components/feed/Avatar';
-import { compressAndUploadAvatar } from '@/lib/imageUpload';
+import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
 
@@ -48,8 +48,11 @@ export default function OnboardingPhotoScreen() {
 
         setUploading(true);
         try {
+            const previous = draft.avatar_url;
             const url = await compressAndUploadAvatar(result.assets[0].uri, user.id);
             patch({ avatar_url: url });
+            // Best-effort: a re-pick orphans the prior upload — clean it up.
+            if (previous && previous !== url) void removeUploadedAvatar(previous).catch(() => {});
         } catch {
             Alert.alert("Couldn't add that photo", 'Please try another one.');
         } finally {
@@ -64,6 +67,8 @@ export default function OnboardingPhotoScreen() {
 
     const skip = () => {
         if (uploading) return;
+        // Best-effort: skipping after an upload orphans it — clean it up.
+        if (draft.avatar_url) void removeUploadedAvatar(draft.avatar_url).catch(() => {});
         patch({ avatar_url: null });
         router.push('/onboarding/city');
     };
@@ -90,7 +95,7 @@ export default function OnboardingPhotoScreen() {
                                 palette={palette}
                             />
                             {uploading && (
-                                <View style={styles.uploadOverlay}>
+                                <View style={[styles.uploadOverlay, { backgroundColor: palette.scrimDark }]}>
                                     <ActivityIndicator color={palette.textInverse} />
                                 </View>
                             )}
@@ -135,7 +140,6 @@ const styles = StyleSheet.create({
     uploadOverlay: {
         ...StyleSheet.absoluteFillObject,
         borderRadius: 66,
-        backgroundColor: 'rgba(28,28,25,0.35)',
         alignItems: 'center',
         justifyContent: 'center',
     },
