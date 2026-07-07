@@ -1,0 +1,127 @@
+name: Scheduled Smoke (prod)
+
+# TICKET-121: between-deploy outage detection. prod-deploy.yml only smokes at
+# deploy time, so an outage that starts between deploys (expired secret,
+# Supabase incident, data drift) is invisible until a friend screenshots the
+# error. This runs the same suite every 6 hours + on demand, and files a
+# deduped GitHub issue when red.
+#
+# Mirrors prod-deploy.yml's smoke steps EXACTLY — same Deno v2 setup and the
+# same `shell: bash` pipefail defaults (both load-bearing; see the comments in
+# prod-deploy.yml) — minus the deploy stages.
+#
+# PLACES_SMOKE is deliberately NOT set here: the places-search check costs a
+# real Google Places request per run and only guards deploy drift, so it runs
+# at deploy time only (prod-deploy.yml).
+#
+# Required repo secrets (same names as prod-deploy.yml):
+#   - PROD_ANON_KEY                   (anon key for prod)
+#   - PROD_SMOKE_TEST_EMAIL           (smoke user on prod — signs in at runtime)
+#   - PROD_SMOKE_TEST_PASSWORD
+#   - PROD_SMOKE_TEST_RESTAURANT_ID
+
+on:
+  schedule:
+    # Every 6 hours at :13 — offset from the top of the hour to dodge the
+    # GitHub Actions scheduled-job stampede (on-the-hour crons get delayed).
+    - cron: '13 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: scheduled-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Smoke test prod (scheduled)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write   # needed to file the smoke-failure issue
+    defaults:
+      run:
+        # `shell: bash` = `bash -eo pipefail` (vs the default `bash -e`).
+        # Load-bearing: smoke pipes through `tee`, and without pipefail a
+        # failing left side exits 0 — smoke "passed" for four straight deploys
+        # on 2026-07-04 while deno was crashing on startup (see prod-deploy.yml).
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify required secrets
+        env:
+          PROD_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          PROD_SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
+          PROD_SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
+          PROD_SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+        run: |
+          missing=()
+          for v in PROD_ANON_KEY PROD_SMOKE_TEST_EMAIL PROD_SMOKE_TEST_PASSWORD PROD_SMOKE_TEST_RESTAURANT_ID; do
+            if [[ -z "${!v:-}" ]]; then missing+=("$v"); fi
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      # Deno 2.x required: the repo's deno.lock is lockfile v5, which Deno 1.x
+      # cannot read (see prod-deploy.yml).
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Same self-healing step as prod-deploy.yml: the keyset walks and the
+      # TICKET-121 discovery checks are only real when the smoke user holds
+      # ≥2 review-bearing entries and ≥1 table. Idempotent.
+      - name: Ensure smoke fixtures
+        env:
+          SUPABASE_URL: https://ftvmseaqwwlcxtdlvxxz.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+        run: |
+          deno run --allow-env --allow-net scripts/smoke/ensure-fixtures.ts 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test prod
+        env:
+          SUPABASE_URL: https://ftvmseaqwwlcxtdlvxxz.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+        run: |
+          echo "## Smoke test results (PROD, scheduled)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          deno run --allow-env --allow-net scripts/smoke/edge-functions.ts 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # File exactly ONE open issue per breakage window: if an open
+      # smoke-failure issue already exists, a repeat red run stays quiet
+      # (4 runs/day against a broken prod must not spam 4 issues/day).
+      - name: Open smoke-failure issue (deduped)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create smoke-failure \
+            --repo "${{ github.repository }}" \
+            --color D93F0B \
+            --description "Scheduled prod smoke run failed" \
+            2>/dev/null || true
+          open_count=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --label smoke-failure \
+            --state open \
+            --json number --jq 'length')
+          if [[ "$open_count" -eq 0 ]]; then
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "smoke: scheduled run failed" \
+              --label smoke-failure \
+              --body "Scheduled prod smoke failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            echo "Open smoke-failure issue already exists — not filing a duplicate."
+          fi

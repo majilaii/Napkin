@@ -19,6 +19,10 @@
  *   exercised across pages. Idempotent: once the account holds ≥2 reviews it
  *   never writes again.
  *
+ *   TICKET-121: also guarantees the smoke user belongs to ≥1 table (created
+ *   through table-management, the app write path) so the table-activity and
+ *   member-profile smoke checks can self-discover a table id at runtime.
+ *
  * Required env (same set as the smoke step in prod-deploy.yml):
  *   SUPABASE_URL, SUPABASE_ANON_KEY
  *   SMOKE_TEST_EMAIL + SMOKE_TEST_PASSWORD  — smoke-user credentials
@@ -112,31 +116,61 @@ async function reviewsCount(token: string, userId: string): Promise<number> {
     return page.rows.length;
 }
 
+// ── TICKET-121: the table-activity + member-profile smoke checks need the
+// smoke user to belong to ≥1 table. Guarantee it through table-management —
+// the app's write path (owner wiring + admin membership row included), NEVER
+// a direct DB write. Idempotent: once any membership exists, never writes.
+// The smoke suite self-discovers the table id at runtime (no new CI secrets).
+async function ensureTable(token: string): Promise<void> {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/table-management`, {
+        method: 'GET',
+        headers: { apikey: ANON_KEY!, Authorization: `Bearer ${token}` },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new Error(`table-management list → HTTP ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
+    }
+    const memberships = Array.isArray(json?.data) ? json.data : [];
+    if (memberships.length > 0) {
+        console.log(`✓ smoke user belongs to ${memberships.length} table(s) — nothing to seed`);
+        return;
+    }
+
+    console.log('→ smoke user has no table — creating one via table-management…');
+    const created = await edge(token, 'table-management', { name: 'Smoke Table' });
+    if (!created?.id) {
+        throw new Error(`table create returned no id: ${JSON.stringify(created).slice(0, 200)}`);
+    }
+    console.log(`  ✓ table ${created.id} created`);
+}
+
 async function main() {
     const { token, userId } = await signIn();
     const have = await reviewsCount(token, userId);
     if (have >= REQUIRED_REVIEWS) {
         console.log(`✓ smoke fixtures present (${have} review-bearing entries) — nothing to seed`);
-        return;
+    } else {
+        console.log(`→ smoke user has ${have}/${REQUIRED_REVIEWS} review-bearing entries — seeding…`);
+        for (const fixture of FIXTURES.slice(0, REQUIRED_REVIEWS - have)) {
+            // Solo feed-only entry (no table_ids): diary-as-self includes private
+            // entries, and content makes it count for the reviews walk too.
+            const created = await edge(token, 'entry', {
+                restaurant_id: RESTAURANT_ID,
+                ...fixture,
+            });
+            console.log(`  ✓ entry ${created?.id ?? '(no id in response)'} @ ${fixture.visited_at}`);
+        }
+
+        const now = await reviewsCount(token, userId);
+        if (now < REQUIRED_REVIEWS) {
+            console.error(`✗ seeded but reviews count is still ${now}/${REQUIRED_REVIEWS} — entry create or reviews read drifted`);
+            Deno.exit(1);
+        }
+        console.log(`✓ smoke fixtures ready (${now} review-bearing entries)`);
     }
 
-    console.log(`→ smoke user has ${have}/${REQUIRED_REVIEWS} review-bearing entries — seeding…`);
-    for (const fixture of FIXTURES.slice(0, REQUIRED_REVIEWS - have)) {
-        // Solo feed-only entry (no table_ids): diary-as-self includes private
-        // entries, and content makes it count for the reviews walk too.
-        const created = await edge(token, 'entry', {
-            restaurant_id: RESTAURANT_ID,
-            ...fixture,
-        });
-        console.log(`  ✓ entry ${created?.id ?? '(no id in response)'} @ ${fixture.visited_at}`);
-    }
-
-    const now = await reviewsCount(token, userId);
-    if (now < REQUIRED_REVIEWS) {
-        console.error(`✗ seeded but reviews count is still ${now}/${REQUIRED_REVIEWS} — entry create or reviews read drifted`);
-        Deno.exit(1);
-    }
-    console.log(`✓ smoke fixtures ready (${now} review-bearing entries)`);
+    // TICKET-121: table floor — always checked, independent of the entry floor.
+    await ensureTable(token);
 }
 
 main().catch((e) => {
