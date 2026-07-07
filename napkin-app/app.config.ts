@@ -1,4 +1,18 @@
 import type { ExpoConfig, ConfigContext } from 'expo/config';
+import { withEntitlementsPlist, type ConfigPlugin } from 'expo/config-plugins';
+
+// Notifications are device-LOCAL only (TICKET-120/128) — no APNs, no remote
+// push. expo-notifications' plugin unconditionally writes the aps-environment
+// entitlement, which our App Store provisioning profile (no Push Notifications
+// capability) rejects at build time. Strip it. Listed FIRST in the plugins
+// array because mods execute in reverse order — first-listed runs last, after
+// expo-notifications adds the key. Delete this plugin only when remote push
+// actually ships (and the profile gains the capability).
+const withoutApsEntitlement: ConfigPlugin = (cfg) =>
+    withEntitlementsPlist(cfg, (c) => {
+        delete c.modResults['aps-environment'];
+        return c;
+    });
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
     ...config,
@@ -85,6 +99,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         favicon: './assets/images/favicon.png',
     },
     plugins: [
+        // Must stay FIRST — config-plugin mods execute in REVERSE array order,
+        // so first-listed runs last and strips the aps-environment entitlement
+        // AFTER expo-notifications adds it (verified via prebuild 2026-07-07).
+        withoutApsEntitlement,
         'expo-router',
         // TICKET-110: GoogleSignIn v16 pulls in AppCheckCore, whose deps
         // (GoogleUtilities, RecaptchaInterop) can't integrate as static
