@@ -40,6 +40,10 @@ function makeGathering(overrides: Partial<GatheringCardActivity> = {}): Gatherin
         ],
         in_count: 1,
         viewer_response: null,
+        counters: [],
+        source_url: null,
+        source_type: null,
+        rescheduled_from: null,
         created_at: '2026-07-04T00:00:00Z',
         ...overrides,
     };
@@ -81,6 +85,74 @@ describe('patchGatheringRsvp', () => {
 
         expect(card.viewer_response).toBe('out');
         expect(card.in_count).toBe(1); // host only
+    });
+
+    it('counter: sets viewer_response=counter, adds a counter chip, drops from in_count', () => {
+        const answered = makeGathering({
+            viewer_response: 'in',
+            in_count: 2,
+            seats: [
+                { user_id: HOST, display_name: 'Clara Host', avatar_url: null, is_host: true, response: 'in' },
+                { user_id: VIEWER, display_name: 'Vera Viewer', avatar_url: null, is_host: false, response: 'in' },
+                { user_id: OTHER, display_name: 'Otto Other', avatar_url: null, is_host: false, response: null },
+            ],
+        });
+        const data = makeInfinite([[answered]]);
+
+        const result = patchGatheringRsvp(data, 'g-1', VIEWER, 'counter', '2026-07-19') as typeof data;
+        const card = result.pages[0].rows[0] as GatheringCardActivity;
+
+        expect(card.viewer_response).toBe('counter');
+        expect(card.seats.find((s) => s.user_id === VIEWER)?.response).toBe('counter');
+        expect(card.in_count).toBe(1); // host only — the viewer left 'in'
+        expect(card.counters).toEqual([
+            { user_id: VIEWER, display_name: 'Vera Viewer', counter_on: '2026-07-19' },
+        ]);
+    });
+
+    it('counter → in clears the viewer counter chip and re-counts in', () => {
+        const countered = makeGathering({
+            viewer_response: 'counter',
+            in_count: 1,
+            seats: [
+                { user_id: HOST, display_name: 'Clara Host', avatar_url: null, is_host: true, response: 'in' },
+                { user_id: VIEWER, display_name: 'Vera Viewer', avatar_url: null, is_host: false, response: 'counter' },
+                { user_id: OTHER, display_name: 'Otto Other', avatar_url: null, is_host: false, response: null },
+            ],
+            counters: [{ user_id: VIEWER, display_name: 'Vera Viewer', counter_on: '2026-07-19' }],
+        });
+        const data = makeInfinite([[countered]]);
+
+        const result = patchGatheringRsvp(data, 'g-1', VIEWER, 'in') as typeof data;
+        const card = result.pages[0].rows[0] as GatheringCardActivity;
+
+        expect(card.viewer_response).toBe('in');
+        expect(card.in_count).toBe(2);
+        expect(card.counters).toEqual([]); // viewer's counter dropped
+    });
+
+    it('counter: re-countering a new date replaces the viewer counter, keeps others', () => {
+        const countered = makeGathering({
+            viewer_response: 'counter',
+            in_count: 1,
+            seats: [
+                { user_id: HOST, display_name: 'Clara Host', avatar_url: null, is_host: true, response: 'in' },
+                { user_id: VIEWER, display_name: 'Vera Viewer', avatar_url: null, is_host: false, response: 'counter' },
+                { user_id: OTHER, display_name: 'Otto Other', avatar_url: null, is_host: false, response: 'counter' },
+            ],
+            counters: [
+                { user_id: VIEWER, display_name: 'Vera Viewer', counter_on: '2026-07-19' },
+                { user_id: OTHER, display_name: 'Otto Other', counter_on: '2026-07-20' },
+            ],
+        });
+        const data = makeInfinite([[countered]]);
+
+        const result = patchGatheringRsvp(data, 'g-1', VIEWER, 'counter', '2026-07-25') as typeof data;
+        const card = result.pages[0].rows[0] as GatheringCardActivity;
+
+        expect(card.counters).toContainEqual({ user_id: OTHER, display_name: 'Otto Other', counter_on: '2026-07-20' });
+        expect(card.counters).toContainEqual({ user_id: VIEWER, display_name: 'Vera Viewer', counter_on: '2026-07-25' });
+        expect(card.counters).toHaveLength(2);
     });
 
     it('leaves other rows and non-gathering kinds untouched', () => {

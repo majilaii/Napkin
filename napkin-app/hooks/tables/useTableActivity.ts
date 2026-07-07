@@ -260,7 +260,18 @@ export interface GatheringSeat {
     display_name: string | null;
     avatar_url: string | null;
     is_host: boolean;
-    response: 'in' | 'out' | null;
+    /** TICKET-127: 'counter' = proposed another date (renders as a counter chip,
+     *  not in the in/out/waiting ledger). */
+    response: 'in' | 'out' | 'counter' | null;
+}
+
+/** TICKET-127 — a member who countered with another date. Rendered as its own
+ *  chip ("you · sat 12" / "Clara · sat 12"), separate from the in/out ledger. */
+export interface GatheringCounter {
+    user_id: string;
+    display_name: string | null;
+    /** YYYY-MM-DD — the date this member proposed instead. */
+    counter_on: string;
 }
 
 /** TICKET-095 gathering feed card — a proposed future date at a restaurant.
@@ -283,7 +294,15 @@ export interface GatheringCardActivity {
     supper_id: string | null;
     seats: GatheringSeat[];
     in_count: number;
-    viewer_response: 'in' | 'out' | null;
+    viewer_response: 'in' | 'out' | 'counter' | null;
+    /** TICKET-127: members who proposed another date (excludes ex-members). */
+    counters: GatheringCounter[];
+    /** TICKET-127: the host's pinned-from source URL for this spot (null = none). */
+    source_url: string | null;
+    /** TICKET-127: source type ('tiktok' | 'google_maps' | 'web' | ...); null when no URL. */
+    source_type: string | null;
+    /** TICKET-127: the previous gather_on if the host re-dated (null = never moved). */
+    rescheduled_from: string | null;
     created_at: string;
 }
 

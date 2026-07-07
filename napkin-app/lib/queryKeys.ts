@@ -243,6 +243,13 @@ export const queryKeys = {
         resolve: (token: string) => ['handoff', 'resolve', token] as const,
     },
 
+    // Gatherings — future "gather the table" plans (TICKET-095 / TICKET-128).
+    // `upcoming` feeds the Table-screen upcoming strip: proposed + dispatched
+    // rows with gather_on >= today, ascending. Short staleTime — dates matter.
+    gatherings: {
+        upcoming: (tableId: string) => ['gatherings', 'upcoming', tableId] as const,
+    },
+
     // Suppers — shared-table meal posts (TICKET-082). A Supper is an `entries`
     // cluster keyed by supper_id; supper_members is the roster + trust anchor.
     // `detail` is the merged-review read ({ supper, roster, takes }); `roster`

@@ -82,7 +82,8 @@ import { TableEntryCard } from '@/components/journal';
 // TICKET-082 v2: the empty-table supper card + in-app nudge
 import { SupperCard, SupperNudgeBanner } from '@/components/suppers';
 // TICKET-095: the gather-the-table proposal card
-import { GatheringCard } from '@/components/gatherings';
+// TICKET-128: the "what's booked" upcoming strip under the masthead
+import { GatheringCard, UpcomingStrip } from '@/components/gatherings';
 // TICKET-115: quiet ledger line for table-list adds
 import { ListAddLedgerLine } from '@/components/feed/ListAddLedgerLine';
 
@@ -560,6 +561,14 @@ export default function TablesScreen() {
                     }
                 >
                     {headerAndControl}
+
+                    {/* TICKET-128: upcoming strip — what's booked/brewing for this
+                        table, under the masthead. Renders null when there's nothing
+                        upcoming. Social tables only (personal tables have no gatherings);
+                        curtained alongside suppers during the friend test. */}
+                    {!FRIEND_TEST.hideSuppers && isSocialTable && activeTable && (
+                        <UpcomingStrip tableId={activeTable.id} tableName={activeTable.name} />
+                    )}
 
                     {/* Empty-chair invitation — users with a single table, dismissable.
                         Curtained during friend-test as part of the emergence-arc nudge;
