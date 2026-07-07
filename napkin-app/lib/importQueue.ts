@@ -52,10 +52,16 @@ const SHARED_DEFAULT_MODE_KEY = 'import.defaultMode';
 // primed and whenever nothing was ever stored.
 let cachedDefaultMode: ImportMode = 'auto';
 
-// Prime the cache once at module load (best-effort; a miss leaves 'auto').
+// Prime the cache once at module load (best-effort; a miss leaves 'auto'). The
+// `primed` latch keeps a slow-resolving read from clobbering an explicit
+// setDefaultImportMode() that raced ahead of it.
+let defaultModePrimed = false;
 AsyncStorage.getItem(DEFAULT_MODE_KEY)
     .then((raw) => {
-        if (raw === 'review' || raw === 'auto') cachedDefaultMode = raw;
+        if (!defaultModePrimed && (raw === 'review' || raw === 'auto')) {
+            cachedDefaultMode = raw;
+        }
+        defaultModePrimed = true;
     })
     .catch(() => {
         /* storage unavailable — keep the 'auto' fallback */
@@ -72,20 +78,24 @@ export function getDefaultImportMode(): ImportMode {
  */
 export function setDefaultImportMode(mode: ImportMode): void {
     if (mode !== 'auto' && mode !== 'review') return;
-    if (cachedDefaultMode === mode) return; // unchanged — nothing to persist
-    cachedDefaultMode = mode;
-    AsyncStorage.setItem(DEFAULT_MODE_KEY, mode).catch(() => {
-        /* best-effort — the in-memory mirror still holds for this session */
-    });
+    defaultModePrimed = true; // an explicit choice outranks a late-resolving prime
     // TICKET-113 Part B: mirror into the App-Group shared default so the iOS share
     // extension (separate process, can't read AsyncStorage) seeds its auto-save
-    // toggle from it on next launch. Guarded — a missing native module (Android /
-    // unlinked) degrades gracefully; the RN-side pref still holds.
+    // toggle from it on next launch. This runs BEFORE the unchanged guard: a user
+    // upgrading from Part A already has this mode cached RN-side while the
+    // extension's UserDefaults is still empty — the unconditional write-through
+    // back-fills it. Guarded — a missing native module (Android / unlinked)
+    // degrades gracefully; the RN-side pref still holds.
     try {
         setSharedDefault(SHARED_DEFAULT_MODE_KEY, mode);
     } catch {
         /* native module absent — RN-side pref still holds */
     }
+    if (cachedDefaultMode === mode) return; // unchanged — nothing to persist
+    cachedDefaultMode = mode;
+    AsyncStorage.setItem(DEFAULT_MODE_KEY, mode).catch(() => {
+        /* best-effort — the in-memory mirror still holds for this session */
+    });
 }
 
 export type ImportManifestStatus = 'pending' | 'failed';

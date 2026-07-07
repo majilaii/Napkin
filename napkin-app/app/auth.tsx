@@ -161,6 +161,9 @@ export default function AuthScreen() {
     // returning → /wishlist. A pending share/handoff resumes via resumeAfterAuth.
     const signInWithProvider = async (provider: 'apple' | 'google') => {
         setLoading(true);
+        // Hoisted so the catch can re-stash if signInWithIdToken THROWS after the
+        // stash was consumed (the {error} branch below covers the non-throw case).
+        let winner: Awaited<ReturnType<typeof postAuthResume.consumeWinner>> = null;
         try {
             const token =
                 provider === 'apple'
@@ -168,7 +171,7 @@ export default function AuthScreen() {
                     : await googleIdToken();
             // Consume BEFORE signIn so the resume replace beats RootLayoutNav's
             // session-flip redirect; re-stash on failure (mirrors the password path).
-            const winner = await postAuthResume.consumeWinner();
+            winner = await postAuthResume.consumeWinner();
             const { error } = await supabase.auth.signInWithIdToken({ provider, token });
             if (error) {
                 if (winner) await postAuthResume.restashWinner(winner);
@@ -177,6 +180,9 @@ export default function AuthScreen() {
                 resumeAfterAuth(winner, router);
             }
         } catch (err) {
+            // A throw past consumeWinner would otherwise drop the pending
+            // import/handoff stash. (Cancel happens before consume — winner null.)
+            if (winner) await postAuthResume.restashWinner(winner);
             // User dismissed the native sheet — silent, no Alert.
             if (err instanceof OAuthCancelledError) return;
             Alert.alert(

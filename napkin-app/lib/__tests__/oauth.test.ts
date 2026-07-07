@@ -108,7 +108,14 @@ describe('googleIdToken', () => {
         await expect(googleIdToken()).rejects.toThrow(/no ID token/);
     });
 
-    it('maps a user cancel to OAuthCancelledError', async () => {
+    it('maps a v16 resolved cancel ({type:"cancelled"}) to OAuthCancelledError', async () => {
+        // google-signin v13+ RESOLVES on cancel — it does NOT reject with
+        // SIGN_IN_CANCELLED. This is the path a real user cancel takes.
+        mockGoogleSignIn.mockResolvedValue({ type: 'cancelled', data: null });
+        await expect(googleIdToken()).rejects.toBeInstanceOf(OAuthCancelledError);
+    });
+
+    it('maps a legacy SIGN_IN_CANCELLED rejection to OAuthCancelledError', async () => {
         mockGoogleSignIn.mockRejectedValue({ code: 'SIGN_IN_CANCELLED' });
         await expect(googleIdToken()).rejects.toBeInstanceOf(OAuthCancelledError);
     });
