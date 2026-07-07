@@ -38,6 +38,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 
 const VALID_EMOJIS = ['🔥', '😋', '❤️', '💯', '👀'] as const;
 type ValidEmoji = typeof VALID_EMOJIS[number];
@@ -773,6 +774,7 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('post-interactions error:', error);
+        reportError(error, { fn: 'post-interactions' });
         const message = error instanceof Error ? error.message : JSON.stringify(error);
         return new Response(
             JSON.stringify({ error: 'Internal Server Error', details: message }),

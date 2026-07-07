@@ -41,6 +41,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { validateUrl } from '../_shared/urlValidation.ts';
 import type { WishlistSourceTikTok } from '../_shared/wishlistSource.ts';
 import { captionToNote } from '../_shared/captionToNote.ts';
@@ -2361,6 +2362,7 @@ serve(async (req) => {
             return errorResponse('TIMEOUT', 'Resolver timed out', 503);
         }
         console.error('resolve-url error:', e);
+        reportError(e, { fn: 'resolve-url' });
         return errorResponse('INTERNAL', 'Internal server error', 500);
     }
 });

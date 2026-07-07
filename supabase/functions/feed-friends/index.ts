@@ -31,6 +31,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 
 const DEFAULT_PAGE_SIZE = 30;
@@ -223,6 +224,7 @@ serve(async (req) => {
         );
     } catch (error) {
         console.error('feed-friends error:', error);
+        reportError(error, { fn: 'feed-friends' });
         const details = error instanceof Error ? error.message : JSON.stringify(error);
         return new Response(
             JSON.stringify({ error: { code: 'INTERNAL', message: 'Internal Server Error', details } }),

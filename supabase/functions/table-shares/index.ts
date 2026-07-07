@@ -21,6 +21,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -75,6 +76,19 @@ const ALLOWED_MIME_TYPES = new Set([
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 serve(async (req) => {
+    // TICKET-121: table-shares had no outer catch — thrown errors escaped to
+    // the runtime's opaque 500, unreported. Wrap + rethrow: reporting only;
+    // the rethrow preserves the exact response the runtime already produced.
+    try {
+        return await handleTableShares(req);
+    } catch (error) {
+        console.error('table-shares error:', error);
+        reportError(error, { fn: 'table-shares' });
+        throw error;
+    }
+});
+
+async function handleTableShares(req: Request): Promise<Response> {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
     }
@@ -128,7 +142,7 @@ serve(async (req) => {
     }
 
     return err('UNKNOWN_ACTION', `Unknown action: ${action}`, 400);
-});
+}
 
 // ── Action: create_import ─────────────────────────────────────────────────────
 

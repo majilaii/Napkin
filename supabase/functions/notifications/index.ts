@@ -22,6 +22,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { encodeCursor, decodeCursor, type CursorTuple } from '../_shared/pagination.ts';
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -602,6 +603,7 @@ serve(async (req) => {
 
     } catch (err) {
         console.error('[notifications] unhandled error:', err);
+        reportError(err, { fn: 'notifications' });
         const msg = err instanceof Error ? err.message : String(err);
         // Hydration failures bubble up as `Error('DB_ERROR: ...')`. Surface them
         // as code: 'DB_ERROR' so clients/log pipeline can distinguish DB issues

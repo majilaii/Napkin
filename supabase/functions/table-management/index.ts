@@ -5,6 +5,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { emitTableInvite, emitTopFourSwap } from '../_shared/notify.ts';
 import { mintShareToken } from '../_shared/handoffToken.ts';
@@ -1260,6 +1261,7 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('table-management error:', error);
+        reportError(error, { fn: 'table-management' });
         return new Response(
             JSON.stringify({ error: 'Internal Server Error', details: String(error) }),
             { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

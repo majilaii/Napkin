@@ -25,6 +25,14 @@
  *   SMOKE_TEST_EMAIL + SMOKE_TEST_PASSWORD — smoke-user credentials; the script
  *       signs in at runtime (TICKET-091 — JWTs expire hourly, so static-JWT
  *       secrets rot; password sign-in gives CI a fresh token every run).
+ * Optional env:
+ *   SMOKE_TEST_ENTRY_ID       — overrides the runtime-discovered entry id for
+ *       the post-interactions check (must be a public-eligible entry of the
+ *       smoke user). Unset in CI — TICKET-121 self-discovers from the smoke
+ *       user's reviews instead.
+ *   PLACES_SMOKE=1            — enables the places-search check (REAL Google
+ *       Places cost). Set only by prod-deploy.yml's smoke step, never by the
+ *       scheduled smoke.
  *
  * Run locally:
  *   deno run --allow-env --allow-net scripts/smoke/edge-functions.ts
@@ -53,10 +61,11 @@ type Check = {
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
 const RESTAURANT_ID = Deno.env.get('SMOKE_TEST_RESTAURANT_ID');
-// Optional: a real table-scoped entry id the SMOKE_TEST_JWT user can read.
-// When set, enables the post-interactions read-path guard below. Left unset in
-// CI until seeded — the check is appended conditionally so a missing value does
-// not fail the suite.
+// Optional OVERRIDE for the post-interactions read-path guard (TICKET-121):
+// must be a public-eligible entry of the smoke user. Unset in CI — the guard
+// self-discovers a fixture entry from the smoke user's reviews at runtime,
+// so the check always runs (it was inert for weeks when it depended on this
+// env being seeded).
 const ENTRY_ID = Deno.env.get('SMOKE_TEST_ENTRY_ID');
 
 function requireEnv(name: string, val: string | undefined): string {
@@ -328,20 +337,130 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-121: table-management GET list — the Tables tab's primary read
+    // (memberships + tables embed). An empty array here would be a legitimate
+    // response shape; the runtime discovery below independently fails loudly
+    // if the smoke user has no table (ensure-fixtures guarantees ≥1).
+    {
+        name: 'table-management GET list (TICKET-121 coverage)',
+        method: 'GET',
+        fn: 'table-management',
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!Array.isArray(data)) return 'data is not an array';
+            return null;
+        },
+    },
+    // TICKET-121: lists list_mine — the Lists rail read path (own + Table
+    // lists, entry counts via list_entries + restaurants!inner embeds — the
+    // exact join class that drifts into PGRST201 500s). Empty array is a
+    // legitimate no-lists state; the guard is 200 + array envelope.
+    {
+        name: 'lists?action=list_mine (TICKET-121 coverage)',
+        method: 'POST',
+        fn: 'lists',
+        body: { action: 'list_mine' },
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!Array.isArray(data)) return 'data is not an array';
+            return null;
+        },
+    },
 ];
+
+// TICKET-121: places-search costs a REAL Google Places request per call, so it
+// only runs when PLACES_SMOKE=1 — set by prod-deploy.yml's smoke step
+// (deploy-time only), deliberately NOT by the scheduled smoke (4 runs/day
+// would be pure spend for zero deploy-drift signal).
+if (Deno.env.get('PLACES_SMOKE') === '1') {
+    CHECKS.push({
+        name: 'places-search POST fixed query (PLACES_SMOKE=1 — deploy-time only, real Google cost)',
+        method: 'POST',
+        fn: 'places-search',
+        body: { query: 'blue bottle coffee san francisco' },
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!Array.isArray(data)) return 'data is not an array';
+            if (data.length === 0) return 'no places returned for a fixed well-known query';
+            const first = data[0] as Record<string, unknown>;
+            if (typeof first.id !== 'string') return 'places[0].id is not a string';
+            // sanitizePlace maps name to displayName?.text ?? null — a degraded
+            // Places payload can legitimately carry null, so string OR null.
+            if (typeof first.name !== 'string' && first.name !== null) {
+                return 'places[0].name is not a string or null';
+            }
+            return null;
+        },
+    });
+}
+
+// ── Runner state ────────────────────────────────────────────────────────────
+
+let passed = 0;
+let failed = 0;
+const failures: string[] = [];
+
+function recordFailure(name: string, detail: string) {
+    failed++;
+    const msg = `✗ ${name}\n   ${detail}`;
+    console.error(msg);
+    failures.push(msg);
+}
+
+// ── TICKET-121: runtime fixture discovery ───────────────────────────────────
+// Some checks need real row ids that only exist on the target project. Rather
+// than adding CI secrets that rot, discover them at runtime through the same
+// read paths the app uses. ensure-fixtures.ts (run by CI immediately before
+// this suite) guarantees the rows exist — a discovery miss is therefore a real
+// failure, never a skip.
+
+/** Minimal authed POST used by discovery (checks themselves stay in CHECKS). */
+async function discoveryPost(fn: string, body: unknown): Promise<unknown> {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/${fn}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${JWT}`,
+            apikey: ANON_KEY!,
+        },
+        body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`${fn} HTTP ${res.status}: ${text.slice(0, 200)}`);
+    return JSON.parse(text);
+}
 
 // post-interactions read-path guard. This endpoint backs every reaction/comment
 // container on entries. It was NOT in the smoke list when the table-scope
 // entry react/comment fire was investigated (2026-06-15); per CLAUDE.md deploy
-// doctrine ("the smoke test list is sacred — add the endpoint a fire traced to"),
-// it is added here. Conditional on SMOKE_TEST_ENTRY_ID so it stays inert until a
-// real table-scoped entry id is seeded into CI.
-if (ENTRY_ID) {
+// doctrine it was added — but stayed INERT because SMOKE_TEST_ENTRY_ID was
+// never set in CI. TICKET-121 activates it: self-discover a review-bearing
+// entry from the smoke user's own reviews. The ensure-fixtures entries are
+// feed-only + rated + note ≥ 20 chars — exactly the is_entry_publicly_eligible
+// predicate (smoke profile is public-default), so scope=public is the correct
+// read: scope=table resolves via entry_tables / entries.table_id, which a
+// feed-only entry doesn't have → 404, not 200.
+try {
+    let entryId = ENTRY_ID ?? null;
+    if (!entryId) {
+        const json = await discoveryPost('user-profile', {
+            action: 'reviews',
+            identifier: SMOKE_USER_ID,
+            limit: 10,
+        }) as { data?: { rows?: Array<{ entry_id?: string; note?: string }> } };
+        const rows = json?.data?.rows ?? [];
+        // Prefer the ensure-fixtures entries — guaranteed public-eligible.
+        const fixture = rows.find((r) => typeof r.note === 'string' && r.note.includes('Smoke fixture'));
+        entryId = fixture?.entry_id ?? rows[0]?.entry_id ?? null;
+    }
+    if (!entryId) {
+        throw new Error('no review-bearing entry found — run scripts/smoke/ensure-fixtures.ts first');
+    }
     CHECKS.push({
-        name: 'post-interactions GET target_type=entry scope=table (TICKET react/comment fire 2026-06-15)',
+        name: 'post-interactions GET target_type=entry scope=public (react/comment fire 2026-06-15; activated TICKET-121)',
         method: 'GET',
         fn: 'post-interactions',
-        query: `target_type=entry&target_id=${ENTRY_ID}&scope=table`,
+        query: `target_type=entry&target_id=${entryId}&scope=public`,
         shape: (json) => {
             const data = (json as { data?: { reactions?: unknown[]; comments?: unknown[]; counts?: unknown } }).data;
             if (!data) return 'missing data envelope';
@@ -351,13 +470,66 @@ if (ENTRY_ID) {
             return null;
         },
     });
+} catch (err) {
+    recordFailure('post-interactions entry discovery (TICKET-121)', (err as Error).message);
+}
+
+// table-activity + member-profile need a table the smoke user belongs to.
+// ensure-fixtures guarantees ≥1 (created through table-management, the app
+// write path). The tables embed off table_members is many-to-one → object,
+// but tolerate an array shape defensively.
+try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/table-management`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${JWT}`, apikey: ANON_KEY! },
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`table-management HTTP ${res.status}: ${text.slice(0, 200)}`);
+    const memberships = (JSON.parse(text) as {
+        data?: Array<{ tables?: { id?: string } | Array<{ id?: string }> }>;
+    }).data ?? [];
+    const embedded = memberships[0]?.tables;
+    const tableId = Array.isArray(embedded) ? embedded[0]?.id : embedded?.id;
+    if (!tableId) {
+        throw new Error('smoke user has no table — run scripts/smoke/ensure-fixtures.ts first');
+    }
+    CHECKS.push(
+        {
+            name: 'table-activity POST page 1 (TICKET-121 coverage)',
+            method: 'POST',
+            fn: 'table-activity',
+            body: { table_id: tableId },
+            shape: (json) => {
+                const data = (json as { data?: { rows?: unknown; next_cursor?: unknown; has_more?: unknown } }).data;
+                if (!data) return 'missing data envelope';
+                if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+                if (typeof data.has_more !== 'boolean') return 'data.has_more is not a boolean';
+                if (!('next_cursor' in data)) return 'missing data.next_cursor';
+                return null;
+            },
+        },
+        {
+            name: 'member-profile?action=profile self-target (TICKET-121 coverage)',
+            method: 'GET',
+            fn: 'member-profile',
+            query: `action=profile&user_id=${SMOKE_USER_ID}&table_id=${tableId}`,
+            shape: (json) => {
+                const data = (json as {
+                    data?: { profile?: unknown; top_entries?: unknown; recent_activity?: unknown };
+                }).data;
+                if (!data) return 'missing data envelope';
+                if (!data.profile) return 'missing data.profile';
+                if (!Array.isArray(data.top_entries)) return 'data.top_entries is not an array';
+                if (!Array.isArray(data.recent_activity)) return 'data.recent_activity is not an array';
+                return null;
+            },
+        },
+    );
+} catch (err) {
+    recordFailure('table fixture discovery (TICKET-121)', (err as Error).message);
 }
 
 // ── Runner ─────────────────────────────────────────────────────────────────
-
-let passed = 0;
-let failed = 0;
-const failures: string[] = [];
 
 for (const check of CHECKS) {
     const url = `${SUPABASE_URL}/functions/v1/${check.fn}${check.query ? '?' + check.query : ''}`;

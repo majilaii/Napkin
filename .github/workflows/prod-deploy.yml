@@ -194,6 +194,9 @@ jobs:
           SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
           SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+          # TICKET-121: places-search check (real Google cost) runs at deploy
+          # time only — the scheduled smoke never sets this.
+          PLACES_SMOKE: "1"
         run: |
           echo "## Smoke test results (PROD)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

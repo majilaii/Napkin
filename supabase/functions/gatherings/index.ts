@@ -30,6 +30,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -139,6 +140,7 @@ serve(async (req) => {
         return err('UNKNOWN_ACTION', `Unknown action: ${action}`, 400);
     } catch (error) {
         console.error('gatherings error:', error);
+        reportError(error, { fn: 'gatherings' });
         const details = error instanceof Error ? error.message : JSON.stringify(error);
         return err('INTERNAL', 'Internal Server Error', 500, details);
     }

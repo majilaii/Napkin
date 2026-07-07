@@ -9,6 +9,7 @@
  * early-return guard). Producers must not rely on DB constraints alone.
  */
 import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { reportError } from './report.ts';
 
 interface BaseFanout {
     actorUserId: string;
@@ -36,9 +37,13 @@ export async function emitFriendLogged(
     }));
     try {
         const { error } = await supabase.from('notifications').insert(rows);
-        if (error) console.error('[notify] friend_logged insert failed:', error.message);
+        if (error) {
+            console.error('[notify] friend_logged insert failed:', error.message);
+            reportError(error, { fn: 'notify', action: 'friend_logged' });
+        }
     } catch (e) {
         console.error('[notify] friend_logged threw:', e);
+        reportError(e, { fn: 'notify', action: 'friend_logged' });
     }
 }
 
@@ -58,9 +63,13 @@ export async function emitTableInvite(
             actor_user_id: args.actorUserId,
             subject_table_id: args.tableId,
         });
-        if (error) console.error('[notify] table_invite insert failed:', error.message);
+        if (error) {
+            console.error('[notify] table_invite insert failed:', error.message);
+            reportError(error, { fn: 'notify', action: 'table_invite' });
+        }
     } catch (e) {
         console.error('[notify] table_invite threw:', e);
+        reportError(e, { fn: 'notify', action: 'table_invite' });
     }
 }
 
@@ -88,9 +97,13 @@ export async function emitTopFourSwap(
     }));
     try {
         const { error } = await supabase.from('notifications').insert(rows);
-        if (error) console.error('[notify] top_four_swap insert failed:', error.message);
+        if (error) {
+            console.error('[notify] top_four_swap insert failed:', error.message);
+            reportError(error, { fn: 'notify', action: 'top_four_swap' });
+        }
     } catch (e) {
         console.error('[notify] top_four_swap threw:', e);
+        reportError(e, { fn: 'notify', action: 'top_four_swap' });
     }
 }
 

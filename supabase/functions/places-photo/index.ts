@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 
 /**
  * Public photo proxy for Google Places media references.
@@ -94,6 +95,8 @@ serve(async req => {
             },
         });
     } catch (e) {
+        console.error('places-photo error:', e);
+        reportError(e, { fn: 'places-photo' });
         return new Response(
             JSON.stringify({ error: 'Proxy error', details: String(e) }),
             { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },

@@ -19,6 +19,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -333,6 +334,7 @@ serve(async (req) => {
                 ? JSON.stringify(err)
                 : String(err);
         console.error('member-profile error:', details);
+        reportError(err, { fn: 'member-profile' });
         return json({ error: 'Internal Server Error', details }, 500);
     }
 });
