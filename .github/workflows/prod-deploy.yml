@@ -171,6 +171,12 @@ jobs:
       # idempotent, writes nothing once the floor is met. Runs BEFORE smoke so
       # the strict single-page-is-failure walks can never fire spuriously.
       - name: Ensure smoke fixtures (keyset walk needs ≥2 entries)
+        # Same condition as the smoke step: a partial fleet-deploy failure must
+        # not skip fixture healing, or smoke runs against unhealed state and
+        # its fixture-dependent checks go red for the wrong reason (2026-07-07
+        # esm.sh outage: deploy failed partway → this step skipped → smoke
+        # failed on missing table/privacy fixtures, masking the real cause).
+        if: success() || steps.deploy-fns.outcome == 'failure'
         env:
           SUPABASE_URL: https://ftvmseaqwwlcxtdlvxxz.supabase.co
           SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
