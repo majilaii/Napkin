@@ -759,6 +759,13 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             return { type: 'google_maps', url };
         }
         if (data.source_type === 'video') {
+            // 'video' also comes back for URL-initiated resolves that rode the
+            // extracted_text tier (IG caption, TikTok ASR) — the server never
+            // saw the URL. Dropping it here loses the tap-out link forever and
+            // diverges from the queue path's provenance. Only a true file
+            // import (no url) is a bare 'video' source.
+            if (url && /tiktok\.com/i.test(url)) return { type: 'tiktok', url };
+            if (url) return { type: 'web', url };
             return { type: 'video' };
         }
         return { type: 'web', url };
@@ -778,7 +785,14 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             case 'substack': return 'from substack';
             case 'screenshot':
             case 'vision': return 'from a screenshot';
-            case 'video': return 'from a video';
+            case 'video': {
+                // extracted_text tier hides the origin from the server — infer
+                // the label from the pasted URL so a reel doesn't read "video".
+                const u = inputValue.trim();
+                if (/instagram\.com|instagr\.am/i.test(u)) return 'from instagram';
+                if (/tiktok\.com/i.test(u)) return 'from tiktok';
+                return 'from a video';
+            }
             default: return 'from the web';
         }
     }

@@ -59,6 +59,7 @@ import {
     downloadTikTokVideo,
     deleteCachedTikTokVideo,
 } from '@/lib/tiktokPerception';
+import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
 import type { SaveImportSpotsResult } from './useSaveImportSpots';
 
@@ -176,9 +177,23 @@ export function useProcessImportQueue() {
                     // + 07-03). Ladder: page text (caption + TikTok's own ASR,
                     // fetched on-device) + playAddr download → media-extract OCR
                     // → fused extracted_text → server caption resolve as fallback.
+                    // Instagram Reels ride the SAME ladder (caption + embed-page
+                    // video_url; no platform ASR, so speech is transcribed
+                    // on-device) — the server's Instagram branch is login-walled
+                    // by design and returns zero candidates, so without this an
+                    // IG share died instantly.
                     let extractedText: string | null = null;
-                    if (isTikTokUrl(m.url)) {
-                        let perception = await fetchTikTokPerception(m.url as string);
+                    const provider = isTikTokUrl(m.url)
+                        ? 'tiktok'
+                        : isInstagramUrl(m.url)
+                          ? 'instagram'
+                          : null;
+                    if (provider) {
+                        const fetchPerception = () =>
+                            provider === 'tiktok'
+                                ? fetchTikTokPerception(m.url as string)
+                                : fetchInstagramPerception(m.url as string);
+                        let perception = await fetchPerception();
                         // Caption ALWAYS fuses: even a name-free caption carries
                         // the city signal (hashtags/handle) that Places needs.
                         // (086c — it was dropped whenever the ASR was missing.)
@@ -193,13 +208,14 @@ export function useProcessImportQueue() {
                             if (!perception?.playAddr) break;
                             const fileUri = await downloadTikTokVideo(
                                 perception.playAddr,
-                                m.url as string,
+                                // IG's fbcdn checks the embed-page referer;
+                                // TikTok's CDN wants the video page itself.
+                                (perception as { refererUrl?: string }).refererUrl ??
+                                    (m.url as string),
                             );
                             if (!fileUri) {
                                 if (attempt === 0) {
-                                    perception =
-                                        (await fetchTikTokPerception(m.url as string)) ??
-                                        perception;
+                                    perception = (await fetchPerception()) ?? perception;
                                 }
                                 continue;
                             }
@@ -237,6 +253,7 @@ export function useProcessImportQueue() {
                         // Which channels actually contributed — without this the
                         // "why did this import flop?" question is unanswerable.
                         const diag = {
+                            provider,
                             page: !!perception,
                             caption_chars: pageText?.length ?? 0,
                             tiktok_asr: perception?.hasTranscript ?? false,
@@ -253,7 +270,10 @@ export function useProcessImportQueue() {
                         body: extractedText ? { extracted_text: extractedText } : { url: m.url },
                     });
                     candidates = resolved?.candidates ?? [];
-                    if (candidates.length === 0 && extractedText) {
+                    // Instagram's url tier is a login-walled constant (zero
+                    // candidates + ig_nudge, which this queue ignores) — the
+                    // fallback would burn a resolve_url rate slot for nothing.
+                    if (candidates.length === 0 && extractedText && provider !== 'instagram') {
                         const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
                             body: { url: m.url },
                         });
@@ -359,6 +379,9 @@ export function useProcessImportQueue() {
             // Provenance: a tiktok link gets a 'tiktok' source so the restaurant
             // page shows "saved from tiktok" + taps out to that exact video; other
             // links → 'web'; a shared file → 'video' (no URL to deep-link).
+            // Instagram deliberately saves as 'web' (still taps out to the reel):
+            // the wishlist_items_source_shape DB CHECK whitelists source types, so
+            // a first-class 'instagram' variant needs a migration — separate ticket.
             const source: Record<string, string> =
                 m.kind === 'url' && m.url
                     ? /tiktok\.com/i.test(m.url)
