@@ -18,6 +18,12 @@
  * `ReanimatedSwipeable` (gesture-handler 2.28) has no `enabled` prop and no
  * literal `activeOffsetX` — we gate by conditionally mounting and tune
  * horizontal activation via `dragOffsetFromRightEdge` (the modern analogue).
+ *
+ * Rendering notes: the children wrapper is painted opaque (screen background)
+ * because the actions layer snaps to full opacity on the first pixel of drag —
+ * any translucency in the row (press-in `opacity` feedback) would let the trash
+ * icon flash through the content. The panel carries a REVEAL_GAP left margin so
+ * the fully-open position keeps a gutter between row content and the panel.
  */
 import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -38,6 +44,8 @@ interface Props {
 }
 
 const PANEL_WIDTH = 76;
+/** Breathing room between the sliding row content and the trash panel when open. */
+const REVEAL_GAP = 12;
 
 export function SwipeToDeleteRow({ enabled, onDelete, children }: Props) {
     const scheme = useColorScheme() ?? 'light';
@@ -72,7 +80,11 @@ export function SwipeToDeleteRow({ enabled, onDelete, children }: Props) {
             overshootRight={false}
             renderRightActions={renderRightActions}
         >
-            <View>{children}</View>
+            {/* Opaque backing: the panel sits at full opacity behind the row from
+                the first pixel of drag, and row Pressables dim via `opacity` on
+                press-in — without a solid background here the trash icon flashes
+                through the translucent row while the pan claims the touch. */}
+            <View style={{ backgroundColor: palette.background }}>{children}</View>
         </ReanimatedSwipeable>
     );
 }
@@ -80,6 +92,9 @@ export function SwipeToDeleteRow({ enabled, onDelete, children }: Props) {
 const styles = StyleSheet.create({
     panel: {
         width: PANEL_WIDTH,
+        // Counted into the measured actions width, so the open position leaves a
+        // background-colored gutter between the row's right column and the panel.
+        marginLeft: REVEAL_GAP,
         alignItems: 'center',
         justifyContent: 'center',
         alignSelf: 'stretch',
