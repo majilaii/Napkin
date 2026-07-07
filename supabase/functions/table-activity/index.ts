@@ -893,14 +893,35 @@ serve(async (req) => {
                 gatheringRpcRows.map((r) => [r.id, r.payload as any]),
             );
 
-            // RSVPs for these gatherings.
+            // RSVPs for these gatherings (TICKET-127: counter_on rides along so we
+            // can build the counters payload + carry a 'counter' seat response).
             const { data: rsvpRows } = await supabase
                 .from('gathering_rsvps')
-                .select('gathering_id, user_id, response')
+                .select('gathering_id, user_id, response, counter_on')
                 .in('gathering_id', gatheringIds);
             const rsvpByGatheringUser = new Map<string, string>();
-            for (const r of (rsvpRows ?? []) as { gathering_id: string; user_id: string; response: string }[]) {
+            // gathering_id → [{ user_id, counter_on }] for members who countered.
+            const countersByGathering = new Map<string, { user_id: string; counter_on: string }[]>();
+            for (const r of (rsvpRows ?? []) as {
+                gathering_id: string; user_id: string; response: string; counter_on: string | null;
+            }[]) {
                 rsvpByGatheringUser.set(`${r.gathering_id}:${r.user_id}`, r.response);
+                if (r.response === 'counter' && r.counter_on) {
+                    const list = countersByGathering.get(r.gathering_id) ?? [];
+                    list.push({ user_id: r.user_id, counter_on: r.counter_on });
+                    countersByGathering.set(r.gathering_id, list);
+                }
+            }
+
+            // TICKET-127: rescheduled_from (host re-date breadcrumb) is NOT in the
+            // RPC anchor payload — batch-fetch it by id. Additive; no RPC touch.
+            const { data: gatheringMetaRows } = await supabase
+                .from('gatherings')
+                .select('id, rescheduled_from')
+                .in('id', gatheringIds);
+            const rescheduledFromByGathering = new Map<string, string | null>();
+            for (const m of (gatheringMetaRows ?? []) as { id: string; rescheduled_from: string | null }[]) {
+                rescheduledFromByGathering.set(m.id, m.rescheduled_from ?? null);
             }
 
             // Current table roster — every gathering in this feed belongs to the
@@ -942,6 +963,29 @@ serve(async (req) => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const gatheringRestMap = new Map((gatheringRestaurants ?? []).map((r: any) => [r.id, r]));
 
+            // TICKET-127 "why this place?": the HOST's own wishlist_items row for
+            // this restaurant may carry an import `source` ({ type, url }). When it
+            // has a URL the card shows one tap-out line ("pinned from tiktok"). Fetch
+            // by (host, restaurant) pairs; map on the composite so a matching source
+            // for a DIFFERENT gathering's host never leaks onto this card.
+            const { data: sourceRows } = hostIds.length > 0 && gatheringRestIds.length > 0
+                ? await supabase
+                    .from('wishlist_items')
+                    .select('user_id, restaurant_id, source')
+                    .in('user_id', hostIds)
+                    .in('restaurant_id', gatheringRestIds)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                : { data: [] as any[] };
+            // `${host}:${restaurant}` → { type, url }
+            const sourceByHostRest = new Map<string, { type?: string; url?: string }>();
+            for (const s of (sourceRows ?? []) as {
+                user_id: string; restaurant_id: string; source: { type?: string; url?: string } | null;
+            }[]) {
+                if (s.source && typeof s.source === 'object') {
+                    sourceByHostRest.set(`${s.user_id}:${s.restaurant_id}`, s.source);
+                }
+            }
+
             for (const r of gatheringRpcRows) {
                 const gid = r.id;
                 const anchor = anchorByGathering.get(gid);
@@ -960,14 +1004,31 @@ serve(async (req) => {
                             display_name: prof?.display_name ?? null,
                             avatar_url: prof?.avatar_url ?? null,
                             is_host: uid === hostUserId,
-                            response: (rsvpByGatheringUser.get(`${gid}:${uid}`) ?? null) as 'in' | 'out' | null,
+                            response: (rsvpByGatheringUser.get(`${gid}:${uid}`) ?? null) as 'in' | 'out' | 'counter' | null,
                         };
                     })
                     .sort((a, b) => seatRank(a) - seatRank(b));
 
                 const inCount = seats.filter((s) => s.response === 'in').length;
                 const viewerResponse =
-                    (rsvpByGatheringUser.get(`${gid}:${user.id}`) ?? null) as 'in' | 'out' | null;
+                    (rsvpByGatheringUser.get(`${gid}:${user.id}`) ?? null) as 'in' | 'out' | 'counter' | null;
+
+                // TICKET-127: counters — members who proposed another date. Drop
+                // ex-members (mirrors the seat roster gate); name via the profile map.
+                const counters = (countersByGathering.get(gid) ?? [])
+                    .filter((c) => rosterIds.includes(c.user_id))
+                    .map((c) => ({
+                        user_id: c.user_id,
+                        display_name: gatheringProfMap.get(c.user_id)?.display_name ?? null,
+                        counter_on: c.counter_on,
+                    }));
+
+                // TICKET-127: source line — only when the host's pin carries a URL.
+                const src = anchor?.restaurant_id
+                    ? sourceByHostRest.get(`${hostUserId}:${anchor.restaurant_id}`)
+                    : undefined;
+                const sourceUrl = src?.url && typeof src.url === 'string' ? src.url : null;
+                const sourceType = sourceUrl ? (src?.type ?? null) : null;
 
                 gatheringItems.push({
                     id: gid,
@@ -986,6 +1047,10 @@ serve(async (req) => {
                     seats,
                     in_count: inCount,
                     viewer_response: viewerResponse,
+                    counters,
+                    source_url: sourceUrl,
+                    source_type: sourceType,
+                    rescheduled_from: rescheduledFromByGathering.get(gid) ?? null,
                     created_at: anchor?.created_at ?? r.sort_date,
                 });
             }

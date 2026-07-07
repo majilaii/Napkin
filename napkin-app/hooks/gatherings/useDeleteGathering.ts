@@ -46,6 +46,9 @@ export function useDeleteGathering() {
         onSuccess: (_result, input) => {
             // invalidate: the row is gone server-side; narrow to this table.
             qc.invalidateQueries({ queryKey: queryKeys.tables.activityForTable(input.table_id) });
+            // The upcoming strip also drops the deleted row (and its day-of reminder
+            // reconciles away on the refetch) — nudge it, narrow to this table.
+            qc.invalidateQueries({ queryKey: queryKeys.gatherings.upcoming(input.table_id) });
         },
         onError: (error, input) => {
             // No optimistic patch to roll back — but a drift refusal means the

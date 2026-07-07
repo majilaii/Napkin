@@ -2,7 +2,10 @@ export { useCreateGathering, isAlreadyProposed } from './useCreateGathering';
 export type { CreateGatheringInput, GatheringRow } from './useCreateGathering';
 
 export { useRsvpGathering, patchGatheringRsvp } from './useRsvpGathering';
-export type { RsvpGatheringInput, RsvpGatheringResult } from './useRsvpGathering';
+export type { RsvpGatheringInput, RsvpGatheringResult, RsvpResponse } from './useRsvpGathering';
+
+export { useRescheduleGathering, patchGatheringReschedule, isRescheduleDrift } from './useRescheduleGathering';
+export type { RescheduleGatheringInput } from './useRescheduleGathering';
 
 export { useCancelGathering } from './useCancelGathering';
 export type { CancelGatheringInput, CancelGatheringResult } from './useCancelGathering';

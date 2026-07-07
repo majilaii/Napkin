@@ -34,6 +34,9 @@ export function useCancelGathering() {
         onSuccess: (_result, input) => {
             // invalidate: cancelled rows drop server-side; narrow to this table.
             qc.invalidateQueries({ queryKey: queryKeys.tables.activityForTable(input.table_id) });
+            // The upcoming strip also drops the cancelled row (and its day-of reminder
+            // reconciles away on the refetch) — nudge it, narrow to this table.
+            qc.invalidateQueries({ queryKey: queryKeys.gatherings.upcoming(input.table_id) });
         },
         onError: (error, input) => {
             // GATHERING_CLOSED = the card's 'proposed' was stale (dispatch or
