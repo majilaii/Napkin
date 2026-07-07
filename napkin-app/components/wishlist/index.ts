@@ -30,4 +30,8 @@ export { TableWishlistRow } from './TableWishlistRow';
 export { WishlistListCardFull } from './WishlistListCardFull';
 export { WishlistEmptyState } from './WishlistEmptyState';
 export { FilterActionSheet, type FilterOption } from './FilterActionSheet';
+// TICKET-124: single tabbed filter sheet (Cuisine · Price · Area · Sort) —
+// replaces the pill-per-sheet strip on the wishlist. FilterActionSheet stays
+// exported (no other consumer; low-risk to keep) for a future cleanup.
+export { FilterTabsSheet, type FilterTabConfig } from './FilterTabsSheet';
 export { ImportInboxCard } from './ImportInboxCard';

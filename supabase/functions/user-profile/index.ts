@@ -1338,6 +1338,79 @@ serve(async (req) => {
             return json({ data: { spots } });
         }
 
+        // ── network_map_pins (read) — TICKET-124: the follow-graph fan-out ──
+        // Caller-scoped (p_viewer = the JWT sub). Restaurants logged by the
+        // people the caller FOLLOWS, one pin per restaurant, diary/spots
+        // (looser) predicate — block exclusion + public-account gate live inside
+        // the SECURITY DEFINER RPC, so there is no identifier / strangerCanRead
+        // gate here (it never reads a target's palate — only the caller's own
+        // follow set). Author names are batch-hydrated from `profiles` by id:
+        // NEVER a PostgREST embed off entries (entries has no FK to profiles —
+        // reference_entries_no_profiles_fk), same shape as co_diners above.
+        if (action === 'network_map_pins') {
+            const { data: rpcRows, error: rpcErr } = await supabase.rpc(
+                'fn_network_map_pins',
+                { p_viewer: user.id },
+            );
+            if (rpcErr) throw rpcErr;
+
+            const rows = (rpcRows ?? []) as {
+                restaurant_id: string;
+                name: string;
+                city: string | null;
+                cuisine: string | null;
+                lat: number;
+                lng: number;
+                author_id: string;
+                entry_id: string;
+                rating: number | null;
+                note_snippet: string | null;
+                others_count: number;
+            }[];
+            if (rows.length === 0) return json({ data: { pins: [] } });
+
+            const authorIds = [...new Set(rows.map((r) => r.author_id))];
+            const { data: profiles, error: profErr } = await supabase
+                .from('profiles')
+                .select('user_id, display_name, avatar_url')
+                .in('user_id', authorIds);
+            if (profErr) throw profErr;
+
+            const byId = new Map(
+                ((profiles ?? []) as {
+                    user_id: string;
+                    display_name: string | null;
+                    avatar_url: string | null;
+                }[]).map((p) => [p.user_id, p]),
+            );
+
+            // Preserve the RPC's most-recent-activity order. A vanished author
+            // profile (deleted mid-flight) degrades to the 'Someone' fallback
+            // rather than dropping the pin.
+            const pins = rows.map((r) => {
+                const p = byId.get(r.author_id);
+                return {
+                    restaurant_id: r.restaurant_id,
+                    name: r.name,
+                    city: r.city ?? null,
+                    cuisine: r.cuisine ?? null,
+                    lat: r.lat,
+                    lng: r.lng,
+                    author: {
+                        id: r.author_id,
+                        name: p?.display_name || 'Someone',
+                        avatar: p?.avatar_url ?? null,
+                    },
+                    entry_id: r.entry_id,
+                    rating: r.rating ?? null,
+                    note: r.note_snippet ?? null,
+                    others_count: Number(r.others_count ?? 0),
+                };
+            });
+
+            return json({ data: { pins } });
+        }
+
         // ── reviews (read) — TICKET-092: diary rows with written notes ─────
         if (action === 'reviews') {
             const { identifier, cursor, limit } = body as {

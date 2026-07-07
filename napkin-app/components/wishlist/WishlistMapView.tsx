@@ -54,6 +54,21 @@ export interface WishlistMapItem {
      * its pins stay plain teardrops. Absent/null → the default cream dot.
      */
     emoji?: string | null;
+    /**
+     * TICKET-124 (network layer): when present, this pin is a followee's LOG,
+     * not one of the viewer's own saves — the peek card switches to the network
+     * variant (whose pin · rating · note snippet, tap → their review). All four
+     * are OPTIONAL and gated on `entryId`: mine-mode pins omit them entirely and
+     * render the existing directions-first card, fully backward-compatible.
+     */
+    author?: { id: string; name: string; avatar: string | null };
+    rating?: number | null;
+    /** Short note snippet; may be null/absent — the peek degrades gracefully. */
+    note?: string | null;
+    /** The followee's entry id → entry-detail. Presence = network pin. */
+    entryId?: string;
+    /** Other distinct followees who also logged here; >0 → "+N others". */
+    othersCount?: number;
 }
 
 type LocationStatus = 'idle' | 'pending' | 'granted' | 'denied';
@@ -68,10 +83,28 @@ interface Props {
     locationStatus: LocationStatus;
     onRequestLocation: () => void;
     onOpenRestaurant: (restaurantId: string) => void;
+    /**
+     * TICKET-124: open a followee's review (entry-detail). Provided by the
+     * network layer only; when a selected pin carries `entryId` AND this is set,
+     * the peek card shows the network variant and its body taps through here
+     * instead of to the restaurant page. Mine-mode consumers omit it.
+     */
+    onOpenReview?: (entryId: string) => void;
     /** Switch back to the list view (toggle lives bottom-right, like the Map
      * button). Optional — screens with their own chrome (dining map, TICKET-092)
      * omit it and the toggle hides. */
     onSwitchToList?: () => void;
+    /**
+     * TICKET-124: optional mine↔network source toggle. Rendered in the
+     * bottom-right chrome cluster and — like the recenter FAB and list toggle —
+     * hidden while a peek card is up, so it never collides with the card. The
+     * OWNER of the state is the screen (dining-map); this just draws the chrome
+     * in the right place with the right hide behavior. Absent → no toggle.
+     */
+    sourceToggle?: {
+        value: 'mine' | 'network';
+        onChange: (next: 'mine' | 'network') => void;
+    };
     palette: typeof Colors.light;
 }
 
@@ -225,7 +258,9 @@ export function WishlistMapView({
     locationStatus,
     onRequestLocation,
     onOpenRestaurant,
+    onOpenReview,
     onSwitchToList,
+    sourceToggle,
     palette,
 }: Props) {
     const insets = useSafeAreaInsets();
@@ -294,14 +329,51 @@ export function WishlistMapView({
         [items, selectedId],
     );
 
+    // ── Source toggle chrome (TICKET-124) — mine ↔ network segmented pill ────────
+    // Rendered bottom-right (the free slot on dining-map, which has no list
+    // toggle). Shown in BOTH the empty state and the populated map so switching
+    // back from an empty network layer is always possible. Hidden on peek so it
+    // never sits under the peek card (passed a `visible` flag by each caller).
+    const renderSourceToggle = (visible: boolean) =>
+        sourceToggle && visible ? (
+            <View style={[styles.sourceToggle, { backgroundColor: palette.surfaceNote, bottom: insets.bottom + 76 }]}>
+                {(['mine', 'network'] as const).map((src) => {
+                    const active = sourceToggle.value === src;
+                    return (
+                        <Pressable
+                            key={src}
+                            onPress={() => sourceToggle.onChange(src)}
+                            style={[styles.sourceToggleBtn, active && { backgroundColor: palette.primary }]}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                        >
+                            <Text
+                                style={[
+                                    styles.sourceToggleText,
+                                    { color: active ? '#fff' : palette.textSecondary },
+                                ]}
+                            >
+                                {src === 'mine' ? 'Mine' : 'Network'}
+                            </Text>
+                        </Pressable>
+                    );
+                })}
+            </View>
+        ) : null;
+
     // ── Empty (defensive — parent only enters map mode with mappable items) ──
     if (items.length === 0) {
+        const emptyCopy =
+            sourceToggle?.value === 'network'
+                ? 'no spots from people you follow yet.'
+                : 'none of your saved spots have a map location yet.';
         return (
-            <View style={[styles.fill, styles.emptyWrap]}>
-                <Ionicons name="map-outline" size={28} color={palette.textMuted} />
-                <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                    none of your saved spots have a map location yet.
-                </Text>
+            <View style={styles.fill}>
+                <View style={[styles.fill, styles.emptyWrap]}>
+                    <Ionicons name="map-outline" size={28} color={palette.textMuted} />
+                    <Text style={[styles.emptyText, { color: palette.textMuted }]}>{emptyCopy}</Text>
+                </View>
+                {renderSourceToggle(true)}
             </View>
         );
     }
@@ -416,6 +488,9 @@ export function WishlistMapView({
                 </Pressable>
             ) : null}
 
+            {/* Source toggle (mine ↔ network) — bottom-right, hidden on peek. */}
+            {renderSourceToggle(!selected)}
+
             {/* Peek card — rises when a pin is tapped */}
             {selected ? (
                 <PeekCard
@@ -426,6 +501,7 @@ export function WishlistMapView({
                     bottomInset={insets.bottom + NAV_CLEARANCE}
                     onClose={() => setSelectedId(null)}
                     onOpen={() => onOpenRestaurant(selected.id)}
+                    onOpenReview={onOpenReview}
                 />
             ) : null}
         </View>
@@ -441,9 +517,11 @@ interface PeekCardProps {
     bottomInset: number;
     onClose: () => void;
     onOpen: () => void;
+    /** TICKET-124: network pins tap through to a followee's review, not directions. */
+    onOpenReview?: (entryId: string) => void;
 }
 
-function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen }: PeekCardProps) {
+function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen, onOpenReview }: PeekCardProps) {
     const slide = useRef(new Animated.Value(40)).current;
     const fade = useRef(new Animated.Value(0)).current;
     useEffect(() => {
@@ -456,9 +534,8 @@ function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen }: P
     const distanceLabel = userCoords
         ? formatDistance(haversineMiles(userCoords, { latitude: item.lat, longitude: item.lng }))
         : null;
-    const meta = [distanceLabel, item.city, item.cuisine].filter(Boolean).join(' · ');
 
-    return (
+    const shell = (children: React.ReactNode) => (
         <Animated.View
             style={[
                 styles.peekCard,
@@ -470,6 +547,65 @@ function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen }: P
                 },
             ]}
         >
+            {children}
+        </Animated.View>
+    );
+
+    // ── Network variant — a followee's LOG (TICKET-124) ─────────────────────────
+    // Gated on entryId (presence = network pin) AND a handler. Review-first, NOT
+    // directions-first: the body taps through to their review. Degrades
+    // gracefully — no note → rating-only meta → name-only (no empty pull-quote).
+    if (item.entryId != null && onOpenReview) {
+        const authorName = item.author?.name ?? 'Someone';
+        const others = item.othersCount ?? 0;
+        const attribution = others > 0 ? `${authorName} +${others} others` : authorName;
+        const meta = [attribution, distanceLabel, item.city].filter(Boolean).join(' · ');
+        const note = item.note?.trim() || null;
+        return shell(
+            <>
+                <Pressable
+                    style={styles.peekBody}
+                    onPress={() => onOpenReview(item.entryId!)}
+                    accessibilityLabel={`Open ${authorName}'s review of ${item.name}`}
+                >
+                    <View style={styles.peekNameRow}>
+                        <Text style={[styles.peekName, styles.peekNameFlex, { color: palette.text }]} numberOfLines={1}>
+                            {item.name}
+                        </Text>
+                        {item.rating != null ? (
+                            <Text style={[styles.peekRating, { color: palette.primary }]}>
+                                {item.rating.toFixed(1)}
+                            </Text>
+                        ) : null}
+                    </View>
+                    {meta ? (
+                        <Text style={[styles.peekMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                            {meta}
+                        </Text>
+                    ) : null}
+                    {note ? (
+                        <Text style={[styles.peekNote, { color: palette.textSecondary }]} numberOfLines={2}>
+                            {`— ${note}`}
+                        </Text>
+                    ) : null}
+                </Pressable>
+                <Pressable
+                    onPress={onClose}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel="close"
+                    style={styles.peekClose}
+                >
+                    <Ionicons name="close" size={20} color={palette.textMuted} />
+                </Pressable>
+            </>,
+        );
+    }
+
+    // ── Mine variant — a saved spot (existing, directions-first) ────────────────
+    const meta = [distanceLabel, item.city, item.cuisine].filter(Boolean).join(' · ');
+    return shell(
+        <>
             <Pressable style={styles.peekBody} onPress={onOpen} accessibilityLabel={`Open ${item.name}`}>
                 <Text style={[styles.peekName, { color: palette.text }]} numberOfLines={1}>
                     {item.name}
@@ -505,7 +641,7 @@ function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen }: P
                     <Ionicons name="close" size={20} color={palette.textMuted} />
                 </Pressable>
             </View>
-        </Animated.View>
+        </>,
     );
 }
 
@@ -606,6 +742,30 @@ const styles = StyleSheet.create({
         fontSize: 12,
         letterSpacing: 0.4,
     },
+    // Source toggle (mine ↔ network) — segmented pill, bottom-right.
+    sourceToggle: {
+        position: 'absolute',
+        right: 18,
+        flexDirection: 'row',
+        borderRadius: 999,
+        padding: 3,
+        gap: 2,
+        shadowColor: '#1c1c19',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.14,
+        shadowRadius: 14,
+        elevation: 6,
+    },
+    sourceToggleBtn: {
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 999,
+    },
+    sourceToggleText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 12,
+        letterSpacing: 0.3,
+    },
     // Peek card
     peekCard: {
         position: 'absolute',
@@ -631,6 +791,28 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 19,
         lineHeight: 23,
+    },
+    // Network variant: name shares its row with the rating numeral.
+    peekNameRow: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 10,
+    },
+    peekNameFlex: {
+        flex: 1,
+    },
+    // Rating numeral — the brand's italic-serif rating moment, terracotta.
+    peekRating: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 19,
+        lineHeight: 23,
+    },
+    // Followee's note snippet — em-dash pull-quote, italic serif.
+    peekNote: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13.5,
+        lineHeight: 18,
+        marginTop: 3,
     },
     peekMeta: {
         fontFamily: 'Manrope_500Medium',
