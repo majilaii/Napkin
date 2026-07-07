@@ -517,13 +517,15 @@ class ShareViewController: UIViewController {
     // MARK: - Capture
 
     private func captureSharedItem() {
-        guard
-            let item = (extensionContext?.inputItems as? [NSExtensionItem])?.first,
-            let attachments = item.attachments
-        else { markFailed(); return }
+        // Scan ALL input items, not just the first — Google apps in particular
+        // split attachments across items.
+        let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
+        let attachments = items.flatMap { $0.attachments ?? [] }
+        guard !attachments.isEmpty else { markFailed(); return }
 
         let movieType = UTType.movie.identifier
         let urlType = UTType.url.identifier
+        let textType = UTType.plainText.identifier
 
         if let provider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(movieType) }) {
             provider.loadFileRepresentation(forTypeIdentifier: movieType) { [weak self] (fileURL, _) in
@@ -547,7 +549,47 @@ class ShareViewController: UIViewController {
             }
             return
         }
+        // Text share: Google Maps (lists, places) and some other apps put the
+        // link INSIDE a plain string ("Title\nhttps://maps.app.goo.gl/…").
+        if let provider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(textType) }) {
+            provider.loadItem(forTypeIdentifier: textType, options: nil) { [weak self] (data, _) in
+                guard let self = self else { return }
+                let text = (data as? String) ?? (data as? NSAttributedString)?.string
+                let url = text.flatMap(Self.firstHTTPURL(in:))
+                DispatchQueue.main.async {
+                    if let url = url { self.capturedURL = url.absoluteString; self.markReady(kind: "url") }
+                    else { self.markFailed() }
+                }
+            }
+            return
+        }
+        // Last resort: hosts that only populate attributedContentText.
+        if let text = items.compactMap({ $0.attributedContentText?.string }).first(where: { !$0.isEmpty }),
+           let url = Self.firstHTTPURL(in: text) {
+            capturedURL = url.absoluteString
+            markReady(kind: "url")
+            return
+        }
         markFailed()
+    }
+
+    /// First http(s) link in a shared text blob (NSDataDetector).
+    /// The detector also matches bare domain-shaped tokens ("eater.com") and
+    /// synthesizes http:// for them — a list TITLE containing a domain would
+    /// win over the actual share link. Prefer matches the sender literally
+    /// typed with a scheme; synthesized ones are only a last resort.
+    private static func firstHTTPURL(in text: String) -> URL? {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        var synthesized: URL? = nil
+        for match in detector.matches(in: text, options: [], range: range) {
+            guard let url = match.url, url.scheme == "http" || url.scheme == "https" else { continue }
+            if let r = Range(match.range, in: text), text[r].lowercased().hasPrefix("http") {
+                return url
+            }
+            if synthesized == nil { synthesized = url }
+        }
+        return synthesized
     }
 
     private func markReady(kind: String) {
@@ -555,9 +597,17 @@ class ShareViewController: UIViewController {
         captureReady = true
         spinner.stopAnimating()
         spinner.isHidden = true
+        // A maps link is a list/place share — the "save the video" nudge only
+        // makes sense for TikTok-style links. (Includes legacy goo.gl/maps.)
+        let isMapsLink = capturedURL?.range(
+            of: #"maps\.app\.goo\.gl|goo\.gl/maps|maps\.google\.|google\.[a-z.]+/maps"#,
+            options: .regularExpression
+        ) != nil
         subtitleLabel.text = kind == "video"
             ? "pick where it lands — we'll pull the spots in the app"
-            : "got the link — save the video for the full list"
+            : (isMapsLink
+                ? "got the list — we'll pull the spots in the app"
+                : "got the link — save the video for the full list")
         doneButton.isEnabled = true
     }
 

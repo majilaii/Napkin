@@ -128,6 +128,21 @@ const SMOKE_USER_ID = jwtSub(JWT);
 // 90% of schema/embed/contract drift for ~zero maintenance cost.
 
 const CHECKS: Check[] = [
+    // Boot check only: an SSRF-rejected URL exercises module load + routing +
+    // the validation path without touching Google/Places. A broken import in
+    // the resolver (maps-list import, TICKET pending) turns this into a 500.
+    {
+        name: 'resolve-url (boot + validation path, no upstream)',
+        method: 'POST',
+        fn: 'resolve-url',
+        body: { url: 'http://localhost/nope' },
+        expectedStatus: 400,
+        shape: (json) => {
+            const code = (json as { error?: { code?: string } }).error?.code;
+            if (code !== 'INVALID_URL') return `expected error.code INVALID_URL, got ${code}`;
+            return null;
+        },
+    },
     {
         name: 'restaurant-history?action=page (the one that 500d on 2026-04-30)',
         method: 'GET',
