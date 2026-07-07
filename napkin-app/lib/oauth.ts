@@ -113,6 +113,13 @@ export async function googleIdToken(): Promise<string> {
     try {
         await GoogleSignin.hasPlayServices();
         const response = await GoogleSignin.signIn();
+        // google-signin v13+ RESOLVES on user cancel ({ type: 'cancelled', data:
+        // null }) instead of rejecting with SIGN_IN_CANCELLED — without this check
+        // a cancel falls through to the no-ID-token throw and shows a false
+        // "Couldn't sign in" alert.
+        if ((response as { type?: string }).type === 'cancelled') {
+            throw new OAuthCancelledError();
+        }
         // google-signin v13+ wraps the payload: { type, data: { idToken, ... } }.
         const idToken =
             (response as { data?: { idToken?: string | null } }).data?.idToken ??
