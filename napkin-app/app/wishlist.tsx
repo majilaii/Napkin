@@ -43,13 +43,14 @@ import {
     WishlistSpotRow,
     WishlistListCardFull,
     WishlistEmptyState,
-    FilterActionSheet,
+    FilterTabsSheet,
     type FilterOption,
     ImportInboxCard,
 } from '@/components/wishlist';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
+import { useHasImported } from '@/hooks/wishlist/useHasImported';
 import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
@@ -254,6 +255,8 @@ export default function WishlistScreen() {
     // latest only) routes straight into its fix/prune screen. Never stacks.
     const { data: recentImports } = useRecentImports(user?.id, 4);
     const activeImports = useActiveImports();
+    // Collapses the empty-state activation hub to compact once a first import lands.
+    const hasImported = useHasImported(user?.id);
     const importSlot = useMemo(() => {
         const review = activeImports.filter((m) => m.phase === 'review');
         const working = activeImports.filter((m) => m.phase === 'reading' || m.phase === 'saving');
@@ -330,14 +333,15 @@ export default function WishlistScreen() {
     // ── Wishlist Redesign: Pinned ↔ Lists segmented tab ──────────────────────
     const [activeTab, setActiveTab] = useState<'pinned' | 'lists'>('pinned');
 
-    // ── Filters: Cuisine · Price · Sort (one FilterActionSheet, opened by key) ──
+    // ── Filters: Cuisine · Price · Area · Sort (one tabbed FilterTabsSheet) ──
     // Open-now / walk-time are deliberately omitted — the wishlist payload carries
     // no hours and there's no walk-time source (numbers are Google's price/rating).
     const [sortMode, setSortMode] = useState<'recent' | 'near'>('recent');
     const [cuisineFilter, setCuisineFilter] = useState<string | null>(null);
     const [priceFilter, setPriceFilter] = useState<string | null>(null); // "1".."4"
     const [cityFilter, setCityFilter] = useState<string | null>(null);
-    const [openSheet, setOpenSheet] = useState<'cuisine' | 'price' | 'sort' | 'city' | null>(null);
+    // TICKET-124: one sheet, four tabs — replaces the per-key openSheet state.
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
     // Watch position live while sorting by nearest or viewing the map, so distances
     // re-rank as you walk (Amsterdam-stroll fix) instead of freezing until restart.
@@ -416,29 +420,17 @@ export default function WishlistScreen() {
         ],
         [],
     );
-    const cuisineLabel = cuisineFilter ?? 'Cuisine';
-    const priceLabel = priceFilter ? priceTierLabel(Number(priceFilter)) : 'Price';
-    const sortLabel = sortMode === 'near' ? 'Nearest' : 'Sort';
-    const cityLabel = cityFilter ?? 'City';
-
-    // The filter pill strip. City leads ("where") when the wishlist spans ≥2 cities;
-    // otherwise it's hidden so a single-city list isn't cluttered. Sort·Nearest still
-    // handles "near me" ordering — City answers "only show me London."
-    const filterPills = [
-        ...(cityCounts.length > 1
-            ? [{ key: 'city' as const, label: cityLabel, active: !!cityFilter }]
-            : []),
-        { key: 'cuisine' as const, label: cuisineLabel, active: !!cuisineFilter },
-        { key: 'price' as const, label: priceLabel, active: !!priceFilter },
-        { key: 'sort' as const, label: sortLabel, active: sortMode === 'near' },
-    ];
+    // Area (city) tab hides when the saved set spans <2 cities (a single-city
+    // wishlist needs no city filter). Sort tab hides in map mode (position is the
+    // signal on a map) — passed to FilterTabsSheet's hideSort below.
+    const hideAreaTab = cityCounts.length < 2;
 
     // Sort selection: "Nearest" opts into location lazily (same idiom as the map).
+    // The tabbed sheet stays open on select — set several filters in one session.
     const handleSelectSort = useCallback((value: string | null) => {
         const next = (value as 'recent' | 'near') ?? 'recent';
         setSortMode(next);
         if (next === 'near') requestLocation();
-        setOpenSheet(null);
     }, [requestLocation]);
 
     const clearFilters = useCallback(() => {
@@ -544,19 +536,42 @@ export default function WishlistScreen() {
         return parts.length ? ` · ${parts.join(' · ')}` : '';
     }, [cityFilter, cuisineFilter, priceFilter]);
 
-    // One sheet, three menus.
-    const sheetProps =
-        openSheet === 'city'
-            ? { title: 'City', options: cityOptions, selected: cityFilter,
-                onSelect: (v: string | null) => { setCityFilter(v); setOpenSheet(null); } }
-            : openSheet === 'cuisine'
-            ? { title: 'Cuisine', options: cuisineOptions, selected: cuisineFilter,
-                onSelect: (v: string | null) => { setCuisineFilter(v); setOpenSheet(null); } }
-            : openSheet === 'price'
-              ? { title: 'Price', options: priceOptions, selected: priceFilter,
-                  onSelect: (v: string | null) => { setPriceFilter(v); setOpenSheet(null); } }
-              : { title: 'Sort by', options: sortOptions, selected: sortMode,
-                  onSelect: handleSelectSort };
+    // The "Filters" trigger shows an active dot when any filter (or, in list
+    // mode, the near sort) is engaged — the tabbed sheet carries the detail.
+    const filtersActive = hasActiveFilters || (viewMode === 'list' && sortMode === 'near');
+
+    // One trigger replaces the pill-per-sheet strip (list + map modes). Mutually
+    // exclusive branches, so reusing the element in both is safe.
+    const filtersTriggerRow = (
+        <View style={styles.rFilterBar}>
+            <Pressable
+                onPress={() => setFiltersOpen(true)}
+                style={[
+                    styles.rFilterPill,
+                    { backgroundColor: filtersActive ? palette.primaryMuted : palette.surfaceJournalHi },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="filters"
+            >
+                <Ionicons
+                    name="options-outline"
+                    size={15}
+                    color={filtersActive ? palette.primary : palette.textSecondary}
+                />
+                <Text
+                    style={[
+                        styles.rFilterPillText,
+                        { color: filtersActive ? palette.primary : palette.textSecondary },
+                    ]}
+                >
+                    Filters
+                </Text>
+                {filtersActive ? (
+                    <View style={[styles.rFilterDot, { backgroundColor: palette.primary }]} />
+                ) : null}
+            </Pressable>
+        </View>
+    );
 
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
@@ -625,40 +640,16 @@ export default function WishlistScreen() {
                         palette={palette}
                         onImport={() => setImportSheetVisible(true)}
                         onSearch={() => router.push('/search' as any)}
+                        hasImported={hasImported}
+                        onImportsHub={() => router.push('/import-progress' as any)}
                     />
                 ) : viewMode === 'map' ? (
                     <View style={styles.mapMode}>
-                        {/* Same filter bar as the list — toggling views must not
-                            lose the filters (founder, 2026-07-03). Sort is
-                            position on a map, so that pill sits this one out.
-                            flexGrow 0: next to the flex map this ScrollView
-                            stretched and the pills grew into pillars (b78). */}
-                        <ScrollView
-                            horizontal
-                            style={styles.rFilterBarScroll}
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.rFilterBar}
-                            keyboardShouldPersistTaps="handled"
-                        >
-                            {filterPills
-                                .filter((pill) => pill.key !== 'sort')
-                                .map((pill) => (
-                                    <Pressable
-                                        key={pill.key}
-                                        onPress={() => setOpenSheet(pill.key)}
-                                        style={[
-                                            styles.rFilterPill,
-                                            { backgroundColor: pill.active ? palette.primaryMuted : palette.surfaceJournalHi },
-                                        ]}
-                                        accessibilityRole="button"
-                                    >
-                                        <Text style={[styles.rFilterPillText, { color: pill.active ? palette.primary : palette.textSecondary }]}>
-                                            {pill.label}
-                                        </Text>
-                                        <Ionicons name="chevron-down" size={11} color={pill.active ? palette.primary : palette.textSecondary} />
-                                    </Pressable>
-                                ))}
-                        </ScrollView>
+                        {/* Same filter state as the list — toggling views must not
+                            lose the filters (founder, 2026-07-03). One "Filters"
+                            trigger; the sheet hides its Sort tab in map mode
+                            (position is the signal). */}
+                        {filtersTriggerRow}
                         <WishlistMapView
                             items={mapItems}
                             unmappableCount={unmappableCount}
@@ -672,31 +663,8 @@ export default function WishlistScreen() {
                     </View>
                 ) : (
                     <View style={{ flex: 1 }}>
-                        {/* Filter bar — Cuisine · Price · Sort */}
-                        <ScrollView
-                            horizontal
-                            style={styles.rFilterBarScroll}
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.rFilterBar}
-                            keyboardShouldPersistTaps="handled"
-                        >
-                            {filterPills.map((pill) => (
-                                <Pressable
-                                    key={pill.key}
-                                    onPress={() => setOpenSheet(pill.key)}
-                                    style={[
-                                        styles.rFilterPill,
-                                        { backgroundColor: pill.active ? palette.primaryMuted : palette.surfaceJournalHi },
-                                    ]}
-                                    accessibilityRole="button"
-                                >
-                                    <Text style={[styles.rFilterPillText, { color: pill.active ? palette.primary : palette.textSecondary }]}>
-                                        {pill.label}
-                                    </Text>
-                                    <Ionicons name="chevron-down" size={11} color={pill.active ? palette.primary : palette.textSecondary} />
-                                </Pressable>
-                            ))}
-                        </ScrollView>
+                        {/* Filter bar — one "Filters" trigger → tabbed sheet */}
+                        {filtersTriggerRow}
 
                         <ScrollView
                             contentContainerStyle={[styles.rListContent, { paddingBottom: insets.bottom + 110 }]}
@@ -831,14 +799,17 @@ export default function WishlistScreen() {
                 />
             ) : null}
 
-            <FilterActionSheet
-                visible={openSheet !== null}
-                title={sheetProps.title}
-                options={sheetProps.options}
-                selected={sheetProps.selected}
-                onSelect={sheetProps.onSelect}
-                onDismiss={() => setOpenSheet(null)}
+            <FilterTabsSheet
+                visible={filtersOpen}
+                onDismiss={() => setFiltersOpen(false)}
                 palette={palette}
+                // Map mode: position is the signal → no Sort tab.
+                hideSort={viewMode === 'map'}
+                hideArea={hideAreaTab}
+                cuisine={{ options: cuisineOptions, selected: cuisineFilter, onSelect: setCuisineFilter }}
+                price={{ options: priceOptions, selected: priceFilter, onSelect: setPriceFilter }}
+                area={{ options: cityOptions, selected: cityFilter, onSelect: setCityFilter }}
+                sort={{ options: sortOptions, selected: sortMode, onSelect: handleSelectSort }}
             />
 
             {/* TICKET-111: remove-from-wishlist confirm (long-press or swipe). */}
@@ -949,6 +920,12 @@ const styles = StyleSheet.create({
     rFilterPillText: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 13,
+    },
+    // Active-dot on the "Filters" trigger — a filter (or near sort) is engaged.
+    rFilterDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
     },
     rListContent: {
         paddingHorizontal: 20,

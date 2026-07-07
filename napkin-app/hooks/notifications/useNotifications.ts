@@ -20,7 +20,8 @@ export type NotificationType =
     | 'top_four_swap'
     | 'table_invite'
     | 'claim_city'
-    | 'reservation_reminder';
+    | 'reservation_reminder'
+    | 'import_done';
 
 interface BaseNotification {
     id: string;
@@ -88,13 +89,26 @@ export interface ReservationReminderNotification extends BaseNotification {
     dayLabel: string;
 }
 
+/**
+ * TICKET-123: self-directed import lifecycle row. No actor — "your import
+ * finished". `outcome` drives the copy; `jobId` (present for 'saved') deep-links
+ * the tap to /imports/[jobId], review/failed route to /import-progress.
+ */
+export interface ImportDoneNotification extends BaseNotification {
+    type: 'import_done';
+    count: number;
+    outcome: 'saved' | 'review' | 'failed';
+    jobId?: string;
+}
+
 export type Notification =
     | FriendLoggedNotification
     | FriendPinnedNotification
     | TopFourSwapNotification
     | TableInviteNotification
     | ClaimCityNotification
-    | ReservationReminderNotification;
+    | ReservationReminderNotification
+    | ImportDoneNotification;
 
 /** Extra top-level field on the inbox page envelope (first page only; subsequent pages have null). */
 export type InboxExtras = { unread_count: number | null };

@@ -2,8 +2,15 @@
  * /dining-map — everywhere a user has eaten, as geography (TICKET-092).
  * Reuses WishlistMapView (terracotta pins, peek card, lazy location) with the
  * list toggle omitted — back chevron is the way out.
+ *
+ * TICKET-124: on the SELF view (no userId param, or it's your own id), a
+ * mine ↔ network segmented toggle switches the pins between your own logged
+ * spots and restaurants logged by people you FOLLOW. A network peek taps through
+ * by data: a review-eligible log → the followee's review (entry-detail, public
+ * scope); a thin/rating-only log → the restaurant page. Viewing someone else's
+ * map stays their spots only — no toggle.
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -13,6 +20,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
+import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { WishlistMapView, type WishlistMapItem } from '@/components/wishlist/WishlistMapView';
 
@@ -25,10 +33,18 @@ export default function DiningMapScreen() {
     const { user } = useAuth();
 
     const identifier = userId ?? user?.id;
+    // Network layer is self-only: never surface your follow graph on someone
+    // else's map. (Their /dining-map shows their spots, per the palate gate.)
+    const isSelf = !!user?.id && identifier === user.id;
+    const [source, setSource] = useState<'mine' | 'network'>('mine');
+    const showNetwork = isSelf && source === 'network';
+
     const { data: spots } = useUserSpots(identifier);
+    // Caller-scoped RPC; only fetched on the self view (null identifier = disabled).
+    const { data: networkPins } = useNetworkMapPins(isSelf ? user?.id : null);
     const { coords, status, request } = useNearbyLocation();
 
-    const items: WishlistMapItem[] = useMemo(
+    const mineItems: WishlistMapItem[] = useMemo(
         () =>
             (spots ?? [])
                 .filter((s) => s.lat != null && s.lng != null)
@@ -42,7 +58,31 @@ export default function DiningMapScreen() {
                 })),
         [spots],
     );
-    const unmappable = (spots?.length ?? 0) - items.length;
+
+    // Network pins already carry non-null coords (RPC filters them); map to the
+    // WishlistMapItem network shape (author/rating/note/entryId → peek variant).
+    const networkItems: WishlistMapItem[] = useMemo(
+        () =>
+            (networkPins ?? []).map((p) => ({
+                id: p.restaurant_id,
+                name: p.name,
+                city: p.city,
+                cuisine: p.cuisine,
+                lat: p.lat,
+                lng: p.lng,
+                author: p.author,
+                rating: p.rating,
+                note: p.note,
+                entryId: p.entry_id,
+                hasReview: p.has_review,
+                othersCount: p.others_count,
+            })),
+        [networkPins],
+    );
+
+    const items = showNetwork ? networkItems : mineItems;
+    // Network pins are all mappable; only the mine layer has coord-less spots.
+    const unmappable = showNetwork ? 0 : (spots?.length ?? 0) - mineItems.length;
 
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
@@ -57,6 +97,11 @@ export default function DiningMapScreen() {
                 onOpenRestaurant={(id) =>
                     router.push({ pathname: '/restaurant/[id]', params: { id } })
                 }
+                // Network pins tap through to the followee's review (public scope).
+                onOpenReview={(entryId) =>
+                    router.push({ pathname: '/entry-detail', params: { entryId, viewAs: 'public' } })
+                }
+                sourceToggle={isSelf ? { value: source, onChange: setSource } : undefined}
                 palette={palette}
             />
 

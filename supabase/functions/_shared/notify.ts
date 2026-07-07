@@ -107,6 +107,45 @@ export async function emitTopFourSwap(
     }
 }
 
+/**
+ * TICKET-123: Emit a self-directed `import_done` row (no actor — "your import
+ * finished", not "someone did X to you"). The recipient IS the sharer.
+ *
+ * Used by BOTH the server auto-save path (resolve-url?action=save_spots, outcome
+ * 'saved') AND the notifications `emit_self` action (outcome 'review' | 'failed',
+ * called by the client drain which has no service-role INSERT of its own). DRY:
+ * one insert shape for all three outcomes.
+ *
+ * Best-effort — a failed insert NEVER throws (never fail an import over a
+ * notification). subject_meta must carry `outcome` (notifications_import_done_shape
+ * CHECK); actor_user_id is null (notifications_actor_not_self allows it).
+ */
+export async function emitImportDone(
+    supabase: SupabaseClient,
+    args: {
+        recipientUserId: string;
+        jobId: string | null;
+        count: number;
+        outcome: 'saved' | 'review' | 'failed';
+    },
+): Promise<void> {
+    try {
+        const { error } = await supabase.from('notifications').insert({
+            user_id: args.recipientUserId,
+            kind: 'import_done',
+            actor_user_id: null,
+            subject_meta: { job_id: args.jobId, count: args.count, outcome: args.outcome },
+        });
+        if (error) {
+            console.error('[notify] import_done insert failed:', error.message);
+            reportError(error, { fn: 'notify', action: 'import_done' });
+        }
+    } catch (e) {
+        console.error('[notify] import_done threw:', e);
+        reportError(e, { fn: 'notify', action: 'import_done' });
+    }
+}
+
 function uniqueExcluding(ids: string[], exclude: string): string[] {
     return [...new Set(ids.filter(id => id && id !== exclude))];
 }

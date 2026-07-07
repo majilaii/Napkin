@@ -285,6 +285,29 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-124: network map pins read path — backs the /dining-map network
+    // layer toggle. callEdgeFn unwraps { data: { pins } }; the smoke asserts
+    // Array.isArray(data.pins) ONLY — an empty array is the legitimate
+    // zero-follow / no-network-log state, never a failure. A 500 here means the
+    // fn_network_map_pins RPC (follow-set fan-out, block/public gates, window +
+    // GROUP BY) drifted — exactly what this guard catches.
+    // NOTE: the CI smoke fixture user follows no one, so this exercises the EMPTY
+    // path ONLY — it catches a hard 500 (SQL drift), NOT a mis-shaped pin. The
+    // join / ROW_NUMBER / others_count / has_review shaping is only covered by the
+    // manual iOS passes (a fixture with a coord-bearing followee log would be
+    // needed to guard the populated shape). Behavior left as-is intentionally.
+    {
+        name: 'user-profile?action=network_map_pins (TICKET-124 — empty array is legitimate)',
+        method: 'POST',
+        fn: 'user-profile',
+        body: { action: 'network_map_pins' },
+        shape: (json) => {
+            const data = (json as { data?: { pins?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.pins)) return 'data.pins is not an array';
+            return null;
+        },
+    },
     // TICKET-090: account fn read path — backs the Blocked settings screen and
     // is the same fn that performs account deletion. blocked_list on the smoke
     // user must return the rows envelope (200 + data.rows array).

@@ -10,14 +10,19 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow } from '@/constants/theme';
+import { ImportActivationHub } from '@/components/import-education';
 
 interface Props {
     palette: typeof Colors.light;
     onImport: () => void;
     onSearch: () => void;
+    /** Whether the user has landed an import — collapses the hub to compact. */
+    hasImported?: boolean;
+    /** Opens the imports hub (durable entry point — closes gap 9). */
+    onImportsHub?: () => void;
 }
 
-export function WishlistEmptyState({ palette, onImport, onSearch }: Props) {
+export function WishlistEmptyState({ palette, onImport, onSearch, hasImported = false, onImportsHub }: Props) {
     return (
         <View style={styles.root}>
             <View style={[styles.tile, Shadow.subtle, { backgroundColor: palette.surfaceJournal }]}>
@@ -57,10 +62,17 @@ export function WishlistEmptyState({ palette, onImport, onSearch }: Props) {
                 </Pressable>
             </View>
 
-            {/* The habit the product bets on — nothing else in-app teaches it. */}
-            <Text style={[styles.tip, { color: palette.textMuted }]}>
-                tip: in TikTok, Share → Napkin does this in two taps
-            </Text>
+            {/* The habit the product bets on — a repeatable activation hub teaches
+                it every time this empty state re-surfaces (rescues gap 7). */}
+            <View style={styles.hub}>
+                <ImportActivationHub
+                    variant="auto"
+                    hasImported={hasImported}
+                    onOpenHub={onImportsHub}
+                    showHubLink
+                    palette={palette}
+                />
+            </View>
         </View>
     );
 }
@@ -127,10 +139,8 @@ const styles = StyleSheet.create({
         fontSize: 13,
         letterSpacing: 0.3,
     },
-    tip: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        marginTop: 22,
-        textAlign: 'center',
+    hub: {
+        marginTop: 30,
+        alignSelf: 'stretch',
     },
 });

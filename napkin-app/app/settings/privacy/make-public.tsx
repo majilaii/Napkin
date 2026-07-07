@@ -1,11 +1,16 @@
 /**
- * /settings/privacy/make-public — first-flip warning screen.
+ * /settings/privacy/make-public — first-flip warning + username claim.
  *
  * Shows two lists (what becomes visible / what stays private) and a
  * username field. On confirm, atomically writes account_privacy='public'
  * and username in a single server call.
  *
- * Guards: if already public on mount, router.replace back to /settings/privacy.
+ * TICKET-126: onboarding now completes accounts as public with NO username
+ * (public-by-default doctrine, no handle captured in onboarding). Such a user
+ * still needs to claim a handle later — so the mount guard only bounces when
+ * ALREADY public AND a username is set (nothing left to do). When public but
+ * handleless, this screen becomes a pure username-claim (the "what becomes
+ * public" explainer is dropped — that flip already happened).
  */
 import React, { useState, useEffect } from 'react';
 import {
@@ -43,12 +48,14 @@ export default function MakePublicScreen() {
     const [username, setUsername] = useState('');
     const [usernameState, setUsernameState] = useState<UsernameState>('idle');
 
-    // Guard: if already public, go back
+    // Public with a handle already set → nothing to do here (guard).
+    // Public WITHOUT a handle (post-onboarding) → stay, this becomes a claim.
+    const alreadyPublic = profile?.account_privacy === 'public';
     useEffect(() => {
-        if (profile?.account_privacy === 'public') {
+        if (profile?.account_privacy === 'public' && profile?.username) {
             router.replace('/settings/privacy');
         }
-    }, [profile?.account_privacy]);
+    }, [profile?.account_privacy, profile?.username]);
 
     // Reset username state when username field changes
     const handleUsernameChange = (text: string) => {
@@ -134,11 +141,11 @@ export default function MakePublicScreen() {
                         },
                     ]}
                 >
-                    Make your profile public?
+                    {alreadyPublic ? 'Your username' : 'Make your profile public?'}
                 </Text>
 
-                {/* Two-list body */}
-                <FirstFlipBody />
+                {/* Two-list body — only for the actual private→public flip. */}
+                {!alreadyPublic && <FirstFlipBody />}
 
                 {/* Username field */}
                 <View style={styles.usernameSection}>
@@ -194,7 +201,7 @@ export default function MakePublicScreen() {
                         ]}
                     >
                         <Text style={[Type.titleMedium, { color: palette.text }]}>
-                            Keep it private
+                            {alreadyPublic ? 'Cancel' : 'Keep it private'}
                         </Text>
                     </Pressable>
 
@@ -223,7 +230,7 @@ export default function MakePublicScreen() {
                                     },
                                 ]}
                             >
-                                Make public
+                                {alreadyPublic ? 'Save username' : 'Make public'}
                             </Text>
                         )}
                     </Pressable>

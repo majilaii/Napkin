@@ -50,6 +50,9 @@ CREATE OR REPLACE FUNCTION public.fn_search_public_lists(
     WHERE l.privacy = 'public'
       AND l.table_id IS NULL              -- Tables-never-public (TICKET-115 cross-gate)
       AND p.account_privacy = 'public'    -- owner account gate (profiles)
+      -- COUPLING (TICKET-125): lists/browse_public calls this fn with q='' so ILIKE '%%'
+      -- matches ALL rows (recency browse). Any edit to this WHERE must keep q='' = match-all,
+      -- or give browse_public its own fn.
       AND (l.title ILIKE '%' || q || '%' OR COALESCE(l.description, '') ILIKE '%' || q || '%')
       AND (p_cursor_date IS NULL OR (l.updated_at, l.id) < (p_cursor_date, p_cursor_id))
     ORDER BY l.updated_at DESC, l.id DESC

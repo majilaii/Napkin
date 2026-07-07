@@ -17,6 +17,8 @@ export interface CompleteOnboardingInput {
     display_name: string;
     /** Free-text home city; null/empty when skipped. */
     home_city?: string | null;
+    /** Uploaded avatar public URL; null when the photo step was skipped (TICKET-126). */
+    avatar_url?: string | null;
 }
 
 interface OnboardingProfileRow {
@@ -24,6 +26,10 @@ interface OnboardingProfileRow {
     display_name: string;
     home_city: string | null;
     onboarded_at: string | null;
+    // TICKET-126: server also stamps these at completion.
+    avatar_url: string | null;
+    terms_accepted_at: string | null;
+    account_privacy: 'private' | 'public';
 }
 
 export function useCompleteOnboarding() {
@@ -37,6 +43,7 @@ export function useCompleteOnboarding() {
                 body: {
                     display_name: input.display_name,
                     home_city: input.home_city ?? null,
+                    avatar_url: input.avatar_url ?? null,
                 },
             });
         },

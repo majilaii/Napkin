@@ -1338,6 +1338,83 @@ serve(async (req) => {
             return json({ data: { spots } });
         }
 
+        // ── network_map_pins (read) — TICKET-124: the follow-graph fan-out ──
+        // Caller-scoped (p_viewer = the JWT sub). Restaurants logged by the
+        // people the caller FOLLOWS, one pin per restaurant, diary/spots
+        // (looser) predicate — block exclusion + public-account gate live inside
+        // the SECURITY DEFINER RPC, so there is no identifier / strangerCanRead
+        // gate here (it never reads a target's palate — only the caller's own
+        // follow set). Author names are batch-hydrated from `profiles` by id:
+        // NEVER a PostgREST embed off entries (entries has no FK to profiles —
+        // reference_entries_no_profiles_fk), same shape as co_diners above.
+        if (action === 'network_map_pins') {
+            const { data: rpcRows, error: rpcErr } = await supabase.rpc(
+                'fn_network_map_pins',
+                { p_viewer: user.id },
+            );
+            if (rpcErr) throw rpcErr;
+
+            const rows = (rpcRows ?? []) as {
+                restaurant_id: string;
+                name: string;
+                city: string | null;
+                cuisine: string | null;
+                lat: number;
+                lng: number;
+                author_id: string;
+                entry_id: string;
+                rating: number | null;
+                note_snippet: string | null;
+                has_review: boolean;
+                others_count: number;
+            }[];
+            if (rows.length === 0) return json({ data: { pins: [] } });
+
+            const authorIds = [...new Set(rows.map((r) => r.author_id))];
+            const { data: profiles, error: profErr } = await supabase
+                .from('profiles')
+                .select('user_id, display_name, avatar_url')
+                .in('user_id', authorIds);
+            if (profErr) throw profErr;
+
+            const byId = new Map(
+                ((profiles ?? []) as {
+                    user_id: string;
+                    display_name: string | null;
+                    avatar_url: string | null;
+                }[]).map((p) => [p.user_id, p]),
+            );
+
+            // Preserve the RPC's most-recent-activity order. A vanished author
+            // profile (deleted mid-flight) degrades to the 'Someone' fallback
+            // rather than dropping the pin.
+            const pins = rows.map((r) => {
+                const p = byId.get(r.author_id);
+                return {
+                    restaurant_id: r.restaurant_id,
+                    name: r.name ?? null,
+                    city: r.city ?? null,
+                    cuisine: r.cuisine ?? null,
+                    lat: r.lat,
+                    lng: r.lng,
+                    author: {
+                        id: r.author_id,
+                        name: p?.display_name || 'Someone',
+                        avatar: p?.avatar_url ?? null,
+                    },
+                    entry_id: r.entry_id,
+                    rating: r.rating ?? null,
+                    note: r.note_snippet ?? null,
+                    // Routes the peek tap: true → the followee's review (entry-detail
+                    // viewAs=public); false → the restaurant page. Never dead-ends.
+                    has_review: r.has_review ?? false,
+                    others_count: Number(r.others_count ?? 0),
+                };
+            });
+
+            return json({ data: { pins } });
+        }
+
         // ── reviews (read) — TICKET-092: diary rows with written notes ─────
         if (action === 'reviews') {
             const { identifier, cursor, limit } = body as {
@@ -1511,8 +1588,20 @@ serve(async (req) => {
         // be left half-set (name saved but onboarded_at NULL). home_city is the
         // FREE-TEXT profiles column (NOT set_user_home_city / claimed cities);
         // it's optional (skip on S2), capped, trimmed-to-null.
+        //
+        // TICKET-126: also carries the uploaded avatar_url (optional/nullable),
+        // and UNCONDITIONALLY stamps terms_accepted_at (13+ / Terms acceptance —
+        // every new user passes through this) and account_privacy='public'
+        // (doctrine 2026-04-20: public-by-default with opt-out in settings). This
+        // is written directly (not via update_privacy) so it deliberately
+        // bypasses the "username required to go public" guard — onboarding
+        // captures no username; opt-out and handle-claim live in settings.
         if (action === 'complete_onboarding') {
-            const updates: Record<string, unknown> = { onboarded_at: new Date().toISOString() };
+            const updates: Record<string, unknown> = {
+                onboarded_at: new Date().toISOString(),
+                terms_accepted_at: new Date().toISOString(),
+                account_privacy: 'public',
+            };
 
             if (typeof body.display_name === 'string') {
                 const name = body.display_name.trim();
@@ -1524,12 +1613,28 @@ serve(async (req) => {
                 const city = body.home_city == null ? '' : String(body.home_city).trim();
                 updates.home_city = city ? city.slice(0, 120) : null;
             }
+            // avatar_url is optional (skip) — trim to null. Defense-in-depth:
+            // onboarding only ever produces our own storage URL, so pin it to the
+            // caller's OWN avatars folder (blocks a crafted client persisting an
+            // external tracking URL or another user's path through this action).
+            if (body.avatar_url !== undefined) {
+                const avatar = body.avatar_url == null ? '' : String(body.avatar_url).trim();
+                if (avatar) {
+                    const ownPrefix = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/avatars/${user.id}/`;
+                    if (avatar.length > 500 || !avatar.startsWith(ownPrefix)) {
+                        return fail('avatar_url must be an uploaded avatar', 400);
+                    }
+                    updates.avatar_url = avatar;
+                } else {
+                    updates.avatar_url = null;
+                }
+            }
 
             const { data: updated, error } = await supabase
                 .from('profiles')
                 .update(updates)
                 .eq('user_id', user.id)
-                .select('user_id, username, display_name, bio, avatar_url, home_city, onboarded_at, account_privacy, allow_public_replies')
+                .select('user_id, username, display_name, bio, avatar_url, home_city, onboarded_at, terms_accepted_at, account_privacy, allow_public_replies')
                 .single();
             if (error) throw error;
 

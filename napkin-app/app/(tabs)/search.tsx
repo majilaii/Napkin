@@ -124,9 +124,11 @@ export default function SearchScreen() {
     const { data: tables } = useTables(user?.id);
 
     // [ARCH-REVIEW-M1] Seed search from ?q= route param (used by ImportLinkSheet fallback).
-    // Consumed once on mount; cleared so re-entering the tab doesn't auto-re-search.
-    const { q: prefillQ } = useLocalSearchParams<{ q?: string }>();
+    // TICKET-125: ?mode=lists lands directly on the Lists segment (For You "see more").
+    // Both consumed once on mount; cleared so re-entering the tab doesn't re-apply.
+    const { q: prefillQ, mode: prefillMode } = useLocalSearchParams<{ q?: string; mode?: string }>();
     const prefillConsumedRef = useRef(false);
+    const modeConsumedRef = useRef(false);
 
     useEffect(() => {
         if (prefillQ && !prefillConsumedRef.current) {
@@ -146,6 +148,22 @@ export default function SearchScreen() {
     // Search mode — Places (default) or People. State is local to the tab.
     // People mode is curtained in friend-test (FRIEND_TEST.hidePeopleSearch).
     const [mode, setMode] = useState<SearchMode>('places');
+
+    // TICKET-125: consume ?mode= once (For You "see more" → Lists segment). Mirrors
+    // the ?q= prefill effect. People is dropped if it's curtained; Lists always ok.
+    useEffect(() => {
+        if (prefillMode && !modeConsumedRef.current) {
+            modeConsumedRef.current = true;
+            const next = prefillMode as SearchMode;
+            const allowed =
+                next === 'lists' ||
+                next === 'places' ||
+                (next === 'people' && !FRIEND_TEST.hidePeopleSearch);
+            if (allowed) setMode(next);
+            router.setParams({ mode: undefined });
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefillMode]);
 
     // Immediate display value (responsive to keystrokes)
     const [immediateQuery, setImmediateQuery] = useState(lastQuery);

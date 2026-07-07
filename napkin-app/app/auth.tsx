@@ -26,6 +26,7 @@ import {
     ActivityIndicator,
     AppState,
     Alert,
+    Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
@@ -37,6 +38,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import * as postAuthResume from '@/lib/postAuthResume';
 import { appleIdToken, googleIdToken, OAuthCancelledError } from '@/lib/oauth';
+import { LEGAL_URLS } from '@/constants/links';
 
 /**
  * TICKET-110: after ANY successful auth (password / Apple / Google), resume a
@@ -316,6 +318,27 @@ export default function AuthScreen() {
                                 />
                             </View>
 
+                            {/* TICKET-126: one implicit-acceptance line governing
+                                email submit AND both OAuth buttons. Manrope, muted,
+                                not italic serif (an instruction, not a brand moment);
+                                Terms + Privacy tap out to the legal pages. */}
+                            <Text style={[styles.legal, { color: palette.textMuted }]}>
+                                by continuing you confirm you&rsquo;re 13+ and agree to the{' '}
+                                <Text
+                                    style={[styles.legalLink, { color: palette.textSecondary }]}
+                                    onPress={() => Linking.openURL(LEGAL_URLS.terms)}
+                                >
+                                    Terms
+                                </Text>
+                                {' & '}
+                                <Text
+                                    style={[styles.legalLink, { color: palette.textSecondary }]}
+                                    onPress={() => Linking.openURL(LEGAL_URLS.privacy)}
+                                >
+                                    Privacy Policy
+                                </Text>
+                            </Text>
+
                             {/* Primary CTA — terracotta pill */}
                             <Pressable
                                 onPress={submit}
@@ -325,6 +348,7 @@ export default function AuthScreen() {
                                     {
                                         backgroundColor: palette.primary,
                                         opacity: pressed || loading ? 0.85 : 1,
+                                        marginTop: Spacing.lg,
                                     },
                                 ]}
                             >
@@ -451,6 +475,18 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         minHeight: 52,
         justifyContent: 'center',
+    },
+    legal: {
+        marginTop: Spacing.xl,
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 11,
+        lineHeight: 16,
+        textAlign: 'center',
+        paddingHorizontal: Spacing.sm,
+    },
+    legalLink: {
+        fontFamily: 'Manrope_600SemiBold',
+        textDecorationLine: 'underline',
     },
     orRow: {
         flexDirection: 'row',
