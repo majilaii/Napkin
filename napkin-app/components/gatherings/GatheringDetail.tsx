@@ -19,7 +19,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert, Linking, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { InitialsAvatar } from '@/components/suppers';
 import { OwnerActionsSheet } from '@/components/common';
@@ -33,7 +33,7 @@ import {
 import { useRestaurantPage } from '@/hooks/restaurants/useRestaurantPage';
 import type { GatheringCardActivity, GatheringSeat } from '@/hooks/tables/useTableActivity';
 import { CounterDatePicker } from './CounterDatePicker';
-import { dayFromNow, firstName, shortDate, toYMD } from './gatheringFormat';
+import { dayFromNow, firstName, relativeDay, shortDate, toYMD } from './gatheringFormat';
 
 type Palette = typeof Colors.light;
 
@@ -88,10 +88,11 @@ export function GatheringDetail({
         restaurant,
         gather_on,
         supper_id,
-        in_count,
         viewer_response,
         counters = [],
         source_url = null,
+        source_type = null,
+        note = null,
         seats,
         rescheduled_from = null,
     } = gathering;
@@ -105,15 +106,15 @@ export function GatheringDetail({
         supperCancelled,
         canClear,
         leaf,
+        ins,
+        outs,
         waiting,
         memberCount,
         bestCounterDate,
         bestCounterN,
         showAlignment,
         showDateMoved,
-        sourceLabel,
         restaurantName,
-        murmur,
     } = vm;
 
     // "change" re-opens the controls after the viewer already answered.
@@ -183,13 +184,37 @@ export function GatheringDetail({
         if (source_url) Linking.openURL(source_url).catch(() => undefined);
     };
 
-    // "the spot" tiers (omit a tier with no value).
-    const youTier = tier(page?.personal.average);
-    const tableTier = tier(page?.table_chip?.average);
+    // Masthead meta — city · cuisine · Google (a sibling signal, small + muted,
+    // never merged into a Napkin number). The old "the spot" you/table tiers and
+    // its whole card are gone; only these survive, inline.
     const googleTier = tier(page?.restaurant?.google_rating);
-    const beenCount = page?.whos_been.length ?? 0;
     const cuisine = page?.restaurant?.cuisine ?? null;
-    const metaBits = [restaurant?.city, cuisine].filter(Boolean) as string[];
+    const metaBits = [
+        restaurant?.city,
+        cuisine,
+        googleTier ? `Google ${googleTier}` : null,
+    ].filter(Boolean) as string[];
+    // Kicker date "FRI 10 JUL" (reuses the leaf pieces; the standalone date tile
+    // is killed). Provenance = just the platform ("tiktok"), tappable to source.
+    const kickerDate = leaf ? `${leaf.wd} ${leaf.day} ${leaf.mo}` : null;
+    const provenance =
+        source_url != null
+            ? source_type
+                ? source_type.toLowerCase().replace(/_/g, ' ')
+                : 'link'
+            : null;
+    // Roster counts line — only for larger tables (the roster owns counts, not
+    // the When row). "2 in · 1 out · 1 waiting" (omit empty parts).
+    const countsLine =
+        memberCount > 4
+            ? [
+                  `${ins.length} in`,
+                  outs.length > 0 ? `${outs.length} out` : null,
+                  waiting.length > 0 ? `${waiting.length} waiting` : null,
+              ]
+                  .filter(Boolean)
+                  .join(' · ')
+            : null;
 
     return (
         <View style={[styles.screen, { backgroundColor: palette.surface }]}>
@@ -205,56 +230,58 @@ export function GatheringDetail({
             </Pressable>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
-                {/* 1 · Masthead */}
+                {/* 1 · Masthead — kicker date · restaurant hero · muted meta (Google
+                    as a sibling signal) with the tiktok provenance as a tiny suffix. */}
                 <View style={styles.masthead}>
-                    {leaf ? (
-                        <View style={[styles.leaf, { backgroundColor: palette.surfaceJournalLow }]}>
-                            <Text style={[styles.leafCap, { color: palette.textMuted }]}>{leaf.wd}</Text>
-                            <Text style={[styles.leafDay, { color: palette.primary }]}>{leaf.day}</Text>
-                            <Text style={[styles.leafCap, { color: palette.textMuted }]}>{leaf.mo}</Text>
+                    <Text style={[styles.kicker, { color: palette.primary }]} numberOfLines={1}>
+                        {kickerDate ? `gathering · ${kickerDate}` : 'gathering'}
+                    </Text>
+                    <Text style={[styles.restaurant, { color: palette.text }]}>{restaurantName}</Text>
+                    {metaBits.length > 0 || provenance ? (
+                        <View style={styles.metaRow}>
+                            {metaBits.length > 0 ? (
+                                <Text style={[styles.cityMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                                    {metaBits.join(' · ')}
+                                </Text>
+                            ) : null}
+                            {provenance ? (
+                                <Pressable
+                                    onPress={openSource}
+                                    hitSlop={6}
+                                    style={styles.provRow}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`pinned from ${provenance}`}
+                                >
+                                    <Ionicons name="link-outline" size={13} color={palette.textMuted} />
+                                    <Text style={[styles.provText, { color: palette.textMuted }]}>{provenance}</Text>
+                                </Pressable>
+                            ) : null}
                         </View>
                     ) : null}
-                    <View style={styles.mastheadText}>
-                        <Text style={[styles.kicker, { color: palette.textMuted }]}>gathering</Text>
-                        <Text style={[styles.restaurant, { color: palette.text }]}>{restaurantName}</Text>
-                        {metaBits.length > 0 ? (
-                            <Text style={[styles.cityMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                                {metaBits.join(' · ')}
+                </View>
+
+                {/* 2 · Pull-quote — only when the host wrote a real note (olive). */}
+                {note ? (
+                    <Text style={[styles.pullQuote, { color: palette.secondary }]}>
+                        <Text style={{ color: palette.secondary }}>— </Text>
+                        {note}
+                    </Text>
+                ) : null}
+
+                {/* 3 · When — one row: long date + quiet relative day. Roster owns
+                    counts; the counter-date affordances below keep their mechanics. */}
+                <View style={styles.section}>
+                    <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>when</Text>
+                    <View style={styles.whenRow}>
+                        <Text style={[styles.whenDate, { color: palette.text }]} numberOfLines={1}>
+                            {longDate(gather_on)}
+                        </Text>
+                        {relativeDay(gather_on) ? (
+                            <Text style={[styles.whenRel, { color: palette.textMuted }]}>
+                                {relativeDay(gather_on)}
                             </Text>
                         ) : null}
                     </View>
-                </View>
-
-                {/* 2 · Host note */}
-                <View style={styles.block}>
-                    <Text style={[styles.murmur, { color: palette.textSecondary }]}>
-                        <Text style={{ color: palette.primary }}>— </Text>
-                        {murmur}
-                    </Text>
-                    <Text style={[styles.attribution, { color: palette.textMuted }]}>
-                        {firstName(gathering.host_name) ?? 'someone'} · host
-                    </Text>
-                </View>
-
-                {/* 3 · Why this place */}
-                {sourceLabel ? (
-                    <Pressable onPress={openSource} hitSlop={6} style={[styles.block, styles.sourceRow]}>
-                        <Ionicons name="link-outline" size={14} color={palette.textMuted} />
-                        <Text style={[styles.sourceText, { color: palette.textMuted }]} numberOfLines={1}>
-                            {sourceLabel}
-                        </Text>
-                    </Pressable>
-                ) : null}
-
-                {/* 4 · when */}
-                <View style={styles.section}>
-                    <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>when</Text>
-                    <Text style={[styles.whenDate, { color: palette.text }]}>{longDate(gather_on)}</Text>
-                    {isProposed ? (
-                        <Text style={[styles.whenMeta, { color: palette.textMuted }]}>
-                            {in_count} in{waiting.length > 0 ? ` · ${waiting.length} waiting` : ''}
-                        </Text>
-                    ) : null}
 
                     {showDateMoved && rescheduled_from ? (
                         <Text style={[styles.dateMoved, { color: palette.textMuted }]}>
@@ -272,7 +299,10 @@ export function GatheringDetail({
                                     <View
                                         style={[
                                             styles.counterChip,
-                                            { backgroundColor: own ? palette.primaryMuted : palette.surfaceContainerLow },
+                                            {
+                                                backgroundColor: own ? palette.primaryMuted : 'transparent',
+                                                borderColor: own ? 'transparent' : palette.ruleWarmNib,
+                                            },
                                         ]}
                                     >
                                         <Ionicons
@@ -330,9 +360,12 @@ export function GatheringDetail({
                     ) : null}
                 </View>
 
-                {/* 5 · who's coming */}
+                {/* 4 · who's coming — compact roster; counts under the kicker when large. */}
                 <View style={styles.section}>
                     <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>who&rsquo;s coming</Text>
+                    {countsLine ? (
+                        <Text style={[styles.countsLine, { color: palette.textMuted }]}>{countsLine}</Text>
+                    ) : null}
                     {comingSeats.map((seat, i) => {
                         const isYou = seat.user_id === viewerId;
                         const name = isYou ? 'you' : seat.display_name ?? 'Member';
@@ -346,7 +379,7 @@ export function GatheringDetail({
                                 ]}
                             >
                                 <View style={{ opacity: solid ? 1 : 0.4 }}>
-                                    <InitialsAvatar name={seat.display_name} avatarUrl={seat.avatar_url} size={34} palette={palette} />
+                                    <InitialsAvatar name={seat.display_name} avatarUrl={seat.avatar_url} size={32} palette={palette} />
                                 </View>
                                 <Text style={[styles.seatName, { color: palette.text }]} numberOfLines={1}>
                                     {name}
@@ -360,62 +393,24 @@ export function GatheringDetail({
                     })}
                 </View>
 
-                {/* 6 · the spot */}
-                {restaurant?.id ? (
-                    <View style={styles.section}>
-                        <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>the spot</Text>
-                        <View style={[styles.spotCard, { backgroundColor: palette.surfaceNote }, Shadow.note]}>
-                            <View style={styles.spotHead}>
-                                <InitialsAvatar name={restaurantName} avatarUrl={null} size={44} palette={palette} />
-                                <View style={{ flex: 1, minWidth: 0 }}>
-                                    <Text style={[styles.spotName, { color: palette.text }]} numberOfLines={1}>
-                                        {restaurantName}
-                                    </Text>
-                                    {beenCount > 0 ? (
-                                        <Text style={[styles.spotBeen, { color: palette.textMuted }]}>
-                                            {beenCount} of you {beenCount === 1 ? 'has' : 'have'} been
-                                        </Text>
-                                    ) : null}
-                                </View>
-                            </View>
-
-                            {youTier || tableTier || googleTier ? (
-                                <View style={styles.tiers}>
-                                    {youTier ? (
-                                        <Text style={styles.tier}>
-                                            <Text style={[styles.tierLabel, { color: palette.textMuted }]}>you </Text>
-                                            <Text style={[styles.tierVal, { color: palette.primary }]}>{youTier}</Text>
-                                        </Text>
-                                    ) : null}
-                                    {tableTier ? (
-                                        <Text style={styles.tier}>
-                                            <Text style={[styles.tierLabel, { color: palette.textMuted }]}>table </Text>
-                                            <Text style={[styles.tierVal, { color: palette.secondary }]}>{tableTier}</Text>
-                                        </Text>
-                                    ) : null}
-                                    {googleTier ? (
-                                        <Text style={styles.tier}>
-                                            <Text style={[styles.tierLabel, { color: palette.textMuted }]}>google </Text>
-                                            <Text style={[styles.tierVal, { color: palette.tertiary }]}>{googleTier}</Text>
-                                        </Text>
-                                    ) : null}
-                                </View>
-                            ) : null}
-
-                            <Pressable
-                                onPress={() => onOpenRestaurant(restaurant.id)}
-                                style={({ pressed }) => [styles.openSpot, pressed && { opacity: 0.6 }]}
-                                accessibilityRole="button"
-                                accessibilityLabel={`open ${restaurantName}`}
-                            >
-                                <Text style={[styles.openSpotText, { color: palette.primary }]}>open restaurant →</Text>
-                            </Pressable>
-                        </View>
-                    </View>
-                ) : null}
-
-                {/* 7 · Pinned in-flow footer (top rule, not a fixed overlay) */}
+                {/* 5 · Actions — `view restaurant →` (all viewers; the dead spot
+                    card's only unique payload, Google rating already lives in the
+                    masthead meta) then the role/state controls. */}
                 <View style={[styles.footer, { borderTopColor: palette.ruleInkSoft }]}>
+                    {restaurant?.id ? (
+                        <Pressable
+                            onPress={() => onOpenRestaurant(restaurant.id)}
+                            hitSlop={6}
+                            style={({ pressed }) => [styles.viewRestaurant, pressed && { opacity: 0.6 }]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`view ${restaurantName}`}
+                        >
+                            <Text style={[styles.viewRestaurantText, { color: palette.primary }]}>
+                                view restaurant →
+                            </Text>
+                        </Pressable>
+                    ) : null}
+
                     {/* member · proposed · unanswered → I'm in · can't · pick another date */}
                     {isProposed && !isHost && showControls ? (
                         <View style={styles.controlsWrap}>
@@ -510,9 +505,9 @@ export function GatheringDetail({
                         </View>
                     ) : null}
 
-                    {/* host · proposed → call it off */}
+                    {/* host · proposed → call it off (centered quiet destructive ghost) */}
                     {isProposed && isHost ? (
-                        <View style={styles.footerRow}>
+                        <View style={styles.callItOffWrap}>
                             <Pressable
                                 onPress={() => setOwnerSheet(true)}
                                 disabled={cancel.isPending}
@@ -627,16 +622,18 @@ function SeatStatus({
     palette: Palette;
 }) {
     if (seat.response === 'in') {
+        // Olive is the "in" accent on this screen (terracotta is reserved for
+        // actions — view restaurant, the RSVP CTA — so the pair stays two).
         return (
             <View style={styles.statusWrap}>
-                <Ionicons name="checkmark-circle-outline" size={15} color={palette.primary} />
-                <Text style={[styles.statusText, { color: palette.primary }]}>in</Text>
+                <Ionicons name="checkmark-circle-outline" size={15} color={palette.secondary} />
+                <Text style={[styles.statusText, { color: palette.secondary }]}>in</Text>
             </View>
         );
     }
     if (seat.response === 'counter') {
         return (
-            <Text style={[styles.statusText, { color: palette.tertiary }]}>
+            <Text style={[styles.statusText, { color: palette.textSecondary }]}>
                 countered{counterOn ? ` · ${shortDate(counterOn)}` : ''}
             </Text>
         );
@@ -652,58 +649,52 @@ const styles = StyleSheet.create({
     backRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: Spacing.md, paddingVertical: 10 },
     backText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
 
-    // Masthead
-    masthead: { flexDirection: 'row', gap: 14, paddingHorizontal: Spacing.lg, paddingTop: 4 },
-    leaf: { width: 60, borderRadius: 14, paddingVertical: 11, alignItems: 'center', gap: 1 },
-    leafCap: { fontFamily: 'Manrope_700Bold', fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase' },
-    leafDay: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 32, lineHeight: 35, letterSpacing: -0.5 },
-    mastheadText: { flex: 1, gap: 3, justifyContent: 'center' },
-    kicker: { fontFamily: 'Manrope_700Bold', fontSize: 10, letterSpacing: 1.4, textTransform: 'uppercase' },
-    restaurant: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 30, letterSpacing: -0.4, lineHeight: 34 },
-    cityMeta: { fontFamily: 'Manrope_600SemiBold', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 },
+    // Masthead — kicker date · restaurant hero · muted meta (Google as sibling)
+    masthead: { paddingHorizontal: Spacing.lg, paddingTop: 4, gap: 5 },
+    kicker: { fontFamily: 'Manrope_700Bold', fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase' },
+    restaurant: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 32, letterSpacing: -0.4, lineHeight: 36 },
+    metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginTop: 1 },
+    cityMeta: { fontFamily: 'Manrope_500Medium', fontSize: 13, letterSpacing: 0.2 },
+    provRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+    provText: { fontFamily: 'Manrope_600SemiBold', fontSize: 13, letterSpacing: 0.2 },
 
-    // Host note
-    block: { paddingHorizontal: Spacing.lg, marginTop: 20 },
-    murmur: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 19, lineHeight: 27 },
-    attribution: { fontFamily: 'Manrope_600SemiBold', fontSize: 11, letterSpacing: 0.4, marginTop: 8, textTransform: 'lowercase' },
-
-    // Why this place
-    sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    sourceText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12, letterSpacing: 0.2 },
+    // Pull-quote (note only) — olive italic serif directly under the masthead
+    pullQuote: {
+        paddingHorizontal: Spacing.lg,
+        marginTop: 16,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 19,
+        lineHeight: 27,
+    },
 
     // Sections
-    section: { paddingHorizontal: Spacing.lg, marginTop: 26 },
+    section: { paddingHorizontal: Spacing.lg, marginTop: 24 },
     sectionKicker: { fontFamily: 'Manrope_700Bold', fontSize: 10, letterSpacing: 1.8, textTransform: 'uppercase', marginBottom: 10 },
 
-    // when
-    whenDate: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 24, letterSpacing: -0.3 },
-    whenMeta: { fontFamily: 'Manrope_600SemiBold', fontSize: 12, letterSpacing: 0.2, marginTop: 6 },
+    // when — one row (date + quiet relative day)
+    whenRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 },
+    whenDate: { flexShrink: 1, fontFamily: 'Newsreader_400Regular_Italic', fontSize: 23, letterSpacing: -0.3 },
+    whenRel: { fontFamily: 'Manrope_600SemiBold', fontSize: 13, letterSpacing: 0.2 },
     dateMoved: { fontFamily: 'Manrope_600SemiBold', fontSize: 12, letterSpacing: 0.2, marginTop: 8 },
     counterWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
-    counterChip: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 30, paddingHorizontal: 12, borderRadius: 999 },
+    counterChip: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 30, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1 },
     counterChipText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
     alignRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 },
     alignText: { fontFamily: 'Manrope_700Bold', fontSize: 13, letterSpacing: 0.2 },
     alignSolo: { marginTop: 12 },
 
-    // who's coming
-    seatRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 11 },
+    // who's coming — compact rows, tight rhythm
+    countsLine: { fontFamily: 'Manrope_600SemiBold', fontSize: 12, letterSpacing: 0.2, marginTop: -4, marginBottom: 10 },
+    seatRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 },
     seatName: { flex: 1, fontFamily: 'Newsreader_400Regular_Italic', fontSize: 17 },
     seatHostTag: { fontFamily: 'Manrope_600SemiBold', fontSize: 11 },
     statusWrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     statusText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
 
-    // the spot
-    spotCard: { borderRadius: 18, padding: 15, gap: 14 },
-    spotHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    spotName: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 20, letterSpacing: -0.2 },
-    spotBeen: { fontFamily: 'Manrope_500Medium', fontSize: 12, marginTop: 3 },
-    tiers: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
-    tier: {},
-    tierLabel: { fontFamily: 'Manrope_600SemiBold', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 },
-    tierVal: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 18 },
-    openSpot: { alignSelf: 'flex-start' },
-    openSpotText: { fontFamily: 'Manrope_700Bold', fontSize: 13, letterSpacing: 0.2 },
+    // actions
+    viewRestaurant: { alignSelf: 'flex-start', marginBottom: 16 },
+    viewRestaurantText: { fontFamily: 'Manrope_700Bold', fontSize: 14, letterSpacing: 0.2 },
+    callItOffWrap: { alignItems: 'center', marginTop: 6 },
 
     // Footer
     footer: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.lg, marginTop: 28, borderTopWidth: 1 },
