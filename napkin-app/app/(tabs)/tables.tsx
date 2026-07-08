@@ -34,6 +34,7 @@ import { FRIEND_TEST } from '@/constants/flags';
 import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { track } from '@/lib/track';
 import { useTables } from '@/hooks/tables/useTables';
+import { useUnreadCount } from '@/hooks/notifications';
 import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
 import { useLastSeenAt, useMarkSeen } from '@/hooks/tables/useLastSeenAt';
 import {
@@ -147,6 +148,7 @@ export default function TablesScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
+    const hasUnread = useUnreadCount(user?.id) > 0;
 
     // Real data
     const {
@@ -434,6 +436,8 @@ export default function TablesScreen() {
                         ? () => setShowAddMember(true)
                         : undefined
                 }
+                onBellPress={() => router.push('/notifications')}
+                bellUnread={hasUnread}
             />
 
             {/* Welcome banner — shown once when a user is added to a table (TICKET-029) */}

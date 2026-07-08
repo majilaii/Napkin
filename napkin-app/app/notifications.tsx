@@ -33,6 +33,7 @@ import {
     useUnreadCount,
     useMarkNotificationRead,
     useMarkAllNotificationsRead,
+    useRespondInvitation,
     bucketFor,
     bucketLabel,
     flattenPages,
@@ -73,6 +74,7 @@ export default function NotificationsScreen() {
 
     const markRead = useMarkNotificationRead(user?.id);
     const markAllRead = useMarkAllNotificationsRead(user?.id);
+    const respond = useRespondInvitation(user?.id);
 
     // Guard: don't fire focus refetch while a mark-read mutation is in-flight
     // (would race and overwrite the optimistic patch before the server responds).
@@ -140,6 +142,23 @@ export default function NotificationsScreen() {
         [markRead, router],
     );
 
+    // Accept / decline a pending table invitation. Fires markRead (reusing the
+    // existing unread-count decrement — no duplication) alongside the respond
+    // mutation, which patches the row's status to accepted/declined in place.
+    const handleRespond = useCallback(
+        (n: Notification, response: 'accept' | 'decline') => {
+            if (n.type !== 'table_invite') return;
+            if (!n.read) markRead.mutate(n.id);
+            respond.mutate({
+                invitationId: n.invitationId,
+                response,
+                tableId: n.tableId,
+                notificationId: n.id,
+            });
+        },
+        [markRead, respond],
+    );
+
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
@@ -204,6 +223,7 @@ export default function NotificationsScreen() {
                                             key={n.id}
                                             notification={n}
                                             onPress={() => handleTapRow(n)}
+                                            onRespond={(response) => handleRespond(n, response)}
                                         />
                                     ))}
                                 </View>
@@ -244,6 +264,10 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
             // full /table/[id] deep route deferred until the index screen exists.
             router.push({ pathname: '/(tabs)/tables', params: { selected: n.tableId } });
             return;
+        case 'table_invite_accepted':
+            // Inviter-side: land on the table the invitee just joined.
+            router.push({ pathname: '/(tabs)/tables', params: { selected: n.tableId } });
+            return;
         case 'claim_city':
             // Future: open the regional Top 4 claim flow.
             return;
@@ -265,9 +289,12 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
 function NotificationRow({
     notification: n,
     onPress,
+    onRespond,
 }: {
     notification: Notification;
     onPress: () => void;
+    /** Accept/decline handler — only used by pending table_invite cards. */
+    onRespond?: (response: 'accept' | 'decline') => void;
 }) {
     const tone = n.read ? 'read' : 'fresh';
 
@@ -341,7 +368,75 @@ function NotificationRow({
                     }
                 />
             );
-        case 'table_invite':
+        case 'table_invite': {
+            // Pending → stateful invite card with Accept/Decline (no deep-link).
+            // Resolved → quiet info line. Status is joined LIVE at hydration.
+            if (n.invitationStatus === 'pending') {
+                const memberMeta = `${n.memberCount} member${n.memberCount === 1 ? '' : 's'}`;
+                return (
+                    <NotifRow
+                        tone={tone}
+                        leading={<NotifAvatar name={n.actor.name} src={n.actor.avatarUrl} />}
+                        title={
+                            <>
+                                <I>{firstName(n.actor.name)}</I>
+                                {' invited you to '}
+                                <I>{n.tableName}</I>
+                            </>
+                        }
+                        time={`${memberMeta} · ${n.timeLabel}`}
+                        trailing={
+                            <View style={styles.inviteActions}>
+                                <NotifAction
+                                    label="Accept"
+                                    variant="filledPrimary"
+                                    onPress={() => onRespond?.('accept')}
+                                />
+                                <NotifAction
+                                    label="Decline"
+                                    variant="outlined"
+                                    onPress={() => onRespond?.('decline')}
+                                />
+                            </View>
+                        }
+                    />
+                );
+            }
+            if (n.invitationStatus === 'accepted') {
+                return (
+                    <NotifRow
+                        tone={tone}
+                        onPress={onPress}
+                        leading={<NotifAvatar name={n.actor.name} src={n.actor.avatarUrl} />}
+                        title={
+                            <>
+                                {'joined '}
+                                <I>{n.tableName}</I>
+                                {'.'}
+                            </>
+                        }
+                        time={n.timeLabel}
+                    />
+                );
+            }
+            // declined / expired → quiet muted row (always read tone).
+            return (
+                <NotifRow
+                    tone="read"
+                    onPress={onPress}
+                    leading={<NotifAvatar name={n.actor.name} src={n.actor.avatarUrl} />}
+                    title={
+                        <>
+                            {'declined '}
+                            <I>{n.tableName}</I>
+                            {'.'}
+                        </>
+                    }
+                    time={n.timeLabel}
+                />
+            );
+        }
+        case 'table_invite_accepted':
             return (
                 <NotifRow
                     tone={tone}
@@ -350,20 +445,12 @@ function NotificationRow({
                     title={
                         <>
                             <I>{firstName(n.actor.name)}</I>
-                            {' added you to a new Table — '}
+                            {' joined '}
                             <I>{n.tableName}</I>
                             {'.'}
                         </>
                     }
                     time={n.timeLabel}
-                    trailing={
-                        <NotifAction
-                            label="Join"
-                            variant="filledPrimary"
-                            // The Join button fires the same deep-link as tapping the row.
-                            onPress={onPress}
-                        />
-                    }
                 />
             );
         case 'import_done': {
@@ -487,5 +574,10 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontStyle: 'italic',
         fontSize: 11,
+    },
+    // Pending invite card: Accept over Decline, stacked so the title keeps width.
+    inviteActions: {
+        gap: 6,
+        alignItems: 'stretch',
     },
 });

@@ -1,40 +1,28 @@
 /**
- * useAddMember — add a mutual-follow to a Table (owner only, TICKET-029).
+ * useAddMember — owner-initiated INVITE of a mutual-follow to a Table.
+ *
+ * TICKET-133 changes the semantics: add_member no longer seats a member. It
+ * upserts a PENDING invitation and notifies the invitee, who must accept
+ * (useRespondInvitation) before a table_members row exists. This hook therefore
+ * no longer patches tables.detail / tables.members — there is no new member yet.
+ *
+ * Optimistic patch (mutations.md): snapshot + add the target id to the
+ * ['tablePendingInvites', tableId] Set so the AddMemberSheet chip flips to
+ * "invited" without a refetch; rollback on error (or when the target turned out
+ * to already be a member).
  *
  * Server enforces:
  *   - caller must be the Table owner (403 NOT_OWNER)
  *   - both follow directions must exist (403 NOT_MUTUAL_FOLLOW)
- *   - idempotent: adding an existing member returns already_member=true (no error)
+ *   - idempotent: existing member → already_member=true; existing pending invite
+ *     → already_invited=true (no duplicate row, no duplicate notification).
  *
- * TICKET-042: replaced blast invalidateQueries with optimistic prepend.
- *
- * Strategy:
- *   - Snapshot tables.detail(tableId).members[] and tables.members(tableId)[].
- *   - Prepend an optimistic stub to both caches.
- *   - Attempt to read profile data from users.profile(targetUserId) if cached
- *     (likely: add-member flows from a profile/search context). Fall back to
- *     a sparse stub (blank display_name) if not present.
- *   - onSuccess: if already_member → rollback (stub shouldn't be there).
- *                else → replace stub with server-confirmed member_id.
- *   - onError: rollback both caches.
- *   - tables.list(userId) invalidate: DROPPED — member-count badges on the
- *     Tables tab are driven by useTableMembers (tables.members key), not
- *     tables.list. The list query carries no per-table member-count field.
- *     Audited against app/(tabs)/tables.tsx on 2026-04-27 (TICKET-042).
- *
- * On error: typed error_code is surfaced so the UI can render specific copy.
- *
- * TICKET-037: uses shared unwrapInvokeError helper instead of local unwrap.
- * AddMemberError.error_code still exposed for UI branching.
+ * TICKET-037: uses shared unwrapInvokeError semantics; AddMemberError.error_code
+ * is still exposed for UI branching.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
-import { queryKeys } from '@/lib/queryKeys';
-import { snapshot } from '@/lib/optimistic';
-import { track } from '@/lib/track';
-import type { TableDetail, TableMember as DetailMember } from '@/hooks/tables/useTableDetail';
-import type { TableMember as MembersMember } from '@/hooks/tables/useTableMembers';
-import type { UserProfileResult } from '@/hooks/users/useUserProfile';
+import { pendingInvitesQueryKey } from '@/hooks/tables/usePendingInvitations';
 
 export interface AddMemberInput {
     tableId: string;
@@ -42,8 +30,10 @@ export interface AddMemberInput {
 }
 
 export interface AddMemberResult {
-    member_id: string;
+    invitation_id?: string;
     already_member: boolean;
+    already_invited?: boolean;
+    status?: 'pending';
 }
 
 export class AddMemberError extends Error {
@@ -75,11 +65,8 @@ async function addMember(input: AddMemberInput): Promise<AddMemberResult> {
     }
 }
 
-const OPTIMISTIC_MEMBER_PREFIX = 'optimistic-member-';
-
 interface MutationContext {
-    restoreDetail: () => void;
-    restoreMembers: () => void;
+    previous?: Set<string>;
     targetUserId: string;
     tableId: string;
 }
@@ -91,108 +78,35 @@ export function useAddMember(_userId: string | null | undefined) {
         mutationFn: addMember,
 
         onMutate: async ({ tableId, targetUserId }) => {
-            const detailKey = queryKeys.tables.detail(tableId);
-            const membersKey = queryKeys.tables.members(tableId);
+            const key = pendingInvitesQueryKey(tableId);
+            await queryClient.cancelQueries({ queryKey: key });
 
-            // Cancel in-flight queries for both caches.
-            await queryClient.cancelQueries({ queryKey: detailKey });
-            await queryClient.cancelQueries({ queryKey: membersKey });
+            // Snapshot the pending set for rollback.
+            const previous = queryClient.getQueryData<Set<string>>(key);
 
-            // Snapshot both for rollback.
-            const { restore: restoreDetail } = snapshot<TableDetail>(queryClient, detailKey);
-            const { restore: restoreMembers } = snapshot<MembersMember[]>(queryClient, membersKey);
-
-            // Try to read display info from users.profile(targetUserId) if cached.
-            // This is likely populated since add-member typically flows from a
-            // profile/search context. Falls back to sparse stub if not present.
-            const cachedProfile = queryClient.getQueryData<UserProfileResult>(
-                queryKeys.users.profile(targetUserId),
-            );
-            const displayName = cachedProfile?.data?.profile?.display_name ?? '';
-            const avatarUrl = cachedProfile?.data?.profile?.avatar_url ?? null;
-
-            const now = new Date().toISOString();
-
-            // Stub for tables.detail(tableId).members[] — uses user_id (DetailMember shape)
-            const detailStub: DetailMember = {
-                user_id: targetUserId,
-                role: 'member',
-                joined_at: now,
-                profiles: { display_name: displayName, avatar_url: avatarUrl },
-            };
-
-            // Stub for tables.members(tableId)[] — uses member_id (MembersMember shape)
-            const membersStub: MembersMember = {
-                member_id: `${OPTIMISTIC_MEMBER_PREFIX}${targetUserId}`,
-                role: 'member',
-                joined_at: now,
-                profiles: { display_name: displayName, avatar_url: avatarUrl },
-            };
-
-            // Patch tables.detail: prepend to members array.
-            queryClient.setQueryData<TableDetail>(detailKey, (prev) => {
-                if (!prev) return prev;
-                return { ...prev, members: [detailStub, ...(prev.members ?? [])] };
+            // Optimistically mark the target as invited so the chip flips.
+            queryClient.setQueryData<Set<string>>(key, (prev) => {
+                const next = new Set(prev ?? []);
+                next.add(targetUserId);
+                return next;
             });
 
-            // Patch tables.members: prepend stub.
-            queryClient.setQueryData<MembersMember[]>(membersKey, (prev) =>
-                prev ? [membersStub, ...prev] : [membersStub],
-            );
-
-            return { restoreDetail, restoreMembers, targetUserId, tableId };
+            return { previous, targetUserId, tableId };
         },
 
         onError: (_err, _vars, ctx) => {
             if (!ctx) return;
-            ctx.restoreDetail();
-            ctx.restoreMembers();
+            queryClient.setQueryData(pendingInvitesQueryKey(ctx.tableId), ctx.previous);
         },
 
-        onSuccess: (result, { tableId, targetUserId }, ctx) => {
+        onSuccess: (result, { tableId }, ctx) => {
             if (!ctx) return;
-
+            // already_member: the target was NOT invited (they're already seated).
+            // Roll back the optimistic add so the chip doesn't lie. Fresh invite
+            // and already_invited both mean a live pending invite exists — keep it.
             if (result.already_member) {
-                // Idempotent add — the member was already there. Roll back the
-                // optimistic prepend so we don't show a duplicate.
-                ctx.restoreDetail();
-                ctx.restoreMembers();
-                return;
+                queryClient.setQueryData(pendingInvitesQueryKey(tableId), ctx.previous);
             }
-
-            // TICKET-088: a table gaining a member (fire-and-forget).
-            track('table_member_added', {});
-
-            // Reconcile: replace stub member_id with server-assigned member_id.
-            const detailKey = queryKeys.tables.detail(tableId);
-            const membersKey = queryKeys.tables.members(tableId);
-
-            // tables.detail.members[] — matched by user_id
-            queryClient.setQueryData<TableDetail>(detailKey, (prev) => {
-                if (!prev) return prev;
-                const members = prev.members.map((m) =>
-                    m.user_id === targetUserId
-                        ? { ...m } // stub is already correct; no extra field to add
-                        : m,
-                );
-                return { ...prev, members };
-            });
-
-            // tables.members[] — swap the optimistic member_id for server-assigned one
-            queryClient.setQueryData<MembersMember[]>(membersKey, (prev) => {
-                if (!prev) return prev;
-                return prev.map((m) =>
-                    m.member_id === `${OPTIMISTIC_MEMBER_PREFIX}${targetUserId}`
-                        ? { ...m, member_id: result.member_id }
-                        : m,
-                );
-            });
-
-            // Note: tables.list(userId) invalidate DROPPED. Audited 2026-04-27:
-            // member-count badges on the Tables tab read from useTableMembers
-            // (tables.members key), not from tables.list. No badge depends on
-            // the list query. tables.detail + tables.members are already patched
-            // above.
         },
     });
 }

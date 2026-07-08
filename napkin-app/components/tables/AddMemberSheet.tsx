@@ -43,6 +43,7 @@ import { SearchInput } from '@/components/search/SearchInput';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useUserSearch, type UserSearchResult } from '@/hooks/users/useUserSearch';
 import { useAddMember, AddMemberError } from '@/hooks/tables/useAddMember';
+import { usePendingInvitations } from '@/hooks/tables/usePendingInvitations';
 import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
 
 type Palette = typeof Colors.light;
@@ -74,6 +75,8 @@ interface MutualResultRowProps {
     onSelect: (row: UserSearchResult) => void;
     onOpenProfile: (userId: string) => void;
     isAdding: boolean;
+    /** TICKET-133: this user already has a pending invite → quiet "invited" chip. */
+    isInvited: boolean;
 }
 
 /** Why a row is non-mutual — uses the directional fields when the server sent them. */
@@ -86,14 +89,17 @@ function nonMutualReason(row: UserSearchResult): string {
     return 'needs to follow you back';
 }
 
-function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: MutualResultRowProps) {
+function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding, isInvited }: MutualResultRowProps) {
     const isMutual = row.is_mutual === true;
     const reason = isMutual ? null : nonMutualReason(row);
+    // An already-invited mutual is non-interactive as an add target — tapping
+    // opens their profile rather than re-sending (the invite is already live).
+    const selectable = isMutual && !isInvited;
 
     return (
         <Pressable
             onPress={() => {
-                if (isMutual) {
+                if (selectable) {
                     onSelect(row);
                 } else {
                     onOpenProfile(row.user_id);
@@ -105,9 +111,11 @@ function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: Mu
             ]}
             accessibilityRole="button"
             accessibilityLabel={
-                isMutual
-                    ? `Add ${row.display_name}`
-                    : `${row.display_name} — ${reason}`
+                isInvited
+                    ? `${row.display_name} — invited`
+                    : isMutual
+                        ? `Add ${row.display_name}`
+                        : `${row.display_name} — ${reason}`
             }
         >
             {/* Avatar */}
@@ -138,7 +146,9 @@ function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: Mu
             </View>
 
             {/* Right action */}
-            {isMutual ? (
+            {isInvited ? (
+                <Text style={[styles.invitedChip, { color: palette.textMuted }]}>invited</Text>
+            ) : isMutual ? (
                 isAdding ? (
                     <ActivityIndicator size="small" color={palette.primary} />
                 ) : (
@@ -179,6 +189,9 @@ export function AddMemberSheet({
 
     const addMember = useAddMember(userId);
     const createInvite = useCreateInvite();
+    // Pending invites for this table — backs the quiet "invited" chip so an owner
+    // who already invited someone doesn't re-tap "Add". Fetched only while open.
+    const { data: pendingInvites } = usePendingInvitations(tableId, visible);
 
     // Reset state when sheet opens
     useEffect(() => {
@@ -250,18 +263,20 @@ export function AddMemberSheet({
         if (addingUserId) return; // prevent double-tap
         setAddingUserId(row.user_id);
         try {
+            // Sends a pending invitation (TICKET-133) — the invitee accepts before
+            // they're seated. Closes on success; the "invited" chip reflects it on reopen.
             await addMember.mutateAsync({ tableId, targetUserId: row.user_id });
             onClose();
         } catch (err) {
-            let msg = 'Could not add member. Please try again.';
+            let msg = 'Could not send the invite. Please try again.';
             if (err instanceof AddMemberError) {
                 if (err.error_code === 'NOT_MUTUAL_FOLLOW') {
                     msg = `${row.display_name} no longer follows you back. Ask them to follow you first.`;
                 } else if (err.error_code === 'NOT_OWNER') {
-                    msg = 'Only the table owner can add members.';
+                    msg = 'Only the table owner can invite members.';
                 }
             }
-            Alert.alert('Could not add', msg);
+            Alert.alert('Could not invite', msg);
         } finally {
             setAddingUserId(null);
         }
@@ -373,6 +388,7 @@ export function AddMemberSheet({
                                 onSelect={handleSelect}
                                 onOpenProfile={handleOpenProfile}
                                 isAdding={addingUserId === item.user_id}
+                                isInvited={pendingInvites?.has(item.user_id) ?? false}
                             />
                         )}
                         keyboardShouldPersistTaps="handled"
@@ -526,6 +542,11 @@ const styles = StyleSheet.create({
     addCta: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 13,
+        letterSpacing: 0.3,
+    },
+    invitedChip: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
         letterSpacing: 0.3,
     },
 });

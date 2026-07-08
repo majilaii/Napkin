@@ -18,6 +18,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
 import { Avatar } from '@/components/feed/Avatar';
+import { NotifBell } from '@/components/notifications';
 
 type Palette = typeof Colors.light;
 
@@ -34,6 +35,9 @@ export interface TableHeaderProps {
     /** When provided (owner only), a designated + for seating people — the
      * invite path no longer hides behind the gear (founder, 2026-07-03). */
     onInvitePress?: () => void;
+    /** TICKET-133: bell on the Tables header — same dot/source as Profile. */
+    onBellPress?: () => void;
+    bellUnread?: boolean;
 }
 
 const MAX_STACK_AVATARS = 3;
@@ -49,6 +53,8 @@ export function TableHeader({
     palette,
     onSettingsPress,
     onInvitePress,
+    onBellPress,
+    bellUnread,
 }: TableHeaderProps) {
     const visibleAvatars = memberNames.slice(0, MAX_STACK_AVATARS);
     const overflow = Math.max(memberNames.length - MAX_STACK_AVATARS, 0);
@@ -100,8 +106,15 @@ export function TableHeader({
                 ) : null}
             </Pressable>
 
-            {/* Right column: stacked avatars + optional settings gear */}
+            {/* Right column: bell + stacked avatars + optional settings gear */}
             <View style={styles.rightColumn}>
+                {onBellPress && (
+                    <NotifBell
+                        unread={bellUnread}
+                        onPress={onBellPress}
+                        ringColor={palette.background}
+                    />
+                )}
                 {stackCells > 0 && (
                     <View style={[styles.avatarStack, { width: stackWidth }]}>
                         {visibleAvatars.map((name, i) => (

@@ -7,7 +7,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
-import { emitTableInvite, emitTopFourSwap } from '../_shared/notify.ts';
+import { emitTableInvite, emitTableInviteAccepted, emitTopFourSwap } from '../_shared/notify.ts';
 import { mintShareToken } from '../_shared/handoffToken.ts';
 
 // Invite codes are minted by mintShareToken() → 22-char base64url (no padding).
@@ -272,7 +272,11 @@ serve(async (req) => {
                 );
             }
 
-            // 4. Idempotent upsert — welcomed_at stays NULL so the banner fires on first view
+            // 4. TICKET-133: consent gate. add_member NO LONGER seats the member —
+            //    it upserts a PENDING invitation and notifies the invitee, who must
+            //    accept via respond_invitation before a table_members row is written.
+
+            // 4a. Already a member → no invite, no notification (idempotent).
             const { data: existing, error: existErr } = await supabase
                 .from('table_members')
                 .select('member_id')
@@ -284,31 +288,280 @@ serve(async (req) => {
 
             if (existing) {
                 return new Response(
-                    JSON.stringify({ data: { member_id: target_user_id, already_member: true } }),
+                    JSON.stringify({ data: { already_member: true } }),
                     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 );
             }
 
-            const { error: insertErr } = await supabase
+            // 4b. Existing pending invitation → return it, no new notification
+            //     (idempotent re-add while pending).
+            const { data: pendingInvite, error: pendingErr } = await supabase
+                .from('table_invitations')
+                .select('id')
+                .eq('table_id', targetTableId)
+                .eq('invited_user_id', target_user_id)
+                .eq('status', 'pending')
+                .maybeSingle();
+
+            if (pendingErr) throw pendingErr;
+
+            if (pendingInvite) {
+                return new Response(
+                    JSON.stringify({
+                        data: {
+                            invitation_id: (pendingInvite as { id: string }).id,
+                            status: 'pending',
+                            already_member: false,
+                            already_invited: true,
+                        },
+                    }),
+                    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // 4c. Insert a fresh pending invitation. On 23505 (partial-unique race)
+            //     re-select the pending row and treat it as an idempotent re-add.
+            let invitationId: string | null = null;
+            const { data: inserted, error: inviteInsertErr } = await supabase
+                .from('table_invitations')
+                .insert({
+                    table_id: targetTableId,
+                    invited_user_id: target_user_id,
+                    invited_by: user.id,
+                    status: 'pending',
+                })
+                .select('id')
+                .maybeSingle();
+
+            if (inviteInsertErr) {
+                if ((inviteInsertErr as { code?: string }).code === '23505') {
+                    const { data: raced } = await supabase
+                        .from('table_invitations')
+                        .select('id')
+                        .eq('table_id', targetTableId)
+                        .eq('invited_user_id', target_user_id)
+                        .eq('status', 'pending')
+                        .maybeSingle();
+                    if (raced) {
+                        return new Response(
+                            JSON.stringify({
+                                data: {
+                                    invitation_id: (raced as { id: string }).id,
+                                    status: 'pending',
+                                    already_member: false,
+                                    already_invited: true,
+                                },
+                            }),
+                            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                        );
+                    }
+                }
+                throw inviteInsertErr;
+            }
+
+            invitationId = (inserted as { id: string } | null)?.id ?? null;
+
+            // 4d. Denormalize member_count for the invite card (stable-enough).
+            const { count: memberCount } = await supabase
                 .from('table_members')
-                .insert({ table_id: targetTableId, member_id: target_user_id, role: 'member' });
+                .select('member_id', { count: 'exact', head: true })
+                .eq('table_id', targetTableId);
 
-            if (insertErr) throw insertErr;
-
-            // TICKET-048: best-effort table_invite notification to the new member.
+            // 4e. Best-effort invite notification carrying the invitation_id.
             try {
                 await emitTableInvite(supabase, {
                     actorUserId: user.id,
                     recipientUserId: target_user_id,
                     tableId: targetTableId,
+                    invitationId: invitationId ?? '',
+                    memberCount: memberCount ?? 0,
                 });
             } catch (notifyErr) {
                 console.error('[notify] table_invite threw:', notifyErr);
             }
 
             return new Response(
-                JSON.stringify({ data: { member_id: target_user_id, already_member: false } }),
+                JSON.stringify({
+                    data: {
+                        invitation_id: invitationId,
+                        status: 'pending',
+                        already_member: false,
+                        already_invited: false,
+                    },
+                }),
                 { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=respond_invitation — invitee-only accept|decline (TICKET-133)
+        if (req.method === 'POST' && action === 'respond_invitation') {
+            const body = await req.json();
+            const { invitation_id, response } = body as {
+                invitation_id?: string;
+                response?: string;
+            };
+
+            if (!invitation_id || typeof invitation_id !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'invitation_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+            if (response !== 'accept' && response !== 'decline') {
+                return new Response(
+                    JSON.stringify({ error: "response must be 'accept' or 'decline'" }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Load the invitation. 404 when missing (also the smoke bogus-id path).
+            const { data: invitation, error: invErr } = await supabase
+                .from('table_invitations')
+                .select('id, table_id, invited_user_id, invited_by, status')
+                .eq('id', invitation_id)
+                .maybeSingle();
+
+            if (invErr) throw invErr;
+            if (!invitation) {
+                return new Response(
+                    JSON.stringify({ error: 'Invitation not found', error_code: 'NOT_FOUND' }),
+                    { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const inv = invitation as {
+                id: string;
+                table_id: string;
+                invited_user_id: string;
+                invited_by: string;
+                status: string;
+            };
+
+            // Only the invitee may respond.
+            if (inv.invited_user_id !== user.id) {
+                return new Response(
+                    JSON.stringify({ error: 'Not your invitation', error_code: 'NOT_INVITEE' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Resolve the table name once for the accept response payloads.
+            const loadTableName = async (): Promise<string | null> => {
+                const { data: t } = await supabase
+                    .from('tables')
+                    .select('name')
+                    .eq('id', inv.table_id)
+                    .maybeSingle();
+                return (t as { name?: string } | null)?.name ?? null;
+            };
+
+            // Idempotent: already accepted → success (no re-seat, no re-notify).
+            if (inv.status === 'accepted') {
+                return new Response(
+                    JSON.stringify({
+                        data: { table_id: inv.table_id, table_name: await loadTableName(), status: 'accepted' },
+                    }),
+                    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Terminal-but-not-accepted (declined/expired) → cannot respond again.
+            if (inv.status !== 'pending') {
+                return new Response(
+                    JSON.stringify({ error: 'Invitation is no longer pending', error_code: 'INVITE_NOT_PENDING' }),
+                    { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            if (response === 'decline') {
+                const { error: declineErr } = await supabase
+                    .from('table_invitations')
+                    .update({ status: 'declined', updated_at: new Date().toISOString() })
+                    .eq('id', inv.id);
+                if (declineErr) throw declineErr;
+                // Silent — no notification to the inviter.
+                return new Response(
+                    JSON.stringify({ data: { status: 'declined' } }),
+                    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // accept → seat the member (PK collision = already a member; swallow).
+            const { error: seatErr } = await supabase
+                .from('table_members')
+                .insert({ table_id: inv.table_id, member_id: user.id, role: 'member' });
+            if (seatErr && (seatErr as { code?: string }).code !== '23505') {
+                throw seatErr;
+            }
+
+            const { error: markErr } = await supabase
+                .from('table_invitations')
+                .update({ status: 'accepted', updated_at: new Date().toISOString() })
+                .eq('id', inv.id);
+            if (markErr) throw markErr;
+
+            // Best-effort notify the inviter that the invitee joined.
+            try {
+                await emitTableInviteAccepted(supabase, {
+                    actorUserId: user.id,
+                    recipientUserId: inv.invited_by,
+                    tableId: inv.table_id,
+                });
+            } catch (notifyErr) {
+                console.error('[notify] table_invite_accepted threw:', notifyErr);
+            }
+
+            return new Response(
+                JSON.stringify({
+                    data: { table_id: inv.table_id, table_name: await loadTableName(), status: 'accepted' },
+                }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+
+        // POST ?action=pending_invitations — member-gated list of pending invitees
+        // for a table (backs the AddMemberSheet "invited" chip). TICKET-133.
+        if (req.method === 'POST' && action === 'pending_invitations') {
+            const body = await req.json();
+            const { table_id: targetTableId } = body as { table_id?: string };
+
+            if (!targetTableId || typeof targetTableId !== 'string') {
+                return new Response(
+                    JSON.stringify({ error: 'table_id is required' }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Verify membership (member_id — not user_id — TICKET-034).
+            const { data: membership, error: memberCheckError } = await supabase
+                .from('table_members')
+                .select('member_id')
+                .eq('table_id', targetTableId)
+                .eq('member_id', user.id)
+                .maybeSingle();
+
+            if (memberCheckError || !membership) {
+                return new Response(
+                    JSON.stringify({ error: 'Not a member of this table' }),
+                    { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
+            const { data: pendingRows, error: pendingListErr } = await supabase
+                .from('table_invitations')
+                .select('invited_user_id')
+                .eq('table_id', targetTableId)
+                .eq('status', 'pending');
+
+            if (pendingListErr) throw pendingListErr;
+
+            const invited_user_ids = (pendingRows ?? []).map(
+                (r) => (r as { invited_user_id: string }).invited_user_id,
+            );
+
+            return new Response(
+                JSON.stringify({ data: { invited_user_ids } }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
         }
 
@@ -1082,6 +1335,21 @@ serve(async (req) => {
                 } catch (usesErr) {
                     console.error('[join_by_invite] uses increment failed:', usesErr);
                 }
+            }
+
+            // TICKET-133: a link join is self-initiated and instant, but if the
+            // owner had also sent a pending invitation, resolve it to 'accepted'
+            // so it stops showing as a live invite. Best-effort — never blocks the
+            // join, no notification (self-initiated).
+            try {
+                await supabase
+                    .from('table_invitations')
+                    .update({ status: 'accepted', updated_at: new Date().toISOString() })
+                    .eq('table_id', inviteTableId)
+                    .eq('invited_user_id', user.id)
+                    .eq('status', 'pending');
+            } catch (inviteErr) {
+                console.error('[join_by_invite] pending invitation reconcile failed:', inviteErr);
             }
 
             const { data: table } = await supabase

@@ -241,6 +241,30 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-133: respond_invitation read-safe guard. A bogus invitation id →
+    // HTTP 404 (invitation not found). This exercises the new POST action's
+    // routing + the table_invitations read path post-migration (catches a
+    // missing-table / column / RLS drift), like the supper-detail guard. The
+    // mutation branches (accept/decline) never run — the row doesn't exist.
+    // table-management uses the flat { error, error_code } envelope, so we
+    // assert only that an error field is present.
+    {
+        name: 'table-management?action=respond_invitation bogus id → 404 (TICKET-133)',
+        method: 'POST',
+        fn: 'table-management',
+        query: 'action=respond_invitation',
+        body: {
+            action: 'respond_invitation',
+            invitation_id: '00000000-0000-0000-0000-000000000000',
+            response: 'decline',
+        },
+        expectedStatus: 404,
+        shape: (json) => {
+            const err = (json as { error?: unknown }).error;
+            if (!err) return 'missing error envelope';
+            return null;
+        },
+    },
     // TICKET-098 Phase B + TICKET-102 + TICKET-114 v2: two-mode rail read path.
     // [ARCH-REVIEW-5] assert Array.isArray on BOTH rows AND fallback ONLY — an
     // empty array is the legitimate below-floor state for each mode (rows: <3
