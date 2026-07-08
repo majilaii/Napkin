@@ -223,9 +223,12 @@ async function discoverTableId(token: string): Promise<string> {
 }
 
 async function mapPinRows(token: string, tableId: string): Promise<unknown[]> {
-    const rows = await edge(token, 'table-atlas', { action: 'map_pins', table_id: tableId });
+    // Envelope is { data: { rows: [...] } } (repo page-envelope convention);
+    // edge() strips the outer data, leaving { rows }.
+    const payload = await edge(token, 'table-atlas', { action: 'map_pins', table_id: tableId });
+    const rows = (payload as { rows?: unknown })?.rows;
     if (!Array.isArray(rows)) {
-        throw new Error(`map_pins returned no array: ${JSON.stringify(rows).slice(0, 200)}`);
+        throw new Error(`map_pins returned no rows array: ${JSON.stringify(payload).slice(0, 200)}`);
     }
     return rows;
 }
@@ -288,6 +291,10 @@ async function main() {
     // TICKET-121 fix-pass: public-profile floor — the scope=public
     // post-interactions check depends on it.
     await ensureProfilePublic(token, userId);
+
+    // TICKET-139 follow-up: group-meal floor — the map_pins member-path
+    // check depends on it. Runs after ensureTable (needs the table).
+    await ensureSupperPin(token);
 }
 
 main().catch((e) => {
