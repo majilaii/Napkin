@@ -15,8 +15,11 @@ import {
     filterItemsByCuisine,
     mergeYourItems,
     peopleFromItems,
+    matchPeople,
     filterByCheckedPeople,
     peopleChipLabel,
+    peopleCountLine,
+    discoverItemsFor,
     overlapToMapItems,
     mergeDiscoverItems,
     supperPinsToMapItems,
@@ -192,7 +195,7 @@ describe('Discover people picker (TICKET-137)', () => {
     ];
 
     describe('peopleFromItems', () => {
-        it('returns distinct authors in first-seen order, ignoring author-less items', () => {
+        it('returns distinct authors sorted by name, ignoring author-less items', () => {
             expect(peopleFromItems(items)).toEqual([
                 { id: 'clara', name: 'Clara', avatar: null },
                 { id: 'thomas', name: 'Thomas', avatar: 'a.png' },
@@ -200,6 +203,48 @@ describe('Discover people picker (TICKET-137)', () => {
         });
         it('is empty for no network authors', () => {
             expect(peopleFromItems([])).toEqual([]);
+        });
+        // TICKET-147 root cause: the pins arrive in recency order, so a first-seen
+        // roster reshuffles under the open sheet and the row a tap lands on changes
+        // identity ("only one ticks at a time"). The roster MUST be stable no matter
+        // what order the pins come in.
+        it('is STABLE: same authors in a different pin order → identical roster', () => {
+            const a = networkPinsToMapItems([
+                pin({ restaurant_id: 'r1', author: { id: 'u-zoe', name: 'Zoe', avatar: null } }),
+                pin({ restaurant_id: 'r2', author: { id: 'u-ada', name: 'Ada', avatar: null } }),
+                pin({ restaurant_id: 'r3', author: { id: 'u-mia', name: 'Mia', avatar: null } }),
+            ]);
+            // Same three authors, pins in the reverse (a fresh-recency) order.
+            const b = networkPinsToMapItems([
+                pin({ restaurant_id: 'r3', author: { id: 'u-mia', name: 'Mia', avatar: null } }),
+                pin({ restaurant_id: 'r2', author: { id: 'u-ada', name: 'Ada', avatar: null } }),
+                pin({ restaurant_id: 'r1', author: { id: 'u-zoe', name: 'Zoe', avatar: null } }),
+            ]);
+            expect(peopleFromItems(a)).toEqual(peopleFromItems(b));
+            // …and the stable order is alphabetical, not pin order.
+            expect(peopleFromItems(a).map((p) => p.name)).toEqual(['Ada', 'Mia', 'Zoe']);
+        });
+        it('breaks name ties on id so the order is total/deterministic', () => {
+            const dupName = networkPinsToMapItems([
+                pin({ restaurant_id: 'r1', author: { id: 'id-b', name: 'Sam', avatar: null } }),
+                pin({ restaurant_id: 'r2', author: { id: 'id-a', name: 'sam', avatar: null } }),
+            ]);
+            expect(peopleFromItems(dupName).map((p) => p.id)).toEqual(['id-a', 'id-b']);
+        });
+    });
+
+    describe('matchPeople (client-side search)', () => {
+        const roster = peopleFromItems(items); // [Clara, Thomas]
+        it('blank query = pass-through (same list)', () => {
+            expect(matchPeople(roster, '')).toEqual(roster);
+            expect(matchPeople(roster, '   ')).toEqual(roster);
+        });
+        it('case-insensitive substring match on name', () => {
+            expect(matchPeople(roster, 'th').map((p) => p.name)).toEqual(['Thomas']);
+            expect(matchPeople(roster, 'LAR').map((p) => p.name)).toEqual(['Clara']);
+        });
+        it('no match → empty', () => {
+            expect(matchPeople(roster, 'zzz')).toEqual([]);
         });
     });
 
@@ -230,6 +275,78 @@ describe('Discover people picker (TICKET-137)', () => {
         });
         it('more than one → "N people"', () => {
             expect(peopleChipLabel(new Set(['clara', 'thomas']), people)).toBe('2 people');
+        });
+    });
+
+    describe('discoverItemsFor (shared map/count derivation)', () => {
+        // Overlap fixture: one restaurant shared with the network (r2) + one only
+        // the table saved (r9).
+        const overlap: WishlistMapItem[] = [
+            { id: 'r2', name: 'Shared', city: null, cuisine: null, lat: 1, lng: 1, overlap: { count: 2, tableId: 't', tableName: 'T', members: [] } },
+            { id: 'r9', name: 'TableOnly', city: null, cuisine: null, lat: 2, lng: 2, overlap: { count: 3, tableId: 't', tableName: 'T', members: [] } },
+        ];
+        it('everyone = overlap ∪ network deduped, overlap winning shared ids', () => {
+            const out = discoverItemsFor(items, overlap, new Set());
+            expect(out.map((i) => i.id).sort()).toEqual(['r1', 'r2', 'r3', 'r4', 'r9']);
+            expect(out.find((i) => i.id === 'r2')?.overlap).toBeTruthy(); // overlap won
+        });
+        it('non-empty checked set = network only (overlap pins hidden)', () => {
+            const out = discoverItemsFor(items, overlap, new Set(['clara', 'thomas']));
+            expect(out.map((i) => i.id).sort()).toEqual(['r1', 'r2', 'r3']);
+            expect(out.every((i) => i.overlap == null)).toBe(true);
+        });
+        it('dedupes two followees on ONE restaurant in the checked branch (first/most-recent wins)', () => {
+            const dup = networkPinsToMapItems([
+                pin({ restaurant_id: 'r5', author: { id: 'clara', name: 'Clara', avatar: null } }),
+                pin({ restaurant_id: 'r5', author: { id: 'thomas', name: 'Thomas', avatar: null } }),
+            ]);
+            const out = discoverItemsFor(dup, [], new Set(['clara', 'thomas']));
+            expect(out).toHaveLength(1);
+            expect(out[0].author?.id).toBe('clara'); // first occurrence kept
+        });
+    });
+
+    describe('peopleCountLine (live count feedback)', () => {
+        // `items` = 3 network pins (r1/r3 Clara, r2 Thomas) + 1 author-less spot.
+        // The count is discoverItemsFor(...).length — the EXACT array the map
+        // renders — so dedupe + everyone-mode overlap merge are included.
+        it('empty set → "from everyone" over all network pins', () => {
+            expect(peopleCountLine(items, [], new Set())).toBe('showing 4 places from everyone');
+        });
+        it('one person → "from 1 person" with that person\'s place count', () => {
+            expect(peopleCountLine(items, [], new Set(['clara']))).toBe('showing 2 places from 1 person');
+        });
+        it('two people → "from 2 people"', () => {
+            expect(peopleCountLine(items, [], new Set(['clara', 'thomas']))).toBe(
+                'showing 3 places from 2 people',
+            );
+        });
+        it('pluralizes a single place', () => {
+            expect(peopleCountLine(items, [], new Set(['thomas']))).toBe('showing 1 place from 1 person');
+        });
+        it('everyone-mode counts the overlap merge exactly as the map renders it (review P2-a)', () => {
+            const overlap: WishlistMapItem[] = [
+                // r1 shared with network (merged, not double-counted); r9 table-only (adds one).
+                { id: 'r1', name: 'A', city: null, cuisine: null, lat: 1, lng: 1, overlap: { count: 2, tableId: 't', tableName: 'T', members: [] } },
+                { id: 'r9', name: 'B', city: null, cuisine: null, lat: 2, lng: 2, overlap: { count: 2, tableId: 't', tableName: 'T', members: [] } },
+            ];
+            const rendered = discoverItemsFor(items, overlap, new Set()).length; // 4 + 1
+            expect(rendered).toBe(5);
+            expect(peopleCountLine(items, overlap, new Set())).toBe('showing 5 places from everyone');
+        });
+        it('two followees on one restaurant → count matches the deduped rendered pins', () => {
+            const dup = networkPinsToMapItems([
+                pin({ restaurant_id: 'r5', author: { id: 'clara', name: 'Clara', avatar: null } }),
+                pin({ restaurant_id: 'r5', author: { id: 'thomas', name: 'Thomas', avatar: null } }),
+            ]);
+            const checked = new Set(['clara', 'thomas']);
+            expect(discoverItemsFor(dup, [], checked)).toHaveLength(1);
+            expect(peopleCountLine(dup, [], checked)).toBe('showing 1 place from 2 people');
+        });
+        it('always equals the rendered discoverItems length (never lies vs the map)', () => {
+            const checked = new Set(['clara']);
+            const shown = discoverItemsFor(items, [], checked).length;
+            expect(peopleCountLine(items, [], checked)).toContain(`showing ${shown} `);
         });
     });
 });

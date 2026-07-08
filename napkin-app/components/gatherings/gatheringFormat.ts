@@ -22,6 +22,24 @@ export function dateLeaf(ymd: string): { wd: string; day: string; mo: string } |
     };
 }
 
+/**
+ * 'YYYY-MM-DD' → a quiet relative-day phrase for the When row: "today" /
+ * "tomorrow" / "in 3 days" / "yesterday" / "5 days ago". `now` is injectable so
+ * the day-boundary math is deterministically testable. Empty string when
+ * unparseable (the caller just renders nothing).
+ */
+export function relativeDay(ymd: string, now: Date = new Date()): string {
+    const d = new Date(`${ymd}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return '';
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+    const delta = Math.round((d.getTime() - today.getTime()) / 86_400_000);
+    if (delta === 0) return 'today';
+    if (delta === 1) return 'tomorrow';
+    if (delta === -1) return 'yesterday';
+    return delta > 1 ? `in ${delta} days` : `${-delta} days ago`;
+}
+
 /** 'YYYY-MM-DD' → 'sat 12' (lowercase weekday + day) — the counter/meta grammar. */
 export function shortDate(ymd: string): string {
     const d = new Date(`${ymd}T00:00:00`);

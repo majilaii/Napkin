@@ -4,41 +4,60 @@
  * Replaces the inline friend rail (founder: "very bugged"). EXCLUSIVE-include
  * semantics: an `Everyone` row at the top (checked when nothing else is) plus one
  * row per person you follow who has pins (avatar + name + check). Nothing checked
- * = everyone; checking a person shows ONLY their pins. The screen owns the
- * `checkedIds` set and the filtering (mapItems.ts helpers) — this just draws.
+ * = everyone; checking a person shows ONLY their pins.
+ *
+ * DRAFT-APPLY (TICKET-147 review round): while the sheet is open, toggles mutate
+ * a LOCAL draft set — the map's applied state is updated ONCE, on dismiss
+ * (backdrop tap / Android back). This kills the multi-select bug's mechanism by
+ * construction: per-tap application forced the always-mounted WishlistMapView to
+ * reconcile its markers UNDER the open Modal, the prime suspect for the on-device
+ * dropped taps ("only one person ticks at a time"). The count line narrates the
+ * DRAFT live (`countFor`), so feedback stays instant; the Everyone row clears the
+ * draft (stays open); exclusive-include semantics are unchanged from the map's
+ * perspective.
  *
  * Same RN-core Modal idiom as FilterTabsSheet: transparent + slide, tap-the-scrim
  * to dismiss, inner Pressable swallows taps, warm-dusk backdrop (no black scrim).
  * Copy economy: one Manrope header line; rows carry no prose.
  */
-import React from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Radius } from '@/constants/theme';
-import type { DiscoverPerson } from './mapItems';
+import { matchPeople, type DiscoverPerson } from './mapItems';
+
+/** Above this many rows, the roster gets a client-side search field. */
+const SEARCH_THRESHOLD = 8;
 
 interface Props {
     visible: boolean;
+    /** Close the sheet. The sheet calls `onApply(draft)` first, then this. */
     onDismiss: () => void;
     palette: typeof Colors.light;
     people: DiscoverPerson[];
-    /** Empty = everyone; else the checked (exclusive-include) author ids. */
+    /**
+     * The APPLIED set (empty = everyone) — seeds the local draft each time the
+     * sheet opens. NOT updated per tap (draft-apply).
+     */
     checkedIds: ReadonlySet<string>;
-    /** Toggle one person in/out of the checked set. */
-    onToggle: (id: string) => void;
-    /** Clear back to everyone (the `Everyone` row). */
-    onEveryone: () => void;
+    /** Apply the draft to the map — called exactly once, on dismiss. */
+    onApply: (next: Set<string>) => void;
+    /**
+     * Quiet live count line (TICKET-147): `showing N places from everyone` /
+     * `… from 2 people`. Called with the CURRENT DRAFT each render; the screen
+     * computes it with the exact derivation the map renders (discoverItemsFor),
+     * so the number matches the pins that will show on apply.
+     */
+    countFor?: (checkedIds: ReadonlySet<string>) => string;
     /**
      * TICKET-139: pinned "your table" rows above Everyone. One tap = exclusive-
-     * include that table's member ids (overlap pins then hide per 138 — correct,
-     * their VISITS show). Only for table members; ≤2 rows typical. Rendered only
-     * when non-empty; the sheet stays presentational.
+     * include that table's member ids in the draft (overlap pins then hide per
+     * 138 — correct, their VISITS show). Only for table members; ≤2 rows typical.
      */
     tableRows?: { tableId: string; name: string; memberIds: string[] }[];
-    onSelectTable?: (memberIds: string[]) => void;
 }
 
 /** True when `checkedIds` is exactly this table's member set (same size + every
@@ -54,17 +73,44 @@ export function DiscoverPeopleSheet({
     palette,
     people,
     checkedIds,
-    onToggle,
-    onEveryone,
+    onApply,
+    countFor,
     tableRows,
-    onSelectTable,
 }: Props) {
     const insets = useSafeAreaInsets();
-    const everyone = checkedIds.size === 0;
+
+    // The DRAFT (draft-apply): seeded from the applied set on open, mutated
+    // locally per tap, applied once on dismiss. The map never reconciles markers
+    // while the Modal is up. While open, `checkedIds` stays stable (nothing
+    // applies), so this effect only fires on visibility transitions.
+    const [draft, setDraft] = useState<Set<string>>(() => new Set(checkedIds));
+    // Client-side people search — shown only for long rosters (short lists don't
+    // need it and the keyboard would just be in the way). Resets on close.
+    const [query, setQuery] = useState('');
+    useEffect(() => {
+        if (visible) setDraft(new Set(checkedIds));
+        else setQuery('');
+    }, [visible, checkedIds]);
+
+    const everyone = draft.size === 0;
+    const applyAndDismiss = () => {
+        onApply(draft);
+        onDismiss();
+    };
+    const toggle = (id: string) =>
+        setDraft((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+
+    const showSearch = people.length > SEARCH_THRESHOLD;
+    const shownPeople = showSearch ? matchPeople(people, query) : people;
 
     return (
-        <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
-            <Pressable style={styles.backdrop} onPress={onDismiss}>
+        <Modal visible={visible} transparent animationType="slide" onRequestClose={applyAndDismiss}>
+            <Pressable style={styles.backdrop} onPress={applyAndDismiss}>
                 <Pressable
                     style={[
                         styles.sheet,
@@ -76,19 +122,45 @@ export function DiscoverPeopleSheet({
 
                     <Text style={[styles.header, { color: palette.textMuted }]}>Show pins from</Text>
 
+                    {countFor ? (
+                        <Text style={[styles.count, { color: palette.textMuted }]}>{countFor(draft)}</Text>
+                    ) : null}
+
+                    {showSearch ? (
+                        <View
+                            style={[
+                                styles.searchField,
+                                { backgroundColor: palette.surfaceContainer, borderColor: palette.ruleWarmNib },
+                            ]}
+                        >
+                            <Ionicons name="search" size={16} color={palette.textMuted} />
+                            <TextInput
+                                style={[styles.searchInput, { color: palette.text }]}
+                                value={query}
+                                onChangeText={setQuery}
+                                placeholder="Search people"
+                                placeholderTextColor={palette.textMuted}
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                                returnKeyType="search"
+                                clearButtonMode="while-editing"
+                            />
+                        </View>
+                    ) : null}
+
                     <ScrollView
                         style={styles.scroll}
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
                     >
-                        {/* "your table" rows (TICKET-139) — one tap includes only
+                        {/* "your table" rows (TICKET-139) — one tap drafts only
                             that table's members. Rendered only for table members. */}
                         {(tableRows ?? []).map((r) => {
-                            const selected = isTableSelected(checkedIds, r.memberIds);
+                            const selected = isTableSelected(draft, r.memberIds);
                             return (
                                 <Pressable
                                     key={r.tableId}
-                                    onPress={() => onSelectTable?.(r.memberIds)}
+                                    onPress={() => setDraft(new Set(r.memberIds))}
                                     style={styles.row}
                                     accessibilityRole="button"
                                     accessibilityState={{ selected }}
@@ -115,9 +187,9 @@ export function DiscoverPeopleSheet({
                             );
                         })}
 
-                        {/* Everyone — clears the exclusive set. */}
+                        {/* Everyone — clears the DRAFT (stays open; dismissal applies). */}
                         <Pressable
-                            onPress={onEveryone}
+                            onPress={() => setDraft(new Set())}
                             style={styles.row}
                             accessibilityRole="button"
                             accessibilityState={{ selected: everyone }}
@@ -142,12 +214,12 @@ export function DiscoverPeopleSheet({
                             ) : null}
                         </Pressable>
 
-                        {people.map((p) => {
-                            const checked = checkedIds.has(p.id);
+                        {shownPeople.map((p) => {
+                            const checked = draft.has(p.id);
                             return (
                                 <Pressable
                                     key={p.id}
-                                    onPress={() => onToggle(p.id)}
+                                    onPress={() => toggle(p.id)}
                                     style={styles.row}
                                     accessibilityRole="button"
                                     accessibilityState={{ selected: checked }}
@@ -219,6 +291,30 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
         paddingTop: 10,
         paddingBottom: 2,
+    },
+    // Live count feedback — the sheet's only prose, and it's data.
+    count: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        paddingHorizontal: 24,
+        paddingBottom: 6,
+    },
+    searchField: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: 24,
+        marginBottom: 4,
+        paddingHorizontal: 12,
+        height: 40,
+        borderRadius: Radius.md,
+        borderWidth: 1,
+    },
+    searchInput: {
+        flex: 1,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 15,
+        paddingVertical: 0,
     },
     scroll: {
         maxHeight: 400,

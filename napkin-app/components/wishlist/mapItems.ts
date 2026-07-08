@@ -225,7 +225,15 @@ export interface DiscoverPerson {
 
 /**
  * Distinct authors across the network layer — the picker's roster ("everyone you
- * follow who has pins"). First-seen order; deterministic.
+ * follow who has pins").
+ *
+ * STABLE ORDER (TICKET-147). Network pins arrive in the RPC's recency order
+ * (`ORDER BY sort_date DESC`), so a first-seen roster would re-rank whenever a
+ * followee logs a meal — people jumping between sessions. Dedupe, then sort by
+ * name (case-insensitive) with an id tiebreak: deterministic regardless of pin
+ * order. (This is a UX/robustness win, NOT the multi-select fix — the cold
+ * review showed row order was already referentially stable across a tapping
+ * session; the multi-select mechanism is killed by the sheet's draft-apply.)
  */
 export function peopleFromItems(items: WishlistMapItem[]): DiscoverPerson[] {
     const seen = new Map<string, DiscoverPerson>();
@@ -233,7 +241,24 @@ export function peopleFromItems(items: WishlistMapItem[]): DiscoverPerson[] {
         const a = it.author;
         if (a && !seen.has(a.id)) seen.set(a.id, { id: a.id, name: a.name, avatar: a.avatar });
     }
-    return [...seen.values()];
+    return [...seen.values()].sort((a, b) => {
+        const an = a.name.trim().toLowerCase();
+        const bn = b.name.trim().toLowerCase();
+        if (an < bn) return -1;
+        if (an > bn) return 1;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+}
+
+/**
+ * Client-side people search (TICKET-147) — case-insensitive name substring
+ * match. Empty/blank query = pass-through. Pure so the picker's search is
+ * unit-tested; the sheet only owns the query string.
+ */
+export function matchPeople(people: DiscoverPerson[], query: string): DiscoverPerson[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return people;
+    return people.filter((p) => p.name.toLowerCase().includes(q));
 }
 
 /**
@@ -262,4 +287,54 @@ export function peopleChipLabel(
         return people.find((p) => p.id === only)?.name ?? '1 person';
     }
     return `${checkedIds.size} people`;
+}
+
+/**
+ * The Discover layer derivation — ONE source of truth shared by the map (the
+ * items it renders) and `peopleCountLine` (the picker's narration), so the two
+ * can never disagree (TICKET-147 review P2-a).
+ *
+ * Empty checked set = everyone: network ∪ table-overlap merged one marker per
+ * restaurant (overlap wins — `mergeDiscoverItems`). A non-empty exclusive-
+ * include shows ONLY those people's network pins (a table overlap bubble would
+ * break the "only these people" promise — TICKET-138), deduped by restaurant id
+ * (first occurrence wins: network rows arrive most-recent-first, mirroring the
+ * RPC's rn=1 primary-author rule). The RPC already emits one row per restaurant,
+ * so that dedupe is belt-and-braces — but it keeps the map's "never two items
+ * for one id" invariant true by construction for any input.
+ */
+export function discoverItemsFor(
+    networkItems: WishlistMapItem[],
+    overlapItems: WishlistMapItem[],
+    checkedIds: ReadonlySet<string>,
+): WishlistMapItem[] {
+    if (checkedIds.size === 0) return mergeDiscoverItems(overlapItems, networkItems);
+    const byId = new Map<string, WishlistMapItem>();
+    for (const it of filterByCheckedPeople(networkItems, checkedIds)) {
+        if (!byId.has(it.id)) byId.set(it.id, it);
+    }
+    return [...byId.values()];
+}
+
+/**
+ * The picker's live count line (TICKET-147): `showing N places from everyone` /
+ * `showing N places from 2 people`. The place count is `discoverItemsFor(...)`
+ * .length — the EXACT array the map renders (restaurant-id dedupe + everyone-
+ * mode overlap merge included), so the number can never lie against the pins.
+ * `who` pluralizes: `everyone` (empty set) · `1 person` · `N people`. Pure;
+ * unit-tested.
+ */
+export function peopleCountLine(
+    networkItems: WishlistMapItem[],
+    overlapItems: WishlistMapItem[],
+    checkedIds: ReadonlySet<string>,
+): string {
+    const places = discoverItemsFor(networkItems, overlapItems, checkedIds).length;
+    const who =
+        checkedIds.size === 0
+            ? 'everyone'
+            : checkedIds.size === 1
+              ? '1 person'
+              : `${checkedIds.size} people`;
+    return `showing ${places} ${places === 1 ? 'place' : 'places'} from ${who}`;
 }
