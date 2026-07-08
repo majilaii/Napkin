@@ -100,6 +100,9 @@ export const queryKeys = {
         regulars: (userId: string) => ['users', 'regulars', userId] as const,
         // TICKET-092 profile revamp
         spots: (userId: string) => ['users', 'spots', userId] as const,
+        // TICKET-144 pt2: the caller's OWN entry photos at a restaurant (Top-4 hero picker).
+        restaurantPhotos: (userId: string, restaurantId: string) =>
+            ['users', 'restaurantPhotos', userId, restaurantId] as const,
         // TICKET-124: network map pins — restaurants logged by the follow set.
         networkMapPins: (userId: string) => ['users', 'networkMapPins', userId] as const,
         reviews: (userId: string) => ['users', 'reviews', userId] as const,

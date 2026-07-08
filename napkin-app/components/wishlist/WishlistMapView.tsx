@@ -71,7 +71,7 @@ import { Colors, Shadow } from '@/constants/theme';
 import { heirloomMapStyle } from '@/constants/mapStyle';
 import { tileUrlTemplate, MAPTILER_ATTRIBUTION, MAP_TILE_MODE } from '@/lib/maptiler';
 import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/geo';
-import { cuisineGlyph, tintIndex } from '@/lib/cuisineGlyph';
+import { cuisineGlyph, tintIndex } from '@/lib/engraving';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { describePeekWho } from './peekWho';
 

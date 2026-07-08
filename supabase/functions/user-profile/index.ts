@@ -116,7 +116,18 @@ type TopPick = {
     restaurant_id: string;
     name: string;
     city: string | null;
+    // TICKET-146: drives the marquee-plate mark (engraving registry). null → monogram.
+    cuisine: string | null;
     photo_url: string | null;
+    // TICKET-144 pt2: the owner's chosen hero photo (their OWN entry photo at this
+    // restaurant), served regardless of the source entry's visibility BECAUSE
+    // choosing it is the explicit publish. ONLY the URL rides on the PUBLIC read —
+    // no entry_id, no note, no rating, no visibility echo. null → typographic plate.
+    hero_photo_url: string | null;
+    // OWNER-ONLY (includePrivate): the photo-row id, so the editor can re-save
+    // untouched slots without clobbering their heroes (the RPC is delete+reinsert).
+    // Public reads get null — the entry_photo id never leaks to strangers.
+    hero_entry_photo_id?: string | null;
     // null when the viewer has no non-private rating for a curated pick.
     max_rating: number | null;
     visit_count: number;
@@ -501,6 +512,8 @@ async function buildPicksFromIds(
     userId: string,
     orderedIds: string[],
     includePrivate: boolean,
+    // TICKET-144 pt2: restaurant_id → chosen hero_entry_photo_id (curated only).
+    heroByRestaurant?: Map<string, string>,
 ): Promise<TopPick[]> {
     if (orderedIds.length === 0) return [];
 
@@ -547,9 +560,25 @@ async function buildPicksFromIds(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, photo_url')
+        .select('id, name, city, cuisine, photo_url')
         .in('id', orderedIds);
     if (restErr) throw restErr;
+
+    // TICKET-144 pt2: hydrate chosen-memory hero URLs. Service-role read of
+    // entry_photos by id — RLS-bypassing BY DESIGN: choosing the photo is the
+    // publish, so the hero is servable on a public profile even when the source
+    // entry is private. We fetch ONLY the URL; `includePrivate` is deliberately
+    // NOT applied here — that IS the consent bypass. Nothing else from the entry
+    // (id, note, rating, visibility) rides along.
+    const heroUrlById = new Map<string, string>();
+    const heroIds = heroByRestaurant ? [...heroByRestaurant.values()].filter(Boolean) : [];
+    if (heroIds.length) {
+        const { data: heroRows } = await supabase
+            .from('entry_photos')
+            .select('id, photo_url')
+            .in('id', heroIds);
+        for (const r of (heroRows ?? []) as any[]) if (r.photo_url) heroUrlById.set(r.id, r.photo_url);
+    }
 
     const byId = new Map<string, any>((rests ?? []).map((r: any) => [r.id, r]));
     return orderedIds
@@ -561,7 +590,13 @@ async function buildPicksFromIds(
                 restaurant_id: rid,
                 name: rest.name,
                 city: rest.city ?? null,
+                cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
+                hero_photo_url: heroByRestaurant
+                    ? (heroUrlById.get(heroByRestaurant.get(rid) ?? '') ?? null)
+                    : null,
+                // Owner-only: the id (for lossless re-save). Public → null.
+                hero_entry_photo_id: includePrivate ? (heroByRestaurant?.get(rid) ?? null) : null,
                 max_rating: a ? a.max_rating : null,
                 visit_count: a ? a.visit_count : 0,
                 last_visited_at: a ? a.last_visited_at : null,
@@ -583,12 +618,23 @@ async function fetchTopFour(
     // list) — shown to anyone who can see the profile, rating included.
     const { data: manual, error: manualErr } = await supabase
         .from('user_profile_top_4')
-        .select('position, restaurant_id')
+        .select('position, restaurant_id, hero_entry_photo_id')
         .eq('user_id', userId)
         .order('position', { ascending: true });
     if (manualErr) throw manualErr;
     if (manual && manual.length > 0) {
-        return await buildPicksFromIds(supabase, userId, manual.map((m: any) => m.restaurant_id), includePrivate);
+        // TICKET-144 pt2: only manual/curated picks carry hero photos.
+        const heroByRestaurant = new Map<string, string>();
+        for (const m of manual as any[]) {
+            if (m.hero_entry_photo_id) heroByRestaurant.set(m.restaurant_id, m.hero_entry_photo_id);
+        }
+        return await buildPicksFromIds(
+            supabase,
+            userId,
+            manual.map((m: any) => m.restaurant_id),
+            includePrivate,
+            heroByRestaurant,
+        );
     }
 
     let query = supabase
@@ -663,7 +709,7 @@ async function fetchTopFour(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, photo_url')
+        .select('id, name, city, cuisine, photo_url')
         .in('id', ranked.map((r) => r.restaurant_id));
     if (restErr) throw restErr;
 
@@ -676,7 +722,11 @@ async function fetchTopFour(
                 restaurant_id: r.restaurant_id,
                 name: rest.name,
                 city: rest.city ?? null,
+                cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
+                // Heroes are a curated-only feature; auto-derived picks never carry one.
+                hero_photo_url: null,
+                hero_entry_photo_id: null,
                 max_rating: r.max_rating,
                 visit_count: r.visit_count,
                 last_visited_at: r.last_visited_at,

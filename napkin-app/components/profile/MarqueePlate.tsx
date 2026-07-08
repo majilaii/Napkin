@@ -1,0 +1,270 @@
+/**
+ * MarqueePlate — TICKET-146. The shared Top-4 "poster" plate (the Letterboxd
+ * marquee, translated to Heirloom). One 2:3 plate, double-hairline inner border,
+ * mark + ground from the engraving registries so the same restaurant reads
+ * identically here and on the map. Public profile reuses this component.
+ *
+ * Two variants, one family:
+ *   • typographic (default) — tinted cream ground + engraved mark, name in
+ *     italic serif, city in letterspaced caps, rating terracotta italic.
+ *   • photo (TICKET-144 pt2) — the owner's own chosen entry photo fills the
+ *     plate, warm scrim at the foot, name + rating + rank overlaid. Same border,
+ *     so a photo plate and a typographic plate sit as one row.
+ *
+ * The mark chain lives in engraving.ts (never per-item); this component only
+ * renders the discriminated `Mark` union at plate scale.
+ */
+import React from 'react';
+import { View, Text, Pressable, StyleSheet, type ViewStyle, type StyleProp } from 'react-native';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+
+import { Colors, Radius } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { markFor, tintFor, type Mark } from '@/lib/engraving';
+
+interface MarqueePlateProps {
+    restaurantId: string; // tint seed
+    name: string;
+    cuisine?: string | null;
+    listEmoji?: string | null;
+    city?: string | null;
+    rating?: number | null; // terracotta italic, bottom-right; hidden when null
+    rank: number; // ghosted top-left "1"
+    photoUrl?: string | null; // truthy → photo variant; undefined → typographic
+    onPress?: () => void;
+    style?: StyleProp<ViewStyle>;
+}
+
+const PLATE_CREAM = '#fef6e6';
+
+function MarkGlyph({ mark, palette, onPhoto }: { mark: Mark; palette: typeof Colors.light; onPhoto?: boolean }) {
+    switch (mark.kind) {
+        case 'emoji':
+            return <Text style={styles.markEmoji}>{mark.emoji}</Text>;
+        case 'glyph':
+            return (
+                <Ionicons
+                    name={mark.glyph}
+                    size={30}
+                    color={onPhoto ? PLATE_CREAM : palette.primary}
+                    style={styles.markGlyph}
+                />
+            );
+        case 'monogram':
+            return (
+                <Text style={[styles.markMonogram, { color: onPhoto ? PLATE_CREAM : palette.primary }]}>
+                    {mark.letter}
+                </Text>
+            );
+    }
+}
+
+export function MarqueePlate({
+    restaurantId,
+    name,
+    cuisine,
+    listEmoji,
+    city,
+    rating,
+    rank,
+    photoUrl,
+    onPress,
+    style,
+}: MarqueePlateProps) {
+    const scheme = useColorScheme() ?? 'light';
+    const palette = Colors[scheme];
+    const mark = markFor({ name, cuisine, listEmoji });
+    const isPhoto = !!photoUrl;
+
+    return (
+        <Pressable
+            onPress={onPress}
+            disabled={!onPress}
+            style={({ pressed }) => [
+                styles.plate,
+                { backgroundColor: isPhoto ? palette.surfaceContainerHigh : tintFor(restaurantId, palette) },
+                pressed && onPress ? { opacity: 0.9 } : null,
+                style,
+            ]}
+            accessibilityRole={onPress ? 'button' : undefined}
+            accessibilityLabel={onPress ? `View ${name}` : undefined}
+        >
+            {isPhoto ? (
+                <>
+                    <Image source={{ uri: photoUrl! }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                    <LinearGradient
+                        colors={['transparent', 'rgba(28,28,25,0.62)']}
+                        style={styles.scrim}
+                        pointerEvents="none"
+                    />
+                    <Text style={[styles.rankPhoto]} numberOfLines={1}>
+                        {rank}
+                    </Text>
+                    <View style={styles.photoFooter} pointerEvents="none">
+                        <Text style={styles.namePhoto} numberOfLines={2}>
+                            {name}
+                        </Text>
+                        {rating != null ? <Text style={styles.ratingPhoto}>{rating.toFixed(1)}</Text> : null}
+                    </View>
+                </>
+            ) : (
+                <>
+                    <Text style={[styles.rank, { color: palette.textMuted }]} numberOfLines={1}>
+                        {rank}
+                    </Text>
+                    <View style={styles.typoBody}>
+                        <View style={styles.markWrap}>
+                            <MarkGlyph mark={mark} palette={palette} />
+                        </View>
+                        <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
+                            {name}
+                        </Text>
+                        {city ? (
+                            <Text style={[styles.city, { color: palette.textMuted }]} numberOfLines={1}>
+                                {city.toUpperCase()}
+                            </Text>
+                        ) : null}
+                    </View>
+                    {rating != null ? (
+                        <Text style={[styles.rating, { color: palette.primary }]}>{rating.toFixed(1)}</Text>
+                    ) : null}
+                </>
+            )}
+
+            {/* Double hairline inner border — the house-plate specimen. Overlays
+                both variants so photo + typographic read as one family. */}
+            <View style={styles.hairlineOuter} pointerEvents="none" />
+            <View style={styles.hairlineInner} pointerEvents="none" />
+        </Pressable>
+    );
+}
+
+const styles = StyleSheet.create({
+    plate: {
+        aspectRatio: 2 / 3,
+        borderRadius: Radius.md,
+        overflow: 'hidden',
+        paddingHorizontal: 8,
+        paddingVertical: 10,
+    },
+    // ── typographic variant ──────────────────────────────────────────────
+    typoBody: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        paddingTop: '16%',
+    },
+    markWrap: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 9,
+    },
+    markGlyph: {
+        opacity: 0.8,
+    },
+    markEmoji: {
+        fontSize: 26,
+        includeFontPadding: false,
+    },
+    markMonogram: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 30,
+        includeFontPadding: false,
+    },
+    name: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13.5,
+        lineHeight: 16,
+        textAlign: 'center',
+    },
+    city: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 6.8,
+        letterSpacing: 1.4,
+        marginTop: 4,
+        textAlign: 'center',
+    },
+    rank: {
+        position: 'absolute',
+        top: 7,
+        left: 9,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        opacity: 0.7,
+        zIndex: 2,
+    },
+    rating: {
+        position: 'absolute',
+        bottom: 8,
+        right: 9,
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 13,
+        zIndex: 2,
+    },
+    // ── photo variant ────────────────────────────────────────────────────
+    scrim: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: '55%',
+    },
+    photoFooter: {
+        position: 'absolute',
+        left: 9,
+        right: 9,
+        bottom: 8,
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        justifyContent: 'space-between',
+        gap: 6,
+    },
+    namePhoto: {
+        flex: 1,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13.5,
+        lineHeight: 16,
+        color: PLATE_CREAM,
+    },
+    ratingPhoto: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 13,
+        color: PLATE_CREAM,
+    },
+    rankPhoto: {
+        position: 'absolute',
+        top: 7,
+        left: 9,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        color: PLATE_CREAM,
+        opacity: 0.9,
+        textShadowColor: 'rgba(28,28,25,0.5)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 2,
+        zIndex: 2,
+    },
+    // ── double hairline (both variants) ──────────────────────────────────
+    hairlineOuter: {
+        position: 'absolute',
+        top: 4,
+        left: 4,
+        right: 4,
+        bottom: 4,
+        borderRadius: Radius.md - 3,
+        borderWidth: 1,
+        borderColor: 'rgba(160,63,40,0.22)',
+    },
+    hairlineInner: {
+        position: 'absolute',
+        top: 6,
+        left: 6,
+        right: 6,
+        bottom: 6,
+        borderRadius: Radius.md - 5,
+        borderWidth: 1,
+        borderColor: 'rgba(160,63,40,0.10)',
+    },
+});

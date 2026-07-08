@@ -1,24 +1,23 @@
 /**
- * TopFour — the profile's four favourite restaurants, ranked 1–4 in a compact 2x2
- * grid of warm "plate" tiles. TICKET-025 · redesigned 2026-06-17.
+ * TopFour — the profile's four favourite restaurants, as a Letterboxd-class
+ * marquee row (TICKET-025 · TICKET-146 "the engraving system", B — the marquee).
  *
- * Each filled tile glances three things without a tap:
- *   • amber rating numeral — what they scored it (hidden when unrated)
- *   • a terracotta heart    — they liked it (Letterboxd-style, distinct from rating)
- *   • a muted note glyph    — they wrote a review (entry has content)
+ * Four 2:3 plates in one horizontal row. Each plate draws its mark + tint from
+ * the shared engraving registries (MarqueePlate), so the same restaurant reads
+ * identically here and on the map. Rank ghosted top-left, rating terracotta
+ * italic bottom-right, name italic serif, city letterspaced caps.
  *
- * Two accents only (amber + terracotta); the review glyph stays neutral ink.
- * Auto-derived or curated from `top_four` in the profile payload. Empty slots show
- * a tappable '+' for the owner.
+ * Auto-derived or curated from `top_four` in the profile payload. Empty slots
+ * show a tappable '+' for the owner. Public profile reuses this component.
  */
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
+import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SectionHeader } from './SectionHeader';
+import { MarqueePlate } from './MarqueePlate';
 import type { TopPick } from '@/hooks/users/useUserProfile';
 
 interface Props {
@@ -40,6 +39,14 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
         picks[3] ?? null,
     ];
 
+    const openPick = (pick: TopPick) =>
+        // Tap a pick with a review → open the review. Gated to the owner so a
+        // public-profile viewer can't deep-link into a Table-visibility entry —
+        // they get the restaurant page.
+        pick.review_entry_id && isOwner
+            ? router.push({ pathname: '/entry-detail', params: { entryId: pick.review_entry_id } })
+            : router.push(`/restaurant/${pick.restaurant_id}` as any);
+
     return (
         <View>
             <SectionHeader
@@ -47,71 +54,28 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                 rightLabel={isOwner && onEdit ? 'edit' : undefined}
                 onRightLabelPress={onEdit}
             />
-            <View style={styles.grid}>
+            <View style={styles.row}>
                 {slots.map((pick, i) =>
                     pick ? (
-                        <Pressable
+                        <MarqueePlate
                             key={i}
-                            style={({ pressed }) => [
-                                styles.tile,
-                                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.92 : 1 },
-                                Shadow.note,
-                            ]}
-                            onPress={() =>
-                                // Tap a pick with a review → open the review. Gated to the
-                                // owner so a (future) public-profile viewer can't deep-link
-                                // into a Table-visibility entry — they get the restaurant page.
-                                pick.review_entry_id && isOwner
-                                    ? router.push({ pathname: '/entry-detail', params: { entryId: pick.review_entry_id } })
-                                    : router.push(`/restaurant/${pick.restaurant_id}` as any)
-                            }
-                            accessibilityRole="button"
-                            accessibilityLabel={pick.review_entry_id && isOwner ? `Read ${pick.name} review` : `View ${pick.name}`}
-                        >
-                            <View style={styles.tileHead}>
-                                <Text style={[styles.rank, { color: palette.textMuted }]}>{i + 1}</Text>
-                                <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
-                                    {pick.name}
-                                </Text>
-                            </View>
-                            {pick.city ? (
-                                <Text style={[styles.city, { color: palette.textMuted }]} numberOfLines={1}>
-                                    {pick.city}
-                                </Text>
-                            ) : null}
-
-                            {/* Indicator row — rated · liked · reviewed */}
-                            <View style={styles.indicators}>
-                                {pick.max_rating != null ? (
-                                    <View style={[styles.ratingChip, { backgroundColor: palette.tertiaryFixed }]}>
-                                        <Text style={[styles.ratingNum, { color: palette.tertiary }]}>
-                                            {pick.max_rating.toFixed(1)}
-                                        </Text>
-                                    </View>
-                                ) : null}
-                                {pick.liked ? (
-                                    <Ionicons name="heart" size={13} color={palette.primary} accessibilityLabel="liked" />
-                                ) : null}
-                                {pick.has_review ? (
-                                    <Ionicons
-                                        name="document-text-outline"
-                                        size={13}
-                                        color={palette.textMuted}
-                                        accessibilityLabel="wrote a review"
-                                    />
-                                ) : null}
-                                {/* Liked but unrated — say so, so the tile isn't bare. */}
-                                {pick.max_rating == null && pick.liked ? (
-                                    <Text style={[styles.likedLabel, { color: palette.textMuted }]}>liked</Text>
-                                ) : null}
-                            </View>
-                        </Pressable>
+                            style={styles.plate}
+                            restaurantId={pick.restaurant_id}
+                            name={pick.name}
+                            cuisine={pick.cuisine}
+                            listEmoji={null}
+                            city={pick.city}
+                            rating={pick.max_rating}
+                            rank={i + 1}
+                            photoUrl={pick.hero_photo_url}
+                            onPress={() => openPick(pick)}
+                        />
                     ) : (
                         <Pressable
                             key={i}
                             style={[
-                                styles.tile,
-                                styles.emptyTile,
+                                styles.plate,
+                                styles.emptyPlate,
                                 { borderColor: palette.outlineVariant, backgroundColor: palette.surfaceContainerLow },
                             ]}
                             onPress={isOwner && onEdit ? onEdit : undefined}
@@ -128,65 +92,17 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
 }
 
 const styles = StyleSheet.create({
-    grid: {
+    row: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
         paddingHorizontal: Spacing.lg,
         gap: Spacing.sm,
     },
-    tile: {
-        width: '48%',
-        minHeight: 96,
-        borderRadius: Radius.md,
-        paddingHorizontal: 11,
-        paddingVertical: 10,
-        justifyContent: 'flex-start',
-    },
-    tileHead: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 6,
-    },
-    rank: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
-        lineHeight: 18,
-    },
-    name: {
+    plate: {
         flex: 1,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 15.5,
-        lineHeight: 18,
     },
-    city: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 10,
-        letterSpacing: 0.3,
-        marginTop: 3,
-        marginLeft: 20,
-    },
-    indicators: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 7,
-        marginTop: 'auto',
-        paddingTop: 9,
-        marginLeft: 20,
-    },
-    ratingChip: {
-        borderRadius: 999,
-        paddingHorizontal: 7,
-        paddingVertical: 1,
-    },
-    ratingNum: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
-    },
-    likedLabel: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12,
-    },
-    emptyTile: {
+    emptyPlate: {
+        aspectRatio: 2 / 3,
+        borderRadius: Radius.md,
         borderWidth: 1,
         borderStyle: 'dashed',
         alignItems: 'center',

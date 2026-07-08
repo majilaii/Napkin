@@ -33,7 +33,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUserProfile } from '@/hooks/users/useUserProfile';
-import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
+import { useUserSpots, deriveTaste, deriveEpithetInput } from '@/hooks/users/useUserSpots';
+import { epithetFor } from '@/lib/engraving';
 import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account';
 
 import { ProfileHeader } from './ProfileHeader';
@@ -76,6 +77,12 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         hasPalateAccess ? profileData?.profile.user_id : null,
     );
     const taste = useMemo(() => deriveTaste(spots ?? []), [spots]);
+    // TICKET-145: the Taste Relic epithet — derived from the SAME spots payload,
+    // no server change. Null below the 10-meal floor (band renders as before).
+    const epithet = useMemo(
+        () => epithetFor(deriveEpithetInput(spots ?? [], taste.topCuisines[0] ?? null)),
+        [spots, taste.topCuisines],
+    );
 
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
 
@@ -304,6 +311,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                     cityCount={taste.cityCount}
                     countryCount={taste.countryCount}
                     palette={palette}
+                    epithet={epithet}
                     // TICKET-112: own profile → tappable drill-in. Non-empty
                     // guard is TasteBand's own (it returns null on empty), so
                     // wiring the handler here is enough.
@@ -357,6 +365,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                         restaurant_id: p.restaurant_id,
                         name: p.name,
                         photo_url: p.photo_url,
+                        hero_entry_photo_id: p.hero_entry_photo_id ?? null,
+                        hero_photo_url: p.hero_photo_url ?? null,
                     }))}
                 />
             )}
