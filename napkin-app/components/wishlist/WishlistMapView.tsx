@@ -54,6 +54,7 @@ import {
     type NativeSyntheticEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import MapView, {
@@ -72,6 +73,7 @@ import { tileUrlTemplate, MAPTILER_ATTRIBUTION, MAP_TILE_MODE } from '@/lib/mapt
 import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/geo';
 import { cuisineGlyph, tintIndex } from '@/lib/cuisineGlyph';
 import { priceTierLabel } from '@/lib/priceLevel';
+import { describePeekWho } from './peekWho';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1261,12 +1263,22 @@ function PeekCardBody({
     save,
     onGather,
 }: PeekCardBodyProps) {
+    const router = useRouter();
+    // TICKET-140: tapping a single-author who-row opens that person's profile.
+    // /u/[identifier] takes a raw user id (see app/follows.tsx) — works off any
+    // layer without a table context (Discover isn't table-scoped).
+    const openProfile = useCallback(
+        (userId: string | null | undefined) => {
+            if (!userId) return;
+            router.push({ pathname: '/u/[identifier]', params: { identifier: userId } });
+        },
+        [router],
+    );
     const isNetwork = item.entryId != null;
     // TICKET-138 overlap card ("N of you saved this" + gather here) / TICKET-139
     // been-together card ("gathered <date>"). Additive variants — 135's card
     // architecture + 137's density stay.
     const isOverlap = item.overlap != null;
-    const overlapCount = item.overlap?.count ?? 0;
     const isGathered = item.gathered != null;
     // TICKET-137: the Save pill now OPENS the shared save sheet (AddToListSheet —
     // wishlist / list / unsave), so the button no longer owns an optimistic flip.
@@ -1307,8 +1319,8 @@ function PeekCardBody({
         : () => onOpenRestaurant(item.id);
 
     const authorName = item.author?.name ?? 'Someone';
-    const others = item.othersCount ?? 0;
-    const attribution = others > 0 ? `${authorName} +${others} ${others === 1 ? 'other' : 'others'}` : authorName;
+    // TICKET-140: who-row contract (words + tap target) — see peekWho.ts.
+    const who = describePeekWho(item);
     const note = isNetwork ? item.note?.trim() || null : null;
 
     // Plate tint — GlyphChip's seeded triple (feed ledger ↔ map speak the same).
@@ -1355,30 +1367,59 @@ function PeekCardBody({
                     ) : null}
                 </View>
 
-                {/* Saved-by row + pull-quote — network cards only. */}
-                {isNetwork ? (
-                    <View style={styles.peekWhoRow}>
+                {/* Who-row — network (followee's log) + overlap (table saves).
+                    TICKET-140: single-author rows tap → that person's profile and
+                    read the name bold (700, ink) as the affordance. Network verb
+                    stays a log ("+N others"); a single save reads "saved by «Name»".
+                    The 2+ overlap ("N of you saved this") has no single person, so
+                    it stays flat + untappable. The pull-quote/gathered rows below
+                    are unchanged. */}
+                {who.variant === 'network' ? (
+                    <Pressable
+                        style={({ pressed }) => [styles.peekWhoRow, { opacity: pressed ? 0.6 : 1 }]}
+                        onPress={() => openProfile(who.tapUserId)}
+                        disabled={!who.tapUserId}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open ${who.name}'s profile`}
+                    >
                         <PeekWhoAvatar author={item.author} palette={palette} />
                         <Text
                             style={[styles.peekWhoText, { color: palette.textSecondary }]}
                             numberOfLines={1}
                         >
-                            {attribution}
+                            <Text style={[styles.peekWhoName, { color: palette.text }]}>
+                                {who.name}
+                            </Text>
+                            {who.othersSuffix}
                         </Text>
-                    </View>
-                ) : null}
-
-                {/* Overlap: "N of you saved this" (≥2) / "«Name» saved this" (1). */}
-                {isOverlap ? (
+                    </Pressable>
+                ) : who.variant === 'saved-by' ? (
+                    <Pressable
+                        style={({ pressed }) => [styles.peekWhoRow, { opacity: pressed ? 0.6 : 1 }]}
+                        onPress={() => openProfile(who.tapUserId)}
+                        disabled={!who.tapUserId}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open ${who.name}'s profile`}
+                    >
+                        <PeekAvatarStack members={item.overlap!.members} palette={palette} />
+                        <Text
+                            style={[styles.peekWhoText, { color: palette.textSecondary }]}
+                            numberOfLines={1}
+                        >
+                            {'saved by '}
+                            <Text style={[styles.peekWhoName, { color: palette.text }]}>
+                                {who.name}
+                            </Text>
+                        </Text>
+                    </Pressable>
+                ) : who.variant === 'overlap-many' ? (
                     <View style={styles.peekWhoRow}>
                         <PeekAvatarStack members={item.overlap!.members} palette={palette} />
                         <Text
                             style={[styles.peekWhoText, { color: palette.textSecondary }]}
                             numberOfLines={1}
                         >
-                            {overlapCount >= 2
-                                ? `${overlapCount} of you saved this`
-                                : `${item.overlap!.members[0]?.display_name ?? 'Someone'} saved this`}
+                            {who.label}
                         </Text>
                     </View>
                 ) : null}
@@ -1827,6 +1868,11 @@ const styles = StyleSheet.create({
         flex: 1,
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 12,
+    },
+    // TICKET-140: the tappable name in a single-author who-row — the weight shift
+    // (700, ink) is the affordance (no chevron / underline).
+    peekWhoName: {
+        fontFamily: 'Manrope_700Bold',
     },
     // Followee's note snippet — em-dash pull-quote, italic serif.
     peekNote: {
