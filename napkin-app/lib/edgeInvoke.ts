@@ -252,6 +252,10 @@ async function callEdgeFnOnce<T = unknown>(
     let invokeName = name;
     const qs = new URLSearchParams();
     if (action) qs.set('action', action);
+    // If a caller ever passed BOTH a top-level `action` and `params.action`
+    // (none does today), `params.action` wins the query here — consistent with
+    // the GET path and postWithFetch. The two are equivalent only when not both
+    // are supplied.
     if (params) {
         for (const [k, v] of Object.entries(params)) {
             if (v === undefined || v === null) continue;
