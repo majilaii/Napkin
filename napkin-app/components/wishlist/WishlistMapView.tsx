@@ -20,13 +20,19 @@
  *     on our surfaces), name + rating, cuisine · $$ · distance meta, saved-by
  *     row (network), note pull-quote, explicit CTAs (view venue / directions /
  *     save).
- *   - tiles: Apple Maps mutedStandard + a vellum wash by default; a key-gated
- *     Google flip (GOOGLE_MAPS_IOS_KEY → PROVIDER_GOOGLE + heirloomMapStyle).
+ *   - tiles (TICKET-134): MapTiler `landscape` raster via UrlTile on BOTH
+ *     platforms — cream land, butter roads, warm-brown labels. iOS replaces the
+ *     Apple base (shouldReplaceMapContent — kills the grey dark tiles ⑧);
+ *     Android draws over the Google base with heirloomMapStyle beneath as the
+ *     load-window fallback. An always-on cream tint (~15%) warms residual blue
+ *     water; dark mode keeps the cream tiles (the map reads as a paper object).
+ *     userInterfaceStyle='light' (#169) pins the NATIVE base light too, so the
+ *     tile-load window never flashes grey in system dark mode.
+ *     Replaces the old vellum-wash + key-gated Google-on-iOS path.
  *
  * Provider:
- *   iOS     → PROVIDER_DEFAULT (Apple Maps, free) UNLESS app.config carries
- *             ios.config.googleMapsApiKey (env-gated) → PROVIDER_GOOGLE.
- *   Android → PROVIDER_GOOGLE (needs a key in app.config; iOS is the test target)
+ *   iOS     → PROVIDER_DEFAULT (Apple) + UrlTile shouldReplaceMapContent
+ *   Android → PROVIDER_GOOGLE + UrlTile draw-over (heirloom fallback beneath)
  *
  * react-native-maps is autolinked (pod installed). The map frames on the user
  * (or first pin) once per open; the locate FAB animates to the user (lazy
@@ -37,6 +43,7 @@ import {
     View,
     Text,
     Pressable,
+    ScrollView,
     StyleSheet,
     Platform,
     Linking,
@@ -49,9 +56,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
-import Constants from 'expo-constants';
 import MapView, {
     Marker,
+    UrlTile,
     PROVIDER_GOOGLE,
     PROVIDER_DEFAULT,
     type LatLng,
@@ -61,6 +68,7 @@ import type MapViewType from 'react-native-maps';
 
 import { Colors, Shadow } from '@/constants/theme';
 import { heirloomMapStyle } from '@/constants/mapStyle';
+import { tileUrlTemplate, MAPTILER_ATTRIBUTION } from '@/lib/maptiler';
 import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/geo';
 import { cuisineGlyph, tintIndex } from '@/lib/cuisineGlyph';
 import { priceTierLabel } from '@/lib/priceLevel';
@@ -175,6 +183,20 @@ interface Props {
     onOpenFilters?: () => void;
     /** Active-filter dot on the Filter chip. */
     filtersActive?: boolean;
+    /**
+     * TICKET-134: Discover-only friend rail — a frosted bottom-left strip of an
+     * `All` chip + per-friend 40px avatar toggles (default all on; toggling
+     * filters the network pins client-side by user_id). Derived from the network
+     * items by the screen; absent → no rail (Your map, dining-map). Hidden while a
+     * peek is up (shares the three-piece hide set).
+     */
+    friendRail?: {
+        friends: { id: string; name: string; avatar: string | null }[];
+        /** null = all friends active. */
+        activeIds: Set<string> | null;
+        onToggleFriend: (id: string) => void;
+        onAll: () => void;
+    };
     /**
      * Distance from the map's top edge to where the floating top chrome (source
      * pills / Filter chip / murmur) begins. Screens whose own chrome overlays
@@ -511,6 +533,7 @@ export function WishlistMapView({
     save,
     onOpenFilters,
     filtersActive,
+    friendRail,
     chromeTopOffset,
     palette,
 }: Props) {
@@ -523,19 +546,14 @@ export function WishlistMapView({
     // palette reference is the render-truth either way).
     const isDark = palette !== Colors.light;
 
-    // TICKET-131: key-gated Google-on-iOS flip. The runtime manifest STRIPS
-    // ios.config, so the key can never be read from there (cold-review P1,
-    // 2026-07-08 — the old read was permanently undefined). app.config mirrors
-    // the key's PRESENCE into extra.hasGoogleMapsIosKey; the same env var
-    // compiles the native Google pods in at prebuild, so this flag ⇔ native
-    // support by construction. Android is already Google + heirloom style.
-    const iosGoogleTiles =
-        Platform.OS === 'ios' && Constants.expoConfig?.extra?.hasGoogleMapsIosKey === true;
-    const googleTiles = Platform.OS === 'android' || iosGoogleTiles;
-    // Vellum wash — Apple-Maps-only warm tint (TICKET-057 idiom). The tiles are
-    // pinned light (userInterfaceStyle below), so the wash applies regardless
-    // of the app scheme — there are no dark tiles to veil anymore.
-    const showVellumWash = Platform.OS === 'ios' && !iosGoogleTiles;
+    // TICKET-134: MapTiler `landscape` raster tiles on BOTH platforms via UrlTile
+    // (see the MapView block). iOS replaces the Apple base (kills the grey dark
+    // tiles ⑧); Android draws over the Google base with heirloomMapStyle beneath
+    // as the load-window fallback skin. The old key-gated Google-on-iOS flip is
+    // gone — the cross-platform tile layer supersedes it. #169's
+    // userInterfaceStyle='light' (on the MapView) pins the NATIVE base light so
+    // the pre-tile load window never flashes grey in system dark mode.
+    const isAndroid = Platform.OS === 'android';
 
     // Frost family for the floating chrome. Light = scrimFrost token; dark pair
     // is inline by design (no new theme tokens — TICKET-131).
@@ -768,16 +786,18 @@ export function WishlistMapView({
             </Pressable>
         ) : null;
 
-    // ── Empty (per-layer copy; pills/chip/List stay so you can always leave) ──
+    // ── Empty (per-source copy; pills/chip/List stay so you can always leave) ──
     if (items.length === 0) {
+        // TICKET-134: wishlist keys are your/discover; dining-map still passes
+        // mine/network — keep both grammars so its empty copy is unchanged.
         const emptyCopy =
-            sources?.value === 'network'
+            sources?.value === 'discover' || sources?.value === 'network'
                 ? 'no spots from people you follow yet.'
-                : sources?.value === 'been' || sources?.value === 'mine'
+                : sources?.value === 'mine'
                   ? 'no logged spots with a map location yet.'
-                  : 'none of your saved spots have a map location yet.';
+                  : 'none of your spots have a map location yet.';
         return (
-            <View style={styles.fill}>
+            <View style={[styles.fill, { backgroundColor: CREAM }]}>
                 <View style={[styles.fill, styles.emptyWrap]}>
                     <Ionicons name="map-outline" size={28} color={palette.textMuted} />
                     <Text style={[styles.emptyText, { color: palette.textMuted }]}>{emptyCopy}</Text>
@@ -790,24 +810,26 @@ export function WishlistMapView({
     }
 
     return (
-        <View style={styles.fill}>
+        <View style={[styles.fill, { backgroundColor: CREAM }]}>
             {/* Full-bleed map — edge-to-edge under the screen's header chrome
                 (TICKET-131 removed the framed-plate inset). The hairline warm rule
-                at the top edge stays. */}
+                at the top edge stays. CREAM background so a tile-load / 404 gap
+                reads as paper, not a grey/void patch (iOS replaced base). */}
             <MapView
                 ref={mapRef}
-                style={StyleSheet.absoluteFillObject}
-                provider={googleTiles ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
-                // Google tiles (Android always; iOS when key-gated in) honor
-                // customMapStyle → heirloom skin. Keyless iOS = Apple Maps, which
-                // ignores customMapStyle → mutedStandard desaturates toward paper
-                // and the vellum wash below warms it.
-                mapType={googleTiles ? 'standard' : 'mutedStandard'}
-                customMapStyle={googleTiles ? heirloomMapStyle : undefined}
+                style={[StyleSheet.absoluteFillObject, { backgroundColor: CREAM }]}
+                provider={isAndroid ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
+                // Android keeps the heirloom skin BENEATH the MapTiler tiles as the
+                // load-window fallback; iOS replaces the Apple base entirely
+                // (UrlTile shouldReplaceMapContent) so no grey dark tiles bleed (⑧).
+                customMapStyle={isAndroid ? heirloomMapStyle : undefined}
                 // The map NEVER goes dark (founder, 2026-07-08; TICKET-134 ⑧:
                 // the map reads as a paper object). Apple tiles follow the
                 // SYSTEM appearance — not our light-forced palette — so system
                 // dark mode was swapping grey tiles under the cream chrome.
+                // (#169; still load-bearing with MapTiler: it pins the NATIVE
+                // base light during the pre-tile load window + Android's Google
+                // base under our draw-over.)
                 userInterfaceStyle="light"
                 initialRegion={initialRegion}
                 showsPointsOfInterest={false}
@@ -819,6 +841,15 @@ export function WishlistMapView({
                 showsUserLocation={locationStatus === 'granted'}
                 onPress={() => setSelectedId(null)}
             >
+                {/* MapTiler cream raster — first child, beneath the markers. iOS
+                    replaces the base (kills grey dark tiles ⑧); Android draws over
+                    Google. @2x endpoint + tileSize 512 → crisp labels. */}
+                <UrlTile
+                    urlTemplate={tileUrlTemplate()}
+                    shouldReplaceMapContent={Platform.OS === 'ios'}
+                    tileSize={512}
+                    maximumZ={20}
+                />
                 {items.map((item) => (
                     <WishlistMarker
                         // Layer-qualified key: the same restaurant can appear in
@@ -833,20 +864,16 @@ export function WishlistMapView({
                 ))}
             </MapView>
 
-            {/* Vellum wash — warm the Apple raster toward the paper palette
-                (TICKET-057 idiom). Light scheme + keyless iOS only. */}
-            {showVellumWash ? (
-                <View
-                    style={[
-                        StyleSheet.absoluteFill,
-                        {
-                            backgroundColor: palette.placesOverlayTint,
-                            opacity: palette.placesOverlayOpacity,
-                        },
-                    ]}
-                    pointerEvents="none"
-                />
-            ) : null}
+            {/* Cream tint — always on, both schemes/platforms (TICKET-134). MapTiler
+                serves cream land on both, so this only warms the residual blue
+                water and unifies the surface. CREAM (not the dark placesOverlayTint,
+                which would darken the tiles); ~15% is in the 12–18% target.
+                (Subsumes #169's scheme-independent vellum: same intent, our tint
+                was already always-on.) */}
+            <View
+                style={[StyleSheet.absoluteFill, { backgroundColor: CREAM, opacity: 0.15 }]}
+                pointerEvents="none"
+            />
 
             {/* Hairline warm rule at the top edge (ghosted, not a 1px border). */}
             <View
@@ -904,6 +931,93 @@ export function WishlistMapView({
             {/* List pill — bottom-LEFT, frosted, same elevation as the FAB.
                 Hidden while a peek card is up (shared with the empty branch). */}
             {renderListPill(!selected)}
+
+            {/* Friend rail — Discover only, one row ABOVE the List pill (its
+                bottom sits clear of the List-pill/locate values so those stay
+                byte-stable). Frosted All chip + 40Ø avatar toggles; hidden while
+                a peek is up (shares the three-piece hide set). TICKET-134. */}
+            {friendRail && !selected && friendRail.friends.length > 0 ? (
+                <View
+                    style={[
+                        styles.friendRail,
+                        { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE + 50 },
+                        Shadow.ambient,
+                    ]}
+                >
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.friendRailRow}
+                    >
+                        <Pressable
+                            onPress={friendRail.onAll}
+                            style={[
+                                styles.friendAllChip,
+                                friendRail.activeIds === null && { backgroundColor: palette.primary },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: friendRail.activeIds === null }}
+                            accessibilityLabel="all friends"
+                        >
+                            <Text
+                                style={[
+                                    styles.friendAllText,
+                                    { color: friendRail.activeIds === null ? '#fff' : palette.textSecondary },
+                                ]}
+                            >
+                                All
+                            </Text>
+                        </Pressable>
+                        {friendRail.friends.map((f) => {
+                            const active = friendRail.activeIds === null || friendRail.activeIds.has(f.id);
+                            const tint = avatarTintFor(f.id || f.name, palette);
+                            return (
+                                <Pressable
+                                    key={f.id}
+                                    onPress={() => friendRail.onToggleFriend(f.id)}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ selected: active }}
+                                    accessibilityLabel={f.name}
+                                    style={[
+                                        styles.friendFace,
+                                        {
+                                            borderColor: active ? palette.primary : 'transparent',
+                                            backgroundColor: tint,
+                                            opacity: active ? 1 : 0.45,
+                                        },
+                                    ]}
+                                >
+                                    {f.avatar ? (
+                                        <ExpoImage
+                                            source={{ uri: f.avatar }}
+                                            style={styles.friendFaceImg}
+                                            contentFit="cover"
+                                        />
+                                    ) : (
+                                        <Text style={[styles.friendFaceInitial, { color: palette.text }]}>
+                                            {(f.name.trim()[0] ?? '?').toUpperCase()}
+                                        </Text>
+                                    )}
+                                </Pressable>
+                            );
+                        })}
+                    </ScrollView>
+                </View>
+            ) : null}
+
+            {/* Attribution — ToS-required ghosted caption, above the nav clearance.
+                Hidden while a peek is up (the carousel owns the bottom). */}
+            {!selected ? (
+                <Text
+                    style={[
+                        styles.attribution,
+                        { color: palette.textMuted, bottom: insets.bottom + NAV_CLEARANCE - 18 },
+                    ]}
+                    pointerEvents="none"
+                >
+                    {MAPTILER_ATTRIBUTION}
+                </Text>
+            ) : null}
 
             {/* Peek carousel — rises when a pin is tapped; swipe for what's
                 nearby. No key: it must NOT remount (re-animate) per pin change,
@@ -1308,10 +1422,10 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 18,
     },
-    // Source pills — frosted segmented control, top-left on the glass.
+    // Source pills — frosted segmented control, top-left on the glass (⑨ h38·13/700).
     sourcePills: {
         position: 'absolute',
-        left: 16,
+        left: 12,
         flexDirection: 'row',
         borderRadius: 999,
         padding: 3,
@@ -1324,23 +1438,23 @@ const styles = StyleSheet.create({
     },
     sourcePillText: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+        fontSize: 13,
         letterSpacing: 0.3,
     },
-    // Filter chip — frosted, top-right on the glass.
+    // Filter chip — frosted, top-right on the glass (⑨ h38·13/700).
     filterChip: {
         position: 'absolute',
-        right: 16,
+        right: 12,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 5,
         borderRadius: 999,
         paddingHorizontal: 13,
-        paddingVertical: 9,
+        paddingVertical: 10,
     },
     filterChipText: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+        fontSize: 13,
         letterSpacing: 0.3,
     },
     filterChipDot: {
@@ -1351,8 +1465,8 @@ const styles = StyleSheet.create({
     // Unmappable murmur — frost family, below the source pills.
     murmurWrap: {
         position: 'absolute',
-        left: 16,
-        right: 16,
+        left: 12,
+        right: 12,
         alignItems: 'flex-start',
     },
     murmurPill: {
@@ -1364,31 +1478,86 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_500Medium',
         fontSize: 11,
     },
-    // Locate FAB — bottom-RIGHT frosted circle, clear of the floating nav pill.
+    // Locate FAB — bottom-RIGHT frosted circle, clear of the floating nav pill (⑨ 46Ø).
     fab: {
         position: 'absolute',
-        right: 16,
+        right: 12,
         width: 46,
         height: 46,
         borderRadius: 23,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    // List pill (map → list) — bottom-LEFT, same frost family + elevation.
+    // List pill (map → list) — bottom-LEFT, same frost family + elevation (⑨ h42·13/800).
     listToggle: {
         position: 'absolute',
-        left: 16,
+        left: 12,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,
         borderRadius: 999,
         paddingHorizontal: 16,
-        paddingVertical: 11,
+        paddingVertical: 12,
     },
     listToggleText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+        fontFamily: 'Manrope_800ExtraBold',
+        fontSize: 13,
         letterSpacing: 0.4,
+    },
+    // Friend rail — Discover only, frosted bar one row above the List pill.
+    friendRail: {
+        position: 'absolute',
+        left: 12,
+        right: 12,
+        borderRadius: 999,
+    },
+    friendRailRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingHorizontal: 6,
+        paddingVertical: 6,
+    },
+    friendAllChip: {
+        height: 40,
+        paddingHorizontal: 15,
+        borderRadius: 999,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    friendAllText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+        letterSpacing: 0.3,
+    },
+    // 40Ø avatar toggle (⑨ rail faces 40Ø). Terracotta ring when active.
+    friendFace: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        borderWidth: 2,
+        overflow: 'hidden',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    friendFaceImg: {
+        width: '100%',
+        height: '100%',
+    },
+    friendFaceInitial: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 15,
+        includeFontPadding: false,
+    },
+    // Ghosted ToS attribution caption — bottom-center, above the nav clearance.
+    attribution: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        textAlign: 'center',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 9,
+        letterSpacing: 0.2,
     },
     // ── Peek carousel ──────────────────────────────────────────────────────────
     peekWrap: {

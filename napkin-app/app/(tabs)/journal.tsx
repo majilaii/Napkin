@@ -26,8 +26,10 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useMySoloEntries } from '@/hooks/entries';
+import { useUnreadCount } from '@/hooks/notifications';
 import type { SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import { JournalList, getEstMonth } from '@/components/journal';
+import { NotifBell } from '@/components/notifications';
 import { ErrorState } from '@/components/ErrorState';
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -40,6 +42,7 @@ export default function JournalScreen() {
     const { user } = useAuth();
 
     const { data: entries, isLoading, isError, isRefetching, refetch } = useMySoloEntries(user?.id);
+    const hasUnread = useUnreadCount(user?.id) > 0;
 
     const sortedEntries: SoloShareActivity[] = useMemo(() => {
         if (!entries) return [];
@@ -77,10 +80,15 @@ export default function JournalScreen() {
                             {`${mealCount} meal${mealCount !== 1 ? 's' : ''} · est. ${estMonth}`}
                         </Text>
                     ) : null}
+                    <NotifBell
+                        unread={hasUnread}
+                        onPress={() => router.push('/notifications')}
+                        ringColor={palette.background}
+                    />
                 </View>
             </View>
         ),
-        [insets.top, palette, mealCount, estMonth],
+        [insets.top, palette, mealCount, estMonth, hasUnread, router],
     );
 
     if (isLoading) {
@@ -129,8 +137,10 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.sm,
     },
     headerRow: {
+        // 'center' (not 'baseline') so the 32px NotifBell aligns cleanly with the
+        // title; the kicker already sets alignSelf:'center' so its slot is unchanged.
         flexDirection: 'row',
-        alignItems: 'baseline',
+        alignItems: 'center',
         gap: 8,
         paddingTop: Spacing.sm,
         paddingBottom: Spacing.sm,

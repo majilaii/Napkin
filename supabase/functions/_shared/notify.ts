@@ -1,5 +1,6 @@
-// Redeploy marker (2026-07-07): run 28898737691 failed at db push BEFORE deploying
-// the #159 fleet — this _shared touch makes the next run redeploy every function.
+// Redeploy marker (2026-07-08, TICKET-133): emitTableInvite now carries the
+// invitation_id + member_count, and emitTableInviteAccepted is new — this
+// _shared touch makes the next run redeploy every function that imports it.
 /**
  * TICKET-048: Best-effort notification fan-out helpers.
  *
@@ -50,12 +51,21 @@ export async function emitFriendLogged(
 }
 
 /**
- * Emit a `table_invite` notification to the newly added user.
+ * TICKET-133: Emit a `table_invite` notification to a PENDING invitee.
+ * Carries the invitation_id (so the inbox can respond without an extra lookup)
+ * and a denormalized member_count (stable-enough, saves a per-row count at
+ * hydration). Status is joined LIVE at read time — it changes after this insert.
  * No row is emitted if actor === recipient.
  */
 export async function emitTableInvite(
     supabase: SupabaseClient,
-    args: { actorUserId: string; recipientUserId: string; tableId: string },
+    args: {
+        actorUserId: string;
+        recipientUserId: string;
+        tableId: string;
+        invitationId: string;
+        memberCount: number;
+    },
 ): Promise<void> {
     if (args.recipientUserId === args.actorUserId) return;
     try {
@@ -64,6 +74,7 @@ export async function emitTableInvite(
             kind: 'table_invite',
             actor_user_id: args.actorUserId,
             subject_table_id: args.tableId,
+            subject_meta: { invitation_id: args.invitationId, member_count: args.memberCount },
         });
         if (error) {
             console.error('[notify] table_invite insert failed:', error.message);
@@ -72,6 +83,33 @@ export async function emitTableInvite(
     } catch (e) {
         console.error('[notify] table_invite threw:', e);
         reportError(e, { fn: 'notify', action: 'table_invite' });
+    }
+}
+
+/**
+ * TICKET-133: Emit a `table_invite_accepted` notification to the INVITER when
+ * their invitee accepts. recipient = inviter, actor = joiner, subject = table.
+ * Best-effort (same try/catch idiom) — a failed insert never blocks the seat.
+ */
+export async function emitTableInviteAccepted(
+    supabase: SupabaseClient,
+    args: { actorUserId: string; recipientUserId: string; tableId: string },
+): Promise<void> {
+    if (args.recipientUserId === args.actorUserId) return;
+    try {
+        const { error } = await supabase.from('notifications').insert({
+            user_id: args.recipientUserId,
+            kind: 'table_invite_accepted',
+            actor_user_id: args.actorUserId,
+            subject_table_id: args.tableId,
+        });
+        if (error) {
+            console.error('[notify] table_invite_accepted insert failed:', error.message);
+            reportError(error, { fn: 'notify', action: 'table_invite_accepted' });
+        }
+    } catch (e) {
+        console.error('[notify] table_invite_accepted threw:', e);
+        reportError(e, { fn: 'notify', action: 'table_invite_accepted' });
     }
 }
 

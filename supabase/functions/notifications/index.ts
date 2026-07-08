@@ -46,6 +46,7 @@ type HydratedNotification =
     | FriendLoggedNotification
     | TopFourSwapNotification
     | TableInviteNotification
+    | TableInviteAcceptedNotification
     | ImportDoneNotification
     | PassthroughNotification;
 
@@ -77,6 +78,18 @@ interface TopFourSwapNotification extends BaseHydrated {
 
 interface TableInviteNotification extends BaseHydrated {
     type: 'table_invite';
+    actor: { id: string; name: string; avatarUrl: string | null };
+    tableName: string;
+    tableId: string;
+    // TICKET-133: joined LIVE at hydration (status mutates after the row is
+    // written). memberCount is denormalized from subject_meta.
+    invitationId: string;
+    invitationStatus: 'pending' | 'accepted' | 'declined' | 'expired';
+    memberCount: number;
+}
+
+interface TableInviteAcceptedNotification extends BaseHydrated {
+    type: 'table_invite_accepted';
     actor: { id: string; name: string; avatarUrl: string | null };
     tableName: string;
     tableId: string;
@@ -270,6 +283,31 @@ async function hydrate(
     const restaurantById = byId(restaurantsRes.data ?? [], 'id');
     const entryById = byId(entriesRes.data ?? [], 'id');
 
+    // TICKET-133: batch-fetch invitation status for all table_invite rows on the
+    // page. Status mutates after the notification is written (accept/decline), so
+    // it must be joined LIVE — the invite card renders pending/accepted/declined
+    // from this map. Default to 'expired' when the invitation row is gone.
+    const invitationIds = unique(
+        rows
+            .filter((r) => r.kind === 'table_invite')
+            .map((r) => (r.subject_meta as { invitation_id?: string } | null)?.invitation_id)
+            .filter(Boolean) as string[],
+    );
+    const invitationStatusById = new Map<string, string>();
+    if (invitationIds.length > 0) {
+        const { data: invRows, error: invErr } = await supabase
+            .from('table_invitations')
+            .select('id, status')
+            .in('id', invitationIds);
+        if (invErr) {
+            console.error('inbox hydration: table_invitations failed', invErr);
+            throw new Error(`DB_ERROR: table_invitations hydration failed — ${invErr.message}`);
+        }
+        for (const iv of (invRows ?? []) as { id: string; status: string }[]) {
+            invitationStatusById.set(iv.id, iv.status);
+        }
+    }
+
     // friend_logged needs visibility re-check via the SECURITY DEFINER RPC
     // can_recipient_view_entry(recipient_id, entry_id) added in this migration.
     // DO NOT re-implement the predicate in TS — it would drift.
@@ -336,9 +374,39 @@ async function hydrate(
             case 'table_invite': {
                 const table = r.subject_table_id ? tableById.get(r.subject_table_id) : null;
                 if (!actor || !table) continue;
+                const meta = (r.subject_meta ?? {}) as { invitation_id?: string; member_count?: number };
+                const invitationId = meta.invitation_id ?? '';
+                // LIVE status: default 'expired' when the row is gone (declined
+                // rows persist as 'declined'; a missing row means deleted table).
+                const rawStatus = invitationId ? invitationStatusById.get(invitationId) : undefined;
+                const invitationStatus =
+                    rawStatus === 'pending' || rawStatus === 'accepted' ||
+                    rawStatus === 'declined' || rawStatus === 'expired'
+                        ? rawStatus
+                        : 'expired';
                 out.push({
                     id: r.id,
                     type: 'table_invite',
+                    read: !!r.read_at,
+                    createdAt: r.created_at,
+                    timeLabel: formatTimeLabel(r.created_at),
+                    actor: { id: actor.user_id, name: actor.display_name, avatarUrl: actor.avatar_url ?? null },
+                    tableName: table.name,
+                    tableId: table.id,
+                    invitationId,
+                    invitationStatus,
+                    memberCount: typeof meta.member_count === 'number' ? meta.member_count : 0,
+                });
+                break;
+            }
+
+            case 'table_invite_accepted': {
+                // TICKET-133: goes to the inviter. actor = joiner, subject = table.
+                const table = r.subject_table_id ? tableById.get(r.subject_table_id) : null;
+                if (!actor || !table) continue;
+                out.push({
+                    id: r.id,
+                    type: 'table_invite_accepted',
                     read: !!r.read_at,
                     createdAt: r.created_at,
                     timeLabel: formatTimeLabel(r.created_at),
