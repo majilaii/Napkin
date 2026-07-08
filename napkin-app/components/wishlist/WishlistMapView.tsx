@@ -195,6 +195,19 @@ const NAV_CLEARANCE = 92;
 const FROST_DARK = 'rgba(42,39,36,0.92)';
 /** A rating at/above this = "loved" → terracotta heart badge on the pin. */
 const LOVED_MIN = 4.5;
+
+// ── Framing deltas ──────────────────────────────────────────────────────────────
+// ONE region API for all camera moves: Camera.zoom is GOOGLE-ONLY — Apple Maps
+// keys on altitude and silently ignores zoom, which is why the locate FAB
+// centered without ever zooming (founder, 2026-07-08). animateToRegion behaves
+// identically on both providers. latitudeDelta ≈ 360 / 2^zoom.
+/** Locate FAB — zoom IN to a walkable radius (≈ zoom 15); pins stay legible. */
+const NEAR_ME_DELTA = 0.013;
+/** First frame on open — the "near me" city view (≈ zoom 13, the original
+ * framing intent that the zoom param never actually applied on Apple). */
+const CITY_DELTA = 0.045;
+/** Layer switch landing on a single spot (≈ zoom 14). */
+const SPOT_DELTA = 0.022;
 /** Network pin ring — warm ink, deliberately NOT a third accent color
  * (terracotta + olive are this screen's two; network stays neutral). */
 const INK_RING_LIGHT = 'rgba(28,28,25,0.32)';
@@ -548,15 +561,25 @@ export function WishlistMapView({
         const timer = setTimeout(() => {
             if (framedRef.current) return;
             if (locationStatus === 'granted' && userCoords) {
-                mapRef.current?.animateCamera(
-                    { center: { latitude: userCoords.latitude, longitude: userCoords.longitude }, zoom: 13 },
-                    { duration: 300 },
+                mapRef.current?.animateToRegion(
+                    {
+                        latitude: userCoords.latitude,
+                        longitude: userCoords.longitude,
+                        latitudeDelta: CITY_DELTA,
+                        longitudeDelta: CITY_DELTA,
+                    },
+                    300,
                 );
                 framedRef.current = true;
             } else if (locationStatus !== 'pending') {
-                mapRef.current?.animateCamera(
-                    { center: { latitude: items[0].lat, longitude: items[0].lng }, zoom: 13 },
-                    { duration: 300 },
+                mapRef.current?.animateToRegion(
+                    {
+                        latitude: items[0].lat,
+                        longitude: items[0].lng,
+                        latitudeDelta: CITY_DELTA,
+                        longitudeDelta: CITY_DELTA,
+                    },
+                    300,
                 );
                 framedRef.current = true;
             }
@@ -577,9 +600,14 @@ export function WishlistMapView({
         framedSourceRef.current = sources.value;
         const timer = setTimeout(() => {
             if (items.length === 1) {
-                mapRef.current?.animateCamera(
-                    { center: { latitude: items[0].lat, longitude: items[0].lng }, zoom: 14 },
-                    { duration: 350 },
+                mapRef.current?.animateToRegion(
+                    {
+                        latitude: items[0].lat,
+                        longitude: items[0].lng,
+                        latitudeDelta: SPOT_DELTA,
+                        longitudeDelta: SPOT_DELTA,
+                    },
+                    350,
                 );
             } else {
                 mapRef.current?.fitToCoordinates(
@@ -602,11 +630,18 @@ export function WishlistMapView({
         };
     }, [items]);
 
+    // Locate FAB: center on the user AND zoom in to a walkable radius — the
+    // founder's explicit ask (centering alone left the map at city zoom).
     const handleRecenter = () => {
         if (locationStatus === 'granted' && userCoords) {
-            mapRef.current?.animateCamera(
-                { center: { latitude: userCoords.latitude, longitude: userCoords.longitude }, zoom: 14 },
-                { duration: 350 },
+            mapRef.current?.animateToRegion(
+                {
+                    latitude: userCoords.latitude,
+                    longitude: userCoords.longitude,
+                    latitudeDelta: NEAR_ME_DELTA,
+                    longitudeDelta: NEAR_ME_DELTA,
+                },
+                350,
             );
         } else {
             onRequestLocation();
