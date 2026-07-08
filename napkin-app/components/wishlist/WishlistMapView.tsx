@@ -138,6 +138,16 @@ export interface WishlistMapItem {
         tableName: string;
         members: { user_id: string; display_name: string | null; avatar_url: string | null }[];
     } | null;
+    /**
+     * TICKET-139 been-together: a group meal (supper / legacy round) at this
+     * restaurant. Set with `been: true` (olive glyph pin — no new BubblePin
+     * variant); only the peek branches on `gathered`.
+     */
+    gathered?: {
+        on: string; // ISO — "gathered 12 jun"
+        participants: { user_id: string; display_name: string; avatar_url: string | null }[];
+        suppersCount: number;
+    } | null;
 }
 
 type LocationStatus = 'idle' | 'pending' | 'granted' | 'denied';
@@ -841,7 +851,11 @@ export function WishlistMapView({
                 ? 'no spots from people you follow yet.'
                 : sources?.value === 'mine'
                   ? 'no logged spots with a map location yet.'
-                  : 'none of your spots have a map location yet.';
+                  : sources?.value === 'been'
+                    ? 'no group meals with a map location yet.'
+                    : sources?.value === 'saved'
+                      ? "the table hasn't saved a mappable spot yet."
+                      : 'none of your spots have a map location yet.';
         return (
             <View style={[styles.fill, { backgroundColor: CREAM }]}>
                 <View style={[styles.fill, styles.emptyWrap]}>
@@ -1107,11 +1121,13 @@ function PeekCarousel({
     // sized to its content sum — pad 18 + plate row 46 + gaps/who/note 43 +
     // actions 43 = 150 — plus 2px slack for device font metrics (review P2-5;
     // 146 measured ~4px under and bled into the action gap).
-    // TICKET-138: overlap cards carry a who-row + actions like network cards, so
-    // they take the taller 152 height. Discover MIXES overlap + network in one
-    // array → the height must be uniform across the whole rail (a per-item height
-    // would desync the snap math).
-    const isTallLayer = items.some((i) => i.entryId != null || i.overlap != null);
+    // TICKET-138/139: overlap + been-together (gathered) cards carry a who-row +
+    // actions like network cards, so they take the taller 152 height. Discover
+    // MIXES overlap + network in one array → the height must be uniform across the
+    // whole rail (a per-item height would desync the snap math).
+    const isTallLayer = items.some(
+        (i) => i.entryId != null || i.overlap != null || i.gathered != null,
+    );
     const cardH = isTallLayer ? 152 : 108;
 
     // Mount at the tapped pin's card (getItemLayout makes initialScrollIndex
@@ -1246,10 +1262,12 @@ function PeekCardBody({
     onGather,
 }: PeekCardBodyProps) {
     const isNetwork = item.entryId != null;
-    // TICKET-138 overlap card ("N of you saved this" + gather here). Additive
-    // variant — 135's card architecture + 137's density stay.
+    // TICKET-138 overlap card ("N of you saved this" + gather here) / TICKET-139
+    // been-together card ("gathered <date>"). Additive variants — 135's card
+    // architecture + 137's density stay.
     const isOverlap = item.overlap != null;
     const overlapCount = item.overlap?.count ?? 0;
+    const isGathered = item.gathered != null;
     // TICKET-137: the Save pill now OPENS the shared save sheet (AddToListSheet —
     // wishlist / list / unsave), so the button no longer owns an optimistic flip.
     // Saved state reads straight from the screen's wishlist set, which the sheet's
@@ -1265,15 +1283,21 @@ function PeekCardBody({
     const meta = (
         isOverlap
             ? [item.cuisine, price, distanceLabel ?? item.city]
-            : isNetwork
-              ? [item.cuisine, distanceLabel ?? item.city]
-              : [item.cuisine, price, distanceLabel ?? item.city, visits]
+            : isGathered
+              ? [
+                    item.cuisine,
+                    distanceLabel ?? item.city,
+                    item.gathered!.suppersCount > 1 ? `×${item.gathered!.suppersCount}` : null,
+                ]
+              : isNetwork
+                ? [item.cuisine, distanceLabel ?? item.city]
+                : [item.cuisine, price, distanceLabel ?? item.city, visits]
     )
         .filter(Boolean)
         .join(' · ');
 
-    // No numeral on overlap (no rating).
-    const rating = isNetwork ? item.rating : item.been ? item.myRating : null;
+    // No numeral on overlap (no rating) or gathered (group meal, no personal avg).
+    const rating = isNetwork ? item.rating : item.been && !isGathered ? item.myRating : null;
 
     // Body tap keeps the TICKET-124 routing: review-eligible network log → the
     // followee's review; everything else → the restaurant page.
@@ -1358,6 +1382,19 @@ function PeekCardBody({
                         </Text>
                     </View>
                 ) : null}
+
+                {/* Been together: "gathered 12 jun" + participant stack. */}
+                {isGathered ? (
+                    <View style={styles.peekWhoRow}>
+                        <PeekAvatarStack members={item.gathered!.participants} palette={palette} />
+                        <Text
+                            style={[styles.peekWhoText, { color: palette.textSecondary }]}
+                            numberOfLines={1}
+                        >
+                            {`gathered ${fmtShortDate(item.gathered!.on)}`}
+                        </Text>
+                    </View>
+                ) : null}
                 {note ? (
                     <Text style={[styles.peekNote, { color: palette.textSecondary }]} numberOfLines={1}>
                         {`— ${note}`}
@@ -1420,8 +1457,8 @@ function PeekCardBody({
                     </Pressable>
                 ) : null}
 
-                {/* Directions — mine layer only (not network / overlap). */}
-                {!isNetwork && !isOverlap ? (
+                {/* Directions — mine layer only (not network / overlap / gathered). */}
+                {!isNetwork && !isOverlap && !isGathered ? (
                     <Pressable
                         onPress={() => openDirections(item)}
                         accessibilityRole="button"
@@ -1516,6 +1553,14 @@ function PeekAvatarStack({
             })}
         </View>
     );
+}
+
+/** "12 jun" — the been-together peek date label (lowercase per voice). */
+function fmtShortDate(iso: string): string {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const mo = d.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+    return `${d.getDate()} ${mo}`;
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────

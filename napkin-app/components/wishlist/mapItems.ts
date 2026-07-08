@@ -15,6 +15,7 @@
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
 import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
 import type { TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
+import type { TableMapPin } from '@/hooks/tables/useTableMapPins';
 import type { WishlistMapItem } from './WishlistMapView';
 
 /**
@@ -182,6 +183,33 @@ export function mergeDiscoverItems(
     for (const n of network) byId.set(n.id, n);
     for (const o of overlap) byId.set(o.id, o); // overlap wins
     return [...byId.values()];
+}
+
+// ── Table been-together layer (TICKET-139) ──────────────────────────────────────
+
+/**
+ * Been-together rows (table-atlas?action=map_pins — the table's suppers + legacy
+ * rounds, one row per restaurant, most-recent group meal winning) → olive `been`
+ * pins carrying `gathered` for the peek. No new BubblePin variant: olive ring +
+ * cuisine glyph is the existing been rendering; only the peek branches on
+ * `gathered`. The RPC guarantees non-null coords, so no coord filter. No
+ * `entryId`, no `myRating` (so no loved heart), no `photo_url`. Pure.
+ */
+export function supperPinsToMapItems(rows: TableMapPin[] | null | undefined): WishlistMapItem[] {
+    return (rows ?? []).map((row) => ({
+        id: row.restaurant_id,
+        name: row.name,
+        city: row.city,
+        cuisine: row.cuisine,
+        lat: row.lat,
+        lng: row.lng,
+        been: true,
+        gathered: {
+            on: row.gathered_on,
+            participants: row.participants,
+            suppersCount: row.suppers_count,
+        },
+    }));
 }
 
 // ── Discover people picker (TICKET-137) ────────────────────────────────────────

@@ -19,10 +19,12 @@ import {
     peopleChipLabel,
     overlapToMapItems,
     mergeDiscoverItems,
+    supperPinsToMapItems,
 } from '../mapItems';
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
 import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
 import type { TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
+import type { TableMapPin } from '@/hooks/tables/useTableMapPins';
 import type { WishlistMapItem } from '../WishlistMapView';
 
 function spot(over: Partial<SpotSummary> & { restaurant_id: string }): SpotSummary {
@@ -375,5 +377,106 @@ describe('mergeDiscoverItems (TICKET-138 overlap-beats-network dedupe)', () => {
         expect(merged.map((i) => i.id).sort()).toEqual(['networkOnly', 'overlapOnly', 'shared']);
         expect(merged.find((i) => i.id === 'networkOnly')?.entryId).toBe('e1');
         expect(merged.find((i) => i.id === 'overlapOnly')?.overlap).not.toBeNull();
+    });
+});
+
+// ── TICKET-139: been-together mapper ────────────────────────────────────────────
+
+function mapPin(over: Partial<TableMapPin> & { restaurant_id: string }): TableMapPin {
+    return {
+        name: 'Kono',
+        city: 'Tokyo',
+        cuisine: 'Japanese',
+        lat: 35.6,
+        lng: 139.7,
+        supper_id: 's1',
+        gathered_on: '2026-06-12T00:00:00Z',
+        participants: [
+            { user_id: 'u1', display_name: 'Clara', avatar_url: null },
+            { user_id: 'u2', display_name: 'Thomas', avatar_url: 'a.png' },
+        ],
+        suppers_count: 1,
+        ...over,
+    };
+}
+
+describe('supperPinsToMapItems (TICKET-139)', () => {
+    it('maps a been-together row to an olive been pin carrying gathered (no entryId/myRating)', () => {
+        const items = supperPinsToMapItems([mapPin({ restaurant_id: 'r1' })]);
+        expect(items).toHaveLength(1);
+        expect(items[0]).toMatchObject({
+            id: 'r1',
+            name: 'Kono',
+            city: 'Tokyo',
+            cuisine: 'Japanese',
+            lat: 35.6,
+            lng: 139.7,
+            been: true,
+        });
+        expect(items[0].gathered).toMatchObject({ on: '2026-06-12T00:00:00Z', suppersCount: 1 });
+        expect(items[0].entryId).toBeUndefined();
+        expect(items[0].myRating).toBeUndefined();
+    });
+
+    it('preserves the ≤5 participant array (server already caps; mapper does not re-cap)', () => {
+        const five = [1, 2, 3, 4, 5].map((n) => ({
+            user_id: `u${n}`,
+            display_name: `M${n}`,
+            avatar_url: null,
+        }));
+        const items = supperPinsToMapItems([mapPin({ restaurant_id: 'r1', participants: five })]);
+        expect(items[0].gathered!.participants).toHaveLength(5);
+        expect(items[0].gathered!.participants.map((p) => p.user_id)).toEqual([
+            'u1', 'u2', 'u3', 'u4', 'u5',
+        ]);
+    });
+
+    it('carries the server-collapsed most-recent row through (gathered_on + suppers_count for "×N")', () => {
+        // The server collapses repeat visits to one row (most-recent wins) and
+        // reports suppers_count; the mapper surfaces both verbatim.
+        const items = supperPinsToMapItems([
+            mapPin({ restaurant_id: 'r1', gathered_on: '2026-07-01T00:00:00Z', suppers_count: 3 }),
+        ]);
+        expect(items[0].gathered).toMatchObject({ on: '2026-07-01T00:00:00Z', suppersCount: 3 });
+    });
+
+    it('overlapToMapItems at minCount:1 keeps a count===1 single (139 saved-layer shared path)', () => {
+        // The 139 saved layer reuses 138's mapper at minCount:1 — a single-saver
+        // restaurant survives with overlap.count===1 and its one member.
+        const sources = [
+            {
+                tableId: 't1',
+                tableName: 'Supper Club',
+                items: [
+                    {
+                        restaurant: {
+                            id: 'solo',
+                            name: 'Solo Spot',
+                            address: null,
+                            city: 'Tokyo',
+                            country: 'Japan',
+                            photo_url: null,
+                            cuisine: 'Japanese',
+                            google_rating: null,
+                            price_level: 2,
+                            external_id: null,
+                            lat: 35.6,
+                            lng: 139.7,
+                        },
+                        count: 1,
+                        members: [{ user_id: 'u1', display_name: 'Clara', avatar_url: null }],
+                    },
+                ],
+            },
+        ];
+        const items = overlapToMapItems(sources, { minCount: 1 });
+        expect(items).toHaveLength(1);
+        expect(items[0].overlap).toMatchObject({ count: 1 });
+        expect(items[0].overlap!.members).toHaveLength(1);
+    });
+
+    it('tolerates null/undefined input', () => {
+        expect(supperPinsToMapItems(null)).toEqual([]);
+        expect(supperPinsToMapItems(undefined)).toEqual([]);
     });
 });

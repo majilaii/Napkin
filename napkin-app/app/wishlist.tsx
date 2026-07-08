@@ -72,6 +72,10 @@ import {
 } from '@/components/wishlist/mapItems';
 import { useTablesOverlap } from '@/hooks/wishlist/useTablesOverlap';
 import { GatherSheet } from '@/components/gatherings';
+import { useQueries } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/queryKeys';
+import { useTables } from '@/hooks/tables/useTables';
+import { fetchTableMembers } from '@/hooks/tables/useTableMembers';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
@@ -426,6 +430,33 @@ export default function WishlistScreen() {
     // armed together with the network layer (first Discover select). Zero-table
     // users fetch nothing (the hook gates useTables + the fan-out on `enabled`).
     const { sources: overlapSources } = useTablesOverlap(user?.id, { enabled: networkArmed });
+
+    // TICKET-139: "your table" rows in the Discover people picker — one tap =
+    // exclusive-include that table's member ids. Rosters fan out per table, armed
+    // only with Discover (enabled: networkArmed), so non-Discover / zero-table
+    // users fetch no rosters. Reuses the SAME cache key + shape as useTableMembers.
+    const { data: rosterMemberships } = useTables(networkArmed ? user?.id : null);
+    const rosterTables = useMemo(
+        () => (rosterMemberships ?? []).map((m) => m.tables).filter(Boolean),
+        [rosterMemberships],
+    );
+    const rosterResults = useQueries({
+        queries: rosterTables.map((t) => ({
+            queryKey: queryKeys.tables.members(t.id),
+            queryFn: () => fetchTableMembers(t.id),
+            enabled: networkArmed && !!user?.id,
+            staleTime: 1000 * 60 * 5,
+        })),
+    });
+    // member_id (NOT user_id) is the table_members column (member_id trap). Rows
+    // appear once their roster is loaded (non-empty) so a tap always includes a set.
+    const tableRows = rosterTables
+        .map((t, i) => ({
+            tableId: t.id,
+            name: t.name,
+            memberIds: (rosterResults[i]?.data ?? []).map((m) => m.member_id),
+        }))
+        .filter((r) => r.memberIds.length > 0);
     // Watch position live while sorting by nearest or viewing the map, so distances
     // re-rank as you walk (Amsterdam-stroll fix) instead of freezing until restart.
     const { coords, status: locationStatus, request: requestLocation } = useNearbyLocation({
@@ -1038,6 +1069,10 @@ export default function WishlistScreen() {
                 checkedIds={checkedPeople}
                 onToggle={handleTogglePerson}
                 onEveryone={handleEveryone}
+                // TICKET-139: "your table" rows — one tap includes only that table's
+                // members (overlap pins then hide per 138; their visits show).
+                tableRows={tableRows}
+                onSelectTable={(ids) => setCheckedPeople(new Set(ids))}
             />
 
             {/* TICKET-137: peek Save pill → the shared save sheet (wishlist / list /

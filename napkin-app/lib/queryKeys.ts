@@ -144,6 +144,9 @@ export const queryKeys = {
         all: () => ['atlas'] as const,
         index: (tableId: string) => ['atlas', tableId] as const,
         city: (tableId: string, city: string) => ['atlas', tableId, city] as const,
+        /** TICKET-139: the table's been-together map pins (suppers + legacy rounds).
+         * Nested under the table's atlas prefix so a table-scoped invalidate reaches it. */
+        mapPins: (tableId: string) => ['atlas', tableId, 'mapPins'] as const,
     },
 
     // Restaurants (accumulated Table + user memory per venue)

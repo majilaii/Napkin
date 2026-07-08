@@ -284,6 +284,26 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-139: table-atlas map_pins member-gate guard. A random UUID is never a
+    // table the SMOKE_TEST_JWT user belongs to, so checkMembership → false and the
+    // main handler denies with fail('Forbidden', 403) BEFORE handleMapPins runs.
+    // This exercises the new action's routing + the membership gate; the suppers /
+    // supper_members / table_nights read assembly is only reached for a member (not
+    // this bogus id), so a 500 here would mean the routing / gate drifted. table-atlas
+    // returns a flat { error } envelope (not the structured shape), so we assert only
+    // that an error field is present — matching the fn's real behavior.
+    {
+        name: 'table-atlas?action=map_pins bogus table id → 403 membership gate (TICKET-139)',
+        method: 'POST',
+        fn: 'table-atlas',
+        body: { action: 'map_pins', table_id: '00000000-0000-0000-0000-000000000000' },
+        expectedStatus: 403,
+        shape: (json) => {
+            const err = (json as { error?: unknown }).error;
+            if (!err) return 'missing error envelope';
+            return null;
+        },
+    },
     // TICKET-098 Phase B + TICKET-102 + TICKET-114 v2: two-mode rail read path.
     // [ARCH-REVIEW-5] assert Array.isArray on BOTH rows AND fallback ONLY — an
     // empty array is the legitimate below-floor state for each mode (rows: <3
