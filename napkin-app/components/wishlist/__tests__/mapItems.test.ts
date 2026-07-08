@@ -17,9 +17,12 @@ import {
     peopleFromItems,
     filterByCheckedPeople,
     peopleChipLabel,
+    overlapToMapItems,
+    mergeDiscoverItems,
 } from '../mapItems';
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
 import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
+import type { TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
 import type { WishlistMapItem } from '../WishlistMapView';
 
 function spot(over: Partial<SpotSummary> & { restaurant_id: string }): SpotSummary {
@@ -251,5 +254,126 @@ describe('filterItemsByCuisine', () => {
 
     it('excludes null-cuisine items when a filter is set', () => {
         expect(filterItemsByCuisine(items, 'Italian').map((i) => i.id)).toEqual(['c']);
+    });
+});
+
+// ── TICKET-138: overlap mappers ─────────────────────────────────────────────────
+
+function overlapRestaurant(over: { id: string } & Partial<TableWishlistItem['restaurant']>) {
+    return {
+        name: `R ${over.id}`,
+        address: null,
+        city: 'Lisbon',
+        country: 'Portugal',
+        photo_url: null,
+        cuisine: 'Portuguese',
+        google_rating: null,
+        price_level: 2,
+        external_id: null,
+        lat: 38.7,
+        lng: -9.1,
+        ...over,
+    } as TableWishlistItem['restaurant'];
+}
+
+function overlapItem(
+    id: string,
+    count: number,
+    over?: { members?: TableWishlistItem['members']; restaurant?: Partial<TableWishlistItem['restaurant']> },
+): TableWishlistItem {
+    return {
+        restaurant: overlapRestaurant({ id, ...over?.restaurant }),
+        count,
+        members: over?.members ?? [
+            { user_id: 'u1', display_name: 'Clara', avatar_url: null },
+            { user_id: 'u2', display_name: 'Thomas', avatar_url: null },
+        ],
+    };
+}
+
+describe('overlapToMapItems (TICKET-138)', () => {
+    it('drops count===1 at minCount:2, keeps it at minCount:1 (139 saved-layer single)', () => {
+        const sources = [{ tableId: 't1', tableName: 'Supper Club', items: [overlapItem('a', 1)] }];
+        expect(overlapToMapItems(sources, { minCount: 2 })).toEqual([]);
+
+        const kept = overlapToMapItems(sources, { minCount: 1 });
+        expect(kept).toHaveLength(1);
+        expect(kept[0].overlap).toMatchObject({ count: 1, tableId: 't1', tableName: 'Supper Club' });
+        expect(kept[0].overlap!.members).toHaveLength(2);
+    });
+
+    it('drops a restaurant with null lat/lng even at count>=2', () => {
+        const sources = [
+            {
+                tableId: 't1',
+                tableName: 'T',
+                items: [
+                    overlapItem('a', 3, { restaurant: { lat: null } }),
+                    overlapItem('b', 4, { restaurant: { lng: null } }),
+                    overlapItem('c', 2),
+                ],
+            },
+        ];
+        expect(overlapToMapItems(sources, { minCount: 2 }).map((i) => i.id)).toEqual(['c']);
+    });
+
+    it('multi-table: MAX-COUNT table wins per restaurant (A=2, B=4 → B, count 4)', () => {
+        const sources = [
+            { tableId: 'A', tableName: 'Table A', items: [overlapItem('shared', 2)] },
+            { tableId: 'B', tableName: 'Table B', items: [overlapItem('shared', 4)] },
+        ];
+        const items = overlapToMapItems(sources, { minCount: 2 });
+        expect(items).toHaveLength(1);
+        expect(items[0].overlap).toMatchObject({ count: 4, tableId: 'B', tableName: 'Table B' });
+    });
+
+    it('ties keep the FIRST source (sources iterate in order)', () => {
+        const sources = [
+            { tableId: 'A', tableName: 'Table A', items: [overlapItem('shared', 3)] },
+            { tableId: 'B', tableName: 'Table B', items: [overlapItem('shared', 3)] },
+        ];
+        expect(overlapToMapItems(sources, { minCount: 2 })[0].overlap!.tableId).toBe('A');
+    });
+
+    it('me-inclusive: the server count passes through unchanged (mapper never recomputes)', () => {
+        // count already includes the caller — the mapper trusts it verbatim.
+        const sources = [{ tableId: 't1', tableName: 'T', items: [overlapItem('a', 3)] }];
+        const items = overlapToMapItems(sources, { minCount: 2 });
+        expect(items[0].overlap!.count).toBe(3);
+        // No relationship flags leak onto an overlap item.
+        expect(items[0].been).toBeUndefined();
+        expect(items[0].entryId).toBeUndefined();
+        expect(items[0].emoji).toBeUndefined();
+        expect(items[0].priceLevel).toBe(2); // restaurant.price_level rides along for the $$ token
+    });
+
+    it('tolerates empty sources', () => {
+        expect(overlapToMapItems([], { minCount: 2 })).toEqual([]);
+    });
+});
+
+describe('mergeDiscoverItems (TICKET-138 overlap-beats-network dedupe)', () => {
+    const overlap = overlapToMapItems(
+        [{ tableId: 't1', tableName: 'T', items: [overlapItem('shared', 3), overlapItem('overlapOnly', 2)] }],
+        { minCount: 2 },
+    );
+    const network = networkPinsToMapItems([
+        pin({ restaurant_id: 'shared' }),
+        pin({ restaurant_id: 'networkOnly' }),
+    ]);
+
+    it('a restaurant in both → one item, overlap wins (overlap != null, entryId == null)', () => {
+        const merged = mergeDiscoverItems(overlap, network);
+        const shared = merged.filter((i) => i.id === 'shared');
+        expect(shared).toHaveLength(1);
+        expect(shared[0].overlap).not.toBeNull();
+        expect(shared[0].entryId).toBeUndefined();
+    });
+
+    it('network-only and overlap-only both survive', () => {
+        const merged = mergeDiscoverItems(overlap, network);
+        expect(merged.map((i) => i.id).sort()).toEqual(['networkOnly', 'overlapOnly', 'shared']);
+        expect(merged.find((i) => i.id === 'networkOnly')?.entryId).toBe('e1');
+        expect(merged.find((i) => i.id === 'overlapOnly')?.overlap).not.toBeNull();
     });
 });

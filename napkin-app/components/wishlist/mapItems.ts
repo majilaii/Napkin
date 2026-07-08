@@ -14,6 +14,7 @@
  */
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
 import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
+import type { TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
 import type { WishlistMapItem } from './WishlistMapView';
 
 /**
@@ -120,6 +121,67 @@ export function filterItemsByCuisine(
 ): WishlistMapItem[] {
     if (!cuisine) return items;
     return items.filter((i) => (i.cuisine?.trim() ?? '') === cuisine);
+}
+
+// ── Table overlap layer (TICKET-138) ────────────────────────────────────────────
+// A restaurant saved by ≥ minCount members of one of the viewer's tables becomes
+// an amber count bubble ("N of you saved this"). The `count` is server-authoritative
+// (member-gated, table-inclusive — computed by wishlist?action=list_table), so the
+// mapper never recomputes it.
+
+/**
+ * Table overlap rows → amber count-bubble items. Merges across the viewer's tables:
+ * MAX-COUNT table wins per restaurant (tie → first source, since sources iterate in
+ * order and only a STRICTLY greater count replaces the prior). Drops coord-less
+ * restaurants and rows below `minCount` (TICKET-138 Discover → 2; TICKET-139 saved
+ * layer → 1, where a count===1 single renders as a plain terracotta save bubble).
+ * Pure; unit-tested.
+ */
+export function overlapToMapItems(
+    sources: { tableId: string; tableName: string; items: TableWishlistItem[] }[],
+    opts: { minCount: number },
+): WishlistMapItem[] {
+    const byId = new Map<string, WishlistMapItem>();
+    for (const src of sources) {
+        for (const it of src.items) {
+            if (it.count < opts.minCount) continue;
+            const r = it.restaurant;
+            if (r?.lat == null || r?.lng == null) continue;
+            const prior = byId.get(r.id);
+            if (prior && (prior.overlap?.count ?? 0) >= it.count) continue; // keep max; tie → first
+            byId.set(r.id, {
+                id: r.id,
+                name: r.name,
+                city: r.city,
+                cuisine: r.cuisine,
+                lat: r.lat,
+                lng: r.lng,
+                priceLevel: r.price_level ?? null,
+                overlap: {
+                    count: it.count,
+                    tableId: src.tableId,
+                    tableName: src.tableName,
+                    members: it.members,
+                },
+            });
+        }
+    }
+    return [...byId.values()];
+}
+
+/**
+ * Discover dedupe: overlap WINS over network per restaurant id (one marker per
+ * restaurant; overlap is the rarer/stronger signal — AC4). Seed with network,
+ * overwrite with overlap. Pure — the render never sees two items for one id.
+ */
+export function mergeDiscoverItems(
+    overlap: WishlistMapItem[],
+    network: WishlistMapItem[],
+): WishlistMapItem[] {
+    const byId = new Map<string, WishlistMapItem>();
+    for (const n of network) byId.set(n.id, n);
+    for (const o of overlap) byId.set(o.id, o); // overlap wins
+    return [...byId.values()];
 }
 
 // ── Discover people picker (TICKET-137) ────────────────────────────────────────

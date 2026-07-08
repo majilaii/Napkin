@@ -125,6 +125,19 @@ export interface WishlistMapItem {
     hasReview?: boolean;
     /** Other distinct followees who also logged here; >0 → "+N others". */
     othersCount?: number;
+    /**
+     * TICKET-138: a restaurant saved by 2+ members of one of the viewer's tables
+     * (table-inclusive count). Presence ranks ABOVE network in BubblePin: amber
+     * count bubble, no avatar chip, no loved heart. `members` is the ≤5 stack the
+     * peek renders. `count===1` (TICKET-139 saved layer) renders as a plain
+     * terracotta save bubble; `count>=2` is the amber count face.
+     */
+    overlap?: {
+        count: number;
+        tableId: string;
+        tableName: string;
+        members: { user_id: string; display_name: string | null; avatar_url: string | null }[];
+    } | null;
 }
 
 type LocationStatus = 'idle' | 'pending' | 'granted' | 'denied';
@@ -177,6 +190,13 @@ interface Props {
         savedIds: ReadonlySet<string>;
         onSave: (item: WishlistMapItem) => void;
     };
+    /**
+     * TICKET-138: "gather here" on an overlap peek card. Fired only by overlap
+     * cards (the peek gates the pill on `item.overlap`); the screen mounts the
+     * existing GatherSheet prefilled with the restaurant + the overlap's table.
+     * Absent → no gather pill (network / been / mine cards never call it).
+     */
+    onGather?: (item: WishlistMapItem) => void;
     /**
      * TICKET-131: renders the top-right Filter chip when present; opens the
      * screen-owned FilterTabsSheet (wishlist). Absent (dining-map) → chip hidden.
@@ -299,13 +319,23 @@ function BubblePin({
 }) {
     const isDark = palette !== Colors.light;
     const isNetwork = item.entryId != null;
-    const ringColor = isNetwork
-        ? isDark
-            ? INK_RING_DARK
-            : INK_RING_LIGHT
-        : item.been
-          ? palette.secondary
-          : palette.primary;
+    // TICKET-138: overlap ranks ABOVE network. `count>=2` is the amber count
+    // face; a single (count 1, TICKET-139 saved layer) renders as a plain
+    // terracotta save bubble (cuisine glyph / list emoji, terracotta ring).
+    const isOverlap = item.overlap != null;
+    const overlapCount = item.overlap?.count ?? 0;
+    const isCountBubble = isOverlap && overlapCount >= 2;
+    const ringColor = isCountBubble
+        ? palette.tertiary // amber count ring (138 overlap)
+        : isOverlap
+          ? palette.primary // single (count 1) = terracotta save ring
+          : isNetwork
+            ? isDark
+                ? INK_RING_DARK
+                : INK_RING_LIGHT
+            : item.been
+              ? palette.secondary
+              : palette.primary;
     const rating = isNetwork ? item.rating : item.myRating;
     const loved = rating != null && rating >= LOVED_MIN && (isNetwork || !!item.been);
     const size = selected ? 38 : 32;
@@ -333,7 +363,19 @@ function BubblePin({
                     },
                 ]}
             >
-                {item.emoji ? (
+                {isCountBubble ? (
+                    // Brand numerals — Newsreader italic, amber (138 overlap count).
+                    <Text
+                        style={{
+                            fontFamily: 'Newsreader_500Medium_Italic',
+                            fontSize: selected ? 18 : 15,
+                            color: palette.tertiary,
+                            includeFontPadding: false,
+                        }}
+                    >
+                        {overlapCount}
+                    </Text>
+                ) : item.emoji ? (
                     <Text style={{ fontSize: selected ? 17 : 15, includeFontPadding: false }}>
                         {item.emoji}
                     </Text>
@@ -534,6 +576,7 @@ export function WishlistMapView({
     onSwitchToList,
     sources,
     save,
+    onGather,
     onOpenFilters,
     filtersActive,
     peopleChip,
@@ -864,7 +907,8 @@ export function WishlistMapView({
                         // Layer-qualified key: the same restaurant can appear in
                         // several layers — remounting per layer re-arms each
                         // marker's tracksViewChanges window for the new pin shape.
-                        key={`${item.entryId != null ? 'n' : item.been ? 'b' : 's'}:${item.id}`}
+                        // `o:` = overlap count bubble (TICKET-138) ranks first.
+                        key={`${item.overlap != null ? 'o' : item.entryId != null ? 'n' : item.been ? 'b' : 's'}:${item.id}`}
                         item={item}
                         selected={selectedId === item.id}
                         palette={palette}
@@ -1002,6 +1046,7 @@ export function WishlistMapView({
                     onOpenRestaurant={onOpenRestaurant}
                     onOpenReview={onOpenReview}
                     save={save}
+                    onGather={onGather}
                 />
             ) : null}
         </View>
@@ -1026,6 +1071,8 @@ interface PeekCarouselProps {
     /** TICKET-124: review-eligible network cards tap through to the review. */
     onOpenReview?: (entryId: string) => void;
     save?: Props['save'];
+    /** TICKET-138: overlap cards' "gather here". */
+    onGather?: Props['onGather'];
 }
 
 function PeekCarousel({
@@ -1039,6 +1086,7 @@ function PeekCarousel({
     onOpenRestaurant,
     onOpenReview,
     save,
+    onGather,
 }: PeekCarouselProps) {
     const listRef = useRef<FlatList<WishlistMapItem>>(null);
     const slide = useRef(new Animated.Value(48)).current;
@@ -1059,8 +1107,12 @@ function PeekCarousel({
     // sized to its content sum — pad 18 + plate row 46 + gaps/who/note 43 +
     // actions 43 = 150 — plus 2px slack for device font metrics (review P2-5;
     // 146 measured ~4px under and bled into the action gap).
-    const isNetworkLayer = items.some((i) => i.entryId != null);
-    const cardH = isNetworkLayer ? 152 : 108;
+    // TICKET-138: overlap cards carry a who-row + actions like network cards, so
+    // they take the taller 152 height. Discover MIXES overlap + network in one
+    // array → the height must be uniform across the whole rail (a per-item height
+    // would desync the snap math).
+    const isTallLayer = items.some((i) => i.entryId != null || i.overlap != null);
+    const cardH = isTallLayer ? 152 : 108;
 
     // Mount at the tapped pin's card (getItemLayout makes initialScrollIndex
     // cheap). Captured once — later selection changes scroll, not remount.
@@ -1155,6 +1207,7 @@ function PeekCarousel({
                         onOpenRestaurant={onOpenRestaurant}
                         onOpenReview={onOpenReview}
                         save={save}
+                        onGather={onGather}
                     />
                 )}
             />
@@ -1179,6 +1232,7 @@ interface PeekCardBodyProps {
     onOpenRestaurant: (restaurantId: string) => void;
     onOpenReview?: (entryId: string) => void;
     save?: Props['save'];
+    onGather?: Props['onGather'];
 }
 
 function PeekCardBody({
@@ -1189,8 +1243,13 @@ function PeekCardBody({
     onOpenRestaurant,
     onOpenReview,
     save,
+    onGather,
 }: PeekCardBodyProps) {
     const isNetwork = item.entryId != null;
+    // TICKET-138 overlap card ("N of you saved this" + gather here). Additive
+    // variant — 135's card architecture + 137's density stay.
+    const isOverlap = item.overlap != null;
+    const overlapCount = item.overlap?.count ?? 0;
     // TICKET-137: the Save pill now OPENS the shared save sheet (AddToListSheet —
     // wishlist / list / unsave), so the button no longer owns an optimistic flip.
     // Saved state reads straight from the screen's wishlist set, which the sheet's
@@ -1204,13 +1263,16 @@ function PeekCardBody({
     const visits =
         !isNetwork && item.been && (item.visitCount ?? 0) > 1 ? `${item.visitCount} visits` : null;
     const meta = (
-        isNetwork
-            ? [item.cuisine, distanceLabel ?? item.city]
-            : [item.cuisine, price, distanceLabel ?? item.city, visits]
+        isOverlap
+            ? [item.cuisine, price, distanceLabel ?? item.city]
+            : isNetwork
+              ? [item.cuisine, distanceLabel ?? item.city]
+              : [item.cuisine, price, distanceLabel ?? item.city, visits]
     )
         .filter(Boolean)
         .join(' · ');
 
+    // No numeral on overlap (no rating).
     const rating = isNetwork ? item.rating : item.been ? item.myRating : null;
 
     // Body tap keeps the TICKET-124 routing: review-eligible network log → the
@@ -1281,6 +1343,21 @@ function PeekCardBody({
                         </Text>
                     </View>
                 ) : null}
+
+                {/* Overlap: "N of you saved this" (≥2) / "«Name» saved this" (1). */}
+                {isOverlap ? (
+                    <View style={styles.peekWhoRow}>
+                        <PeekAvatarStack members={item.overlap!.members} palette={palette} />
+                        <Text
+                            style={[styles.peekWhoText, { color: palette.textSecondary }]}
+                            numberOfLines={1}
+                        >
+                            {overlapCount >= 2
+                                ? `${overlapCount} of you saved this`
+                                : `${item.overlap!.members[0]?.display_name ?? 'Someone'} saved this`}
+                        </Text>
+                    </View>
+                ) : null}
                 {note ? (
                     <Text style={[styles.peekNote, { color: palette.textSecondary }]} numberOfLines={1}>
                         {`— ${note}`}
@@ -1301,6 +1378,23 @@ function PeekCardBody({
                     <Text style={[styles.viewVenueLabel, { color: palette.text }]}>view restaurant</Text>
                     <Ionicons name="arrow-forward" size={13} color={palette.text} />
                 </Pressable>
+
+                {/* Overlap card: "gather here" (terracotta, lowercase verb) →
+                    the screen's GatherSheet, prefilled with the overlap's table. */}
+                {isOverlap && onGather ? (
+                    <Pressable
+                        onPress={() => onGather(item)}
+                        accessibilityRole="button"
+                        accessibilityLabel="gather here"
+                        style={({ pressed }) => [
+                            styles.sidePill,
+                            { backgroundColor: palette.primary, opacity: pressed ? 0.9 : 1 },
+                        ]}
+                    >
+                        <Ionicons name="calendar-outline" size={15} color="#fff" />
+                        <Text style={[styles.sidePillLabel, { color: '#fff' }]}>gather here</Text>
+                    </Pressable>
+                ) : null}
 
                 {isNetwork && save ? (
                     <Pressable
@@ -1326,7 +1420,8 @@ function PeekCardBody({
                     </Pressable>
                 ) : null}
 
-                {!isNetwork ? (
+                {/* Directions — mine layer only (not network / overlap). */}
+                {!isNetwork && !isOverlap ? (
                     <Pressable
                         onPress={() => openDirections(item)}
                         accessibilityRole="button"
@@ -1366,6 +1461,59 @@ function PeekWhoAvatar({
             <Text style={[styles.peekWhoInitial, { color: palette.text }]}>
                 {(name.trim()[0] ?? '?').toUpperCase()}
             </Text>
+        </View>
+    );
+}
+
+/**
+ * ≤5 overlapping 16px avatars — the overlap "N of you saved this" (TICKET-138)
+ * and been-together participant (TICKET-139) stack. Image, or initial on the
+ * seeded tint (matches the pin chip / PeekWhoAvatar). The data already caps at 5.
+ */
+function PeekAvatarStack({
+    members,
+    palette,
+}: {
+    members: { user_id: string; display_name: string | null; avatar_url: string | null }[];
+    palette: typeof Colors.light;
+}) {
+    const shown = members.slice(0, 5);
+    if (shown.length === 0) return null;
+    const STEP = 11;
+    return (
+        <View style={[styles.peekStack, { width: 16 + (shown.length - 1) * STEP }]}>
+            {shown.map((m, i) => {
+                const name = m.display_name ?? 'Member';
+                const tint = avatarTintFor(m.user_id || name, palette);
+                return (
+                    <View
+                        key={m.user_id || i}
+                        style={[
+                            styles.peekStackCell,
+                            { left: i * STEP, zIndex: shown.length - i, borderColor: palette.surfaceContainerLow },
+                        ]}
+                    >
+                        {m.avatar_url ? (
+                            <ExpoImage
+                                source={{ uri: m.avatar_url }}
+                                style={styles.peekStackImg}
+                                contentFit="cover"
+                            />
+                        ) : (
+                            <View
+                                style={[
+                                    styles.peekStackImg,
+                                    { backgroundColor: tint, alignItems: 'center', justifyContent: 'center' },
+                                ]}
+                            >
+                                <Text style={[styles.peekWhoInitial, { color: palette.text }]}>
+                                    {(name.trim()[0] ?? '?').toUpperCase()}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                );
+            })}
         </View>
     );
 }
@@ -1605,6 +1753,25 @@ const styles = StyleSheet.create({
         height: 16,
         borderRadius: 8,
         overflow: 'hidden',
+    },
+    // Overlapping ≤5 avatar stack (overlap / been-together who-rows).
+    peekStack: {
+        height: 16,
+        position: 'relative',
+    },
+    peekStackCell: {
+        position: 'absolute',
+        top: 0,
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        borderWidth: 1.5,
+        overflow: 'hidden',
+    },
+    peekStackImg: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 8,
     },
     peekWhoInitial: {
         fontFamily: 'Manrope_600SemiBold',

@@ -67,7 +67,11 @@ import {
     peopleFromItems,
     filterByCheckedPeople,
     peopleChipLabel,
+    overlapToMapItems,
+    mergeDiscoverItems,
 } from '@/components/wishlist/mapItems';
+import { useTablesOverlap } from '@/hooks/wishlist/useTablesOverlap';
+import { GatherSheet } from '@/components/gatherings';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
@@ -407,6 +411,10 @@ export default function WishlistScreen() {
     // launch). Replaces the old friend rail's null=all/toggle-off-to-hide model.
     const [checkedPeople, setCheckedPeople] = useState<Set<string>>(new Set());
     const [peopleSheetOpen, setPeopleSheetOpen] = useState(false);
+    // TICKET-138: "gather here" on an overlap peek → GatherSheet, prefilled with
+    // the restaurant + the overlap's max-count table. The 409 ALREADY_PROPOSED
+    // path is owned inside GatherSheet (Alert), exactly as the restaurant page.
+    const [gatherItem, setGatherItem] = useState<WishlistMapItem | null>(null);
     const handleMapSource = useCallback((key: string) => {
         const next = key as 'your' | 'discover';
         setMapSource(next);
@@ -414,6 +422,10 @@ export default function WishlistScreen() {
     }, []);
     const { data: beenSpots } = useUserSpots(user?.id);
     const { data: networkPins } = useNetworkMapPins(networkArmed ? user?.id : null);
+    // TICKET-138: table overlap pins on Discover — per-table `list_table` fan-out,
+    // armed together with the network layer (first Discover select). Zero-table
+    // users fetch nothing (the hook gates useTables + the fan-out on `enabled`).
+    const { sources: overlapSources } = useTablesOverlap(user?.id, { enabled: networkArmed });
     // Watch position live while sorting by nearest or viewing the map, so distances
     // re-rank as you walk (Amsterdam-stroll fix) instead of freezing until restart.
     const { coords, status: locationStatus, request: requestLocation } = useNearbyLocation({
@@ -590,10 +602,25 @@ export default function WishlistScreen() {
     // reuses useNetworkMapPins). "Everyone you follow who has pins."
     const discoverPeople = useMemo(() => peopleFromItems(networkItems), [networkItems]);
 
+    // Table overlap items (≥2 members saved) — amber count bubbles, max-count
+    // table winning per restaurant. The active cuisine filter applies (same as the
+    // network layer). TICKET-138.
+    const overlapItems = useMemo(
+        () => filterItemsByCuisine(overlapToMapItems(overlapSources, { minCount: 2 }), cuisineFilter),
+        [overlapSources, cuisineFilter],
+    );
+
     // Discover: network pins EXCLUSIVE-include filtered by the picker (empty = all).
+    // People filter OFF → overlap + network merged (overlap wins the dedupe);
+    // ON → network only. An exclusive-include promises "only these people", which
+    // table overlap pins would break (TICKET-138) — so they hide whenever the
+    // checked set is non-empty.
     const discoverItems = useMemo(
-        () => filterByCheckedPeople(networkItems, checkedPeople),
-        [networkItems, checkedPeople],
+        () =>
+            checkedPeople.size === 0
+                ? mergeDiscoverItems(overlapItems, filterByCheckedPeople(networkItems, checkedPeople))
+                : filterByCheckedPeople(networkItems, checkedPeople),
+        [overlapItems, networkItems, checkedPeople],
     );
 
     const activeMapItems = mapSource === 'discover' ? discoverItems : yourItems;
@@ -738,6 +765,9 @@ export default function WishlistScreen() {
             }
             // Save-from-the-map (#167): Discover peek cards render a Save pill.
             save={{ savedIds: savedRestaurantIds, onSave: handleMapSave }}
+            // TICKET-138: overlap peek cards render "gather here" (only overlap
+            // items call this; reachable on Discover with the people filter off).
+            onGather={(item) => setGatherItem(item)}
             onOpenFilters={() => setFiltersOpen(true)}
             filtersActive={mapFiltersActive}
             chromeTopOffset={insets.top + 8}
@@ -1021,6 +1051,20 @@ export default function WishlistScreen() {
                 showWishlist
                 isWishlisted={saveSheetSaved}
                 onToggleWishlist={handleToggleSaveSheetWishlist}
+            />
+
+            {/* TICKET-138: "gather here" from an overlap peek → propose a date to
+                the overlap's table. No photo_url (banned Places hero); the 409
+                ALREADY_PROPOSED case is owned inside GatherSheet (Alert). */}
+            <GatherSheet
+                visible={gatherItem !== null}
+                onClose={() => setGatherItem(null)}
+                restaurant={{
+                    id: gatherItem?.id,
+                    name: gatherItem?.name ?? '',
+                    city: gatherItem?.city ?? null,
+                }}
+                tableId={gatherItem?.overlap?.tableId ?? null}
             />
         </View>
     );
