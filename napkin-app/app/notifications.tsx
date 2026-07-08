@@ -419,7 +419,26 @@ function NotificationRow({
                     />
                 );
             }
-            // declined / expired → quiet muted row (always read tone).
+            if (n.invitationStatus === 'declined') {
+                // declined → quiet muted row (always read tone).
+                return (
+                    <NotifRow
+                        tone="read"
+                        onPress={onPress}
+                        leading={<NotifAvatar name={n.actor.name} src={n.actor.avatarUrl} />}
+                        title={
+                            <>
+                                {'declined '}
+                                <I>{n.tableName}</I>
+                                {'.'}
+                            </>
+                        }
+                        time={n.timeLabel}
+                    />
+                );
+            }
+            // expired → its own quiet line, same treatment as declined (a future
+            // expiry job must not mislabel unanswered invites as "declined").
             return (
                 <NotifRow
                     tone="read"
@@ -427,9 +446,8 @@ function NotificationRow({
                     leading={<NotifAvatar name={n.actor.name} src={n.actor.avatarUrl} />}
                     title={
                         <>
-                            {'declined '}
+                            {'invite expired · '}
                             <I>{n.tableName}</I>
-                            {'.'}
                         </>
                     }
                     time={n.timeLabel}

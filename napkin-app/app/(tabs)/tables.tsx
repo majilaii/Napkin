@@ -617,10 +617,12 @@ export default function TablesScreen() {
                             memberCount={members?.length ?? 0}
                             onInvite={async () => {
                                 // One invite flow (2026-07-03): the AddMemberSheet
-                                // seats mutuals directly and carries the share-link
-                                // row for friends not on Napkin yet. Founder = owner
-                                // on a brand-new table; non-owner members mint + share
-                                // the real join link (any member can mint).
+                                // sends PENDING invitations to mutuals (TICKET-133 —
+                                // they seat themselves on accept) and carries the
+                                // share-link row for friends not on Napkin yet.
+                                // Founder = owner on a brand-new table; non-owner
+                                // members mint + share the real join link (any
+                                // member can mint).
                                 if (activeTable.owner_id === user?.id) {
                                     setShowAddMember(true);
                                     return;
