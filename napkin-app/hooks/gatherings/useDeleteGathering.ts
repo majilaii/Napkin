@@ -49,6 +49,9 @@ export function useDeleteGathering() {
             // The upcoming strip also drops the deleted row (and its day-of reminder
             // reconciles away on the refetch) — nudge it, narrow to this table.
             qc.invalidateQueries({ queryKey: queryKeys.gatherings.upcoming(input.table_id) });
+            // Drop the detail cache so /gathering/[id] can't re-render the deleted
+            // row as live (a re-entry re-fetches → get 404 → not-available).
+            qc.removeQueries({ queryKey: queryKeys.gatherings.detail(input.gathering_id) });
         },
         onError: (error, input) => {
             // No optimistic patch to roll back — but a drift refusal means the

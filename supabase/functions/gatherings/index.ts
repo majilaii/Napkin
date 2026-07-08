@@ -43,6 +43,12 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
+import {
+    buildGatheringCard,
+    type ProfileInput,
+    type RsvpInput,
+    type SourceInput,
+} from './buildCard.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -138,6 +144,9 @@ serve(async (req) => {
 
         if (action === 'create') {
             return await handleCreate(supabase, user, body);
+        }
+        if (action === 'get') {
+            return await handleGet(supabase, user, body);
         }
         if (action === 'rsvp') {
             return await handleRsvp(supabase, user, body);
@@ -248,6 +257,106 @@ async function handleCreate(
     }
 
     return json(gathering);
+}
+
+// ── Action: get ────────────────────────────────────────────────────────────────
+// Single-gathering read (TICKET-136) — backs /gathering/[id] deep-link + reconcile.
+// Returns the EXACT GatheringCardActivity shape the feed card consumes, assembled
+// as a faithful single-row parallel of table-activity's batched hydration (see
+// buildCard.ts for the 7-point parity contract). Member-gated (member_id doctrine).
+//   • missing row OR status === 'cancelled' → 404 NOT_FOUND (cancelled never
+//     reaches the client — mirrors the feed exclusion, keeps the status union
+//     proposed|dispatched|expired so the shape stays byte-identical).
+//   • non-member → 403 FORBIDDEN.
+async function handleGet(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: any,
+    user: { id: string },
+    body: Record<string, unknown>,
+): Promise<Response> {
+    const gatheringId = body.gathering_id;
+    if (typeof gatheringId !== 'string' || !UUID_RE.test(gatheringId)) {
+        return err('INVALID_INPUT', 'gathering_id is required');
+    }
+
+    // Anchor row — read directly (NO RPC), same columns the card needs.
+    const { data: row, error: rowErr } = await supabase
+        .from('gatherings')
+        .select('id, table_id, restaurant_id, host_user_id, note, gather_on, status, supper_id, rescheduled_from, created_at')
+        .eq('id', gatheringId)
+        .maybeSingle();
+    if (rowErr) throw rowErr;
+    // Cancelled rows never reach the client (matches the feed exclusion).
+    if (!row || row.status === 'cancelled') {
+        return err('NOT_FOUND', 'Gathering not found', 404);
+    }
+
+    if (!(await isTableMember(supabase, row.table_id, user.id))) {
+        return err('FORBIDDEN', 'Not a member of this table', 403);
+    }
+
+    // RSVPs for this one gathering (counter_on rides along for the counters row +
+    // the 'counter' seat response).
+    const { data: rsvpRows } = await supabase
+        .from('gathering_rsvps')
+        .select('user_id, response, counter_on')
+        .eq('gathering_id', gatheringId);
+    const rsvps = ((rsvpRows ?? []) as RsvpInput[]).map((r) => ({
+        user_id: r.user_id,
+        response: r.response,
+        counter_on: r.counter_on ?? null,
+    }));
+
+    // Current roster — member_id doctrine (NEVER tm.user_id).
+    const { data: rosterRows } = await supabase
+        .from('table_members')
+        .select('member_id')
+        .eq('table_id', row.table_id);
+    const rosterIds = ((rosterRows ?? []) as { member_id: string }[]).map((m) => m.member_id);
+
+    // Profiles: roster + host (a host may have LEFT the table — still named).
+    const profileIds = [
+        ...new Set([...rosterIds, ...(row.host_user_id ? [row.host_user_id] : [])]),
+    ];
+    const { data: profileRows } = profileIds.length > 0
+        ? await supabase
+            .from('profiles')
+            .select('user_id, display_name, avatar_url')
+            .in('user_id', profileIds)
+        : { data: [] as ProfileInput[] };
+    const profMap = new Map(
+        ((profileRows ?? []) as ProfileInput[]).map((p) => [p.user_id, p]),
+    );
+
+    // Restaurant.
+    let restaurant = null;
+    if (row.restaurant_id) {
+        const { data: restRow } = await supabase
+            .from('restaurants')
+            .select('id, name, city, photo_url')
+            .eq('id', row.restaurant_id)
+            .maybeSingle();
+        restaurant = restRow ?? null;
+    }
+
+    // Source ("why this place?"): the HOST's own wishlist source for this spot.
+    // Looked up on the (host, restaurant) composite key — never a bare restaurant
+    // match, so a different gathering's host source can't leak.
+    let source: SourceInput | undefined;
+    if (row.host_user_id && row.restaurant_id) {
+        const { data: srcRow } = await supabase
+            .from('wishlist_items')
+            .select('source')
+            .eq('user_id', row.host_user_id)
+            .eq('restaurant_id', row.restaurant_id)
+            .maybeSingle();
+        if (srcRow?.source && typeof srcRow.source === 'object') {
+            source = srcRow.source as SourceInput;
+        }
+    }
+
+    const card = buildGatheringCard(row, rsvps, rosterIds, profMap, restaurant, source, user.id);
+    return json(card);
 }
 
 // ── Action: rsvp ──────────────────────────────────────────────────────────────

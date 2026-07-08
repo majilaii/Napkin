@@ -250,8 +250,11 @@ export const queryKeys = {
     // Gatherings — future "gather the table" plans (TICKET-095 / TICKET-128).
     // `upcoming` feeds the Table-screen upcoming strip: proposed + dispatched
     // rows with gather_on >= today, ascending. Short staleTime — dates matter.
+    // `detail` (TICKET-136) is the single-gathering read backing /gathering/[id];
+    // it seeds from the feed cache and reconciles via the `get` edge action.
     gatherings: {
         upcoming: (tableId: string) => ['gatherings', 'upcoming', tableId] as const,
+        detail: (id: string) => ['gatherings', 'detail', id] as const,
     },
 
     // Suppers — shared-table meal posts (TICKET-082). A Supper is an `entries`

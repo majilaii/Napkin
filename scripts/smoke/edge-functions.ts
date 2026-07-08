@@ -241,6 +241,25 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-136: gatherings action=get bogus id → HTTP 404 (missing-row / not-found
+    // gate). Mirrors the supper-detail bogus-id smoke: a random UUID is never a
+    // gathering the SMOKE_TEST_JWT user can read, so the single-row read path
+    // (parse + gatherings/gathering_rsvps/table_members/profiles schema hits) is
+    // exercised and the missing row denies with NOT_FOUND. A 500 here means the
+    // read assembly or a table/column drifted — exactly what this guard catches.
+    {
+        name: 'gatherings?action=get bogus id → 404 not-found gate (TICKET-136)',
+        method: 'POST',
+        fn: 'gatherings',
+        body: { action: 'get', gathering_id: '00000000-0000-0000-0000-000000000000' },
+        expectedStatus: 404,
+        shape: (json) => {
+            const err = (json as { error?: { code?: string } }).error;
+            if (!err) return 'missing error envelope';
+            if (err.code !== 'NOT_FOUND') return `expected error.code NOT_FOUND, got ${err.code}`;
+            return null;
+        },
+    },
     // TICKET-098 Phase B + TICKET-102 + TICKET-114 v2: two-mode rail read path.
     // [ARCH-REVIEW-5] assert Array.isArray on BOTH rows AND fallback ONLY — an
     // empty array is the legitimate below-floor state for each mode (rows: <3
