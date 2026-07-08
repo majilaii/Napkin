@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { cuisineGlyph, tintIndex } from '@/lib/cuisineGlyph';
+import { cuisineGlyph, tintIndex } from '@/lib/engraving';
 
 type Palette = typeof Colors.light;
 

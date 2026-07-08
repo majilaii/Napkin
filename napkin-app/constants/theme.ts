@@ -66,6 +66,16 @@ export const Colors = {
     // Cream — ambient backgrounds on elevated/hero surfaces
     cream: '#f6ecd9',
 
+    // Plate tints (TICKET-146 engraving system) — 6 warm tonal creams for the
+    // Top-4 marquee plates + future crest. Assigned by tintFor(restaurant_id).
+    // Never per-item; stay in the warm-paper family.
+    plateAmber: '#f4e6cd',
+    plateOlive: '#e6ead5',
+    plateRose: '#f2e3da',
+    plateGrey: '#eae6dc',
+    plateSlate: '#e3e8e4',
+    plateSand: '#f0e8d6',
+
     // Overlay variants
     overlayPhoto: 'rgba(0, 0, 0, 0.35)',
     overlayHeavy: 'rgba(0, 0, 0, 0.6)',
@@ -146,6 +156,14 @@ export const Colors = {
     sanguineOnCream: '#fff0e0',
 
     cream: '#3a3025',
+
+    // Plate tints (TICKET-146) — muted dark equivalents, same order as light.
+    plateAmber: '#2f2a22',
+    plateOlive: '#282c22',
+    plateRose: '#2e2724',
+    plateGrey: '#272420',
+    plateSlate: '#232825',
+    plateSand: '#2c2820',
 
     overlayPhoto: 'rgba(0, 0, 0, 0.5)',
     overlayHeavy: 'rgba(0, 0, 0, 0.75)',

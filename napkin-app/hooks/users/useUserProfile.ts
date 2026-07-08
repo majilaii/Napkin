@@ -83,6 +83,8 @@ export type TopPick = {
     restaurant_id: string;
     name: string;
     city: string | null;
+    /** TICKET-146: marquee-plate mark seed (engraving registry). null → monogram. */
+    cuisine: string | null;
     photo_url: string | null;
     max_rating: number | null;
     visit_count: number;

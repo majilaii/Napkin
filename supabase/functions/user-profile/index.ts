@@ -116,6 +116,8 @@ type TopPick = {
     restaurant_id: string;
     name: string;
     city: string | null;
+    // TICKET-146: drives the marquee-plate mark (engraving registry). null → monogram.
+    cuisine: string | null;
     photo_url: string | null;
     // null when the viewer has no non-private rating for a curated pick.
     max_rating: number | null;
@@ -547,7 +549,7 @@ async function buildPicksFromIds(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, photo_url')
+        .select('id, name, city, cuisine, photo_url')
         .in('id', orderedIds);
     if (restErr) throw restErr;
 
@@ -561,6 +563,7 @@ async function buildPicksFromIds(
                 restaurant_id: rid,
                 name: rest.name,
                 city: rest.city ?? null,
+                cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
                 max_rating: a ? a.max_rating : null,
                 visit_count: a ? a.visit_count : 0,
@@ -663,7 +666,7 @@ async function fetchTopFour(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, photo_url')
+        .select('id, name, city, cuisine, photo_url')
         .in('id', ranked.map((r) => r.restaurant_id));
     if (restErr) throw restErr;
 
@@ -676,6 +679,7 @@ async function fetchTopFour(
                 restaurant_id: r.restaurant_id,
                 name: rest.name,
                 city: rest.city ?? null,
+                cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
                 max_rating: r.max_rating,
                 visit_count: r.visit_count,
