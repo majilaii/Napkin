@@ -31,6 +31,13 @@ export function spotsToMapItems(spots: SpotSummary[] | null | undefined): Wishli
             lat: s.lat!,
             lng: s.lng!,
             been: true,
+            // Peek-card + pin enrichment (map-card-pin pass, 2026-07-08):
+            // $$ meta, rating numeral + loved-heart badge, visit count.
+            // Deliberately NO photo: SpotSummary.photo_url mirrors
+            // restaurants.photo_url = a Places hero photo (banned surface).
+            priceLevel: s.price_level,
+            myRating: s.avg_rating,
+            visitCount: s.visit_count,
         }));
 }
 

@@ -49,6 +49,7 @@ import {
 } from '@/components/wishlist';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
+import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { useHasImported } from '@/hooks/wishlist/useHasImported';
 import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
@@ -337,6 +338,20 @@ export default function WishlistScreen() {
         [allItems],
     );
 
+    // Save-from-the-map (network layer peek cards). Loaded pages are enough:
+    // a stale miss just shows "Save" and the add is idempotent server-side.
+    const wishlistAdd = useWishlistAdd(user?.id);
+    const savedRestaurantIds = useMemo(
+        () => new Set(allItems.map((i) => i.restaurant?.id).filter((id): id is string => !!id)),
+        [allItems],
+    );
+    const handleMapSave = useCallback(
+        (item: WishlistMapItem) => {
+            wishlistAdd.mutate({ restaurant_id: item.id });
+        },
+        [wishlistAdd],
+    );
+
     // ── Wishlist Redesign: Pinned ↔ Lists segmented tab ──────────────────────
     const [activeTab, setActiveTab] = useState<'pinned' | 'lists'>('pinned');
 
@@ -577,6 +592,10 @@ export default function WishlistScreen() {
     // The "Filters" trigger shows an active dot when any filter (or, in list
     // mode, the near sort) is engaged — the tabbed sheet carries the detail.
     const filtersActive = hasActiveFilters || (viewMode === 'list' && sortMode === 'near');
+    // Map chip dot follows the ACTIVE layer: Been/Network only honor the
+    // cuisine filter (city/price stay saved-only), so only cuisine lights it
+    // there — a lit dot for a filter that can't apply reads as a bug.
+    const mapFiltersActive = mapSource === 'saved' ? hasActiveFilters : !!cuisineFilter;
 
     // One trigger replaces the pill-per-sheet strip. List mode only since
     // TICKET-131 — map mode's trigger is the frosted Filter chip floating on the
@@ -715,8 +734,9 @@ export default function WishlistScreen() {
                                 value: mapSource,
                                 onChange: handleMapSource,
                             }}
+                            save={{ savedIds: savedRestaurantIds, onSave: handleMapSave }}
                             onOpenFilters={() => setFiltersOpen(true)}
-                            filtersActive={filtersActive}
+                            filtersActive={mapFiltersActive}
                             palette={palette}
                         />
                     </View>
