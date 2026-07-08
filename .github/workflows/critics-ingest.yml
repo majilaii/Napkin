@@ -47,10 +47,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # v2 matches prod-deploy/scheduled-smoke (PR #121) — the repo's deno.lock
+      # is lockfile v5, which Deno 1.x can't parse (every run died 2026-07-08).
       - name: Set up Deno
-        uses: denoland/setup-deno@v1
+        uses: denoland/setup-deno@v2
         with:
-          deno-version: v1.x
+          deno-version: v2.x
 
       - name: Resolve mode
         id: mode
