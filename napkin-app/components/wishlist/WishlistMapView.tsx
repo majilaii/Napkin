@@ -519,9 +519,10 @@ export function WishlistMapView({
     const iosGoogleTiles =
         Platform.OS === 'ios' && Constants.expoConfig?.extra?.hasGoogleMapsIosKey === true;
     const googleTiles = Platform.OS === 'android' || iosGoogleTiles;
-    // Vellum wash — Apple-Maps-only warm tint (TICKET-057 idiom), light scheme
-    // only (dark tiles don't want a cream veil).
-    const showVellumWash = Platform.OS === 'ios' && !iosGoogleTiles && !isDark;
+    // Vellum wash — Apple-Maps-only warm tint (TICKET-057 idiom). The tiles are
+    // pinned light (userInterfaceStyle below), so the wash applies regardless
+    // of the app scheme — there are no dark tiles to veil anymore.
+    const showVellumWash = Platform.OS === 'ios' && !iosGoogleTiles;
 
     // Frost family for the floating chrome. Light = scrimFrost token; dark pair
     // is inline by design (no new theme tokens — TICKET-131).
@@ -768,6 +769,11 @@ export function WishlistMapView({
                 // and the vellum wash below warms it.
                 mapType={googleTiles ? 'standard' : 'mutedStandard'}
                 customMapStyle={googleTiles ? heirloomMapStyle : undefined}
+                // The map NEVER goes dark (founder, 2026-07-08; TICKET-134 ⑧:
+                // the map reads as a paper object). Apple tiles follow the
+                // SYSTEM appearance — not our light-forced palette — so system
+                // dark mode was swapping grey tiles under the cream chrome.
+                userInterfaceStyle="light"
                 initialRegion={initialRegion}
                 showsPointsOfInterest={false}
                 showsCompass={false}
