@@ -6,7 +6,8 @@
  * (Mine · Network):
  *   - source pills float top-LEFT on the glass (frosted segmented)
  *   - optional Filter chip top-RIGHT (opens the screen-owned FilterTabsSheet)
- *   - locate FAB bottom-RIGHT, List pill bottom-LEFT — both frosted, both clear
+ *   - locate FAB stacked above the List pill, both bottom-RIGHT (corner law v2,
+ *     TICKET-137); people chip bottom-LEFT (Discover) — all frosted, all clear
  *     of the floating bottom nav (TICKET-130)
  *   - pins (map-card-pin pass, 2026-07-08): ONE bubble grammar for every layer —
  *     the bubble carries the WHAT (cuisine glyph, or the owning list's emoji),
@@ -146,9 +147,10 @@ interface Props {
      * instead of to the restaurant page. Mine-mode consumers omit it.
      */
     onOpenReview?: (entryId: string) => void;
-    /** Switch back to the list view — frosted List pill, bottom-LEFT. Optional —
-     * screens with their own chrome (dining map, TICKET-092) omit it and the
-     * pill hides. */
+    /** Switch back to the list view — frosted List pill, bottom-RIGHT (below the
+     * locate FAB; corner law v2, TICKET-137). Optional — screens with their own
+     * chrome (dining map, TICKET-092) omit it: the pill hides AND the FAB drops
+     * to the corner position (no stack offset over a pill that isn't there). */
     onSwitchToList?: () => void;
     /**
      * TICKET-131: source pills — frosted segmented control floating top-LEFT on
@@ -768,8 +770,8 @@ export function WishlistMapView({
             </Pressable>
         ) : null;
 
-    // ── List pill — bottom-left, frosted. Also in both branches (same review
-    // finding: an empty layer must not strand you on the map).
+    // ── List pill — bottom-right, frosted (corner law v2). Also in both branches
+    // (same review finding: an empty layer must not strand you on the map).
     const renderListPill = (visible: boolean) =>
         visible && onSwitchToList ? (
             <Pressable
@@ -911,8 +913,10 @@ export function WishlistMapView({
             ) : null}
 
             {/* Locate FAB — bottom-RIGHT, stacked directly ABOVE the List pill
-                (corner law v2, TICKET-137). Clear of the floating nav pill; hidden
-                once a peek card is up (card owns the bottom). */}
+                (corner law v2, TICKET-137). The stack offset applies only when the
+                pill actually renders (onSwitchToList) — dining-map omits it, so
+                its FAB sits at the corner, not 52px above an empty gap. Clear of
+                the floating nav pill; hidden once a peek card is up. */}
             {!selected ? (
                 <Pressable
                     onPress={handleRecenter}
@@ -920,7 +924,10 @@ export function WishlistMapView({
                         styles.fab,
                         {
                             backgroundColor: frostBg,
-                            bottom: insets.bottom + NAV_CLEARANCE + RIGHT_STACK_OFFSET,
+                            bottom:
+                                insets.bottom +
+                                NAV_CLEARANCE +
+                                (onSwitchToList ? RIGHT_STACK_OFFSET : 0),
                         },
                         Shadow.ambient,
                     ]}
@@ -940,8 +947,8 @@ export function WishlistMapView({
                 </Pressable>
             ) : null}
 
-            {/* List pill — bottom-LEFT, frosted, same elevation as the FAB.
-                Hidden while a peek card is up (shared with the empty branch). */}
+            {/* List pill — bottom-RIGHT below the locate FAB, frosted (corner law
+                v2). Hidden while a peek card is up (shared with the empty branch). */}
             {renderListPill(!selected)}
 
             {/* People chip — Discover only, bottom-LEFT (corner law v2, TICKET-137).
@@ -1047,8 +1054,13 @@ function PeekCarousel({
     // open: network cards carry a saved-by row + note line, mine cards don't.
     // TICKET-137: heights tightened to the content (was 178/136) — the founder's
     // "too much empty white space" was the card being taller than its plate.
+    // Uniform explicit heights are structural (the wrap's fixed height carries
+    // the ✕ headroom + the rail animates as one block), so the network value is
+    // sized to its content sum — pad 18 + plate row 46 + gaps/who/note 43 +
+    // actions 43 = 150 — plus 2px slack for device font metrics (review P2-5;
+    // 146 measured ~4px under and bled into the action gap).
     const isNetworkLayer = items.some((i) => i.entryId != null);
-    const cardH = isNetworkLayer ? 146 : 108;
+    const cardH = isNetworkLayer ? 152 : 108;
 
     // Mount at the tapped pin's card (getItemLayout makes initialScrollIndex
     // cheap). Captured once — later selection changes scroll, not remount.

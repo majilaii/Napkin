@@ -369,7 +369,12 @@ export default function WishlistScreen() {
                 onError: () => toast.show('Could not remove that — try again'),
             });
         } else {
-            wishlistAdd.mutate({ restaurant_id: item.id });
+            wishlistAdd.mutate(
+                { restaurant_id: item.id },
+                // Parity with the remove branch + the restaurant page (review
+                // P2-4): a failed save must not die silently.
+                { onError: () => toast.show('Could not save that — try again') },
+            );
         }
     }, [saveSheetItem, saveSheetSaved, wishlistAdd, wishlistRemove, toast]);
 
