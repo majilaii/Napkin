@@ -356,6 +356,10 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
+            name="gathering/[id]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
             name="lists"
             options={{ headerShown: false }}
           />

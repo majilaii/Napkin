@@ -146,8 +146,12 @@ export function useRescheduleGathering() {
 
         // onSuccess: the upcoming strip reads gather_on server-side and has no
         // optimistic patch of its own — nudge it so a moved date surfaces promptly.
+        // The detail cache (TICKET-136) gets a cheap settle-invalidate too: the
+        // date-move + RSVP resets are complex, so a single refetch is the safe
+        // reconcile (the feed patch already synthesised the within-row rewrite).
         onSuccess: (_result, input) => {
             qc.invalidateQueries({ queryKey: queryKeys.gatherings.upcoming(input.table_id) });
+            qc.invalidateQueries({ queryKey: queryKeys.gatherings.detail(input.gathering_id) });
         },
     });
 }

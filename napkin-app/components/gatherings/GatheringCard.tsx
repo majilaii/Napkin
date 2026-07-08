@@ -24,11 +24,10 @@
  * Card body tap → the restaurant page. Cancelled rows never reach the client.
  */
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Alert, Linking, Modal, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { InitialsAvatar } from '@/components/suppers';
 import { OwnerActionsSheet } from '@/components/common';
@@ -37,76 +36,21 @@ import {
     useCancelGathering,
     useDeleteGathering,
     useRescheduleGathering,
+    useGatheringViewModel,
 } from '@/hooks/gatherings';
 import type { GatheringCardActivity, GatheringSeat } from '@/hooks/tables/useTableActivity';
+import { CounterDatePicker } from './CounterDatePicker';
+import { dayFromNow, firstName, namesLine, shortDate, toYMD } from './gatheringFormat';
 
 type Palette = typeof Colors.light;
 
 const GHOST_OPACITY = 0.34;
 const STACK_MAX = 4;
-const MAX_DAYS_AHEAD = 90;
 
 interface GatheringCardProps {
     gathering: GatheringCardActivity;
     /** The viewing user — decides host chrome vs the RSVP zone. */
     viewerId?: string;
-}
-
-/** 'YYYY-MM-DD' → the calendar-leaf pieces ("SUN", "5", "JUL"). */
-function dateLeaf(ymd: string): { wd: string; day: string; mo: string } | null {
-    const d = new Date(`${ymd}T00:00:00`);
-    if (Number.isNaN(d.getTime())) return null;
-    return {
-        wd: d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(),
-        day: String(d.getDate()),
-        mo: d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(),
-    };
-}
-
-/** 'YYYY-MM-DD' → 'sat 12' (lowercase weekday + day) — the counter/meta grammar. */
-function shortDate(ymd: string): string {
-    const d = new Date(`${ymd}T00:00:00`);
-    if (Number.isNaN(d.getTime())) return ymd;
-    const wd = d.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
-    return `${wd} ${d.getDate()}`;
-}
-
-/** Start of the day n days from now (device-local; the server re-validates HKT). */
-function dayFromNow(n: number): Date {
-    const d = new Date();
-    d.setDate(d.getDate() + n);
-    d.setHours(0, 0, 0, 0);
-    return d;
-}
-
-/** Local-time YYYY-MM-DD (never toISOString — UTC can shift the day). */
-function toYMD(d: Date): string {
-    return d.toLocaleDateString('en-CA');
-}
-
-function firstName(name: string | null): string | null {
-    if (!name) return null;
-    return name.split(' ')[0] || null;
-}
-
-/** Viewer first (as "you"), then the host, then everyone else. */
-function orderSeats(rows: GatheringSeat[], viewerId?: string): GatheringSeat[] {
-    const score = (s: GatheringSeat) =>
-        s.user_id === viewerId ? 0 : s.is_host ? 1 : 2;
-    return [...rows].sort((a, b) => score(a) - score(b));
-}
-
-/** "you, Clara +2" — up to two names, the rest counted. */
-function namesLine(rows: GatheringSeat[], viewerId?: string): string {
-    const names: string[] = [];
-    for (const s of rows) {
-        if (names.length === 2) break;
-        const n = s.user_id === viewerId ? 'you' : firstName(s.display_name);
-        if (n) names.push(n);
-    }
-    const extra = rows.length - names.length;
-    if (names.length === 0) return `${rows.length}`;
-    return `${names.join(', ')}${extra > 0 ? ` +${extra}` : ''}`;
 }
 
 /** One ledger row: a small stack of seats + "in · you, Clara +1". */
@@ -174,25 +118,36 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
         id,
         table_id,
         restaurant,
-        host_user_id,
-        host_name,
-        note,
         gather_on,
-        status,
         supper_id,
-        seats,
         in_count,
         viewer_response,
         counters = [],
         source_url = null,
-        source_type = null,
         rescheduled_from = null,
     } = gathering;
 
-    const isHost = !!viewerId && viewerId === host_user_id;
-    const isProposed = status === 'proposed';
-    const isDispatched = status === 'dispatched';
-    const isExpired = status === 'expired';
+    // Pure derivations — shared with GatheringDetail via one brain (no drift).
+    const {
+        isHost,
+        isProposed,
+        isDispatched,
+        isExpired,
+        supperCancelled,
+        canClear,
+        leaf,
+        ins,
+        outs,
+        waitingLine,
+        memberCount,
+        bestCounterDate,
+        bestCounterN,
+        showAlignment,
+        showDateMoved,
+        sourceLabel,
+        restaurantName,
+        murmur,
+    } = useGatheringViewModel(gathering, viewerId);
 
     // "change" re-opens the controls after the viewer already answered.
     const [changing, setChanging] = useState(false);
@@ -200,60 +155,9 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
 
     // Counter-date picker (same DateTimePicker family as GatherSheet).
     const [counterPickerVisible, setCounterPickerVisible] = useState(false);
-    const [counterDate, setCounterDate] = useState<Date>(() => dayFromNow(1));
+    const [counterDate] = useState<Date>(() => dayFromNow(1));
 
     const [ownerSheet, setOwnerSheet] = useState(false);
-
-    const supperCancelled = isDispatched && !supper_id;
-    const canClear = isHost && (isExpired || supperCancelled);
-
-    const leaf = dateLeaf(gather_on);
-    const ins = orderSeats(seats.filter((s) => s.response === 'in'), viewerId);
-    const outs = orderSeats(seats.filter((s) => s.response === 'out'), viewerId);
-    // Waiting = still undecided; a counter is a definitive answer, not "waiting".
-    const waiting = seats.filter((s) => s.response === null);
-    const waitingNames = waiting
-        .map((s) => (s.user_id === viewerId ? 'you' : firstName(s.display_name)))
-        .filter(Boolean) as string[];
-    const waitingLine =
-        waiting.length === 0
-            ? null
-            : waiting.length === 1 && waitingNames[0]
-              ? `waiting on ${waitingNames[0]}`
-              : `waiting on ${waiting.length} more`;
-
-    // Alignment (AC11): the best counter date, shown only when it clusters (>= 2)
-    // AND beats the current date's in-count. m = table member count.
-    const memberCount = seats.length;
-    const counterTally = new Map<string, number>();
-    for (const c of counters) {
-        if (c.counter_on === gather_on) continue; // never surface the current date
-        counterTally.set(c.counter_on, (counterTally.get(c.counter_on) ?? 0) + 1);
-    }
-    let bestCounterDate: string | null = null;
-    let bestCounterN = 0;
-    for (const [date, n] of counterTally) {
-        if (n > bestCounterN) {
-            bestCounterN = n;
-            bestCounterDate = date;
-        }
-    }
-    const showAlignment =
-        isProposed && !!bestCounterDate && bestCounterN >= 2 && bestCounterN > in_count;
-
-    // "date moved · was <old>" until the viewer re-answers on the new date.
-    const showDateMoved = isProposed && !!rescheduled_from && viewer_response === null;
-
-    // Source line (AC1/AC2): only when the host's pin carries a URL.
-    const srcType = source_type ? source_type.toLowerCase().replace(/_/g, ' ') : null;
-    const sourceLabel = source_url ? `pinned from ${srcType ?? 'a link'}` : null;
-
-    const restaurantName = restaurant?.name ?? 'a spot';
-    const murmur = note
-        ? note
-        : isHost
-          ? 'you want to gather the table'
-          : `${firstName(host_name) ?? 'someone'} wants to gather the table`;
 
     const answer = (response: 'in' | 'out') => {
         setChanging(false);
@@ -264,22 +168,6 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
         setCounterPickerVisible(false);
         setChanging(false);
         rsvp.mutate({ gathering_id: id, table_id, response: 'counter', counter_on: toYMD(d) });
-    };
-
-    const handleCounterChange = (event: DateTimePickerEvent, selected?: Date) => {
-        // Android's picker is a system dialog — it returns the chosen date directly.
-        if (Platform.OS === 'android') {
-            setCounterPickerVisible(false);
-            if (event.type === 'dismissed' || !selected) return;
-            const next = new Date(selected);
-            next.setHours(0, 0, 0, 0);
-            submitCounter(next);
-            return;
-        }
-        if (!selected) return;
-        const next = new Date(selected);
-        next.setHours(0, 0, 0, 0);
-        setCounterDate(next);
     };
 
     // Host taps a counter (or the alignment line) → move the gather there.
@@ -317,9 +205,10 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
     const onCardLongPress =
         (isHost && isProposed) || canClear ? () => setOwnerSheet(true) : undefined;
 
-    const openRestaurant = () => {
-        if (!restaurant?.id) return;
-        router.push({ pathname: '/restaurant/[id]', params: { id: restaurant.id } });
+    // Card body tap → the gathering detail (TICKET-136). The restaurant is now a
+    // deliberate drill-in from the detail's "the spot" section, not the tap target.
+    const openGathering = () => {
+        router.push({ pathname: '/gathering/[id]', params: { id } });
     };
 
     const openSupper = () => {
@@ -333,7 +222,7 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
 
     return (
         <Pressable
-            onPress={openRestaurant}
+            onPress={openGathering}
             onLongPress={onCardLongPress}
             delayLongPress={350}
             style={({ pressed }) => [styles.pressable, pressed ? { opacity: 0.92 } : undefined]}
@@ -669,54 +558,16 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                 onCancel={() => setOwnerSheet(false)}
             />
 
-            {/* Counter-date picker — same DateTimePicker family as GatherSheet
-                (min today — same-day counters are the decide-tonight spirit; max +90d).
-                iOS: inline in a sheet with a done button;
-                Android: the system dialog confirms straight through handleCounterChange. */}
-            {Platform.OS === 'ios' ? (
-                <Modal
-                    visible={counterPickerVisible}
-                    transparent
-                    animationType="slide"
-                    onRequestClose={() => setCounterPickerVisible(false)}
-                    statusBarTranslucent
-                >
-                    <Pressable
-                        style={[styles.calendarScrim, { backgroundColor: palette.scrimDark }]}
-                        onPress={() => setCounterPickerVisible(false)}
-                        accessibilityLabel="close calendar"
-                    />
-                    <View style={[styles.calendarSheet, { backgroundColor: palette.surfaceNote }]}>
-                        <View style={styles.calendarHeader}>
-                            <Text style={[styles.calendarKicker, { color: palette.textMuted }]}>PICK A DATE</Text>
-                            <Pressable onPress={() => submitCounter(counterDate)} hitSlop={14} accessibilityLabel="done">
-                                <Text style={[styles.calendarDone, { color: palette.primary }]}>done</Text>
-                            </Pressable>
-                        </View>
-                        <View style={styles.calendarPickerWrap}>
-                            <DateTimePicker
-                                value={counterDate}
-                                mode="date"
-                                display="inline"
-                                minimumDate={dayFromNow(0)}
-                                maximumDate={dayFromNow(MAX_DAYS_AHEAD)}
-                                onChange={handleCounterChange}
-                                accentColor={palette.primary}
-                                themeVariant={scheme}
-                            />
-                        </View>
-                    </View>
-                </Modal>
-            ) : counterPickerVisible ? (
-                <DateTimePicker
-                    value={counterDate}
-                    mode="date"
-                    display="calendar"
-                    minimumDate={dayFromNow(1)}
-                    maximumDate={dayFromNow(MAX_DAYS_AHEAD)}
-                    onChange={handleCounterChange}
-                />
-            ) : null}
+            {/* Counter-date picker — extracted (TICKET-136); one picker family across
+                the feed card and the detail screen. */}
+            <CounterDatePicker
+                visible={counterPickerVisible}
+                value={counterDate}
+                onPick={submitCounter}
+                onClose={() => setCounterPickerVisible(false)}
+                palette={palette}
+                scheme={scheme}
+            />
         </Pressable>
     );
 }
@@ -932,40 +783,5 @@ const styles = StyleSheet.create({
     counterCtaText: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 13,
-    },
-    // Counter-date picker overlay (mirrors GatherSheet's calendar sheet).
-    calendarScrim: { ...StyleSheet.absoluteFillObject },
-    calendarSheet: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        borderTopLeftRadius: Radius.xl,
-        borderTopRightRadius: Radius.xl,
-        paddingBottom: Spacing.xl,
-        shadowColor: '#1c1c19',
-        shadowOffset: { width: 0, height: -8 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-        elevation: 16,
-    },
-    calendarHeader: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        justifyContent: 'space-between',
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.md,
-        paddingBottom: Spacing.xs,
-    },
-    calendarKicker: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1.4,
-        textTransform: 'uppercase',
-    },
-    calendarDone: { fontFamily: 'Manrope_700Bold', fontSize: 13 },
-    calendarPickerWrap: {
-        paddingHorizontal: Spacing.md,
-        paddingTop: Spacing.xs,
     },
 });
