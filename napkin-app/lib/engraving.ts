@@ -73,7 +73,7 @@ export function tintFor(seed: string, palette: Palette): string {
     return tints[tintIndex6(seed)];
 }
 
-// ── 3. Lore registry — "which words" (stub this ticket; TICKET-145 fills) ────
+// ── 3. Lore registry — "which words" (the epithet, TICKET-145) ──────────────
 /** Noun bank keyed by glyph bucket — adding a RULES needle inherits a noun. */
 export const LORE_NOUN_BY_GLYPH: Record<CuisineGlyph, string> = {
     'pizza-outline': 'trattoria',
@@ -87,6 +87,63 @@ export const LORE_NOUN_BY_GLYPH: Record<CuisineGlyph, string> = {
     'restaurant-outline': 'small rooms',
 };
 
-export function loreFor(_stats: unknown): { epithet: string | null } {
-    return { epithet: null }; // TICKET-145 replaces with epithetFor()
+/**
+ * The Taste Relic, direction A — the epithet. A two-part italic-serif title
+ * generated from already-fetched profile data, set like a book dedication.
+ * Deterministic (same input → same title, forever — it reads as identity, not a
+ * slot machine; it drifts only because your eating changed). Never gamified.
+ *
+ * Data FLOOR = 10 meals: below it, `epithetFor` returns null and the TASTE band
+ * renders exactly as before (thin data must never produce a confident title).
+ */
+export interface EpithetInput {
+    totalMeals: number; // Σ visit_count
+    totalPlaces: number; // spots.length
+    dominantCuisine: string | null; // topCuisines[0] (already lower-cased)
+    cityCount: number;
+    countryCount: number;
+    priceMode: number | null; // 1..4 modal price_level, or null
+}
+
+const EPITHET_FLOOR_MEALS = 10;
+
+// Adjective band from behaviour (repeat ratio = meals / places).
+//   ratio >= 1.8                    → "devoted" (goes back again and again)
+//   ratio <= 1.15 AND cityCount>=3  → "roving"  (spread wide, rarely repeats)
+//   else                            → "steady"
+function adjectiveFor(input: EpithetInput): string {
+    const ratio = input.totalPlaces > 0 ? input.totalMeals / input.totalPlaces : 1;
+    if (ratio >= 1.8) return 'devoted';
+    if (ratio <= 1.15 && input.cityCount >= 3) return 'roving';
+    return 'steady';
+}
+
+// Noun from dominant cuisine, via the glyph bucket → LORE_NOUN_BY_GLYPH.
+// Falls back to 'small rooms' (restaurant-outline bucket) when cuisine is null.
+function nounFor(cuisine: string | null): string {
+    return LORE_NOUN_BY_GLYPH[cuisineGlyph(cuisine)];
+}
+
+// Qualifier from price/city texture (one phrase, or ''). First match wins.
+function qualifierFor(input: EpithetInput): string {
+    if (input.countryCount >= 3) return 'across borders';
+    if (input.priceMode === 4) return 'of the grand rooms';
+    if (input.priceMode === 1) return 'of cheap eats';
+    if (input.cityCount >= 5) return 'of many cities';
+    return '';
+}
+
+/**
+ * Two-part italic-serif epithet, book-dedication voice. Lowercase (Heirloom),
+ * no title-case. Returns null below the meal floor (band stays as-is).
+ * e.g. "a devoted regular of the smokehouse" ·
+ *      "a roving regular of the raw bar, across borders".
+ */
+export function epithetFor(input: EpithetInput): string | null {
+    if (input.totalMeals < EPITHET_FLOOR_MEALS) return null;
+    const adj = adjectiveFor(input);
+    const noun = nounFor(input.dominantCuisine);
+    const qual = qualifierFor(input);
+    const core = `a ${adj} regular of the ${noun}`;
+    return qual ? `${core}, ${qual}` : core;
 }
