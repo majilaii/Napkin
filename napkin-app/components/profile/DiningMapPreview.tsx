@@ -56,6 +56,9 @@ export function DiningMapPreview({ spots, onPress, palette }: Props) {
                 <MapView
                     style={StyleSheet.absoluteFill}
                     provider={Platform.OS === 'ios' ? PROVIDER_DEFAULT : PROVIDER_GOOGLE}
+                    // Maps never go dark — Apple tiles follow the SYSTEM
+                    // appearance, not the light-forced palette (2026-07-08).
+                    userInterfaceStyle="light"
                     initialRegion={region}
                     scrollEnabled={false}
                     zoomEnabled={false}

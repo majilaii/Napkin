@@ -129,6 +129,9 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
                 style={StyleSheet.absoluteFillObject}
                 provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
                 mapType="standard"
+                // Maps never go dark — Apple tiles follow the SYSTEM
+                // appearance, not the light-forced palette (2026-07-08).
+                userInterfaceStyle="light"
                 initialRegion={initialRegion}
                 showsPointsOfInterest={false}
                 showsCompass={false}
