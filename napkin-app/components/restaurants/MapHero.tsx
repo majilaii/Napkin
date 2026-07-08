@@ -126,6 +126,9 @@ export function MapHero({
                         style={StyleSheet.absoluteFillObject}
                         provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
                         mapType={Platform.OS === 'ios' ? 'mutedStandard' : 'standard'}
+                        // Maps never go dark — Apple tiles follow the SYSTEM
+                        // appearance, not the light-forced palette (2026-07-08).
+                        userInterfaceStyle="light"
                         pointerEvents="none"
                         initialRegion={{
                             latitude: lat!,

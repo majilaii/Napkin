@@ -11,7 +11,7 @@
  * scope); a thin/rating-only log → the restaurant page. Viewing someone else's
  * map stays their spots only — no pills.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -23,6 +23,8 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
+import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
+import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { WishlistMapView, type WishlistMapItem } from '@/components/wishlist/WishlistMapView';
 import { spotsToMapItems, networkPinsToMapItems } from '@/components/wishlist/mapItems';
 
@@ -58,6 +60,27 @@ export default function DiningMapScreen() {
     // Network pins are all mappable; only the mine layer has coord-less spots.
     const unmappable = showNetwork ? 0 : (spots?.length ?? 0) - mineItems.length;
 
+    // Save-from-the-map (network peek cards) — self view only. Loaded wishlist
+    // pages are enough: a miss shows "Save" and the add is idempotent.
+    const { data: wishlistPages } = useMyWishlist(isSelf ? user?.id : null);
+    const wishlistAdd = useWishlistAdd(user?.id);
+    const savedRestaurantIds = useMemo(
+        () =>
+            new Set(
+                (wishlistPages?.pages ?? [])
+                    .flatMap((p) => p.data ?? [])
+                    .map((i) => i.restaurant?.id)
+                    .filter((id): id is string => !!id),
+            ),
+        [wishlistPages],
+    );
+    const handleMapSave = useCallback(
+        (item: WishlistMapItem) => {
+            wishlistAdd.mutate({ restaurant_id: item.id });
+        },
+        [wishlistAdd],
+    );
+
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
@@ -86,6 +109,9 @@ export default function DiningMapScreen() {
                               onChange: (k) => setSource(k as 'mine' | 'network'),
                           }
                         : undefined
+                }
+                save={
+                    isSelf ? { savedIds: savedRestaurantIds, onSave: handleMapSave } : undefined
                 }
                 // Pills sit below the frosted back chevron + title chip row.
                 chromeTopOffset={insets.top + 56}

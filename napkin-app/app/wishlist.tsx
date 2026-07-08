@@ -49,6 +49,7 @@ import {
 } from '@/components/wishlist';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
+import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { useHasImported } from '@/hooks/wishlist/useHasImported';
 import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
@@ -60,6 +61,7 @@ import {
     spotsToMapItems,
     networkPinsToMapItems,
     filterItemsByCuisine,
+    mergeYourItems,
 } from '@/components/wishlist/mapItems';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
@@ -337,6 +339,20 @@ export default function WishlistScreen() {
         [allItems],
     );
 
+    // Save-from-the-map (network layer peek cards). Loaded pages are enough:
+    // a stale miss just shows "Save" and the add is idempotent server-side.
+    const wishlistAdd = useWishlistAdd(user?.id);
+    const savedRestaurantIds = useMemo(
+        () => new Set(allItems.map((i) => i.restaurant?.id).filter((id): id is string => !!id)),
+        [allItems],
+    );
+    const handleMapSave = useCallback(
+        (item: WishlistMapItem) => {
+            wishlistAdd.mutate({ restaurant_id: item.id });
+        },
+        [wishlistAdd],
+    );
+
     // ── Wishlist Redesign: Pinned ↔ Lists segmented tab ──────────────────────
     const [activeTab, setActiveTab] = useState<'pinned' | 'lists'>('pinned');
 
@@ -349,23 +365,26 @@ export default function WishlistScreen() {
     const [cityFilter, setCityFilter] = useState<string | null>(null);
     // TICKET-124: one sheet, four tabs — replaces the per-key openSheet state.
     const [filtersOpen, setFiltersOpen] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+    // TICKET-134: the Map tab lands ON the map (map-first). List is an overlay.
+    const [viewMode, setViewMode] = useState<'list' | 'map'>('map');
 
-    // ── TICKET-131: map source layers — Saved · Been · Network ────────────────
-    // Saved = the existing wishlist∪lists union; Been = your logged spots
-    // (useUserSpots); Network = follows' logs (useNetworkMapPins). The extra
-    // layers fetch LAZILY: their hooks stay disabled (null identifier) until the
-    // pill is first selected, then stay armed so switching back is instant.
-    const [mapSource, setMapSource] = useState<'saved' | 'been' | 'network'>('saved');
-    const [beenArmed, setBeenArmed] = useState(false);
+    // ── TICKET-134: map sources — Your map · Discover ─────────────────────────
+    // Your map = saved (terracotta) + been (olive) merged, gated by the show
+    // saved / show been toggles. Discover = follows' logs (avatar pins) filtered
+    // by the friend rail. Been loads immediately (Your map is default and always
+    // includes it); Network arms lazily on first Discover select, then stays armed.
+    const [mapSource, setMapSource] = useState<'your' | 'discover'>('your');
+    const [showSaved, setShowSaved] = useState(true);
+    const [showBeen, setShowBeen] = useState(true);
     const [networkArmed, setNetworkArmed] = useState(false);
+    // Friend rail selection: null = all friends active; a Set filters to those ids.
+    const [activeFriendIds, setActiveFriendIds] = useState<Set<string> | null>(null);
     const handleMapSource = useCallback((key: string) => {
-        const next = key as 'saved' | 'been' | 'network';
+        const next = key as 'your' | 'discover';
         setMapSource(next);
-        if (next === 'been') setBeenArmed(true);
-        if (next === 'network') setNetworkArmed(true);
+        if (next === 'discover') setNetworkArmed(true);
     }, []);
-    const { data: beenSpots } = useUserSpots(beenArmed ? user?.id : null);
+    const { data: beenSpots } = useUserSpots(user?.id);
     const { data: networkPins } = useNetworkMapPins(networkArmed ? user?.id : null);
     // Watch position live while sorting by nearest or viewing the map, so distances
     // re-rank as you walk (Amsterdam-stroll fix) instead of freezing until restart.
@@ -531,8 +550,46 @@ export default function WishlistScreen() {
         () => filterItemsByCuisine(networkPinsToMapItems(networkPins), cuisineFilter),
         [networkPins, cuisineFilter],
     );
-    const activeMapItems =
-        mapSource === 'been' ? beenItems : mapSource === 'network' ? networkItems : mapItems;
+
+    // Your map: saved (terracotta) + been (olive) merged, been-wins, gated by the
+    // show saved / show been toggles (TICKET-134).
+    const yourItems = useMemo(
+        () => mergeYourItems(mapItems, beenItems, { showSaved, showBeen }),
+        [mapItems, beenItems, showSaved, showBeen],
+    );
+
+    // Friend-rail faces — distinct authors across the network layer (no new
+    // endpoint; reuses useNetworkMapPins).
+    const friendRailFriends = useMemo(() => {
+        const seen = new Map<string, { id: string; name: string; avatar: string | null }>();
+        for (const it of networkItems) {
+            const a = it.author;
+            if (a && !seen.has(a.id)) seen.set(a.id, { id: a.id, name: a.name, avatar: a.avatar });
+        }
+        return [...seen.values()];
+    }, [networkItems]);
+
+    // Discover: network pins filtered client-side by the friend rail (null = all).
+    const discoverItems = useMemo(() => {
+        if (activeFriendIds === null) return networkItems;
+        return networkItems.filter((it) => it.author != null && activeFriendIds.has(it.author.id));
+    }, [networkItems, activeFriendIds]);
+
+    const activeMapItems = mapSource === 'discover' ? discoverItems : yourItems;
+
+    // Friend-rail toggles: multi-select on/off; All resets to everyone (null).
+    const handleToggleFriend = useCallback((id: string) => {
+        setActiveFriendIds((prev) => {
+            const allIds = friendRailFriends.map((f) => f.id);
+            const next = new Set(prev ?? allIds);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            // Back to everyone → collapse to the "all on" sentinel.
+            if (next.size === allIds.length) return null;
+            return next;
+        });
+    }, [friendRailFriends]);
+    const handleAllFriends = useCallback(() => setActiveFriendIds(null), []);
 
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);
@@ -577,6 +634,15 @@ export default function WishlistScreen() {
     // The "Filters" trigger shows an active dot when any filter (or, in list
     // mode, the near sort) is engaged — the tabbed sheet carries the detail.
     const filtersActive = hasActiveFilters || (viewMode === 'list' && sortMode === 'near');
+    // Map chip dot follows the ACTIVE source (#167 doctrine, adapted to
+    // your/discover): Your map honors all filters (its saved portion takes
+    // city/price too) plus the show-saved/show-been toggles (a hidden layer is
+    // an active filter); Discover only honors cuisine — a lit dot for a filter
+    // that can't apply reads as a bug.
+    const mapFiltersActive =
+        mapSource === 'your'
+            ? hasActiveFilters || !showSaved || !showBeen
+            : !!cuisineFilter;
 
     // One trigger replaces the pill-per-sheet strip. List mode only since
     // TICKET-131 — map mode's trigger is the frosted Filter chip floating on the
@@ -612,9 +678,66 @@ export default function WishlistScreen() {
         </View>
     );
 
+    // ── Full-bleed map — ALWAYS mounted (the Map tab's hero). The list is an
+    // opaque overlay ON TOP when viewMode==='list' (TICKET-134). Your map merges
+    // saved+been; Discover shows the network layer + friend rail. The Filter chip
+    // + sheet share the SAME filter state as the list, so toggling views never
+    // loses filters (founder, 2026-07-03).
+    const mapSurface = (
+        <WishlistMapView
+            items={activeMapItems}
+            // Unmappable murmur is a saved-layer concern only.
+            unmappableCount={mapSource === 'your' && showSaved ? unmappableCount : 0}
+            userCoords={coords}
+            locationStatus={locationStatus}
+            onRequestLocation={requestLocation}
+            onOpenRestaurant={(id) => router.push(('/restaurant/' + id) as any)}
+            onOpenReview={(entryId) =>
+                router.push({
+                    pathname: '/entry-detail',
+                    params: { entryId, viewAs: 'public' },
+                })
+            }
+            onSwitchToList={() => setViewMode('list')}
+            sources={{
+                options: [
+                    { key: 'your', label: 'Your map' },
+                    { key: 'discover', label: 'Discover' },
+                ],
+                value: mapSource,
+                onChange: handleMapSource,
+            }}
+            friendRail={
+                mapSource === 'discover'
+                    ? {
+                          friends: friendRailFriends,
+                          activeIds: activeFriendIds,
+                          onToggleFriend: handleToggleFriend,
+                          onAll: handleAllFriends,
+                      }
+                    : undefined
+            }
+            // Save-from-the-map (#167): Discover peek cards render a Save pill.
+            save={{ savedIds: savedRestaurantIds, onSave: handleMapSave }}
+            onOpenFilters={() => setFiltersOpen(true)}
+            filtersActive={mapFiltersActive}
+            chromeTopOffset={insets.top + 8}
+            palette={palette}
+        />
+    );
+
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
+
+            {/* Full-bleed map — always mounted, edge to edge, behind the nav pill. */}
+            {mapSurface}
+
+            {/* List overlay — the entire wishlist surface (title · Import ·
+                segmented · ledger · lists), opaque over the map. Toggled by the
+                corner Map/List pills (viewMode). TICKET-134. */}
+            {viewMode === 'list' ? (
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: palette.background }]}>
 
             {/* Header — title left, share + Import right (redesign) */}
             <View style={[styles.rHeader, { paddingTop: insets.top + Spacing.sm }]}>
@@ -682,51 +805,13 @@ export default function WishlistScreen() {
                         hasImported={hasImported}
                         onImportsHub={() => router.push('/import-progress' as any)}
                     />
-                ) : viewMode === 'map' ? (
-                    <View style={styles.mapMode}>
-                        {/* Full-bleed map (TICKET-131): the Filter chip floats
-                            top-right ON the map and opens the same tabbed sheet —
-                            same filter state as the list, so toggling views must
-                            not lose the filters (founder, 2026-07-03). The sheet
-                            hides its Sort tab in map mode (position is the
-                            signal). Source pills: Saved · Been · Network. */}
-                        <WishlistMapView
-                            items={activeMapItems}
-                            unmappableCount={mapSource === 'saved' ? unmappableCount : 0}
-                            userCoords={coords}
-                            locationStatus={locationStatus}
-                            onRequestLocation={requestLocation}
-                            onOpenRestaurant={(id) => router.push(('/restaurant/' + id) as any)}
-                            // Network pins tap through to the followee's review
-                            // (public scope) when the log clears the review gate.
-                            onOpenReview={(entryId) =>
-                                router.push({
-                                    pathname: '/entry-detail',
-                                    params: { entryId, viewAs: 'public' },
-                                })
-                            }
-                            onSwitchToList={() => handleSelectView('list')}
-                            sources={{
-                                options: [
-                                    { key: 'saved', label: 'Saved' },
-                                    { key: 'been', label: 'Been' },
-                                    { key: 'network', label: 'Network' },
-                                ],
-                                value: mapSource,
-                                onChange: handleMapSource,
-                            }}
-                            onOpenFilters={() => setFiltersOpen(true)}
-                            filtersActive={filtersActive}
-                            palette={palette}
-                        />
-                    </View>
                 ) : (
                     <View style={{ flex: 1 }}>
                         {/* Filter bar — one "Filters" trigger → tabbed sheet */}
                         {filtersTriggerRow}
 
                         <ScrollView
-                            contentContainerStyle={[styles.rListContent, { paddingBottom: insets.bottom + 110 }]}
+                            contentContainerStyle={[styles.rListContent, { paddingBottom: insets.bottom + 150 }]}
                             showsVerticalScrollIndicator={false}
                         >
                             {/* The import slot — one card, one state, one destination */}
@@ -796,24 +881,12 @@ export default function WishlistScreen() {
                                 <ActivityIndicator color={palette.primary} style={styles.loadMoreRow} size="small" />
                             ) : null}
                         </ScrollView>
-
-                        {/* Floating Map button */}
-                        {mapItems.length > 0 ? (
-                            <Pressable
-                                onPress={() => handleSelectView('map')}
-                                style={[styles.rMapFab, { backgroundColor: palette.primary, bottom: insets.bottom + 76 }]}
-                                accessibilityLabel="map view"
-                            >
-                                <Ionicons name="map-outline" size={16} color="#fff" />
-                                <Text style={styles.rMapFabText}>Map</Text>
-                            </Pressable>
-                        ) : null}
                     </View>
                 )
             ) : (
                 /* ───────── LISTS ───────── */
                 <ScrollView
-                    contentContainerStyle={[styles.rListContent, { paddingBottom: insets.bottom + 40 }]}
+                    contentContainerStyle={[styles.rListContent, { paddingBottom: insets.bottom + 150 }]}
                     showsVerticalScrollIndicator={false}
                 >
                     {(myLists ?? []).map((list) => (
@@ -834,6 +907,19 @@ export default function WishlistScreen() {
                     </Pressable>
                 </ScrollView>
             )}
+
+            {/* Map pill — bottom-LEFT, mirrors the map's List pill (corner law ⑥). */}
+            <Pressable
+                onPress={() => handleSelectView('map')}
+                style={[styles.rMapPill, { backgroundColor: palette.scrimFrost, bottom: insets.bottom + 92 }]}
+                accessibilityRole="button"
+                accessibilityLabel="map view"
+            >
+                <Ionicons name="map" size={15} color={palette.primary} />
+                <Text style={[styles.rMapPillText, { color: palette.primary }]}>Map</Text>
+            </Pressable>
+            </View>
+            ) : null}
 
             <ImportLinkSheet
                 visible={importSheetVisible}
@@ -869,6 +955,17 @@ export default function WishlistScreen() {
                 price={{ options: priceOptions, selected: priceFilter, onSelect: setPriceFilter }}
                 area={{ options: cityOptions, selected: cityFilter, onSelect: setCityFilter }}
                 sort={{ options: sortOptions, selected: sortMode, onSelect: handleSelectSort }}
+                // "On the map" layer toggles — Your map only (TICKET-134).
+                showSaved={
+                    viewMode === 'map' && mapSource === 'your'
+                        ? { value: showSaved, onToggle: () => setShowSaved((v) => !v) }
+                        : undefined
+                }
+                showBeen={
+                    viewMode === 'map' && mapSource === 'your'
+                        ? { value: showBeen, onToggle: () => setShowBeen((v) => !v) }
+                        : undefined
+                }
             />
 
             {/* TICKET-111: remove-from-wishlist confirm (long-press or swipe). */}
@@ -1024,26 +1121,26 @@ const styles = StyleSheet.create({
         fontSize: 12,
         letterSpacing: 0.3,
     },
-    rMapFab: {
+    // Map pill — bottom-LEFT frosted (mirrors the map's List pill; corner law ⑥,
+    // ⑨ h42·13/800). Same frost family, same corner.
+    rMapPill: {
         position: 'absolute',
-        right: 18,
+        left: 12,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: 7,
         borderRadius: 999,
-        paddingHorizontal: 18,
-        paddingVertical: 13,
-        shadowColor: '#a03f28',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.32,
-        shadowRadius: 20,
-        elevation: 6,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        shadowColor: '#1c1c19',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.06,
+        shadowRadius: 30,
     },
-    rMapFabText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+    rMapPillText: {
+        fontFamily: 'Manrope_800ExtraBold',
+        fontSize: 13,
         letterSpacing: 0.4,
-        color: '#fff',
     },
     rNewList: {
         flexDirection: 'row',

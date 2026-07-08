@@ -19,6 +19,7 @@ export type NotificationType =
     | 'friend_pinned'
     | 'top_four_swap'
     | 'table_invite'
+    | 'table_invite_accepted'
     | 'claim_city'
     | 'reservation_reminder'
     | 'import_done';
@@ -72,6 +73,23 @@ export interface TableInviteNotification extends BaseNotification {
     actor: { id: string; name: string; avatarUrl?: string | null };
     tableName: string;
     tableId?: string;
+    /** TICKET-133: id of the pending/resolved invitation this row responds to. */
+    invitationId: string;
+    /** Live status joined at hydration — drives the card state (Accept/Decline vs resolved). */
+    invitationStatus: 'pending' | 'accepted' | 'declined' | 'expired';
+    /** Denormalized member count for the card's meta line. */
+    memberCount: number;
+}
+
+/**
+ * TICKET-133: inviter-side row — "«joiner» joined *«table»*". Plain info row,
+ * no actions. Emitted when an invitee accepts.
+ */
+export interface TableInviteAcceptedNotification extends BaseNotification {
+    type: 'table_invite_accepted';
+    actor: { id: string; name: string; avatarUrl?: string | null };
+    tableName: string;
+    tableId?: string;
 }
 
 export interface ClaimCityNotification extends BaseNotification {
@@ -106,6 +124,7 @@ export type Notification =
     | FriendPinnedNotification
     | TopFourSwapNotification
     | TableInviteNotification
+    | TableInviteAcceptedNotification
     | ClaimCityNotification
     | ReservationReminderNotification
     | ImportDoneNotification;

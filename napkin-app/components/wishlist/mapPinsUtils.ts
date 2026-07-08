@@ -50,6 +50,9 @@ export interface MapPinItem {
     lat: number;
     lng: number;
     emoji: string | null;
+    /** Camel-cased to align with WishlistMapItem (the map consumes this shape
+     * directly) — the peek card's $$ meta token (map-card-pin pass, 2026-07-08). */
+    priceLevel: number | null;
 }
 
 export interface Filters {
@@ -85,13 +88,14 @@ export function buildMapPins(
     const byId = new Map<string, MapPinItem>();
     let unmappableSaves = 0;
 
-    // (A) wishlist saves — teardrop, no emoji.
+    // (A) wishlist saves — cuisine-glyph bubble, no emoji.
     for (const s of saves) {
         if (!matchesFilters(s.city, s.cuisine, s.price_level, filters)) continue;
         if (s.lat != null && s.lng != null) {
             byId.set(s.id, {
                 id: s.id, name: s.name, city: s.city, cuisine: s.cuisine,
                 lat: s.lat, lng: s.lng, emoji: null,
+                priceLevel: s.price_level,
             });
         } else {
             unmappableSaves += 1;
@@ -115,6 +119,7 @@ export function buildMapPins(
             id: p.restaurant_id, name: p.name, city: p.city, cuisine: p.cuisine,
             lat: p.lat, lng: p.lng,
             emoji: p.emoji ?? prior?.emoji ?? null,
+            priceLevel: p.price_level,
         });
     }
 

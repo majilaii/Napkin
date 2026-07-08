@@ -8,36 +8,57 @@
  *   - optional Filter chip top-RIGHT (opens the screen-owned FilterTabsSheet)
  *   - locate FAB bottom-RIGHT, List pill bottom-LEFT — both frosted, both clear
  *     of the floating bottom nav (TICKET-130)
- *   - pins by layer: saved = terracotta teardrop (emoji variant unchanged),
- *     been = olive teardrop, network = followee avatar pin
- *   - tiles: Apple Maps mutedStandard + a vellum wash by default; a key-gated
- *     Google flip (GOOGLE_MAPS_IOS_KEY → PROVIDER_GOOGLE + heirloomMapStyle).
+ *   - pins (map-card-pin pass, 2026-07-08): ONE bubble grammar for every layer —
+ *     the bubble carries the WHAT (cuisine glyph, or the owning list's emoji),
+ *     the ring carries YOUR RELATIONSHIP (terracotta = saved, olive = been,
+ *     warm ink = network), an avatar chip carries the WHO (network pins), and
+ *     a terracotta heart badge = loved (rating ≥ LOVED_MIN). No more
+ *     initials-as-pins: discovery reads from the pin itself.
+ *   - peek = a swipeable CAROUSEL of cards (nearest-first), synced with pin
+ *     selection both ways; each card: glyph/emoji plate (typographic — NO
+ *     restaurant photos: restaurants.photo_url is always a Places hero, banned
+ *     on our surfaces), name + rating, cuisine · $$ · distance meta, saved-by
+ *     row (network), note pull-quote, explicit CTAs (view venue / directions /
+ *     save).
+ *   - tiles (TICKET-134): MapTiler `landscape` raster via UrlTile on BOTH
+ *     platforms — cream land, butter roads, warm-brown labels. iOS replaces the
+ *     Apple base (shouldReplaceMapContent — kills the grey dark tiles ⑧);
+ *     Android draws over the Google base with heirloomMapStyle beneath as the
+ *     load-window fallback. An always-on cream tint (~15%) warms residual blue
+ *     water; dark mode keeps the cream tiles (the map reads as a paper object).
+ *     userInterfaceStyle='light' (#169) pins the NATIVE base light too, so the
+ *     tile-load window never flashes grey in system dark mode.
+ *     Replaces the old vellum-wash + key-gated Google-on-iOS path.
  *
  * Provider:
- *   iOS     → PROVIDER_DEFAULT (Apple Maps, free) UNLESS app.config carries
- *             ios.config.googleMapsApiKey (env-gated) → PROVIDER_GOOGLE.
- *   Android → PROVIDER_GOOGLE (needs a key in app.config; iOS is the test target)
+ *   iOS     → PROVIDER_DEFAULT (Apple) + UrlTile shouldReplaceMapContent
+ *   Android → PROVIDER_GOOGLE + UrlTile draw-over (heirloom fallback beneath)
  *
  * react-native-maps is autolinked (pod installed). The map frames on the user
  * (or first pin) once per open; the locate FAB animates to the user (lazy
  * foreground location).
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
     Text,
     Pressable,
+    ScrollView,
     StyleSheet,
     Platform,
     Linking,
     Animated,
+    Dimensions,
+    FlatList,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
-import Constants from 'expo-constants';
 import MapView, {
     Marker,
+    UrlTile,
     PROVIDER_GOOGLE,
     PROVIDER_DEFAULT,
     type LatLng,
@@ -47,7 +68,10 @@ import type MapViewType from 'react-native-maps';
 
 import { Colors, Shadow } from '@/constants/theme';
 import { heirloomMapStyle } from '@/constants/mapStyle';
+import { tileUrlTemplate, MAPTILER_ATTRIBUTION } from '@/lib/maptiler';
 import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/geo';
+import { cuisineGlyph, tintIndex } from '@/lib/cuisineGlyph';
+import { priceTierLabel } from '@/lib/priceLevel';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -66,10 +90,17 @@ export interface WishlistMapItem {
     emoji?: string | null;
     /**
      * TICKET-131: a spot the user has LOGGED (wishlist "Been" layer, dining-map
-     * "Mine") — renders the teardrop in olive (`palette.secondary`) instead of
-     * terracotta. Set by the shared mappers in mapItems.ts; absent on saves.
+     * "Mine") — renders the bubble ring in olive (`palette.secondary`) instead
+     * of terracotta. Set by the shared mappers in mapItems.ts; absent on saves.
      */
     been?: boolean;
+    /** Google Places price tier (0–4) → "$$" token on the peek card meta. */
+    priceLevel?: number | null;
+    /** Viewer's own avg rating at this spot (been/mine layers) — the card's
+     * rating numeral + the loved (≥ LOVED_MIN) heart badge on the pin. */
+    myRating?: number | null;
+    /** Viewer's visit count (been/mine layers) — quiet card meta when > 1. */
+    visitCount?: number;
     /**
      * TICKET-124 (network layer): when present, this pin is a followee's LOG,
      * not one of the viewer's own saves — the pin becomes an avatar pin and the
@@ -134,12 +165,38 @@ interface Props {
         onChange: (k: string) => void;
     };
     /**
+     * Save-from-the-map (map-card-pin pass): network cards render a Save pill
+     * so a followee's spot can be pinned without leaving the map (the rec'd
+     * card's core affordance). `savedIds` = restaurants already on the viewer's
+     * wishlist (partial is fine — the add action is idempotent server-side);
+     * `onSave` fires the screen-owned useWishlistAdd mutation. Absent → no
+     * Save pill (nothing breaks).
+     */
+    save?: {
+        savedIds: ReadonlySet<string>;
+        onSave: (item: WishlistMapItem) => void;
+    };
+    /**
      * TICKET-131: renders the top-right Filter chip when present; opens the
      * screen-owned FilterTabsSheet (wishlist). Absent (dining-map) → chip hidden.
      */
     onOpenFilters?: () => void;
     /** Active-filter dot on the Filter chip. */
     filtersActive?: boolean;
+    /**
+     * TICKET-134: Discover-only friend rail — a frosted bottom-left strip of an
+     * `All` chip + per-friend 40px avatar toggles (default all on; toggling
+     * filters the network pins client-side by user_id). Derived from the network
+     * items by the screen; absent → no rail (Your map, dining-map). Hidden while a
+     * peek is up (shares the three-piece hide set).
+     */
+    friendRail?: {
+        friends: { id: string; name: string; avatar: string | null }[];
+        /** null = all friends active. */
+        activeIds: Set<string> | null;
+        onToggleFriend: (id: string) => void;
+        onAll: () => void;
+    };
     /**
      * Distance from the map's top edge to where the floating top chrome (source
      * pills / Filter chip / murmur) begins. Screens whose own chrome overlays
@@ -158,6 +215,36 @@ const NAV_CLEARANCE = 92;
 /** Dark-scheme frost pair for the floating chrome (light uses palette.scrimFrost).
  * Inline by design — no new theme tokens (TICKET-131). */
 const FROST_DARK = 'rgba(42,39,36,0.92)';
+/** A rating at/above this = "loved" → terracotta heart badge on the pin. */
+const LOVED_MIN = 4.5;
+
+// ── Framing deltas ──────────────────────────────────────────────────────────────
+// ONE region API for all camera moves: Camera.zoom is GOOGLE-ONLY — Apple Maps
+// keys on altitude and silently ignores zoom, which is why the locate FAB
+// centered without ever zooming (founder, 2026-07-08). animateToRegion behaves
+// identically on both providers. latitudeDelta ≈ 360 / 2^zoom.
+/** Locate FAB — zoom IN to a walkable radius (≈ zoom 15); pins stay legible. */
+const NEAR_ME_DELTA = 0.013;
+/** First frame on open — the "near me" city view (≈ zoom 13, the original
+ * framing intent that the zoom param never actually applied on Apple). */
+const CITY_DELTA = 0.045;
+/** Layer switch landing on a single spot (≈ zoom 14). */
+const SPOT_DELTA = 0.022;
+/** Network pin ring — warm ink, deliberately NOT a third accent color
+ * (terracotta + olive are this screen's two; network stays neutral). */
+const INK_RING_LIGHT = 'rgba(28,28,25,0.32)';
+const INK_RING_DARK = 'rgba(253,246,236,0.5)';
+
+// ── Peek carousel geometry ──────────────────────────────────────────────────────
+// Near-full-width card with the next card peeking at the right edge (the rec'd
+// swipe-for-more grammar). Snap math depends on these being fixed: getItemLayout
+// offsets are i*PEEK_SNAP (the 18px left pad is deliberately excluded — snap
+// offsets stay exact multiples, and the pad shows the neighbor's edge).
+const SCREEN_W = Dimensions.get('window').width;
+const PEEK_PAD_L = 18;
+const PEEK_CARD_W = SCREEN_W - 56;
+const PEEK_GAP = 10;
+const PEEK_SNAP = PEEK_CARD_W + PEEK_GAP;
 
 // ── Directions deep-link (mirrors InfoMapPreview / MetaActions) ─────────────────
 
@@ -172,99 +259,20 @@ function openDirections(item: WishlistMapItem) {
     });
 }
 
-// ── WishlistPin ─────────────────────────────────────────────────────────────────
-// Teardrop, cream interior dot. Selected = larger + cream ring.
-// Terracotta for saves; olive (`palette.secondary`) for logged/"been" spots.
-
-function WishlistPin({
-    selected,
-    palette,
-    emoji,
-    been,
-}: {
-    selected: boolean;
-    palette: typeof Colors.light;
-    emoji?: string | null;
-    been?: boolean;
-}) {
-    const hasEmoji = !!emoji;
-    // Emoji pins are a touch larger so the glyph reads ≥14pt inside the teardrop
-    // (AC: pin legibility at default zoom). Plain-dot pins keep the tight size.
-    const size = hasEmoji ? (selected ? 30 : 26) : selected ? 22 : 16;
-    return (
-        <View style={pinStyles.wrap}>
-            <View
-                style={[
-                    pinStyles.pin,
-                    {
-                        width: size,
-                        height: size,
-                        borderRadius: size / 2,
-                        backgroundColor: been ? palette.secondary : palette.primary,
-                        borderColor: CREAM,
-                        borderWidth: selected ? 2 : 1.5,
-                    },
-                ]}
-            >
-                {hasEmoji ? (
-                    // Emoji sits in place of the cream dot, counter-rotated +45°
-                    // so it stays upright against the teardrop body's -45°.
-                    <Text style={[pinStyles.emoji, { fontSize: selected ? 17 : 15 }]}>
-                        {emoji}
-                    </Text>
-                ) : (
-                    <View
-                        style={[
-                            pinStyles.dot,
-                            {
-                                width: size * 0.4,
-                                height: size * 0.4,
-                                borderRadius: (size * 0.4) / 2,
-                                backgroundColor: CREAM,
-                            },
-                        ]}
-                    />
-                )}
-            </View>
-        </View>
-    );
-}
-
-const pinStyles = StyleSheet.create({
-    // 44×44 transparent hit area (iOS HIG min target) around the small visible
-    // teardrop — the dot stays small, but the tap-target is finger-sized so pins
-    // are easy to hit on a dense map. anchor={0.5,0.5} keeps the pin on-coordinate.
-    wrap: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    pin: {
-        // Teardrop: rotated rounded square w/ one square corner, like InfoMapPreview
-        borderBottomLeftRadius: 0,
-        transform: [{ rotate: '-45deg' }],
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: '#1c1c19',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 5,
-        elevation: 4,
-    },
-    dot: {
-        transform: [{ rotate: '45deg' }], // counter-rotate so the dot stays upright
-    },
-    emoji: {
-        // Counter-rotate +45° so the glyph stays upright vs. the teardrop's -45°.
-        transform: [{ rotate: '45deg' }],
-        textAlign: 'center',
-        includeFontPadding: false,
-    },
-});
-
-// ── AvatarPin (network layer, TICKET-131) ───────────────────────────────────────
-// 34px followee avatar in a cream ring with a small triangular tail below (the
-// marker anchors bottom-center so the tail tip sits on the coordinate), and a
-// terracotta dot badge top-right when the log clears the public-review gate.
-// Fallback when the followee has no avatar: initial on a seeded warm tint
-// (same deterministic triple as AtlasPinMarker / feed Avatar, so a person's pin
-// color matches their avatar color everywhere).
+// ── BubblePin (map-card-pin pass, 2026-07-08) ───────────────────────────────────
+// ONE pin grammar for every layer, so discovery reads from the pin itself
+// (founder: "the name J as a pin is not suitable for discovery"):
+//   bubble  = WHAT   — cuisine glyph (lib/cuisineGlyph, same mapping as the
+//             feed ledger's GlyphChip) or the owning list's emoji (TICKET-108
+//             precedence unchanged: emoji is more specific, it wins)
+//   ring    = YOURS  — terracotta saved · olive been · warm-ink network
+//   chip    = WHO    — followee avatar, network pins only (top-left, rec'd
+//             anatomy; initial-on-tint fallback, same seeded triple as Avatar)
+//   badge   = LOVED  — terracotta heart when the rating ≥ LOVED_MIN; network
+//             pins without a loved rating keep the review dot (routing hint)
+// Cream paper fill (not solid color blocks — 40 solid terracotta bubbles would
+// rash the vellum); a small tail in the ring color anchors the coordinate
+// (marker anchors {0.5, 1} = tail tip).
 
 function avatarTintFor(seed: string, palette: typeof Colors.light): string {
     const tints = [
@@ -275,7 +283,7 @@ function avatarTintFor(seed: string, palette: typeof Colors.light): string {
     return tints[(seed.charCodeAt(0) || 0) % tints.length];
 }
 
-function AvatarPin({
+function BubblePin({
     item,
     selected,
     palette,
@@ -286,78 +294,158 @@ function AvatarPin({
     palette: typeof Colors.light;
     onAvatarLoad: () => void;
 }) {
-    const size = selected ? 38 : 34;
+    const isDark = palette !== Colors.light;
+    const isNetwork = item.entryId != null;
+    const ringColor = isNetwork
+        ? isDark
+            ? INK_RING_DARK
+            : INK_RING_LIGHT
+        : item.been
+          ? palette.secondary
+          : palette.primary;
+    const rating = isNetwork ? item.rating : item.myRating;
+    const loved = rating != null && rating >= LOVED_MIN && (isNetwork || !!item.been);
+    const size = selected ? 38 : 32;
+    const ring = selected ? 3 : 2.5;
+    const fill = isDark ? palette.surfaceContainerHigh : CREAM;
+
     const avatar = item.author?.avatar ?? null;
-    const name = item.author?.name ?? 'Someone';
-    const initial = (name.trim()[0] ?? '?').toUpperCase();
-    const tint = avatarTintFor(item.author?.id || name, palette);
-    const RING = 2.5;
-    const inner = size - RING * 2;
+    const authorName = item.author?.name ?? 'Someone';
+    const chipTint = avatarTintFor(item.author?.id || authorName, palette);
+    const CHIP = 18;
 
     return (
-        <View style={avatarPinStyles.wrap}>
+        <View style={pinStyles.wrap}>
             <View
                 style={[
-                    avatarPinStyles.circle,
+                    pinStyles.bubble,
                     {
                         width: size,
                         height: size,
                         borderRadius: size / 2,
-                        borderWidth: RING,
-                        borderColor: CREAM,
-                        backgroundColor: tint,
+                        borderWidth: ring,
+                        borderColor: ringColor,
+                        backgroundColor: fill,
+                        shadowOpacity: selected ? 0.3 : 0.22,
                     },
                 ]}
             >
-                {avatar ? (
-                    <ExpoImage
-                        source={{ uri: avatar }}
-                        style={{ width: inner, height: inner, borderRadius: inner / 2 }}
-                        contentFit="cover"
-                        onLoad={onAvatarLoad}
-                        // A 404ing avatar must still settle tracksViewChanges,
-                        // or this marker re-snapshots every frame forever.
-                        onError={onAvatarLoad}
-                    />
-                ) : (
-                    <Text style={[avatarPinStyles.initial, { color: palette.text, fontSize: size * 0.4 }]}>
-                        {initial}
+                {item.emoji ? (
+                    <Text style={{ fontSize: selected ? 17 : 15, includeFontPadding: false }}>
+                        {item.emoji}
                     </Text>
+                ) : (
+                    <Ionicons
+                        name={cuisineGlyph(item.cuisine)}
+                        size={selected ? 18 : 15}
+                        color={palette.primary}
+                        style={pinStyles.glyph}
+                    />
                 )}
-                {item.hasReview ? (
+
+                {/* WHO — followee avatar chip, network pins only. */}
+                {isNetwork ? (
                     <View
                         style={[
-                            avatarPinStyles.badge,
-                            { backgroundColor: palette.primary, borderColor: CREAM },
+                            pinStyles.chip,
+                            {
+                                width: CHIP,
+                                height: CHIP,
+                                borderRadius: CHIP / 2,
+                                borderColor: fill,
+                                backgroundColor: chipTint,
+                            },
+                        ]}
+                    >
+                        {avatar ? (
+                            <ExpoImage
+                                source={{ uri: avatar }}
+                                style={{ width: CHIP - 3, height: CHIP - 3, borderRadius: (CHIP - 3) / 2 }}
+                                contentFit="cover"
+                                onLoad={onAvatarLoad}
+                                // A 404ing avatar must still settle tracksViewChanges,
+                                // or this marker re-snapshots every frame forever.
+                                onError={onAvatarLoad}
+                            />
+                        ) : (
+                            <Text style={[pinStyles.chipInitial, { color: palette.text }]}>
+                                {(authorName.trim()[0] ?? '?').toUpperCase()}
+                            </Text>
+                        )}
+                    </View>
+                ) : null}
+
+                {/* LOVED heart, else the network review dot (routing hint). */}
+                {loved ? (
+                    <View
+                        style={[
+                            pinStyles.lovedBadge,
+                            { backgroundColor: palette.primary, borderColor: fill },
+                        ]}
+                    >
+                        <Ionicons name="heart" size={8} color={CREAM} />
+                    </View>
+                ) : isNetwork && item.hasReview ? (
+                    <View
+                        style={[
+                            pinStyles.reviewDot,
+                            { backgroundColor: palette.primary, borderColor: fill },
                         ]}
                     />
                 ) : null}
             </View>
-            {/* Triangular tail — border-trick triangle, no svg. Cream to match the ring. */}
-            <View style={avatarPinStyles.tail} />
+            {/* Tail — border-trick triangle in the ring color; tip = coordinate. */}
+            <View style={[pinStyles.tail, { borderTopColor: ringColor }]} />
         </View>
     );
 }
 
-const avatarPinStyles = StyleSheet.create({
-    // 44-wide hit area; the marker anchors {0.5, 1} so the tail tip = coordinate.
-    wrap: { width: 44, alignItems: 'center' },
-    circle: {
+const pinStyles = StyleSheet.create({
+    // 56-wide hit area (≥ iOS HIG min target) with 6px headroom so the avatar
+    // chip (left overhang) and loved/review badges (top overhang) stay INSIDE
+    // the wrap — react-native-maps snapshots the marker view; content outside
+    // its bounds risks getting clipped. Marker anchors {0.5, 1} = tail tip on
+    // the coordinate.
+    wrap: { width: 56, alignItems: 'center', paddingTop: 6 },
+    bubble: {
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'visible',
         shadowColor: '#1c1c19',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
         shadowRadius: 5,
         elevation: 4,
     },
-    initial: {
+    glyph: {
+        opacity: 0.85,
+    },
+    chip: {
+        position: 'absolute',
+        top: -6,
+        left: -8,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    chipInitial: {
         fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
         includeFontPadding: false,
         textAlign: 'center',
     },
-    badge: {
+    lovedBadge: {
+        position: 'absolute',
+        top: -5,
+        right: -6,
+        width: 15,
+        height: 15,
+        borderRadius: 7.5,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    reviewDot: {
         position: 'absolute',
         top: -2,
         right: -2,
@@ -375,7 +463,6 @@ const avatarPinStyles = StyleSheet.create({
         borderTopWidth: 6,
         borderLeftColor: 'transparent',
         borderRightColor: 'transparent',
-        borderTopColor: CREAM,
     },
 });
 
@@ -415,22 +502,18 @@ function WishlistMarker({ item, selected, palette, onPress }: WishlistMarkerProp
     return (
         <Marker
             coordinate={coordinate}
-            // Avatar pins have a tail → anchor bottom-center; teardrops center.
-            anchor={isNetwork ? { x: 0.5, y: 1 } : { x: 0.5, y: 0.5 }}
+            // Every bubble has a tail now → anchor bottom-center (tail tip = coordinate).
+            anchor={{ x: 0.5, y: 1 }}
             tracksViewChanges={tracking}
             stopPropagation
             onPress={onPress}
         >
-            {isNetwork ? (
-                <AvatarPin
-                    item={item}
-                    selected={selected}
-                    palette={palette}
-                    onAvatarLoad={() => setAvatarLoaded(true)}
-                />
-            ) : (
-                <WishlistPin selected={selected} palette={palette} emoji={item.emoji} been={item.been} />
-            )}
+            <BubblePin
+                item={item}
+                selected={selected}
+                palette={palette}
+                onAvatarLoad={() => setAvatarLoaded(true)}
+            />
         </Marker>
     );
 }
@@ -447,8 +530,10 @@ export function WishlistMapView({
     onOpenReview,
     onSwitchToList,
     sources,
+    save,
     onOpenFilters,
     filtersActive,
+    friendRail,
     chromeTopOffset,
     palette,
 }: Props) {
@@ -461,18 +546,14 @@ export function WishlistMapView({
     // palette reference is the render-truth either way).
     const isDark = palette !== Colors.light;
 
-    // TICKET-131: key-gated Google-on-iOS flip. The runtime manifest STRIPS
-    // ios.config, so the key can never be read from there (cold-review P1,
-    // 2026-07-08 — the old read was permanently undefined). app.config mirrors
-    // the key's PRESENCE into extra.hasGoogleMapsIosKey; the same env var
-    // compiles the native Google pods in at prebuild, so this flag ⇔ native
-    // support by construction. Android is already Google + heirloom style.
-    const iosGoogleTiles =
-        Platform.OS === 'ios' && Constants.expoConfig?.extra?.hasGoogleMapsIosKey === true;
-    const googleTiles = Platform.OS === 'android' || iosGoogleTiles;
-    // Vellum wash — Apple-Maps-only warm tint (TICKET-057 idiom), light scheme
-    // only (dark tiles don't want a cream veil).
-    const showVellumWash = Platform.OS === 'ios' && !iosGoogleTiles && !isDark;
+    // TICKET-134: MapTiler `landscape` raster tiles on BOTH platforms via UrlTile
+    // (see the MapView block). iOS replaces the Apple base (kills the grey dark
+    // tiles ⑧); Android draws over the Google base with heirloomMapStyle beneath
+    // as the load-window fallback skin. The old key-gated Google-on-iOS flip is
+    // gone — the cross-platform tile layer supersedes it. #169's
+    // userInterfaceStyle='light' (on the MapView) pins the NATIVE base light so
+    // the pre-tile load window never flashes grey in system dark mode.
+    const isAndroid = Platform.OS === 'android';
 
     // Frost family for the floating chrome. Light = scrimFrost token; dark pair
     // is inline by design (no new theme tokens — TICKET-131).
@@ -498,15 +579,25 @@ export function WishlistMapView({
         const timer = setTimeout(() => {
             if (framedRef.current) return;
             if (locationStatus === 'granted' && userCoords) {
-                mapRef.current?.animateCamera(
-                    { center: { latitude: userCoords.latitude, longitude: userCoords.longitude }, zoom: 13 },
-                    { duration: 300 },
+                mapRef.current?.animateToRegion(
+                    {
+                        latitude: userCoords.latitude,
+                        longitude: userCoords.longitude,
+                        latitudeDelta: CITY_DELTA,
+                        longitudeDelta: CITY_DELTA,
+                    },
+                    300,
                 );
                 framedRef.current = true;
             } else if (locationStatus !== 'pending') {
-                mapRef.current?.animateCamera(
-                    { center: { latitude: items[0].lat, longitude: items[0].lng }, zoom: 13 },
-                    { duration: 300 },
+                mapRef.current?.animateToRegion(
+                    {
+                        latitude: items[0].lat,
+                        longitude: items[0].lng,
+                        latitudeDelta: CITY_DELTA,
+                        longitudeDelta: CITY_DELTA,
+                    },
+                    300,
                 );
                 framedRef.current = true;
             }
@@ -527,9 +618,14 @@ export function WishlistMapView({
         framedSourceRef.current = sources.value;
         const timer = setTimeout(() => {
             if (items.length === 1) {
-                mapRef.current?.animateCamera(
-                    { center: { latitude: items[0].lat, longitude: items[0].lng }, zoom: 14 },
-                    { duration: 350 },
+                mapRef.current?.animateToRegion(
+                    {
+                        latitude: items[0].lat,
+                        longitude: items[0].lng,
+                        latitudeDelta: SPOT_DELTA,
+                        longitudeDelta: SPOT_DELTA,
+                    },
+                    350,
                 );
             } else {
                 mapRef.current?.fitToCoordinates(
@@ -552,11 +648,18 @@ export function WishlistMapView({
         };
     }, [items]);
 
+    // Locate FAB: center on the user AND zoom in to a walkable radius — the
+    // founder's explicit ask (centering alone left the map at city zoom).
     const handleRecenter = () => {
         if (locationStatus === 'granted' && userCoords) {
-            mapRef.current?.animateCamera(
-                { center: { latitude: userCoords.latitude, longitude: userCoords.longitude }, zoom: 14 },
-                { duration: 350 },
+            mapRef.current?.animateToRegion(
+                {
+                    latitude: userCoords.latitude,
+                    longitude: userCoords.longitude,
+                    latitudeDelta: NEAR_ME_DELTA,
+                    longitudeDelta: NEAR_ME_DELTA,
+                },
+                350,
             );
         } else {
             onRequestLocation();
@@ -567,6 +670,31 @@ export function WishlistMapView({
         () => items.find((i) => i.id === selectedId) ?? null,
         [items, selectedId],
     );
+
+    // Carousel order — nearest-first when we know where the user is, so a swipe
+    // right reads "more spots around here" (the rec'd grammar). Without location
+    // the source order stands. useNearbyLocation resolves once (no live stream),
+    // so the order can't reshuffle mid-swipe.
+    const orderedItems = useMemo(() => {
+        if (!userCoords) return items;
+        return [...items]
+            .map((item) => ({
+                item,
+                d: haversineMiles(userCoords, { latitude: item.lat, longitude: item.lng }),
+            }))
+            .sort((a, b) => a.d - b.d)
+            .map((x) => x.item);
+    }, [items, userCoords]);
+
+    // Swiping the carousel selects the pin AND pans the camera to it (center
+    // only — the current zoom is the user's, don't fight it).
+    const handleCarouselSelect = useCallback((item: WishlistMapItem) => {
+        setSelectedId(item.id);
+        mapRef.current?.animateCamera(
+            { center: { latitude: item.lat, longitude: item.lng } },
+            { duration: 260 },
+        );
+    }, []);
 
     // ── Source pills (TICKET-131) — frosted segmented, top-LEFT on the glass ────
     // Shown in BOTH the empty state and the populated map so switching back from
@@ -658,16 +786,18 @@ export function WishlistMapView({
             </Pressable>
         ) : null;
 
-    // ── Empty (per-layer copy; pills/chip/List stay so you can always leave) ──
+    // ── Empty (per-source copy; pills/chip/List stay so you can always leave) ──
     if (items.length === 0) {
+        // TICKET-134: wishlist keys are your/discover; dining-map still passes
+        // mine/network — keep both grammars so its empty copy is unchanged.
         const emptyCopy =
-            sources?.value === 'network'
+            sources?.value === 'discover' || sources?.value === 'network'
                 ? 'no spots from people you follow yet.'
-                : sources?.value === 'been'
+                : sources?.value === 'mine'
                   ? 'no logged spots with a map location yet.'
-                  : 'none of your saved spots have a map location yet.';
+                  : 'none of your spots have a map location yet.';
         return (
-            <View style={styles.fill}>
+            <View style={[styles.fill, { backgroundColor: CREAM }]}>
                 <View style={[styles.fill, styles.emptyWrap]}>
                     <Ionicons name="map-outline" size={28} color={palette.textMuted} />
                     <Text style={[styles.emptyText, { color: palette.textMuted }]}>{emptyCopy}</Text>
@@ -680,20 +810,27 @@ export function WishlistMapView({
     }
 
     return (
-        <View style={styles.fill}>
+        <View style={[styles.fill, { backgroundColor: CREAM }]}>
             {/* Full-bleed map — edge-to-edge under the screen's header chrome
                 (TICKET-131 removed the framed-plate inset). The hairline warm rule
-                at the top edge stays. */}
+                at the top edge stays. CREAM background so a tile-load / 404 gap
+                reads as paper, not a grey/void patch (iOS replaced base). */}
             <MapView
                 ref={mapRef}
-                style={StyleSheet.absoluteFillObject}
-                provider={googleTiles ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
-                // Google tiles (Android always; iOS when key-gated in) honor
-                // customMapStyle → heirloom skin. Keyless iOS = Apple Maps, which
-                // ignores customMapStyle → mutedStandard desaturates toward paper
-                // and the vellum wash below warms it.
-                mapType={googleTiles ? 'standard' : 'mutedStandard'}
-                customMapStyle={googleTiles ? heirloomMapStyle : undefined}
+                style={[StyleSheet.absoluteFillObject, { backgroundColor: CREAM }]}
+                provider={isAndroid ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
+                // Android keeps the heirloom skin BENEATH the MapTiler tiles as the
+                // load-window fallback; iOS replaces the Apple base entirely
+                // (UrlTile shouldReplaceMapContent) so no grey dark tiles bleed (⑧).
+                customMapStyle={isAndroid ? heirloomMapStyle : undefined}
+                // The map NEVER goes dark (founder, 2026-07-08; TICKET-134 ⑧:
+                // the map reads as a paper object). Apple tiles follow the
+                // SYSTEM appearance — not our light-forced palette — so system
+                // dark mode was swapping grey tiles under the cream chrome.
+                // (#169; still load-bearing with MapTiler: it pins the NATIVE
+                // base light during the pre-tile load window + Android's Google
+                // base under our draw-over.)
+                userInterfaceStyle="light"
                 initialRegion={initialRegion}
                 showsPointsOfInterest={false}
                 showsCompass={false}
@@ -704,6 +841,15 @@ export function WishlistMapView({
                 showsUserLocation={locationStatus === 'granted'}
                 onPress={() => setSelectedId(null)}
             >
+                {/* MapTiler cream raster — first child, beneath the markers. iOS
+                    replaces the base (kills grey dark tiles ⑧); Android draws over
+                    Google. @2x endpoint + tileSize 512 → crisp labels. */}
+                <UrlTile
+                    urlTemplate={tileUrlTemplate()}
+                    shouldReplaceMapContent={Platform.OS === 'ios'}
+                    tileSize={512}
+                    maximumZ={20}
+                />
                 {items.map((item) => (
                     <WishlistMarker
                         // Layer-qualified key: the same restaurant can appear in
@@ -718,20 +864,16 @@ export function WishlistMapView({
                 ))}
             </MapView>
 
-            {/* Vellum wash — warm the Apple raster toward the paper palette
-                (TICKET-057 idiom). Light scheme + keyless iOS only. */}
-            {showVellumWash ? (
-                <View
-                    style={[
-                        StyleSheet.absoluteFill,
-                        {
-                            backgroundColor: palette.placesOverlayTint,
-                            opacity: palette.placesOverlayOpacity,
-                        },
-                    ]}
-                    pointerEvents="none"
-                />
-            ) : null}
+            {/* Cream tint — always on, both schemes/platforms (TICKET-134). MapTiler
+                serves cream land on both, so this only warms the residual blue
+                water and unifies the surface. CREAM (not the dark placesOverlayTint,
+                which would darken the tiles); ~15% is in the 12–18% target.
+                (Subsumes #169's scheme-independent vellum: same intent, our tint
+                was already always-on.) */}
+            <View
+                style={[StyleSheet.absoluteFill, { backgroundColor: CREAM, opacity: 0.15 }]}
+                pointerEvents="none"
+            />
 
             {/* Hairline warm rule at the top edge (ghosted, not a 1px border). */}
             <View
@@ -790,38 +932,148 @@ export function WishlistMapView({
                 Hidden while a peek card is up (shared with the empty branch). */}
             {renderListPill(!selected)}
 
-            {/* Peek card — rises when a pin is tapped */}
+            {/* Friend rail — Discover only, one row ABOVE the List pill (its
+                bottom sits clear of the List-pill/locate values so those stay
+                byte-stable). Frosted All chip + 40Ø avatar toggles; hidden while
+                a peek is up (shares the three-piece hide set). TICKET-134. */}
+            {friendRail && !selected && friendRail.friends.length > 0 ? (
+                <View
+                    style={[
+                        styles.friendRail,
+                        { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE + 50 },
+                        Shadow.ambient,
+                    ]}
+                >
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.friendRailRow}
+                    >
+                        <Pressable
+                            onPress={friendRail.onAll}
+                            style={[
+                                styles.friendAllChip,
+                                friendRail.activeIds === null && { backgroundColor: palette.primary },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: friendRail.activeIds === null }}
+                            accessibilityLabel="all friends"
+                        >
+                            <Text
+                                style={[
+                                    styles.friendAllText,
+                                    { color: friendRail.activeIds === null ? '#fff' : palette.textSecondary },
+                                ]}
+                            >
+                                All
+                            </Text>
+                        </Pressable>
+                        {friendRail.friends.map((f) => {
+                            const active = friendRail.activeIds === null || friendRail.activeIds.has(f.id);
+                            const tint = avatarTintFor(f.id || f.name, palette);
+                            return (
+                                <Pressable
+                                    key={f.id}
+                                    onPress={() => friendRail.onToggleFriend(f.id)}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ selected: active }}
+                                    accessibilityLabel={f.name}
+                                    style={[
+                                        styles.friendFace,
+                                        {
+                                            borderColor: active ? palette.primary : 'transparent',
+                                            backgroundColor: tint,
+                                            opacity: active ? 1 : 0.45,
+                                        },
+                                    ]}
+                                >
+                                    {f.avatar ? (
+                                        <ExpoImage
+                                            source={{ uri: f.avatar }}
+                                            style={styles.friendFaceImg}
+                                            contentFit="cover"
+                                        />
+                                    ) : (
+                                        <Text style={[styles.friendFaceInitial, { color: palette.text }]}>
+                                            {(f.name.trim()[0] ?? '?').toUpperCase()}
+                                        </Text>
+                                    )}
+                                </Pressable>
+                            );
+                        })}
+                    </ScrollView>
+                </View>
+            ) : null}
+
+            {/* Attribution — ToS-required ghosted caption, above the nav clearance.
+                Hidden while a peek is up (the carousel owns the bottom). */}
+            {!selected ? (
+                <Text
+                    style={[
+                        styles.attribution,
+                        { color: palette.textMuted, bottom: insets.bottom + NAV_CLEARANCE - 18 },
+                    ]}
+                    pointerEvents="none"
+                >
+                    {MAPTILER_ATTRIBUTION}
+                </Text>
+            ) : null}
+
+            {/* Peek carousel — rises when a pin is tapped; swipe for what's
+                nearby. No key: it must NOT remount (re-animate) per pin change,
+                only on closed → open. */}
             {selected ? (
-                <PeekCard
-                    key={selected.id}
-                    item={selected}
+                <PeekCarousel
+                    items={orderedItems}
+                    selectedId={selected.id}
                     userCoords={userCoords}
                     palette={palette}
                     bottomInset={insets.bottom + NAV_CLEARANCE}
+                    onSelect={handleCarouselSelect}
                     onClose={() => setSelectedId(null)}
-                    onOpen={() => onOpenRestaurant(selected.id)}
+                    onOpenRestaurant={onOpenRestaurant}
                     onOpenReview={onOpenReview}
+                    save={save}
                 />
             ) : null}
         </View>
     );
 }
 
-// ── PeekCard ────────────────────────────────────────────────────────────────────
+// ── PeekCarousel (map-card-pin pass, 2026-07-08) ─────────────────────────────────
+// The peek is a swipeable rail of cards, nearest-first — swipe right for more
+// spots in the vicinity (rec'd grammar). Selection syncs both ways: pin tap →
+// the carousel scrolls to that card; card swipe → that pin selects + the camera
+// pans. One frosted ✕ floats above the rail (map-tap also closes, as before).
 
-interface PeekCardProps {
-    item: WishlistMapItem;
+interface PeekCarouselProps {
+    items: WishlistMapItem[];
+    selectedId: string;
     userCoords: GeoLatLng | null;
     palette: typeof Colors.light;
     bottomInset: number;
+    onSelect: (item: WishlistMapItem) => void;
     onClose: () => void;
-    onOpen: () => void;
-    /** TICKET-124: network pins tap through to a followee's review, not directions. */
+    onOpenRestaurant: (restaurantId: string) => void;
+    /** TICKET-124: review-eligible network cards tap through to the review. */
     onOpenReview?: (entryId: string) => void;
+    save?: Props['save'];
 }
 
-function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen, onOpenReview }: PeekCardProps) {
-    const slide = useRef(new Animated.Value(40)).current;
+function PeekCarousel({
+    items,
+    selectedId,
+    userCoords,
+    palette,
+    bottomInset,
+    onSelect,
+    onClose,
+    onOpenRestaurant,
+    onOpenReview,
+    save,
+}: PeekCarouselProps) {
+    const listRef = useRef<FlatList<WishlistMapItem>>(null);
+    const slide = useRef(new Animated.Value(48)).current;
     const fade = useRef(new Animated.Value(0)).current;
     useEffect(() => {
         Animated.parallel([
@@ -830,130 +1082,319 @@ function PeekCard({ item, userCoords, palette, bottomInset, onClose, onOpen, onO
         ]).start();
     }, [slide, fade]);
 
-    const distanceLabel = userCoords
-        ? formatDistance(haversineMiles(userCoords, { latitude: item.lat, longitude: item.lng }))
-        : null;
+    // Layers never mix in one items array, so the card height is uniform per
+    // open: network cards carry a saved-by row + note line, mine cards don't.
+    const isNetworkLayer = items.some((i) => i.entryId != null);
+    const cardH = isNetworkLayer ? 178 : 136;
 
-    const shell = (children: React.ReactNode) => (
+    // Mount at the tapped pin's card (getItemLayout makes initialScrollIndex
+    // cheap). Captured once — later selection changes scroll, not remount.
+    const initialIndexRef = useRef(Math.max(0, items.findIndex((i) => i.id === selectedId)));
+    // A swipe-driven selection must NOT trigger the programmatic scroll-back
+    // (it would fight the momentum the user just spent).
+    const swipeIdRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (swipeIdRef.current === selectedId) {
+            swipeIdRef.current = null;
+            return;
+        }
+        const idx = items.findIndex((i) => i.id === selectedId);
+        if (idx >= 0) listRef.current?.scrollToIndex({ index: idx, animated: true });
+    }, [selectedId, items]);
+
+    const handleMomentumEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const x = e.nativeEvent.contentOffset.x;
+        const idx = Math.min(items.length - 1, Math.max(0, Math.round(x / PEEK_SNAP)));
+        const item = items[idx];
+        if (item && item.id !== selectedId) {
+            swipeIdRef.current = item.id;
+            onSelect(item);
+        }
+    };
+
+    const isDark = palette !== Colors.light;
+
+    return (
         <Animated.View
             style={[
-                styles.peekCard,
+                styles.peekWrap,
                 {
-                    backgroundColor: palette.surfaceContainerLow,
                     bottom: bottomInset,
+                    // 16px headroom so the ✕ (overlapping the card's top-right
+                    // corner) stays fully INSIDE the wrap — iOS hit-testing
+                    // ignores touches outside a parent's bounds.
+                    height: cardH + 16,
                     opacity: fade,
                     transform: [{ translateY: slide }],
                 },
             ]}
+            pointerEvents="box-none"
         >
-            {children}
+            {/* One frosted ✕ above the rail — stays put while cards swipe. */}
+            <Pressable
+                onPress={onClose}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="close"
+                style={[
+                    styles.peekCloseFab,
+                    { backgroundColor: isDark ? FROST_DARK : palette.scrimFrost },
+                    Shadow.ambient,
+                ]}
+            >
+                <Ionicons name="close" size={16} color={palette.textSecondary} />
+            </Pressable>
+
+            <FlatList
+                ref={listRef}
+                data={items}
+                keyExtractor={(i) => i.id}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                initialScrollIndex={initialIndexRef.current}
+                getItemLayout={(_, index) => ({ length: PEEK_SNAP, offset: PEEK_SNAP * index, index })}
+                onScrollToIndexFailed={({ index }) =>
+                    listRef.current?.scrollToOffset({ offset: PEEK_SNAP * index, animated: false })
+                }
+                snapToInterval={PEEK_SNAP}
+                snapToAlignment="start"
+                decelerationRate="fast"
+                disableIntervalMomentum
+                onMomentumScrollEnd={handleMomentumEnd}
+                contentContainerStyle={{
+                    paddingLeft: PEEK_PAD_L,
+                    paddingRight: Math.max(0, SCREEN_W - PEEK_CARD_W - PEEK_PAD_L),
+                    paddingTop: 16,
+                }}
+                // Shadows bleed past cell bounds — don't clip them away.
+                removeClippedSubviews={false}
+                initialNumToRender={3}
+                windowSize={5}
+                renderItem={({ item }) => (
+                    <PeekCardBody
+                        item={item}
+                        userCoords={userCoords}
+                        palette={palette}
+                        height={cardH}
+                        onOpenRestaurant={onOpenRestaurant}
+                        onOpenReview={onOpenReview}
+                        save={save}
+                    />
+                )}
+            />
         </Animated.View>
     );
+}
 
-    // ── Network variant — a followee's LOG (TICKET-124) ─────────────────────────
-    // Gated on entryId (presence = network pin). ONE body affordance, routed by
-    // data: a review-eligible primary entry (hasReview) taps through to their
-    // review (entry-detail, viewAs public); a thin/rating-only log — which the
-    // looser network predicate deliberately includes — taps to the restaurant page
-    // instead, since entry-detail's public view can't render it (it fails the
-    // is_entry_publicly_eligible pre-check). Degrades gracefully — no note →
-    // rating-only meta → name-only (no empty pull-quote).
-    if (item.entryId != null) {
-        const authorName = item.author?.name ?? 'Someone';
-        const others = item.othersCount ?? 0;
-        const attribution =
-            others > 0
-                ? `${authorName} +${others} ${others === 1 ? 'other' : 'others'}`
-                : authorName;
-        const meta = [attribution, distanceLabel, item.city].filter(Boolean).join(' · ');
-        const note = item.note?.trim() || null;
-        const opensReview = !!item.hasReview && !!onOpenReview;
-        const onPressBody = opensReview ? () => onOpenReview!(item.entryId!) : onOpen;
-        return shell(
-            <>
-                <Pressable
-                    style={styles.peekBody}
-                    onPress={onPressBody}
-                    accessibilityLabel={
-                        opensReview
-                            ? `Open ${authorName}'s review of ${item.name}`
-                            : `Open ${item.name}`
-                    }
-                >
-                    <View style={styles.peekNameRow}>
-                        <Text style={[styles.peekName, styles.peekNameFlex, { color: palette.text }]} numberOfLines={1}>
+// ── PeekCardBody — one card in the rail ─────────────────────────────────────────
+// Anatomy (rec'd parity, Heirloom voice): leading GLYPH PLATE (cuisine glyph /
+// list emoji on a seeded tint — typographic identity; restaurants.photo_url is
+// always a Places hero photo, banned on our surfaces, and lists already killed
+// thumbnails in TICKET-084), name + rating numeral, cuisine · $$ · distance
+// meta, saved-by row (network), — note pull-quote (network), then explicit
+// CTAs: view venue everywhere; directions (mine) / save (network).
+
+interface PeekCardBodyProps {
+    item: WishlistMapItem;
+    userCoords: GeoLatLng | null;
+    palette: typeof Colors.light;
+    height: number;
+    onOpenRestaurant: (restaurantId: string) => void;
+    onOpenReview?: (entryId: string) => void;
+    save?: Props['save'];
+}
+
+function PeekCardBody({
+    item,
+    userCoords,
+    palette,
+    height,
+    onOpenRestaurant,
+    onOpenReview,
+    save,
+}: PeekCardBodyProps) {
+    const isNetwork = item.entryId != null;
+    // Optimistic local flip — the add is idempotent server-side, and the
+    // screen's wishlist caches catch up via the mutation's own patches.
+    const [savedNow, setSavedNow] = useState(false);
+    const alreadySaved = savedNow || !!save?.savedIds.has(item.id);
+
+    const distanceLabel = userCoords
+        ? formatDistance(haversineMiles(userCoords, { latitude: item.lat, longitude: item.lng }))
+        : null;
+    const price = priceTierLabel(item.priceLevel);
+    const visits =
+        !isNetwork && item.been && (item.visitCount ?? 0) > 1 ? `${item.visitCount} visits` : null;
+    const meta = (
+        isNetwork
+            ? [item.cuisine, distanceLabel ?? item.city]
+            : [item.cuisine, price, distanceLabel ?? item.city, visits]
+    )
+        .filter(Boolean)
+        .join(' · ');
+
+    const rating = isNetwork ? item.rating : item.been ? item.myRating : null;
+
+    // Body tap keeps the TICKET-124 routing: review-eligible network log → the
+    // followee's review; everything else → the restaurant page.
+    const opensReview = isNetwork && !!item.hasReview && !!onOpenReview;
+    const onPressBody = opensReview
+        ? () => onOpenReview!(item.entryId!)
+        : () => onOpenRestaurant(item.id);
+
+    const authorName = item.author?.name ?? 'Someone';
+    const others = item.othersCount ?? 0;
+    const attribution = others > 0 ? `${authorName} +${others} ${others === 1 ? 'other' : 'others'}` : authorName;
+    const note = isNetwork ? item.note?.trim() || null : null;
+
+    // Plate tint — GlyphChip's seeded triple (feed ledger ↔ map speak the same).
+    const plateTints = [palette.surfaceJournal, palette.oliveCream, palette.tertiaryFixed] as const;
+    const plateTint = plateTints[tintIndex(item.id)];
+
+    return (
+        <View style={[styles.peekCard, { backgroundColor: palette.surfaceContainerLow, height }]}>
+            <Pressable
+                style={styles.peekBody}
+                onPress={onPressBody}
+                accessibilityLabel={
+                    opensReview ? `Open ${authorName}'s review of ${item.name}` : `Open ${item.name}`
+                }
+            >
+                <View style={styles.peekTopRow}>
+                    <View style={[styles.peekPlate, { backgroundColor: plateTint }]}>
+                        <View style={styles.peekPlateInset} />
+                        {item.emoji ? (
+                            <Text style={styles.peekPlateEmoji}>{item.emoji}</Text>
+                        ) : (
+                            <Ionicons
+                                name={cuisineGlyph(item.cuisine)}
+                                size={22}
+                                color={palette.primary}
+                                style={styles.peekPlateGlyph}
+                            />
+                        )}
+                    </View>
+                    <View style={styles.peekTitleCol}>
+                        <Text style={[styles.peekName, { color: palette.text }]} numberOfLines={1}>
                             {item.name}
                         </Text>
-                        {item.rating != null ? (
-                            <Text style={[styles.peekRating, { color: palette.primary }]}>
-                                {item.rating.toFixed(1)}
+                        {meta ? (
+                            <Text style={[styles.peekMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                                {meta}
                             </Text>
                         ) : null}
                     </View>
-                    {meta ? (
-                        <Text style={[styles.peekMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                            {meta}
+                    {rating != null ? (
+                        <Text style={[styles.peekRating, { color: palette.primary }]}>
+                            {rating.toFixed(1)}
                         </Text>
                     ) : null}
-                    {note ? (
-                        <Text style={[styles.peekNote, { color: palette.textSecondary }]} numberOfLines={2}>
-                            {`— ${note}`}
-                        </Text>
-                    ) : null}
-                </Pressable>
-                <Pressable
-                    onPress={onClose}
-                    hitSlop={10}
-                    accessibilityRole="button"
-                    accessibilityLabel="close"
-                    style={styles.peekClose}
-                >
-                    <Ionicons name="close" size={20} color={palette.textMuted} />
-                </Pressable>
-            </>,
-        );
-    }
+                </View>
 
-    // ── Mine variant — a saved/been spot (existing, directions-first) ───────────
-    const meta = [distanceLabel, item.city, item.cuisine].filter(Boolean).join(' · ');
-    return shell(
-        <>
-            <Pressable style={styles.peekBody} onPress={onOpen} accessibilityLabel={`Open ${item.name}`}>
-                <Text style={[styles.peekName, { color: palette.text }]} numberOfLines={1}>
-                    {item.name}
-                </Text>
-                {meta ? (
-                    <Text style={[styles.peekMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                        {meta}
+                {/* Saved-by row + pull-quote — network cards only. */}
+                {isNetwork ? (
+                    <View style={styles.peekWhoRow}>
+                        <PeekWhoAvatar author={item.author} palette={palette} />
+                        <Text
+                            style={[styles.peekWhoText, { color: palette.textSecondary }]}
+                            numberOfLines={1}
+                        >
+                            {attribution}
+                        </Text>
+                    </View>
+                ) : null}
+                {note ? (
+                    <Text style={[styles.peekNote, { color: palette.textSecondary }]} numberOfLines={1}>
+                        {`— ${note}`}
                     </Text>
                 ) : null}
             </Pressable>
 
             <View style={styles.peekActions}>
                 <Pressable
-                    onPress={() => openDirections(item)}
-                    hitSlop={8}
+                    onPress={() => onOpenRestaurant(item.id)}
                     accessibilityRole="button"
-                    accessibilityLabel="directions"
+                    accessibilityLabel={`View ${item.name}`}
                     style={({ pressed }) => [
-                        styles.directionsPill,
-                        { borderColor: 'rgba(160,63,40,0.35)', opacity: pressed ? 0.7 : 1 },
+                        styles.viewVenueBtn,
+                        { backgroundColor: palette.surfaceContainerHigh, opacity: pressed ? 0.7 : 1 },
                     ]}
                 >
-                    <Ionicons name="navigate-outline" size={15} color={palette.primary} />
-                    <Text style={[styles.directionsLabel, { color: palette.primary }]}>directions</Text>
+                    <Text style={[styles.viewVenueLabel, { color: palette.text }]}>view venue</Text>
+                    <Ionicons name="arrow-forward" size={13} color={palette.text} />
                 </Pressable>
-                <Pressable
-                    onPress={onClose}
-                    hitSlop={10}
-                    accessibilityRole="button"
-                    accessibilityLabel="close"
-                    style={styles.peekClose}
-                >
-                    <Ionicons name="close" size={20} color={palette.textMuted} />
-                </Pressable>
+
+                {isNetwork && save ? (
+                    <Pressable
+                        onPress={() => {
+                            if (alreadySaved) return;
+                            setSavedNow(true);
+                            save.onSave(item);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: alreadySaved }}
+                        accessibilityLabel={alreadySaved ? 'saved to wishlist' : 'save to wishlist'}
+                        style={({ pressed }) => [
+                            styles.sidePill,
+                            alreadySaved
+                                ? { backgroundColor: palette.primaryMuted }
+                                : { borderWidth: 1.5, borderColor: 'rgba(160,63,40,0.35)' },
+                            { opacity: pressed && !alreadySaved ? 0.7 : 1 },
+                        ]}
+                    >
+                        <Ionicons
+                            name={alreadySaved ? 'heart' : 'heart-outline'}
+                            size={15}
+                            color={palette.primary}
+                        />
+                        <Text style={[styles.sidePillLabel, { color: palette.primary }]}>
+                            {alreadySaved ? 'saved' : 'save'}
+                        </Text>
+                    </Pressable>
+                ) : null}
+
+                {!isNetwork ? (
+                    <Pressable
+                        onPress={() => openDirections(item)}
+                        accessibilityRole="button"
+                        accessibilityLabel="directions"
+                        style={({ pressed }) => [
+                            styles.sidePill,
+                            {
+                                borderWidth: 1.5,
+                                borderColor: 'rgba(160,63,40,0.35)',
+                                opacity: pressed ? 0.7 : 1,
+                            },
+                        ]}
+                    >
+                        <Ionicons name="navigate-outline" size={15} color={palette.primary} />
+                        <Text style={[styles.sidePillLabel, { color: palette.primary }]}>directions</Text>
+                    </Pressable>
+                ) : null}
             </View>
-        </>,
+        </View>
+    );
+}
+
+/** 16px saved-by avatar — image, or initial on the seeded tint (matches the pin chip). */
+function PeekWhoAvatar({
+    author,
+    palette,
+}: {
+    author: WishlistMapItem['author'];
+    palette: typeof Colors.light;
+}) {
+    const name = author?.name ?? 'Someone';
+    const tint = avatarTintFor(author?.id || name, palette);
+    return author?.avatar ? (
+        <ExpoImage source={{ uri: author.avatar }} style={styles.peekWhoAvatar} contentFit="cover" />
+    ) : (
+        <View style={[styles.peekWhoAvatar, { backgroundColor: tint, alignItems: 'center', justifyContent: 'center' }]}>
+            <Text style={[styles.peekWhoInitial, { color: palette.text }]}>
+                {(name.trim()[0] ?? '?').toUpperCase()}
+            </Text>
+        </View>
     );
 }
 
@@ -981,10 +1422,10 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 18,
     },
-    // Source pills — frosted segmented control, top-left on the glass.
+    // Source pills — frosted segmented control, top-left on the glass (⑨ h38·13/700).
     sourcePills: {
         position: 'absolute',
-        left: 16,
+        left: 12,
         flexDirection: 'row',
         borderRadius: 999,
         padding: 3,
@@ -997,23 +1438,23 @@ const styles = StyleSheet.create({
     },
     sourcePillText: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+        fontSize: 13,
         letterSpacing: 0.3,
     },
-    // Filter chip — frosted, top-right on the glass.
+    // Filter chip — frosted, top-right on the glass (⑨ h38·13/700).
     filterChip: {
         position: 'absolute',
-        right: 16,
+        right: 12,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 5,
         borderRadius: 999,
         paddingHorizontal: 13,
-        paddingVertical: 9,
+        paddingVertical: 10,
     },
     filterChipText: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+        fontSize: 13,
         letterSpacing: 0.3,
     },
     filterChipDot: {
@@ -1024,8 +1465,8 @@ const styles = StyleSheet.create({
     // Unmappable murmur — frost family, below the source pills.
     murmurWrap: {
         position: 'absolute',
-        left: 16,
-        right: 16,
+        left: 12,
+        right: 12,
         alignItems: 'flex-start',
     },
     murmurPill: {
@@ -1037,43 +1478,112 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_500Medium',
         fontSize: 11,
     },
-    // Locate FAB — bottom-RIGHT frosted circle, clear of the floating nav pill.
+    // Locate FAB — bottom-RIGHT frosted circle, clear of the floating nav pill (⑨ 46Ø).
     fab: {
         position: 'absolute',
-        right: 16,
+        right: 12,
         width: 46,
         height: 46,
         borderRadius: 23,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    // List pill (map → list) — bottom-LEFT, same frost family + elevation.
+    // List pill (map → list) — bottom-LEFT, same frost family + elevation (⑨ h42·13/800).
     listToggle: {
         position: 'absolute',
-        left: 16,
+        left: 12,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,
         borderRadius: 999,
         paddingHorizontal: 16,
-        paddingVertical: 11,
+        paddingVertical: 12,
     },
     listToggleText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+        fontFamily: 'Manrope_800ExtraBold',
+        fontSize: 13,
         letterSpacing: 0.4,
     },
-    // Peek card
-    peekCard: {
+    // Friend rail — Discover only, frosted bar one row above the List pill.
+    friendRail: {
         position: 'absolute',
-        left: 18,
-        right: 18,
+        left: 12,
+        right: 12,
+        borderRadius: 999,
+    },
+    friendRailRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
-        paddingVertical: 14,
-        paddingHorizontal: 18,
+        gap: 8,
+        paddingHorizontal: 6,
+        paddingVertical: 6,
+    },
+    friendAllChip: {
+        height: 40,
+        paddingHorizontal: 15,
+        borderRadius: 999,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    friendAllText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+        letterSpacing: 0.3,
+    },
+    // 40Ø avatar toggle (⑨ rail faces 40Ø). Terracotta ring when active.
+    friendFace: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        borderWidth: 2,
+        overflow: 'hidden',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    friendFaceImg: {
+        width: '100%',
+        height: '100%',
+    },
+    friendFaceInitial: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 15,
+        includeFontPadding: false,
+    },
+    // Ghosted ToS attribution caption — bottom-center, above the nav clearance.
+    attribution: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        textAlign: 'center',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 9,
+        letterSpacing: 0.2,
+    },
+    // ── Peek carousel ──────────────────────────────────────────────────────────
+    peekWrap: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+    },
+    // Frosted ✕ overlapping the rail's top-right corner — one, not per-card.
+    peekCloseFab: {
+        position: 'absolute',
+        top: 0,
+        right: 16,
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2,
+    },
+    peekCard: {
+        width: PEEK_CARD_W,
+        marginRight: PEEK_GAP,
         borderRadius: 16,
+        paddingVertical: 13,
+        paddingHorizontal: 15,
+        justifyContent: 'space-between',
         shadowColor: '#1c1c19',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.12,
@@ -1082,21 +1592,48 @@ const styles = StyleSheet.create({
     },
     peekBody: {
         flex: 1,
-        gap: 3,
+        gap: 5,
+    },
+    peekTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 11,
+    },
+    // Leading plate — glyph/emoji on a seeded tint (GlyphChip idiom: engraved
+    // inset rule). Typographic by doctrine — never a restaurant photo.
+    peekPlate: {
+        width: 52,
+        height: 52,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    peekPlateInset: {
+        position: 'absolute',
+        top: 3.5,
+        left: 3.5,
+        right: 3.5,
+        bottom: 3.5,
+        borderRadius: 9,
+        borderWidth: 1,
+        borderColor: 'rgba(160,63,40,0.22)',
+    },
+    peekPlateGlyph: {
+        opacity: 0.8,
+    },
+    peekPlateEmoji: {
+        fontSize: 24,
+        includeFontPadding: false,
+    },
+    peekTitleCol: {
+        flex: 1,
+        gap: 2,
     },
     peekName: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 19,
-        lineHeight: 23,
-    },
-    // Network variant: name shares its row with the rating numeral.
-    peekNameRow: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 10,
-    },
-    peekNameFlex: {
-        flex: 1,
+        fontSize: 18,
+        lineHeight: 22,
     },
     // Rating numeral — the brand's italic-serif rating moment, terracotta.
     peekRating: {
@@ -1104,41 +1641,73 @@ const styles = StyleSheet.create({
         fontSize: 19,
         lineHeight: 23,
     },
+    peekMeta: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+    },
+    // Saved-by row — avatar + "{name} +N others" (network cards).
+    peekWhoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 2,
+    },
+    peekWhoAvatar: {
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        overflow: 'hidden',
+    },
+    peekWhoInitial: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 8,
+        includeFontPadding: false,
+    },
+    peekWhoText: {
+        flex: 1,
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
+    },
     // Followee's note snippet — em-dash pull-quote, italic serif.
     peekNote: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 13.5,
         lineHeight: 18,
-        marginTop: 3,
-    },
-    peekMeta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
     },
     peekActions: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
+        marginTop: 10,
     },
-    directionsPill: {
+    viewVenueBtn: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 5,
-        borderWidth: 1.5,
-        borderRadius: 18,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
+        justifyContent: 'center',
+        gap: 6,
+        height: 36,
+        borderRadius: 12,
     },
-    directionsLabel: {
+    viewVenueLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 12.5,
+        letterSpacing: 0.2,
+    },
+    // Side pill — directions (mine) / Save (network), same footprint.
+    sidePill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+        height: 36,
+        borderRadius: 12,
+        paddingHorizontal: 13,
+    },
+    sidePillLabel: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 12,
         letterSpacing: 0.2,
-    },
-    peekClose: {
-        width: 28,
-        height: 28,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
 });
 

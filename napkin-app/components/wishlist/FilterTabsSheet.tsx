@@ -37,6 +37,12 @@ export interface FilterTabConfig {
     onSelect: (value: string | null) => void;
 }
 
+/** TICKET-134: a boolean "on the map" toggle (show saved / show been). */
+export interface FilterToggleConfig {
+    value: boolean;
+    onToggle: () => void;
+}
+
 interface Props {
     visible: boolean;
     onDismiss: () => void;
@@ -49,6 +55,10 @@ interface Props {
     price: FilterTabConfig;
     area: FilterTabConfig;
     sort: FilterTabConfig;
+    /** TICKET-134: Your-map only — show/hide the saved layer. Absent → no row. */
+    showSaved?: FilterToggleConfig;
+    /** TICKET-134: Your-map only — show/hide the been layer. Absent → no row. */
+    showBeen?: FilterToggleConfig;
 }
 
 export function FilterTabsSheet({
@@ -61,6 +71,8 @@ export function FilterTabsSheet({
     price,
     area,
     sort,
+    showSaved,
+    showBeen,
 }: Props) {
     const insets = useSafeAreaInsets();
     const visibility = { hideSort, hideArea };
@@ -155,9 +167,61 @@ export function FilterTabsSheet({
                             );
                         })}
                     </ScrollView>
+
+                    {/* On the map — Your-map layer toggles (TICKET-134). Rendered
+                        only when the screen passes them; two boolean rows. */}
+                    {showSaved || showBeen ? (
+                        <View style={[styles.onMapSection, { borderTopColor: palette.dividerSoft }]}>
+                            <Text style={[styles.onMapLabel, { color: palette.textMuted }]}>On the map</Text>
+                            {showSaved ? (
+                                <ToggleRow label="Saved" config={showSaved} palette={palette} />
+                            ) : null}
+                            {showBeen ? (
+                                <ToggleRow label="Been" config={showBeen} palette={palette} />
+                            ) : null}
+                        </View>
+                    ) : null}
                 </Pressable>
             </Pressable>
         </Modal>
+    );
+}
+
+/** One boolean toggle row for the "On the map" section (TICKET-134). */
+function ToggleRow({
+    label,
+    config,
+    palette,
+}: {
+    label: string;
+    config: FilterToggleConfig;
+    palette: typeof Colors.light;
+}) {
+    return (
+        <Pressable
+            onPress={config.onToggle}
+            style={styles.optionRow}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: config.value }}
+            accessibilityLabel={label}
+        >
+            <Text
+                style={[
+                    styles.optionLabel,
+                    {
+                        color: config.value ? palette.primary : palette.text,
+                        fontFamily: config.value ? 'Manrope_700Bold' : 'Manrope_500Medium',
+                    },
+                ]}
+            >
+                {label}
+            </Text>
+            <Ionicons
+                name={config.value ? 'checkmark-circle' : 'ellipse-outline'}
+                size={20}
+                color={config.value ? palette.primary : palette.textMuted}
+            />
+        </Pressable>
     );
 }
 
@@ -217,5 +281,20 @@ const styles = StyleSheet.create({
     },
     optionLabel: {
         fontSize: 16,
+    },
+    // "On the map" toggle section — Your-map layer switches (TICKET-134).
+    onMapSection: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: 8,
+        marginTop: 4,
+    },
+    onMapLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        paddingHorizontal: 24,
+        paddingTop: 8,
+        paddingBottom: 2,
     },
 });

@@ -9,9 +9,10 @@
  *  - network pins carry entryId/author/hasReview (avatar pin + network peek)
  *  - the cuisine filter trim-matches and applies to any layer; null = pass-through
  */
-import { spotsToMapItems, networkPinsToMapItems, filterItemsByCuisine } from '../mapItems';
+import { spotsToMapItems, networkPinsToMapItems, filterItemsByCuisine, mergeYourItems } from '../mapItems';
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
 import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
+import type { WishlistMapItem } from '../WishlistMapView';
 
 function spot(over: Partial<SpotSummary> & { restaurant_id: string }): SpotSummary {
     return {
@@ -99,6 +100,67 @@ describe('networkPinsToMapItems', () => {
     it('tolerates null/undefined input', () => {
         expect(networkPinsToMapItems(null)).toEqual([]);
         expect(networkPinsToMapItems(undefined)).toEqual([]);
+    });
+});
+
+describe('mergeYourItems (TICKET-134 Your map)', () => {
+    // A save (no `been`) and a been pin for the SAME restaurant id, plus disjoint ones.
+    const save = (id: string): WishlistMapItem => ({
+        id, name: `save ${id}`, city: 'London', cuisine: 'Thai', lat: 51.5, lng: -0.1,
+    });
+    const beenPin = (id: string): WishlistMapItem => spotsToMapItems([spot({ restaurant_id: id })])[0];
+
+    it('both on: unions saved + been and dedupes with been winning', () => {
+        const saves = [save('a'), save('shared')];
+        const been = [beenPin('shared'), beenPin('c')];
+        const merged = mergeYourItems(saves, been, { showSaved: true, showBeen: true });
+        expect(merged.map((i) => i.id).sort()).toEqual(['a', 'c', 'shared']);
+        // The shared id keeps the BEEN relationship (been wins → olive ring)
+        // plus the been-side enrichment (#167 card meta + loved badge).
+        expect(merged.find((i) => i.id === 'shared')).toMatchObject({
+            been: true,
+            myRating: 4,
+            visitCount: 1,
+        });
+        // A save-only id has no `been` flag (terracotta ring).
+        expect(merged.find((i) => i.id === 'a')?.been).toBeUndefined();
+    });
+
+    it('been wins the relationship but does NOT strip save-side enrichment (emoji, priceLevel fallback)', () => {
+        // #167 pin grammar: bubble = emoji (list save) or cuisine glyph; the
+        // been mapper never carries emoji, so a been-win must keep the save's
+        // (TICKET-108 emoji-wins precedence) + fall back to its priceLevel.
+        const listSave: WishlistMapItem = { ...save('shared'), emoji: '🥟', priceLevel: 3 };
+        const beenSide = { ...beenPin('shared'), priceLevel: null };
+        const merged = mergeYourItems([listSave], [beenSide], { showSaved: true, showBeen: true });
+        expect(merged).toHaveLength(1);
+        expect(merged[0]).toMatchObject({
+            id: 'shared',
+            been: true,       // relationship: been wins
+            emoji: '🥟',      // save enrichment survives
+            priceLevel: 3,    // been-side null → saved fallback
+            myRating: 4,      // been enrichment rides along
+        });
+    });
+
+    it('showSaved=false: only been pins', () => {
+        const merged = mergeYourItems([save('a')], [beenPin('c')], { showSaved: false, showBeen: true });
+        expect(merged.map((i) => i.id)).toEqual(['c']);
+        expect(merged[0].been).toBe(true);
+    });
+
+    it('showBeen=false: only saved pins (no been flag)', () => {
+        const merged = mergeYourItems([save('a')], [beenPin('c')], { showSaved: true, showBeen: false });
+        expect(merged.map((i) => i.id)).toEqual(['a']);
+        expect(merged[0].been).toBeUndefined();
+    });
+
+    it('both off: empty (hits the map empty-state branch)', () => {
+        expect(mergeYourItems([save('a')], [beenPin('c')], { showSaved: false, showBeen: false })).toEqual([]);
+    });
+
+    it('empty inputs: empty out', () => {
+        expect(mergeYourItems([], [], { showSaved: true, showBeen: true })).toEqual([]);
     });
 });
 
