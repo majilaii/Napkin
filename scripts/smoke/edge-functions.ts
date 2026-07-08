@@ -638,8 +638,8 @@ try {
             query: 'action=map_pins',
             body: { action: 'map_pins', table_id: tableId },
             shape: (json) => {
-                const rows = (json as { data?: unknown }).data;
-                if (!Array.isArray(rows)) return 'data is not an array';
+                const rows = (json as { data?: { rows?: unknown } }).data?.rows;
+                if (!Array.isArray(rows)) return 'data.rows is not an array';
                 if (rows.length === 0) {
                     return 'no pin rows — ensure-fixtures seeds a supper; empty means the map_pins read path regressed (or SMOKE_TEST_RESTAURANT_ID lost its coords)';
                 }
