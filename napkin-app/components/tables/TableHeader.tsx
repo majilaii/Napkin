@@ -38,6 +38,10 @@ export interface TableHeaderProps {
     /** TICKET-133: bell on the Tables header — same dot/source as Profile. */
     onBellPress?: () => void;
     bellUnread?: boolean;
+    /** TICKET-139: the table's territory map. One quiet map-outline in the
+     * rightColumn (masthead furniture, not a hero). Any member may open it (the
+     * map is member-gated server-side). */
+    onMapPress?: () => void;
 }
 
 const MAX_STACK_AVATARS = 3;
@@ -55,6 +59,7 @@ export function TableHeader({
     onInvitePress,
     onBellPress,
     bellUnread,
+    onMapPress,
 }: TableHeaderProps) {
     const visibleAvatars = memberNames.slice(0, MAX_STACK_AVATARS);
     const overflow = Math.max(memberNames.length - MAX_STACK_AVATARS, 0);
@@ -106,8 +111,19 @@ export function TableHeader({
                 ) : null}
             </Pressable>
 
-            {/* Right column: bell + stacked avatars + optional settings gear */}
+            {/* Right column: map + bell + stacked avatars + optional settings gear */}
             <View style={styles.rightColumn}>
+                {onMapPress && (
+                    <Pressable
+                        onPress={onMapPress}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel="table map"
+                        style={styles.mapButton}
+                    >
+                        <Ionicons name="map-outline" size={17} color={palette.textMuted} />
+                    </Pressable>
+                )}
                 {onBellPress && (
                     <NotifBell
                         unread={bellUnread}
@@ -251,6 +267,9 @@ const styles = StyleSheet.create({
         height: AVATAR_SIZE,
     },
     settingsButton: {
+        padding: 2,
+    },
+    mapButton: {
         padding: 2,
     },
     inviteButton: {

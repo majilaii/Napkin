@@ -31,6 +31,21 @@ interface Props {
     onToggle: (id: string) => void;
     /** Clear back to everyone (the `Everyone` row). */
     onEveryone: () => void;
+    /**
+     * TICKET-139: pinned "your table" rows above Everyone. One tap = exclusive-
+     * include that table's member ids (overlap pins then hide per 138 — correct,
+     * their VISITS show). Only for table members; ≤2 rows typical. Rendered only
+     * when non-empty; the sheet stays presentational.
+     */
+    tableRows?: { tableId: string; name: string; memberIds: string[] }[];
+    onSelectTable?: (memberIds: string[]) => void;
+}
+
+/** True when `checkedIds` is exactly this table's member set (same size + every
+ * id present) — the "your table" row's selected state. */
+function isTableSelected(checkedIds: ReadonlySet<string>, memberIds: string[]): boolean {
+    if (memberIds.length === 0 || checkedIds.size !== memberIds.length) return false;
+    return memberIds.every((id) => checkedIds.has(id));
 }
 
 export function DiscoverPeopleSheet({
@@ -41,6 +56,8 @@ export function DiscoverPeopleSheet({
     checkedIds,
     onToggle,
     onEveryone,
+    tableRows,
+    onSelectTable,
 }: Props) {
     const insets = useSafeAreaInsets();
     const everyone = checkedIds.size === 0;
@@ -64,6 +81,40 @@ export function DiscoverPeopleSheet({
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
                     >
+                        {/* "your table" rows (TICKET-139) — one tap includes only
+                            that table's members. Rendered only for table members. */}
+                        {(tableRows ?? []).map((r) => {
+                            const selected = isTableSelected(checkedIds, r.memberIds);
+                            return (
+                                <Pressable
+                                    key={r.tableId}
+                                    onPress={() => onSelectTable?.(r.memberIds)}
+                                    style={styles.row}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ selected }}
+                                    accessibilityLabel={r.name}
+                                >
+                                    <View style={[styles.avatar, { backgroundColor: palette.primaryMuted }]}>
+                                        <Ionicons name="people-circle-outline" size={19} color={palette.primary} />
+                                    </View>
+                                    <Text
+                                        style={[
+                                            styles.tableName,
+                                            {
+                                                color: selected ? palette.primary : palette.text,
+                                            },
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {r.name}
+                                    </Text>
+                                    {selected ? (
+                                        <Ionicons name="checkmark" size={18} color={palette.primary} />
+                                    ) : null}
+                                </Pressable>
+                            );
+                        })}
+
                         {/* Everyone — clears the exclusive set. */}
                         <Pressable
                             onPress={onEveryone}
@@ -200,6 +251,12 @@ const styles = StyleSheet.create({
     name: {
         flex: 1,
         fontSize: 16,
+    },
+    // Table names are brand voice → italic serif (not the Manrope person rows).
+    tableName: {
+        flex: 1,
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 17,
     },
 });
 

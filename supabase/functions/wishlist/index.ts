@@ -290,6 +290,8 @@ serve(async (req) => {
                         google_rating,
                         price_level,
                         external_id,
+                        lat,
+                        lng,
                         verification
                     )
                 `)
