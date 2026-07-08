@@ -1,23 +1,132 @@
 /**
- * Settings screen — relocated from (tabs)/settings.tsx (TICKET-020).
+ * Settings screen — a sectioned Heirloom ledger (TICKET-142).
  *
- * Reachable ONLY via the gear icon on own profile. Route: /settings.
- * Adds a "Privacy" section above "My Wishlist".
- * Existing content (Wishlist, Lists, Sign out) preserved.
+ * Reachable via the gear on own profile / Tables header. Route: /settings.
+ *
+ * Sections (each a `note`-card group with ghosted warm rules between rows):
+ *   profile     — avatar · Name · Username · Bio   → the existing editors on
+ *                 /settings/privacy (no new editors built here)
+ *   account     — Account visibility (Public/Private pill → /settings/privacy) ·
+ *                 Email (read-only)
+ *   privacy     — Blocked
+ *   permissions — Notifications · Location: real OS state (On/Off pill) →
+ *                 Linking.openSettings()
+ *   about       — Support · Terms · Privacy (legal links)
+ * Footer: SIGN OUT (terracotta) + quiet delete account.
+ *
+ * The My Wishlist / My Lists shortcut cards were cut — settings is not a junk
+ * drawer (they live on the Map tab's List sheet + the profile).
  */
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, ScrollView, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 
-import { Colors, Radius, Spacing, Type } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { PrivacySection } from '@/components/settings/PrivacySection';
-import { FRIEND_TEST } from '@/constants/flags';
-import { LEGAL_URLS } from '@/constants/links';
+import { useUserProfile } from '@/hooks/users';
 import { useDeleteAccount } from '@/hooks/account';
+import { Avatar } from '@/components/feed/Avatar';
+import { LEGAL_URLS } from '@/constants/links';
+import { getPermissionState } from '@/lib/localNotify';
+import { permissionPill, type PermissionPill } from '@/lib/permissionLabel';
+
+type Palette = typeof Colors.light;
+
+// ── Section (kicker + note card) ────────────────────────────────────────────
+
+function Section({
+    title,
+    palette,
+    children,
+}: {
+    title: string;
+    palette: Palette;
+    children: React.ReactNode;
+}) {
+    return (
+        <View style={styles.section}>
+            <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>{title}</Text>
+            <View style={[styles.card, { backgroundColor: palette.card }, Shadow.ambient]}>{children}</View>
+        </View>
+    );
+}
+
+// ── Row (label · value/pill · chevron) ──────────────────────────────────────
+
+function Row({
+    label,
+    value,
+    pill,
+    palette,
+    onPress,
+    last,
+    leading,
+}: {
+    label: string;
+    value?: string | null;
+    pill?: PermissionPill | { label: string; tone: 'neutral' | 'muted' };
+    palette: Palette;
+    onPress?: () => void;
+    last?: boolean;
+    leading?: React.ReactNode;
+}) {
+    const pillColor =
+        pill?.tone === 'positive'
+            ? palette.secondary
+            : pill?.tone === 'neutral'
+              ? palette.text
+              : palette.textMuted;
+
+    const body = (
+        <View style={styles.rowInner}>
+            {leading ? <View style={styles.rowLeading}>{leading}</View> : null}
+            <Text style={[styles.rowLabel, { color: palette.text }]}>{label}</Text>
+            <View style={styles.rowRight}>
+                {pill ? (
+                    <View style={[styles.pill, { backgroundColor: palette.surfaceContainerHigh }]}>
+                        <Text style={[styles.pillText, { color: pillColor }]}>{pill.label}</Text>
+                    </View>
+                ) : value != null ? (
+                    <Text style={[styles.rowValue, { color: palette.textMuted }]} numberOfLines={1}>
+                        {value}
+                    </Text>
+                ) : null}
+                {onPress ? (
+                    <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
+                ) : null}
+            </View>
+        </View>
+    );
+
+    return (
+        <>
+            {onPress ? (
+                <Pressable
+                    onPress={onPress}
+                    accessibilityRole="button"
+                    accessibilityLabel={label}
+                    style={({ pressed }) => [
+                        styles.row,
+                        pressed ? { backgroundColor: palette.surfaceJournalLow } : null,
+                    ]}
+                >
+                    {body}
+                </Pressable>
+            ) : (
+                <View style={styles.row}>{body}</View>
+            )}
+            {!last ? (
+                <View style={[styles.rule, { backgroundColor: palette.outlineVariant }]} />
+            ) : null}
+        </>
+    );
+}
+
+// ── Screen ──────────────────────────────────────────────────────────────────
 
 export default function SettingsScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -27,9 +136,35 @@ export default function SettingsScreen() {
     const router = useRouter();
     const deleteAccount = useDeleteAccount();
 
-    // Two-step destructive confirm (guideline 5.1.1(v)). No typed phrase —
-    // Alert-chain friction is enough at this scale, and the server does the
-    // irreversible part only on the explicit second confirm.
+    const { data: result } = useUserProfile(user?.id);
+    const profile = result?.data?.profile;
+    const isPublic = (profile?.account_privacy ?? 'public') === 'public';
+
+    // Real OS permission state — refreshed whenever the screen regains focus
+    // (so a trip out to system Settings and back reflects immediately).
+    const [notifStatus, setNotifStatus] = useState<string>('undetermined');
+    const [locStatus, setLocStatus] = useState<string>('undetermined');
+    useFocusEffect(
+        useCallback(() => {
+            let alive = true;
+            getPermissionState()
+                .then((s) => alive && setNotifStatus(s))
+                .catch(() => undefined);
+            Location.getForegroundPermissionsAsync()
+                .then((r) => alive && setLocStatus(r.status))
+                .catch(() => undefined);
+            return () => {
+                alive = false;
+            };
+        }, []),
+    );
+
+    const goPrivacy = () => router.push('/settings/privacy');
+    const openSystemSettings = () => {
+        Linking.openSettings().catch(() => undefined);
+    };
+
+    // Two-step destructive confirm (guideline 5.1.1(v)) — unchanged from TICKET-090.
     const confirmDelete = () => {
         Alert.alert(
             'Delete account?',
@@ -40,39 +175,33 @@ export default function SettingsScreen() {
                     text: 'Continue',
                     style: 'destructive',
                     onPress: () =>
-                        Alert.alert(
-                            'This is permanent',
-                            "There's no undo and nothing is kept.",
-                            [
-                                { text: 'Keep my account', style: 'cancel' },
-                                {
-                                    text: 'Delete everything',
-                                    style: 'destructive',
-                                    onPress: () =>
-                                        deleteAccount.mutate(undefined, {
-                                            onError: () =>
-                                                Alert.alert(
-                                                    'Something went wrong',
-                                                    "Your account was not deleted. Try again, or email us from the support page.",
-                                                ),
-                                        }),
-                                },
-                            ],
-                        ),
+                        Alert.alert('This is permanent', "There's no undo and nothing is kept.", [
+                            { text: 'Keep my account', style: 'cancel' },
+                            {
+                                text: 'Delete everything',
+                                style: 'destructive',
+                                onPress: () =>
+                                    deleteAccount.mutate(undefined, {
+                                        onError: () =>
+                                            Alert.alert(
+                                                'Something went wrong',
+                                                'Your account was not deleted. Try again, or email us from the support page.',
+                                            ),
+                                    }),
+                            },
+                        ]),
                 },
             ],
         );
     };
 
     return (
-        <View style={[
-            styles.container,
-            {
-                backgroundColor: palette.background,
-                paddingTop: insets.top + Spacing.sm,
-            },
-        ]}>
-            {/* Top bar with back nav */}
+        <View
+            style={[
+                styles.container,
+                { backgroundColor: palette.background, paddingTop: insets.top + Spacing.sm },
+            ]}
+        >
             <View style={styles.topBar}>
                 <Pressable onPress={() => router.back()} hitSlop={12}>
                     <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
@@ -86,104 +215,109 @@ export default function SettingsScreen() {
                 showsVerticalScrollIndicator={false}
             >
                 <Text style={[Type.displaySmall, { color: palette.text }]}>Settings</Text>
-                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: Spacing.sm }]}>
+                <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 4 }]}>
                     {user?.email ?? 'Signed in'}
                 </Text>
 
-                {/* Privacy section — routes to /settings/privacy */}
-                <PrivacySection />
+                <Section title="profile" palette={palette}>
+                    <Row
+                        label="Photo"
+                        palette={palette}
+                        onPress={goPrivacy}
+                        leading={
+                            <Avatar
+                                name={profile?.display_name ?? ''}
+                                url={profile?.avatar_url ?? null}
+                                size={40}
+                                palette={palette}
+                            />
+                        }
+                    />
+                    <Row
+                        label="Name"
+                        value={profile?.display_name || '—'}
+                        palette={palette}
+                        onPress={goPrivacy}
+                    />
+                    <Row
+                        label="Username"
+                        value={profile?.username ? `@${profile.username}` : 'not set'}
+                        palette={palette}
+                        onPress={goPrivacy}
+                    />
+                    <Row
+                        label="Bio"
+                        value={profile?.bio || '—'}
+                        palette={palette}
+                        onPress={goPrivacy}
+                        last
+                    />
+                </Section>
 
-                {/* My Wishlist */}
-                <Pressable
-                    onPress={() => router.push('/wishlist')}
-                    style={({ pressed }) => [
-                        styles.row,
-                        {
-                            backgroundColor: pressed
-                                ? palette.surfaceContainerHigh
-                                : palette.surfaceContainerLow,
-                        },
-                    ]}
-                >
-                    <View style={styles.rowLeft}>
-                        <Ionicons name="heart-outline" size={20} color={palette.primary} />
-                        <Text style={[Type.titleSmall, { color: palette.text }]}>My Wishlist</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
-                </Pressable>
+                <Section title="account" palette={palette}>
+                    <Row
+                        label="Account visibility"
+                        pill={{ label: isPublic ? 'Public' : 'Private', tone: isPublic ? 'neutral' : 'muted' }}
+                        palette={palette}
+                        onPress={goPrivacy}
+                    />
+                    <Row label="Email" value={user?.email ?? '—'} palette={palette} last />
+                </Section>
 
-                {/* My Lists — hidden during friend-test */}
-                {!FRIEND_TEST.hideLists && (
-                    <Pressable
-                        onPress={() => router.push('/lists')}
-                        style={({ pressed }) => [
-                            styles.row,
-                            {
-                                backgroundColor: pressed
-                                    ? palette.surfaceContainerHigh
-                                    : palette.surfaceContainerLow,
-                            },
-                        ]}
-                    >
-                        <View style={styles.rowLeft}>
-                            <Ionicons name="list-outline" size={20} color={palette.primary} />
-                            <Text style={[Type.titleSmall, { color: palette.text }]}>My Lists</Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
-                    </Pressable>
-                )}
+                <Section title="privacy" palette={palette}>
+                    <Row
+                        label="Blocked"
+                        palette={palette}
+                        onPress={() => router.push('/settings/blocked')}
+                        last
+                    />
+                </Section>
 
-                {/* Blocked users (TICKET-090) */}
-                <Pressable
-                    onPress={() => router.push('/settings/blocked')}
-                    style={({ pressed }) => [
-                        styles.row,
-                        {
-                            backgroundColor: pressed
-                                ? palette.surfaceContainerHigh
-                                : palette.surfaceContainerLow,
-                        },
-                    ]}
-                >
-                    <View style={styles.rowLeft}>
-                        <Ionicons name="hand-left-outline" size={20} color={palette.primary} />
-                        <Text style={[Type.titleSmall, { color: palette.text }]}>Blocked</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
-                </Pressable>
+                <Section title="permissions" palette={palette}>
+                    <Row
+                        label="Notifications"
+                        pill={permissionPill(notifStatus)}
+                        palette={palette}
+                        onPress={openSystemSettings}
+                    />
+                    <Row
+                        label="Location"
+                        pill={permissionPill(locStatus)}
+                        palette={palette}
+                        onPress={openSystemSettings}
+                        last
+                    />
+                </Section>
 
-                {/* Legal + support (TICKET-090) */}
-                <View style={styles.linkRow}>
-                    {(
-                        [
-                            ['Privacy', LEGAL_URLS.privacy],
-                            ['Terms', LEGAL_URLS.terms],
-                            ['Support', LEGAL_URLS.support],
-                        ] as const
-                    ).map(([label, url]) => (
-                        <Pressable key={label} onPress={() => Linking.openURL(url)} hitSlop={8}>
-                            <Text style={[styles.linkLabel, { color: palette.textMuted }]}>
-                                {label}
-                            </Text>
-                        </Pressable>
-                    ))}
-                </View>
+                <Section title="about" palette={palette}>
+                    <Row
+                        label="Support"
+                        palette={palette}
+                        onPress={() => Linking.openURL(LEGAL_URLS.support)}
+                    />
+                    <Row
+                        label="Terms"
+                        palette={palette}
+                        onPress={() => Linking.openURL(LEGAL_URLS.terms)}
+                    />
+                    <Row
+                        label="Privacy"
+                        palette={palette}
+                        onPress={() => Linking.openURL(LEGAL_URLS.privacy)}
+                        last
+                    />
+                </Section>
 
-                {/* Sign out */}
                 <Pressable
                     onPress={signOut}
                     style={({ pressed }) => [
                         styles.signOut,
-                        {
-                            backgroundColor: palette.primary,
-                            opacity: pressed ? 0.9 : 1,
-                        },
+                        { backgroundColor: palette.primary, opacity: pressed ? 0.9 : 1 },
                     ]}
                 >
                     <Text style={[Type.label, { color: palette.textInverse }]}>Sign out</Text>
                 </Pressable>
 
-                {/* Delete account — quiet by design; destructive confirm carries the weight */}
                 <Pressable
                     onPress={confirmDelete}
                     disabled={deleteAccount.isPending}
@@ -191,7 +325,12 @@ export default function SettingsScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="Delete account"
                 >
-                    <Text style={[styles.deleteLabel, { color: palette.textMuted, opacity: deleteAccount.isPending ? 0.5 : 1 }]}>
+                    <Text
+                        style={[
+                            styles.deleteLabel,
+                            { color: palette.textMuted, opacity: deleteAccount.isPending ? 0.5 : 1 },
+                        ]}
+                    >
                         {deleteAccount.isPending ? 'deleting…' : 'delete account'}
                     </Text>
                 </Pressable>
@@ -216,36 +355,72 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.lg,
     },
-    row: {
-        marginTop: Spacing.md,
-        paddingVertical: Spacing.md,
-        paddingHorizontal: Spacing.lg,
-        borderRadius: Radius.md,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+    section: {
+        marginTop: Spacing.xl,
     },
-    rowLeft: {
+    sectionKicker: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        letterSpacing: 0.9,
+        textTransform: 'uppercase',
+        marginBottom: Spacing.sm,
+        marginLeft: Spacing.xs,
+    },
+    card: {
+        borderRadius: Radius.lg,
+        overflow: 'hidden',
+    },
+    row: {
+        minHeight: 52,
+        justifyContent: 'center',
+    },
+    rowInner: {
         flexDirection: 'row',
         alignItems: 'center',
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.sm,
         gap: Spacing.sm,
     },
+    rowLeading: {
+        marginRight: 2,
+    },
+    rowLabel: {
+        flex: 1,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 15,
+    },
+    rowRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        flexShrink: 1,
+    },
+    rowValue: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 14,
+        maxWidth: 190,
+    },
+    pill: {
+        borderRadius: Radius.full,
+        paddingHorizontal: 10,
+        paddingVertical: 3,
+    },
+    pillText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
+        letterSpacing: 0.2,
+    },
+    // Ghosted warm rule — inset from the card edges, low opacity (no solid border).
+    rule: {
+        height: 1,
+        marginLeft: Spacing.lg,
+        opacity: 0.28,
+    },
     signOut: {
-        marginTop: Spacing.md,
+        marginTop: Spacing.xl,
         paddingVertical: Spacing.md,
         borderRadius: Radius.full,
         alignItems: 'center',
-    },
-    linkRow: {
-        flexDirection: 'row',
-        gap: Spacing.lg,
-        marginTop: Spacing.lg,
-        paddingHorizontal: Spacing.xs,
-    },
-    linkLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
-        letterSpacing: 0.4,
     },
     deleteRow: {
         marginTop: Spacing.xl,

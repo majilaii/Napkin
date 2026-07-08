@@ -29,6 +29,7 @@ import { RateMoreToUnlockPrompt } from './RateMoreToUnlockPrompt';
 import { NotifBell } from '@/components/notifications/NotifBell';
 import { useUnreadCount } from '@/hooks/notifications';
 import { useAuth } from '@/providers/AuthProvider';
+import { profileStatSegments } from './statsLine';
 
 interface Props {
     profile: UserProfileRow;
@@ -81,10 +82,9 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
         relationship === 'public_only' ||
         relationship === 'public_and_tables';
 
-    const totalLogs = stats?.total_logs ?? 0;
-    const totalPlaces = stats?.total_restaurants ?? 0;
-    // Social counts fall back stats → social → null. null renders a '·' placeholder
-    // (older cache, genuinely unknown) rather than a lying 0.
+    // Social counts fall back stats → social → null. null → omitted from the line
+    // (older cache / genuinely unknown) rather than a lying 0. PLACES / THIS YR
+    // are gone (cities/countries live in the TASTE band) — TICKET-144.
     const followersCount: number | null = stats
         ? stats.followers_count
         : social
@@ -95,6 +95,12 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
         : social
           ? social.following_count
           : null;
+    // meals only when stats are present (a withheld tablemate shows none, not 0).
+    const statSegments = profileStatSegments({
+        meals: stats ? (stats.total_logs ?? 0) : null,
+        following: followingCount,
+        followers: followersCount,
+    });
 
     // One terse relationship meta line (non-self only). 'follows you' wins when
     // the target follows back; otherwise flag an unreciprocated outbound follow.
@@ -133,6 +139,30 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                             @{profile.username}
                         </Text>
                     )}
+                    {/* TICKET-144: one quiet counts line — meals · following ·
+                        follower(s). Follow segments tap → /follows (correct tab). */}
+                    {statSegments.length > 0 ? (
+                        <Text style={[styles.statsLine, { color: palette.textMuted }]}>
+                            {statSegments.map((seg, i) => (
+                                <React.Fragment key={seg.key}>
+                                    {i > 0 ? <Text>{' · '}</Text> : null}
+                                    {seg.tappable ? (
+                                        <Text
+                                            onPress={() =>
+                                                openFollowList(seg.key as 'followers' | 'following')
+                                            }
+                                            accessibilityRole="button"
+                                            accessibilityLabel={seg.text}
+                                        >
+                                            {seg.text}
+                                        </Text>
+                                    ) : (
+                                        <Text>{seg.text}</Text>
+                                    )}
+                                </React.Fragment>
+                            ))}
+                        </Text>
+                    ) : null}
                     {profile.bio ? (
                         <Text style={[styles.bio, { color: palette.textSecondary }]}>
                             {profile.bio}
@@ -206,71 +236,7 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                     </View>
                 );
             })()}
-
-            {/* TICKET-092: stats strip in the ScoreBand grammar — ledger counts
-                first, social last (the Letterboxd move). One identity-counts
-                surface; the old inline sans row is gone. */}
-            <View style={[styles.statsStrip, { borderColor: 'rgba(28,28,25,0.07)' }]}>
-                <StatCell label="meals" value={totalLogs} palette={palette} />
-                <View style={styles.statRule} />
-                <StatCell label="places" value={totalPlaces} palette={palette} />
-                <View style={styles.statRule} />
-                <StatCell
-                    label="this yr"
-                    value={stats?.logs_this_year ?? 0}
-                    palette={palette}
-                />
-                <View style={styles.statRule} />
-                <StatCell
-                    label="followers"
-                    value={followersCount}
-                    palette={palette}
-                    onPress={() => openFollowList('followers')}
-                />
-                <View style={styles.statRule} />
-                <StatCell
-                    label="following"
-                    value={followingCount}
-                    palette={palette}
-                    onPress={() => openFollowList('following')}
-                />
-            </View>
         </View>
-    );
-}
-
-function StatCell({
-    label,
-    value,
-    palette,
-    onPress,
-}: {
-    /** null → count genuinely unknown (withheld / older cache): render '·', not 0. */
-    value: number | null;
-    label: string;
-    palette: typeof Colors.light;
-    onPress?: () => void;
-}) {
-    const dimmed = value === null || value === 0;
-    const display = value === null ? '·' : value === 0 ? '—' : value;
-    const body = (
-        <>
-            <Text style={[styles.statValue, { color: palette.text, opacity: dimmed ? 0.4 : 1 }]}>
-                {display}
-            </Text>
-            <Text style={[styles.statLabel, { color: palette.textMuted }]}>{label}</Text>
-        </>
-    );
-    if (!onPress) return <View style={styles.statCell}>{body}</View>;
-    return (
-        <Pressable
-            onPress={onPress}
-            style={({ pressed }) => [styles.statCell, { opacity: pressed ? 0.7 : 1 }]}
-            accessibilityRole="button"
-            accessibilityLabel={`${value ?? 0} ${label}`}
-        >
-            {body}
-        </Pressable>
     );
 }
 
@@ -316,6 +282,14 @@ const styles = StyleSheet.create({
         marginTop: 2,
         letterSpacing: 0.2,
     },
+    // TICKET-144: one quiet counts line under the @handle (meals · following ·
+    // follower). Low-key Manrope; follow segments are tappable (no underline).
+    statsLine: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        marginTop: 6,
+        letterSpacing: 0.2,
+    },
     bio: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 13,
@@ -344,33 +318,5 @@ const styles = StyleSheet.create({
     calibrationRow: {
         marginTop: Spacing.sm,
         paddingHorizontal: 0,
-    },
-    statsStrip: {
-        marginTop: 16,
-        flexDirection: 'row',
-        alignItems: 'stretch',
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        paddingVertical: 10,
-    },
-    statRule: {
-        width: StyleSheet.hairlineWidth,
-        backgroundColor: 'rgba(28,28,25,0.07)',
-    },
-    statCell: {
-        flex: 1,
-        alignItems: 'center',
-        gap: 2,
-    },
-    statValue: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 21,
-        lineHeight: 25,
-    },
-    statLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 8.5,
-        letterSpacing: 1.1,
-        textTransform: 'uppercase',
     },
 });
