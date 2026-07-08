@@ -29,8 +29,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Radius } from '@/constants/theme';
 import { matchPeople, type DiscoverPerson } from './mapItems';
 
-/** Above this many rows, the roster gets a client-side search field. */
-const SEARCH_THRESHOLD = 8;
+/** Search is always visible (founder call 2026-07-09 — the old >8-row gate
+ * hid it on small rosters and read as a missing feature). */
+const SEARCH_THRESHOLD = 0;
 
 interface Props {
     visible: boolean;
