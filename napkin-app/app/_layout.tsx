@@ -176,15 +176,15 @@ function BottomNavBar() {
         <Text style={labelStyle('search')}>Search</Text>
       </Pressable>
 
-      {/* Wishlist — points to existing Stack route */}
+      {/* Map (TICKET-134 — formerly Wishlist) — points to existing /wishlist route */}
       <Pressable
         onPress={() => router.replace('/wishlist')}
         style={navStyles.tab}
-        accessibilityLabel="Wishlist"
+        accessibilityLabel="Map"
         accessibilityRole="tab"
       >
-        <Ionicons name="location-outline" size={21} color={tabColor('wishlist')} />
-        <Text style={labelStyle('wishlist')}>Wishlist</Text>
+        <Ionicons name="map-outline" size={21} color={tabColor('wishlist')} />
+        <Text style={labelStyle('wishlist')}>Map</Text>
       </Pressable>
 
       {/* Profile */}
