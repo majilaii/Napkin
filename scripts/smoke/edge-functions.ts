@@ -625,6 +625,32 @@ try {
                 return null;
             },
         },
+        // TICKET-139 follow-up: map_pins MEMBER path. The bogus-id guard above only
+        // proves the 403 gate; this exercises the real read assembly (suppers ∪
+        // legacy rounds join, participant hydration, cap). STRICT ≥1 row:
+        // ensure-fixtures seeds a host-only supper into this same first-listed
+        // table and hard-fails if map_pins stays empty, so an empty array here
+        // means the read path regressed after seeding — exactly what we want loud.
+        {
+            name: 'table-atlas?action=map_pins member path → pin rows (TICKET-139)',
+            method: 'POST',
+            fn: 'table-atlas',
+            query: 'action=map_pins',
+            body: { action: 'map_pins', table_id: tableId },
+            shape: (json) => {
+                const rows = (json as { data?: unknown }).data;
+                if (!Array.isArray(rows)) return 'data is not an array';
+                if (rows.length === 0) {
+                    return 'no pin rows — ensure-fixtures seeds a supper; empty means the map_pins read path regressed (or SMOKE_TEST_RESTAURANT_ID lost its coords)';
+                }
+                const r = rows[0] as Record<string, unknown>;
+                if (typeof r.lat !== 'number' || typeof r.lng !== 'number') return 'row missing numeric lat/lng';
+                if (!Array.isArray(r.participants) || r.participants.length === 0) return 'row missing participants';
+                if (typeof r.suppers_count !== 'number' || r.suppers_count < 1) return 'suppers_count < 1';
+                if ('photo_url' in r) return 'photo_url leaked into a map_pins row (banned surface)';
+                return null;
+            },
+        },
     );
 } catch (err) {
     recordFailure('table fixture discovery (TICKET-121)', (err as Error).message);
