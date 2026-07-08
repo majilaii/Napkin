@@ -18,6 +18,15 @@ alter table public.user_profile_top_4
 
 -- 2. RPC: accept + validate per-pick hero_entry_photo_id. Signature UNCHANGED
 --    (uuid, jsonb) — the photo id rides inside each picks element.
+--
+--    Stale-vs-violation split (TICKET-144 review P2; edited in place — this
+--    migration is unapplied anywhere, CI applies it on merge):
+--      • photo row MISSING (deleted — the FK already SET NULLed the stored
+--        hero) → coerce THAT slot's hero to NULL. A stale client cache
+--        re-sending a dangling id must not fail the whole save.
+--      • photo row EXISTS but belongs to another user / another restaurant →
+--        hard reject (PHOTO_NOT_OWNED). Never coerce a genuine violation —
+--        that would soften the consent gate.
 create or replace function public.set_profile_top_four_picks(
     p_user_id uuid, p_picks jsonb
 ) returns void
@@ -25,6 +34,8 @@ language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare
     v_len int; v_pos smallint; v_rid uuid; v_photo uuid; v_elem jsonb;
+    -- Sanitized picks: same rows, stale (deleted-photo) heroes coerced to NULL.
+    v_clean jsonb := '[]'::jsonb;
 begin
     v_len := coalesce(jsonb_array_length(p_picks), 0);
     if v_len > 4 then
@@ -38,15 +49,25 @@ begin
         if v_pos < 1 or v_pos > 4 then
             raise exception using errcode='22023', message=format('invalid position %s — must be 1..4', v_pos);
         end if;
-        -- CONSENT BOUNDARY: a hero photo must be the user's OWN, at THIS restaurant.
-        if v_photo is not null and not exists (
-            select 1 from public.entry_photos ep
-            join public.entries e on e.id = ep.entry_id
-            where ep.id = v_photo and e.user_id = p_user_id and e.restaurant_id = v_rid
-        ) then
-            raise exception using errcode='22023',
-                message='hero_entry_photo_id not owned by user at this restaurant — PHOTO_NOT_OWNED';
+        if v_photo is not null then
+            if not exists (select 1 from public.entry_photos ep where ep.id = v_photo) then
+                -- STALE, not a violation: the photo row is gone. Self-heal the slot.
+                v_photo := null;
+            elsif not exists (
+                -- CONSENT BOUNDARY: a hero photo must be the user's OWN, at THIS restaurant.
+                select 1 from public.entry_photos ep
+                join public.entries e on e.id = ep.entry_id
+                where ep.id = v_photo and e.user_id = p_user_id and e.restaurant_id = v_rid
+            ) then
+                raise exception using errcode='22023',
+                    message='hero_entry_photo_id not owned by user at this restaurant — PHOTO_NOT_OWNED';
+            end if;
         end if;
+        v_clean := v_clean || jsonb_build_object(
+            'position', v_pos,
+            'restaurant_id', v_rid,
+            'hero_entry_photo_id', v_photo
+        );
     end loop;
 
     -- distinct positions
@@ -60,13 +81,14 @@ begin
 
     delete from public.user_profile_top_4 where user_id = p_user_id;
     if v_len > 0 then
+        -- Insert from the SANITIZED array (stale heroes already nulled above).
         insert into public.user_profile_top_4 (user_id, position, restaurant_id, hero_entry_photo_id, updated_at)
         select p_user_id,
                (elem->>'position')::smallint,
                (elem->>'restaurant_id')::uuid,
                nullif(elem->>'hero_entry_photo_id','')::uuid,
                now()
-        from jsonb_array_elements(p_picks) elem;
+        from jsonb_array_elements(v_clean) elem;
     end if;
 end $$;
 
