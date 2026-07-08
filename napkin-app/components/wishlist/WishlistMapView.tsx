@@ -663,37 +663,81 @@ export function WishlistMapView({
         return () => clearTimeout(timer);
     }, [items, locationStatus, userCoords]);
 
-    // Cold-review P2 fix (2026-07-08): a layer SWITCH re-frames to the new
-    // layer's pins — without this, a Been/Network layer whose spots live in
-    // another part of town renders entirely off-screen. The initial layer keeps
-    // the user-centric framing above; only a CHANGE of sources.value fits, and
-    // only once its pins have arrived (lazy layers load on first select). Item
-    // churn on the same layer (filters, refetch) never re-frames.
+    // Layer SWITCH framing (Your map ↔ Discover). The founder's "it zooms out
+    // incessantly when I toggle" was this effect fitToCoordinates-ing over the
+    // WHOLE new layer on every switch — for a globally-spread wishlist / follow
+    // graph that's a near-world-scale zoom-out, and it's pointless when the spots
+    // you're looking at are already on screen. Rule (2026-07-09): PRESERVE the
+    // current viewport across a switch; only MOVE the camera when the new layer
+    // would render ENTIRELY off-screen (traveling, or a layer whose spots live in
+    // another city). Even then, PAN to the nearest pin at a calm city zoom — never
+    // fit-all. Fires once per real sources.value change, and only once the (lazy)
+    // layer's pins have arrived. Item churn on the same layer never moves.
+    //
+    // The ref is committed INSIDE the timer, never in the effect body: `sources`
+    // is a fresh inline object each parent render and this component isn't
+    // memoized, so the effect re-runs on every render, and the Discover layer in
+    // particular settles across two async queries (network + table overlap).
+    // Advancing the ref synchronously let those churny re-renders clearTimeout the
+    // pending camera move and then bail the reschedule (guard already matched) — so
+    // the off-screen rescue silently never fired on first open. Scheduling-only,
+    // with the commit deferred into the timer, makes each re-render reschedule a
+    // fresh 350ms window; the decision runs exactly once, after the layer settles.
     const framedSourceRef = useRef(sources?.value);
     useEffect(() => {
         if (!sources || sources.value === framedSourceRef.current) return;
         if (items.length === 0) return; // layer still loading — wait for pins
-        framedSourceRef.current = sources.value;
-        const timer = setTimeout(() => {
-            if (items.length === 1) {
-                mapRef.current?.animateToRegion(
-                    {
-                        latitude: items[0].lat,
-                        longitude: items[0].lng,
-                        latitudeDelta: SPOT_DELTA,
-                        longitudeDelta: SPOT_DELTA,
-                    },
-                    350,
-                );
-            } else {
-                mapRef.current?.fitToCoordinates(
-                    items.slice(0, 50).map((i) => ({ latitude: i.lat, longitude: i.lng })),
-                    { edgePadding: { top: 120, right: 60, bottom: 200, left: 60 }, animated: true },
-                );
+        const targetSource = sources.value;
+        const layerItems = items;
+        const timer = setTimeout(async () => {
+            const map = mapRef.current;
+            if (!map) return; // not attached yet — a later render reschedules
+            framedSourceRef.current = targetSource; // commit: this switch is handled
+            // What's on screen right now? If any pin of the new layer falls inside
+            // the visible bounds, leave the camera exactly where the user put it.
+            let bounds: { northEast: LatLng; southWest: LatLng } | null = null;
+            try {
+                bounds = await map.getMapBoundaries();
+            } catch {
+                bounds = null;
             }
+            const visible = (i: WishlistMapItem) =>
+                !!bounds &&
+                i.lat <= bounds.northEast.latitude &&
+                i.lat >= bounds.southWest.latitude &&
+                i.lng <= bounds.northEast.longitude &&
+                i.lng >= bounds.southWest.longitude;
+            if (bounds && layerItems.some(visible)) return; // overlap — keep viewport
+
+            // Off-screen rescue: pan to the pin nearest the current center (or the
+            // user, or just the first pin) at a city zoom — NOT a world-scale fit.
+            const center =
+                bounds != null
+                    ? {
+                          latitude: (bounds.northEast.latitude + bounds.southWest.latitude) / 2,
+                          longitude: (bounds.northEast.longitude + bounds.southWest.longitude) / 2,
+                      }
+                    : userCoords;
+            const target = center
+                ? [...layerItems].sort(
+                      (a, b) =>
+                          haversineMiles(center, { latitude: a.lat, longitude: a.lng }) -
+                          haversineMiles(center, { latitude: b.lat, longitude: b.lng }),
+                  )[0]
+                : layerItems[0];
+            const delta = layerItems.length === 1 ? SPOT_DELTA : CITY_DELTA;
+            map.animateToRegion(
+                {
+                    latitude: target.lat,
+                    longitude: target.lng,
+                    latitudeDelta: delta,
+                    longitudeDelta: delta,
+                },
+                350,
+            );
         }, 350); // let a remounting MapView (empty→loaded flip) attach first
         return () => clearTimeout(timer);
-    }, [sources, items]);
+    }, [sources, items, userCoords]);
 
     const initialRegion: Region | undefined = useMemo(() => {
         if (items.length === 0) return undefined;
