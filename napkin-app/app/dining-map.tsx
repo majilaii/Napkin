@@ -74,11 +74,14 @@ export default function DiningMapScreen() {
             ),
         [wishlistPages],
     );
+    // One-tap save on this self map (no save sheet here). The peek's own
+    // already-saved guard moved out in TICKET-137, so guard the re-fire here.
     const handleMapSave = useCallback(
         (item: WishlistMapItem) => {
+            if (savedRestaurantIds.has(item.id)) return;
             wishlistAdd.mutate({ restaurant_id: item.id });
         },
-        [wishlistAdd],
+        [wishlistAdd, savedRestaurantIds],
     );
 
     return (

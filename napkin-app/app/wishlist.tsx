@@ -46,7 +46,9 @@ import {
     FilterTabsSheet,
     type FilterOption,
     ImportInboxCard,
+    DiscoverPeopleSheet,
 } from '@/components/wishlist';
+import { AddToListSheet } from '@/components/lists';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
@@ -62,11 +64,15 @@ import {
     networkPinsToMapItems,
     filterItemsByCuisine,
     mergeYourItems,
+    peopleFromItems,
+    filterByCheckedPeople,
+    peopleChipLabel,
 } from '@/components/wishlist/mapItems';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
+import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import { OwnerActionsSheet } from '@/components/common';
 import { useToast } from '@/providers/ToastProvider';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
@@ -340,18 +346,32 @@ export default function WishlistScreen() {
     );
 
     // Save-from-the-map (network layer peek cards). Loaded pages are enough:
-    // a stale miss just shows "Save" and the add is idempotent server-side.
+    // a stale miss just shows "Save" and the sheet's add is idempotent server-side.
     const wishlistAdd = useWishlistAdd(user?.id);
     const savedRestaurantIds = useMemo(
         () => new Set(allItems.map((i) => i.restaurant?.id).filter((id): id is string => !!id)),
         [allItems],
     );
-    const handleMapSave = useCallback(
-        (item: WishlistMapItem) => {
+    // TICKET-137: the peek Save pill now opens the SAME save sheet the restaurant
+    // page uses (AddToListSheet — wishlist / list / unsave), rather than a one-tap
+    // add. handleMapSave just targets the sheet; the sheet owns the mutations.
+    const [saveSheetItem, setSaveSheetItem] = useState<WishlistMapItem | null>(null);
+    const handleMapSave = useCallback((item: WishlistMapItem) => setSaveSheetItem(item), []);
+    // Mirror the restaurant page's bookmark wiring for the sheet's Wishlist row:
+    // a server-checked saved flag + an idempotent add / remove toggle. Network pin
+    // ids are persisted restaurant UUIDs (networkPinsToMapItems → restaurant_id).
+    const saveSheetSaved = useIsWishlisted(saveSheetItem?.id, user?.id);
+    const handleToggleSaveSheetWishlist = useCallback(() => {
+        const item = saveSheetItem;
+        if (!item) return;
+        if (saveSheetSaved) {
+            wishlistRemove.mutate(item.id, {
+                onError: () => toast.show('Could not remove that — try again'),
+            });
+        } else {
             wishlistAdd.mutate({ restaurant_id: item.id });
-        },
-        [wishlistAdd],
-    );
+        }
+    }, [saveSheetItem, saveSheetSaved, wishlistAdd, wishlistRemove, toast]);
 
     // ── Wishlist Redesign: Pinned ↔ Lists segmented tab ──────────────────────
     const [activeTab, setActiveTab] = useState<'pinned' | 'lists'>('pinned');
@@ -377,8 +397,11 @@ export default function WishlistScreen() {
     const [showSaved, setShowSaved] = useState(true);
     const [showBeen, setShowBeen] = useState(true);
     const [networkArmed, setNetworkArmed] = useState(false);
-    // Friend rail selection: null = all friends active; a Set filters to those ids.
-    const [activeFriendIds, setActiveFriendIds] = useState<Set<string> | null>(null);
+    // TICKET-137 Discover people picker — EXCLUSIVE-include: empty set = everyone;
+    // any checked ids show ONLY those people's pins. Session state (resets per
+    // launch). Replaces the old friend rail's null=all/toggle-off-to-hide model.
+    const [checkedPeople, setCheckedPeople] = useState<Set<string>>(new Set());
+    const [peopleSheetOpen, setPeopleSheetOpen] = useState(false);
     const handleMapSource = useCallback((key: string) => {
         const next = key as 'your' | 'discover';
         setMapSource(next);
@@ -558,38 +581,34 @@ export default function WishlistScreen() {
         [mapItems, beenItems, showSaved, showBeen],
     );
 
-    // Friend-rail faces — distinct authors across the network layer (no new
-    // endpoint; reuses useNetworkMapPins).
-    const friendRailFriends = useMemo(() => {
-        const seen = new Map<string, { id: string; name: string; avatar: string | null }>();
-        for (const it of networkItems) {
-            const a = it.author;
-            if (a && !seen.has(a.id)) seen.set(a.id, { id: a.id, name: a.name, avatar: a.avatar });
-        }
-        return [...seen.values()];
-    }, [networkItems]);
+    // Picker roster — distinct authors across the network layer (no new endpoint;
+    // reuses useNetworkMapPins). "Everyone you follow who has pins."
+    const discoverPeople = useMemo(() => peopleFromItems(networkItems), [networkItems]);
 
-    // Discover: network pins filtered client-side by the friend rail (null = all).
-    const discoverItems = useMemo(() => {
-        if (activeFriendIds === null) return networkItems;
-        return networkItems.filter((it) => it.author != null && activeFriendIds.has(it.author.id));
-    }, [networkItems, activeFriendIds]);
+    // Discover: network pins EXCLUSIVE-include filtered by the picker (empty = all).
+    const discoverItems = useMemo(
+        () => filterByCheckedPeople(networkItems, checkedPeople),
+        [networkItems, checkedPeople],
+    );
 
     const activeMapItems = mapSource === 'discover' ? discoverItems : yourItems;
 
-    // Friend-rail toggles: multi-select on/off; All resets to everyone (null).
-    const handleToggleFriend = useCallback((id: string) => {
-        setActiveFriendIds((prev) => {
-            const allIds = friendRailFriends.map((f) => f.id);
-            const next = new Set(prev ?? allIds);
+    // Chip label reflects the checked set: Everyone · one name · N people.
+    const peopleLabel = useMemo(
+        () => peopleChipLabel(checkedPeople, discoverPeople),
+        [checkedPeople, discoverPeople],
+    );
+
+    // Picker toggles: plain add/remove (exclusive-include); Everyone clears the set.
+    const handleTogglePerson = useCallback((id: string) => {
+        setCheckedPeople((prev) => {
+            const next = new Set(prev);
             if (next.has(id)) next.delete(id);
             else next.add(id);
-            // Back to everyone → collapse to the "all on" sentinel.
-            if (next.size === allIds.length) return null;
             return next;
         });
-    }, [friendRailFriends]);
-    const handleAllFriends = useCallback(() => setActiveFriendIds(null), []);
+    }, []);
+    const handleEveryone = useCallback(() => setCheckedPeople(new Set()), []);
 
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);
@@ -707,14 +726,9 @@ export default function WishlistScreen() {
                 value: mapSource,
                 onChange: handleMapSource,
             }}
-            friendRail={
+            peopleChip={
                 mapSource === 'discover'
-                    ? {
-                          friends: friendRailFriends,
-                          activeIds: activeFriendIds,
-                          onToggleFriend: handleToggleFriend,
-                          onAll: handleAllFriends,
-                      }
+                    ? { label: peopleLabel, onPress: () => setPeopleSheetOpen(true) }
                     : undefined
             }
             // Save-from-the-map (#167): Discover peek cards render a Save pill.
@@ -908,7 +922,8 @@ export default function WishlistScreen() {
                 </ScrollView>
             )}
 
-            {/* Map pill — bottom-LEFT, mirrors the map's List pill (corner law ⑥). */}
+            {/* Map pill — bottom-RIGHT, mirrors the map's List pill (corner law v2,
+                TICKET-137: mode toggle lives bottom-right in both directions). */}
             <Pressable
                 onPress={() => handleSelectView('map')}
                 style={[styles.rMapPill, { backgroundColor: palette.scrimFrost, bottom: insets.bottom + 92 }]}
@@ -977,6 +992,30 @@ export default function WishlistScreen() {
                     { label: 'Remove from wishlist', kind: 'destructive', onPress: handleConfirmRemove },
                 ]}
                 onCancel={() => setRemoveItem(null)}
+            />
+
+            {/* TICKET-137: Discover people picker (exclusive-include). */}
+            <DiscoverPeopleSheet
+                visible={peopleSheetOpen}
+                onDismiss={() => setPeopleSheetOpen(false)}
+                palette={palette}
+                people={discoverPeople}
+                checkedIds={checkedPeople}
+                onToggle={handleTogglePerson}
+                onEveryone={handleEveryone}
+            />
+
+            {/* TICKET-137: peek Save pill → the shared save sheet (wishlist / list /
+                unsave), same component + data flow as the restaurant page bookmark. */}
+            <AddToListSheet
+                visible={saveSheetItem !== null}
+                onClose={() => setSaveSheetItem(null)}
+                userId={user?.id}
+                restaurantId={saveSheetItem?.id}
+                restaurantName={saveSheetItem?.name}
+                showWishlist
+                isWishlisted={saveSheetSaved}
+                onToggleWishlist={handleToggleSaveSheetWishlist}
             />
         </View>
     );
@@ -1121,11 +1160,11 @@ const styles = StyleSheet.create({
         fontSize: 12,
         letterSpacing: 0.3,
     },
-    // Map pill — bottom-LEFT frosted (mirrors the map's List pill; corner law ⑥,
-    // ⑨ h42·13/800). Same frost family, same corner.
+    // Map pill — bottom-RIGHT frosted (mirrors the map's List pill; corner law v2,
+    // TICKET-137, ⑨ h42·13/800). Same frost family, same corner as the List pill.
     rMapPill: {
         position: 'absolute',
-        left: 12,
+        right: 12,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,

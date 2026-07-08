@@ -9,7 +9,15 @@
  *  - network pins carry entryId/author/hasReview (avatar pin + network peek)
  *  - the cuisine filter trim-matches and applies to any layer; null = pass-through
  */
-import { spotsToMapItems, networkPinsToMapItems, filterItemsByCuisine, mergeYourItems } from '../mapItems';
+import {
+    spotsToMapItems,
+    networkPinsToMapItems,
+    filterItemsByCuisine,
+    mergeYourItems,
+    peopleFromItems,
+    filterByCheckedPeople,
+    peopleChipLabel,
+} from '../mapItems';
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
 import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
 import type { WishlistMapItem } from '../WishlistMapView';
@@ -161,6 +169,63 @@ describe('mergeYourItems (TICKET-134 Your map)', () => {
 
     it('empty inputs: empty out', () => {
         expect(mergeYourItems([], [], { showSaved: true, showBeen: true })).toEqual([]);
+    });
+});
+
+describe('Discover people picker (TICKET-137)', () => {
+    // Three network pins from two authors (Clara ×2, Thomas ×1) + one author-less
+    // item (shouldn't happen on the network layer, but the helpers must tolerate it).
+    const items: WishlistMapItem[] = [
+        ...networkPinsToMapItems([
+            pin({ restaurant_id: 'r1', author: { id: 'clara', name: 'Clara', avatar: null } }),
+            pin({ restaurant_id: 'r2', author: { id: 'thomas', name: 'Thomas', avatar: 'a.png' } }),
+            pin({ restaurant_id: 'r3', author: { id: 'clara', name: 'Clara', avatar: null } }),
+        ]),
+        // A stray author-less item (e.g. a been pin) — filter must drop it under an
+        // active checked set, and peopleFromItems must ignore it.
+        spotsToMapItems([spot({ restaurant_id: 'r4' })])[0],
+    ];
+
+    describe('peopleFromItems', () => {
+        it('returns distinct authors in first-seen order, ignoring author-less items', () => {
+            expect(peopleFromItems(items)).toEqual([
+                { id: 'clara', name: 'Clara', avatar: null },
+                { id: 'thomas', name: 'Thomas', avatar: 'a.png' },
+            ]);
+        });
+        it('is empty for no network authors', () => {
+            expect(peopleFromItems([])).toEqual([]);
+        });
+    });
+
+    describe('filterByCheckedPeople (EXCLUSIVE-include)', () => {
+        it('empty set = everyone (pass-through, same array semantics)', () => {
+            expect(filterByCheckedPeople(items, new Set())).toHaveLength(4);
+        });
+        it('one checked id shows ONLY that person, dropping author-less items', () => {
+            expect(filterByCheckedPeople(items, new Set(['clara'])).map((i) => i.id)).toEqual(['r1', 'r3']);
+        });
+        it('multiple checked ids include exactly those people', () => {
+            expect(
+                filterByCheckedPeople(items, new Set(['clara', 'thomas'])).map((i) => i.id).sort(),
+            ).toEqual(['r1', 'r2', 'r3']);
+        });
+    });
+
+    describe('peopleChipLabel', () => {
+        const people = peopleFromItems(items);
+        it('empty set → "Everyone"', () => {
+            expect(peopleChipLabel(new Set(), people)).toBe('Everyone');
+        });
+        it('one checked → that person\'s name', () => {
+            expect(peopleChipLabel(new Set(['thomas']), people)).toBe('Thomas');
+        });
+        it('one checked but unknown id → "1 person" fallback', () => {
+            expect(peopleChipLabel(new Set(['ghost']), people)).toBe('1 person');
+        });
+        it('more than one → "N people"', () => {
+            expect(peopleChipLabel(new Set(['clara', 'thomas']), people)).toBe('2 people');
+        });
     });
 });
 

@@ -34,4 +34,6 @@ export { FilterActionSheet, type FilterOption } from './FilterActionSheet';
 // replaces the pill-per-sheet strip on the wishlist. FilterActionSheet stays
 // exported (no other consumer; low-risk to keep) for a future cleanup.
 export { FilterTabsSheet, type FilterTabConfig } from './FilterTabsSheet';
+// TICKET-137: Discover people picker (exclusive-include) — replaces the friend rail.
+export { DiscoverPeopleSheet } from './DiscoverPeopleSheet';
 export { ImportInboxCard } from './ImportInboxCard';
