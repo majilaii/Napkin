@@ -121,3 +121,55 @@ export function filterItemsByCuisine(
     if (!cuisine) return items;
     return items.filter((i) => (i.cuisine?.trim() ?? '') === cuisine);
 }
+
+// ── Discover people picker (TICKET-137) ────────────────────────────────────────
+// The old friend rail ("toggle a face off to hide it") is replaced by an
+// EXCLUSIVE-include picker: an empty checked set = everyone; any checked ids show
+// ONLY those people's pins. Pure so the semantics are unit-tested.
+
+export interface DiscoverPerson {
+    id: string;
+    name: string;
+    avatar: string | null;
+}
+
+/**
+ * Distinct authors across the network layer — the picker's roster ("everyone you
+ * follow who has pins"). First-seen order; deterministic.
+ */
+export function peopleFromItems(items: WishlistMapItem[]): DiscoverPerson[] {
+    const seen = new Map<string, DiscoverPerson>();
+    for (const it of items) {
+        const a = it.author;
+        if (a && !seen.has(a.id)) seen.set(a.id, { id: a.id, name: a.name, avatar: a.avatar });
+    }
+    return [...seen.values()];
+}
+
+/**
+ * EXCLUSIVE-include filter: empty set → everyone (pass-through); otherwise only
+ * pins whose author is checked. (NOT the old "toggle off to hide" model.)
+ */
+export function filterByCheckedPeople(
+    items: WishlistMapItem[],
+    checkedIds: ReadonlySet<string>,
+): WishlistMapItem[] {
+    if (checkedIds.size === 0) return items;
+    return items.filter((it) => it.author != null && checkedIds.has(it.author.id));
+}
+
+/**
+ * The people-chip label: `Everyone` (default) · the one checked person's name ·
+ * `N people` when more than one is checked. Copy economy (TICKET-137).
+ */
+export function peopleChipLabel(
+    checkedIds: ReadonlySet<string>,
+    people: DiscoverPerson[],
+): string {
+    if (checkedIds.size === 0) return 'Everyone';
+    if (checkedIds.size === 1) {
+        const [only] = [...checkedIds];
+        return people.find((p) => p.id === only)?.name ?? '1 person';
+    }
+    return `${checkedIds.size} people`;
+}

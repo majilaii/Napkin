@@ -6,7 +6,8 @@
  * (Mine · Network):
  *   - source pills float top-LEFT on the glass (frosted segmented)
  *   - optional Filter chip top-RIGHT (opens the screen-owned FilterTabsSheet)
- *   - locate FAB bottom-RIGHT, List pill bottom-LEFT — both frosted, both clear
+ *   - locate FAB stacked above the List pill, both bottom-RIGHT (corner law v2,
+ *     TICKET-137); people chip bottom-LEFT (Discover) — all frosted, all clear
  *     of the floating bottom nav (TICKET-130)
  *   - pins (map-card-pin pass, 2026-07-08): ONE bubble grammar for every layer —
  *     the bubble carries the WHAT (cuisine glyph, or the owning list's emoji),
@@ -18,8 +19,8 @@
  *     selection both ways; each card: glyph/emoji plate (typographic — NO
  *     restaurant photos: restaurants.photo_url is always a Places hero, banned
  *     on our surfaces), name + rating, cuisine · $$ · distance meta, saved-by
- *     row (network), note pull-quote, explicit CTAs (view venue / directions /
- *     save).
+ *     row (network), note pull-quote, explicit CTAs (view restaurant / directions
+ *     / save — save opens the shared save sheet, TICKET-137).
  *   - tiles (TICKET-134): MapTiler `landscape` raster via UrlTile on BOTH
  *     platforms — cream land, butter roads, warm-brown labels. iOS replaces the
  *     Apple base (shouldReplaceMapContent — kills the grey dark tiles ⑧);
@@ -43,7 +44,6 @@ import {
     View,
     Text,
     Pressable,
-    ScrollView,
     StyleSheet,
     Platform,
     Linking,
@@ -68,7 +68,7 @@ import type MapViewType from 'react-native-maps';
 
 import { Colors, Shadow } from '@/constants/theme';
 import { heirloomMapStyle } from '@/constants/mapStyle';
-import { tileUrlTemplate, MAPTILER_ATTRIBUTION } from '@/lib/maptiler';
+import { tileUrlTemplate, MAPTILER_ATTRIBUTION, MAP_TILE_MODE } from '@/lib/maptiler';
 import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/geo';
 import { cuisineGlyph, tintIndex } from '@/lib/cuisineGlyph';
 import { priceTierLabel } from '@/lib/priceLevel';
@@ -147,9 +147,10 @@ interface Props {
      * instead of to the restaurant page. Mine-mode consumers omit it.
      */
     onOpenReview?: (entryId: string) => void;
-    /** Switch back to the list view — frosted List pill, bottom-LEFT. Optional —
-     * screens with their own chrome (dining map, TICKET-092) omit it and the
-     * pill hides. */
+    /** Switch back to the list view — frosted List pill, bottom-RIGHT (below the
+     * locate FAB; corner law v2, TICKET-137). Optional — screens with their own
+     * chrome (dining map, TICKET-092) omit it: the pill hides AND the FAB drops
+     * to the corner position (no stack offset over a pill that isn't there). */
     onSwitchToList?: () => void;
     /**
      * TICKET-131: source pills — frosted segmented control floating top-LEFT on
@@ -184,18 +185,16 @@ interface Props {
     /** Active-filter dot on the Filter chip. */
     filtersActive?: boolean;
     /**
-     * TICKET-134: Discover-only friend rail — a frosted bottom-left strip of an
-     * `All` chip + per-friend 40px avatar toggles (default all on; toggling
-     * filters the network pins client-side by user_id). Derived from the network
-     * items by the screen; absent → no rail (Your map, dining-map). Hidden while a
-     * peek is up (shares the three-piece hide set).
+     * TICKET-137: Discover-only people chip — a frosted bottom-LEFT chip
+     * (people-outline + a state label: `Everyone` · one name · `N people`) that
+     * opens the screen-owned picker sheet. Replaces the old inline friend rail
+     * ("very bugged"). The screen owns the EXCLUSIVE-include filter state and the
+     * sheet; this just draws the chip. Absent → no chip (Your map, dining-map).
+     * Hidden while a peek is up (shares the bottom-chrome hide set).
      */
-    friendRail?: {
-        friends: { id: string; name: string; avatar: string | null }[];
-        /** null = all friends active. */
-        activeIds: Set<string> | null;
-        onToggleFriend: (id: string) => void;
-        onAll: () => void;
+    peopleChip?: {
+        label: string;
+        onPress: () => void;
     };
     /**
      * Distance from the map's top edge to where the floating top chrome (source
@@ -212,6 +211,10 @@ interface Props {
 const CREAM = '#fdf6ec';
 /** Clearance so bottom chrome + peek sit above the floating nav pill (TICKET-130). */
 const NAV_CLEARANCE = 92;
+/** Corner law v2 (TICKET-137): the locate FAB stacks directly ABOVE the List
+ * pill in the bottom-RIGHT corner. Offset = List-pill height (~42) + gap (~10),
+ * so the FAB's bottom edge clears the pill's top edge by the gap. */
+const RIGHT_STACK_OFFSET = 52;
 /** Dark-scheme frost pair for the floating chrome (light uses palette.scrimFrost).
  * Inline by design — no new theme tokens (TICKET-131). */
 const FROST_DARK = 'rgba(42,39,36,0.92)';
@@ -533,7 +536,7 @@ export function WishlistMapView({
     save,
     onOpenFilters,
     filtersActive,
-    friendRail,
+    peopleChip,
     chromeTopOffset,
     palette,
 }: Props) {
@@ -546,14 +549,14 @@ export function WishlistMapView({
     // palette reference is the render-truth either way).
     const isDark = palette !== Colors.light;
 
-    // TICKET-134: MapTiler `landscape` raster tiles on BOTH platforms via UrlTile
-    // (see the MapView block). iOS replaces the Apple base (kills the grey dark
-    // tiles ⑧); Android draws over the Google base with heirloomMapStyle beneath
-    // as the load-window fallback skin. The old key-gated Google-on-iOS flip is
-    // gone — the cross-platform tile layer supersedes it. #169's
-    // userInterfaceStyle='light' (on the MapView) pins the NATIVE base light so
-    // the pre-tile load window never flashes grey in system dark mode.
+    // TICKET-137: tile skin is flag-gated. `MAP_TILE_MODE==='maptiler'` draws the
+    // cream `landscape` raster via UrlTile + cream tint + attribution (the 134
+    // path); `'apple'` (shipping) leaves plain Apple `mutedStandard` (light-pinned)
+    // on iOS and Google + heirloomMapStyle on Android — no UrlTile, no tint, no
+    // caption. #169's userInterfaceStyle='light' (on the MapView) pins the base
+    // light in BOTH modes so the map never flashes grey in system dark mode.
     const isAndroid = Platform.OS === 'android';
+    const tilesOn = MAP_TILE_MODE === 'maptiler';
 
     // Frost family for the floating chrome. Light = scrimFrost token; dark pair
     // is inline by design (no new theme tokens — TICKET-131).
@@ -767,8 +770,8 @@ export function WishlistMapView({
             </Pressable>
         ) : null;
 
-    // ── List pill — bottom-left, frosted. Also in both branches (same review
-    // finding: an empty layer must not strand you on the map).
+    // ── List pill — bottom-right, frosted (corner law v2). Also in both branches
+    // (same review finding: an empty layer must not strand you on the map).
     const renderListPill = (visible: boolean) =>
         visible && onSwitchToList ? (
             <Pressable
@@ -819,10 +822,13 @@ export function WishlistMapView({
                 ref={mapRef}
                 style={[StyleSheet.absoluteFillObject, { backgroundColor: CREAM }]}
                 provider={isAndroid ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
-                // Android keeps the heirloom skin BENEATH the MapTiler tiles as the
-                // load-window fallback; iOS replaces the Apple base entirely
-                // (UrlTile shouldReplaceMapContent) so no grey dark tiles bleed (⑧).
+                // Android always keeps the heirloom skin (the base in apple mode,
+                // the load-window fallback beneath the tiles in maptiler mode).
                 customMapStyle={isAndroid ? heirloomMapStyle : undefined}
+                // Apple mode (TICKET-137): plain, de-saturated `mutedStandard` on
+                // iOS — a calm paper-adjacent base with POIs already suppressed.
+                // In maptiler mode the base is replaced anyway (shouldReplaceMapContent).
+                mapType={!tilesOn && Platform.OS === 'ios' ? 'mutedStandard' : undefined}
                 // The map NEVER goes dark (founder, 2026-07-08; TICKET-134 ⑧:
                 // the map reads as a paper object). Apple tiles follow the
                 // SYSTEM appearance — not our light-forced palette — so system
@@ -843,13 +849,16 @@ export function WishlistMapView({
             >
                 {/* MapTiler cream raster — first child, beneath the markers. iOS
                     replaces the base (kills grey dark tiles ⑧); Android draws over
-                    Google. @2x endpoint + tileSize 512 → crisp labels. */}
-                <UrlTile
-                    urlTemplate={tileUrlTemplate()}
-                    shouldReplaceMapContent={Platform.OS === 'ios'}
-                    tileSize={512}
-                    maximumZ={20}
-                />
+                    Google. @2x endpoint + tileSize 512 → crisp labels. Rendered
+                    only in maptiler mode (TICKET-137); apple mode shows plain Apple. */}
+                {tilesOn ? (
+                    <UrlTile
+                        urlTemplate={tileUrlTemplate()}
+                        shouldReplaceMapContent={Platform.OS === 'ios'}
+                        tileSize={512}
+                        maximumZ={20}
+                    />
+                ) : null}
                 {items.map((item) => (
                     <WishlistMarker
                         // Layer-qualified key: the same restaurant can appear in
@@ -864,16 +873,17 @@ export function WishlistMapView({
                 ))}
             </MapView>
 
-            {/* Cream tint — always on, both schemes/platforms (TICKET-134). MapTiler
-                serves cream land on both, so this only warms the residual blue
-                water and unifies the surface. CREAM (not the dark placesOverlayTint,
-                which would darken the tiles); ~15% is in the 12–18% target.
-                (Subsumes #169's scheme-independent vellum: same intent, our tint
-                was already always-on.) */}
-            <View
-                style={[StyleSheet.absoluteFill, { backgroundColor: CREAM, opacity: 0.15 }]}
-                pointerEvents="none"
-            />
+            {/* Cream tint — maptiler mode only (TICKET-137). It warms the residual
+                blue water over the MapTiler cream land and unifies the surface;
+                apple mode shows plain Apple with no tint (founder ask). CREAM (not
+                the dark placesOverlayTint, which would darken the tiles); ~15% is
+                in the 12–18% target. */}
+            {tilesOn ? (
+                <View
+                    style={[StyleSheet.absoluteFill, { backgroundColor: CREAM, opacity: 0.15 }]}
+                    pointerEvents="none"
+                />
+            ) : null}
 
             {/* Hairline warm rule at the top edge (ghosted, not a 1px border). */}
             <View
@@ -902,14 +912,23 @@ export function WishlistMapView({
                 </View>
             ) : null}
 
-            {/* Locate FAB — bottom-RIGHT frosted circle, clear of the floating
-                nav pill. Hidden once a peek card is up (card owns the bottom). */}
+            {/* Locate FAB — bottom-RIGHT, stacked directly ABOVE the List pill
+                (corner law v2, TICKET-137). The stack offset applies only when the
+                pill actually renders (onSwitchToList) — dining-map omits it, so
+                its FAB sits at the corner, not 52px above an empty gap. Clear of
+                the floating nav pill; hidden once a peek card is up. */}
             {!selected ? (
                 <Pressable
                     onPress={handleRecenter}
                     style={[
                         styles.fab,
-                        { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE },
+                        {
+                            backgroundColor: frostBg,
+                            bottom:
+                                insets.bottom +
+                                NAV_CLEARANCE +
+                                (onSwitchToList ? RIGHT_STACK_OFFSET : 0),
+                        },
                         Shadow.ambient,
                     ]}
                     hitSlop={8}
@@ -928,86 +947,35 @@ export function WishlistMapView({
                 </Pressable>
             ) : null}
 
-            {/* List pill — bottom-LEFT, frosted, same elevation as the FAB.
-                Hidden while a peek card is up (shared with the empty branch). */}
+            {/* List pill — bottom-RIGHT below the locate FAB, frosted (corner law
+                v2). Hidden while a peek card is up (shared with the empty branch). */}
             {renderListPill(!selected)}
 
-            {/* Friend rail — Discover only, one row ABOVE the List pill (its
-                bottom sits clear of the List-pill/locate values so those stay
-                byte-stable). Frosted All chip + 40Ø avatar toggles; hidden while
-                a peek is up (shares the three-piece hide set). TICKET-134. */}
-            {friendRail && !selected && friendRail.friends.length > 0 ? (
-                <View
+            {/* People chip — Discover only, bottom-LEFT (corner law v2, TICKET-137).
+                Frosted people-outline + state label; opens the screen-owned picker
+                sheet. Hidden while a peek is up (shares the bottom-chrome hide set). */}
+            {peopleChip && !selected ? (
+                <Pressable
+                    onPress={peopleChip.onPress}
                     style={[
-                        styles.friendRail,
-                        { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE + 50 },
+                        styles.peopleChip,
+                        { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE },
                         Shadow.ambient,
                     ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`filter people · ${peopleChip.label}`}
                 >
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.friendRailRow}
-                    >
-                        <Pressable
-                            onPress={friendRail.onAll}
-                            style={[
-                                styles.friendAllChip,
-                                friendRail.activeIds === null && { backgroundColor: palette.primary },
-                            ]}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected: friendRail.activeIds === null }}
-                            accessibilityLabel="all friends"
-                        >
-                            <Text
-                                style={[
-                                    styles.friendAllText,
-                                    { color: friendRail.activeIds === null ? '#fff' : palette.textSecondary },
-                                ]}
-                            >
-                                All
-                            </Text>
-                        </Pressable>
-                        {friendRail.friends.map((f) => {
-                            const active = friendRail.activeIds === null || friendRail.activeIds.has(f.id);
-                            const tint = avatarTintFor(f.id || f.name, palette);
-                            return (
-                                <Pressable
-                                    key={f.id}
-                                    onPress={() => friendRail.onToggleFriend(f.id)}
-                                    accessibilityRole="button"
-                                    accessibilityState={{ selected: active }}
-                                    accessibilityLabel={f.name}
-                                    style={[
-                                        styles.friendFace,
-                                        {
-                                            borderColor: active ? palette.primary : 'transparent',
-                                            backgroundColor: tint,
-                                            opacity: active ? 1 : 0.45,
-                                        },
-                                    ]}
-                                >
-                                    {f.avatar ? (
-                                        <ExpoImage
-                                            source={{ uri: f.avatar }}
-                                            style={styles.friendFaceImg}
-                                            contentFit="cover"
-                                        />
-                                    ) : (
-                                        <Text style={[styles.friendFaceInitial, { color: palette.text }]}>
-                                            {(f.name.trim()[0] ?? '?').toUpperCase()}
-                                        </Text>
-                                    )}
-                                </Pressable>
-                            );
-                        })}
-                    </ScrollView>
-                </View>
+                    <Ionicons name="people-outline" size={15} color={palette.primary} />
+                    <Text style={[styles.peopleChipText, { color: palette.primary }]} numberOfLines={1}>
+                        {peopleChip.label}
+                    </Text>
+                </Pressable>
             ) : null}
 
-            {/* Attribution — ToS-required ghosted caption, above the nav clearance.
-                Hidden while a peek is up (the carousel owns the bottom). */}
-            {!selected ? (
+            {/* Attribution — ToS-required ghosted caption, maptiler mode only
+                (TICKET-137: ToS needs it solely when their tiles render). Hidden
+                while a peek is up (the carousel owns the bottom). */}
+            {tilesOn && !selected ? (
                 <Text
                     style={[
                         styles.attribution,
@@ -1084,8 +1052,15 @@ function PeekCarousel({
 
     // Layers never mix in one items array, so the card height is uniform per
     // open: network cards carry a saved-by row + note line, mine cards don't.
+    // TICKET-137: heights tightened to the content (was 178/136) — the founder's
+    // "too much empty white space" was the card being taller than its plate.
+    // Uniform explicit heights are structural (the wrap's fixed height carries
+    // the ✕ headroom + the rail animates as one block), so the network value is
+    // sized to its content sum — pad 18 + plate row 46 + gaps/who/note 43 +
+    // actions 43 = 150 — plus 2px slack for device font metrics (review P2-5;
+    // 146 measured ~4px under and bled into the action gap).
     const isNetworkLayer = items.some((i) => i.entryId != null);
-    const cardH = isNetworkLayer ? 178 : 136;
+    const cardH = isNetworkLayer ? 152 : 108;
 
     // Mount at the tapped pin's card (getItemLayout makes initialScrollIndex
     // cheap). Captured once — later selection changes scroll, not remount.
@@ -1193,7 +1168,8 @@ function PeekCarousel({
 // always a Places hero photo, banned on our surfaces, and lists already killed
 // thumbnails in TICKET-084), name + rating numeral, cuisine · $$ · distance
 // meta, saved-by row (network), — note pull-quote (network), then explicit
-// CTAs: view venue everywhere; directions (mine) / save (network).
+// CTAs: view restaurant everywhere; directions (mine) / save (network — the pill
+// opens the shared save sheet, TICKET-137). Compact plate density (TICKET-137).
 
 interface PeekCardBodyProps {
     item: WishlistMapItem;
@@ -1215,10 +1191,11 @@ function PeekCardBody({
     save,
 }: PeekCardBodyProps) {
     const isNetwork = item.entryId != null;
-    // Optimistic local flip — the add is idempotent server-side, and the
-    // screen's wishlist caches catch up via the mutation's own patches.
-    const [savedNow, setSavedNow] = useState(false);
-    const alreadySaved = savedNow || !!save?.savedIds.has(item.id);
+    // TICKET-137: the Save pill now OPENS the shared save sheet (AddToListSheet —
+    // wishlist / list / unsave), so the button no longer owns an optimistic flip.
+    // Saved state reads straight from the screen's wishlist set, which the sheet's
+    // own mutation cache-patches keep current.
+    const alreadySaved = !!save?.savedIds.has(item.id);
 
     const distanceLabel = userCoords
         ? formatDistance(haversineMiles(userCoords, { latitude: item.lat, longitude: item.lng }))
@@ -1269,7 +1246,7 @@ function PeekCardBody({
                         ) : (
                             <Ionicons
                                 name={cuisineGlyph(item.cuisine)}
-                                size={22}
+                                size={20}
                                 color={palette.primary}
                                 style={styles.peekPlateGlyph}
                             />
@@ -1321,26 +1298,21 @@ function PeekCardBody({
                         { backgroundColor: palette.surfaceContainerHigh, opacity: pressed ? 0.7 : 1 },
                     ]}
                 >
-                    <Text style={[styles.viewVenueLabel, { color: palette.text }]}>view venue</Text>
+                    <Text style={[styles.viewVenueLabel, { color: palette.text }]}>view restaurant</Text>
                     <Ionicons name="arrow-forward" size={13} color={palette.text} />
                 </Pressable>
 
                 {isNetwork && save ? (
                     <Pressable
-                        onPress={() => {
-                            if (alreadySaved) return;
-                            setSavedNow(true);
-                            save.onSave(item);
-                        }}
+                        onPress={() => save.onSave(item)}
                         accessibilityRole="button"
-                        accessibilityState={{ disabled: alreadySaved }}
-                        accessibilityLabel={alreadySaved ? 'saved to wishlist' : 'save to wishlist'}
+                        accessibilityLabel={alreadySaved ? 'saved — open save options' : 'save'}
                         style={({ pressed }) => [
                             styles.sidePill,
                             alreadySaved
                                 ? { backgroundColor: palette.primaryMuted }
                                 : { borderWidth: 1.5, borderColor: 'rgba(160,63,40,0.35)' },
-                            { opacity: pressed && !alreadySaved ? 0.7 : 1 },
+                            { opacity: pressed ? 0.7 : 1 },
                         ]}
                     >
                         <Ionicons
@@ -1488,10 +1460,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    // List pill (map → list) — bottom-LEFT, same frost family + elevation (⑨ h42·13/800).
+    // List pill (map → list) — bottom-RIGHT, stacked below the locate FAB (corner
+    // law v2, TICKET-137). Same frost family + elevation (⑨ h42·13/800).
     listToggle: {
         position: 'absolute',
-        left: 12,
+        right: 12,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,
@@ -1504,50 +1477,23 @@ const styles = StyleSheet.create({
         fontSize: 13,
         letterSpacing: 0.4,
     },
-    // Friend rail — Discover only, frosted bar one row above the List pill.
-    friendRail: {
+    // People chip — Discover only, bottom-LEFT (corner law v2, TICKET-137).
+    // Frosted people-outline + state label; opens the picker sheet.
+    peopleChip: {
         position: 'absolute',
         left: 12,
-        right: 12,
-        borderRadius: 999,
-    },
-    friendRailRow: {
+        maxWidth: SCREEN_W * 0.5,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
-        paddingHorizontal: 6,
-        paddingVertical: 6,
-    },
-    friendAllChip: {
-        height: 40,
-        paddingHorizontal: 15,
+        gap: 7,
         borderRadius: 999,
-        alignItems: 'center',
-        justifyContent: 'center',
+        paddingHorizontal: 15,
+        paddingVertical: 11,
     },
-    friendAllText: {
+    peopleChipText: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 13,
         letterSpacing: 0.3,
-    },
-    // 40Ø avatar toggle (⑨ rail faces 40Ø). Terracotta ring when active.
-    friendFace: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        borderWidth: 2,
-        overflow: 'hidden',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    friendFaceImg: {
-        width: '100%',
-        height: '100%',
-    },
-    friendFaceInitial: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 15,
-        includeFontPadding: false,
     },
     // Ghosted ToS attribution caption — bottom-center, above the nav clearance.
     attribution: {
@@ -1577,12 +1523,14 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         zIndex: 2,
     },
+    // Compact plate density (TICKET-137): tighter paddings/gaps (~30% off the
+    // vertical), smaller plate — the card reads as a plate, not a stretched sheet.
     peekCard: {
         width: PEEK_CARD_W,
         marginRight: PEEK_GAP,
         borderRadius: 16,
-        paddingVertical: 13,
-        paddingHorizontal: 15,
+        paddingVertical: 9,
+        paddingHorizontal: 14,
         justifyContent: 'space-between',
         shadowColor: '#1c1c19',
         shadowOffset: { width: 0, height: 8 },
@@ -1592,30 +1540,30 @@ const styles = StyleSheet.create({
     },
     peekBody: {
         flex: 1,
-        gap: 5,
+        gap: 3,
     },
     peekTopRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 11,
+        gap: 10,
     },
     // Leading plate — glyph/emoji on a seeded tint (GlyphChip idiom: engraved
     // inset rule). Typographic by doctrine — never a restaurant photo.
     peekPlate: {
-        width: 52,
-        height: 52,
-        borderRadius: 12,
+        width: 46,
+        height: 46,
+        borderRadius: 11,
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'hidden',
     },
     peekPlateInset: {
         position: 'absolute',
-        top: 3.5,
-        left: 3.5,
-        right: 3.5,
-        bottom: 3.5,
-        borderRadius: 9,
+        top: 3,
+        left: 3,
+        right: 3,
+        bottom: 3,
+        borderRadius: 8,
         borderWidth: 1,
         borderColor: 'rgba(160,63,40,0.22)',
     },
@@ -1623,7 +1571,7 @@ const styles = StyleSheet.create({
         opacity: 0.8,
     },
     peekPlateEmoji: {
-        fontSize: 24,
+        fontSize: 21,
         includeFontPadding: false,
     },
     peekTitleCol: {
@@ -1678,7 +1626,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginTop: 10,
+        marginTop: 7,
     },
     viewVenueBtn: {
         flex: 1,

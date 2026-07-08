@@ -74,11 +74,36 @@ export default function DiningMapScreen() {
             ),
         [wishlistPages],
     );
+    // One-tap save on this self map (no save sheet here). The peek's own
+    // optimistic flip + already-saved guard moved out in TICKET-137, so BOTH live
+    // here now: a local just-saved set flips the pill instantly (useWishlistAdd
+    // only patches the check keys — wishlist.personal waits for its invalidate
+    // refetch), rolled back on error; the guard stops a double-add re-fire.
+    const [justSavedIds, setJustSavedIds] = useState<ReadonlySet<string>>(new Set());
+    const savedIds = useMemo(
+        () =>
+            justSavedIds.size === 0
+                ? savedRestaurantIds
+                : new Set([...savedRestaurantIds, ...justSavedIds]),
+        [savedRestaurantIds, justSavedIds],
+    );
     const handleMapSave = useCallback(
         (item: WishlistMapItem) => {
-            wishlistAdd.mutate({ restaurant_id: item.id });
+            if (savedIds.has(item.id)) return;
+            setJustSavedIds((prev) => new Set(prev).add(item.id));
+            wishlistAdd.mutate(
+                { restaurant_id: item.id },
+                {
+                    onError: () =>
+                        setJustSavedIds((prev) => {
+                            const next = new Set(prev);
+                            next.delete(item.id);
+                            return next;
+                        }),
+                },
+            );
         },
-        [wishlistAdd],
+        [wishlistAdd, savedIds],
     );
 
     return (
@@ -110,9 +135,7 @@ export default function DiningMapScreen() {
                           }
                         : undefined
                 }
-                save={
-                    isSelf ? { savedIds: savedRestaurantIds, onSave: handleMapSave } : undefined
-                }
+                save={isSelf ? { savedIds, onSave: handleMapSave } : undefined}
                 // Pills sit below the frosted back chevron + title chip row.
                 chromeTopOffset={insets.top + 56}
                 palette={palette}
