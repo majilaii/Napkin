@@ -67,6 +67,7 @@ import {
     peopleFromItems,
     filterByCheckedPeople,
     peopleChipLabel,
+    peopleCountLine,
     overlapToMapItems,
     mergeDiscoverItems,
 } from '@/components/wishlist/mapItems';
@@ -662,6 +663,14 @@ export default function WishlistScreen() {
         [checkedPeople, discoverPeople],
     );
 
+    // Live count line for the picker — `showing N places from everyone/2 people`.
+    // Uses the SAME filterByCheckedPeople the map applies, so it never disagrees
+    // with the network pins on the map (TICKET-147).
+    const peopleCountLabel = useMemo(
+        () => peopleCountLine(networkItems, checkedPeople),
+        [networkItems, checkedPeople],
+    );
+
     // Picker toggles: plain add/remove (exclusive-include); Everyone clears the set.
     const handleTogglePerson = useCallback((id: string) => {
         setCheckedPeople((prev) => {
@@ -1067,6 +1076,7 @@ export default function WishlistScreen() {
                 palette={palette}
                 people={discoverPeople}
                 checkedIds={checkedPeople}
+                countLabel={peopleCountLabel}
                 onToggle={handleTogglePerson}
                 onEveryone={handleEveryone}
                 // TICKET-139: "your table" rows — one tap includes only that table's

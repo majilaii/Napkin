@@ -15,8 +15,10 @@ import {
     filterItemsByCuisine,
     mergeYourItems,
     peopleFromItems,
+    matchPeople,
     filterByCheckedPeople,
     peopleChipLabel,
+    peopleCountLine,
     overlapToMapItems,
     mergeDiscoverItems,
     supperPinsToMapItems,
@@ -192,7 +194,7 @@ describe('Discover people picker (TICKET-137)', () => {
     ];
 
     describe('peopleFromItems', () => {
-        it('returns distinct authors in first-seen order, ignoring author-less items', () => {
+        it('returns distinct authors sorted by name, ignoring author-less items', () => {
             expect(peopleFromItems(items)).toEqual([
                 { id: 'clara', name: 'Clara', avatar: null },
                 { id: 'thomas', name: 'Thomas', avatar: 'a.png' },
@@ -200,6 +202,48 @@ describe('Discover people picker (TICKET-137)', () => {
         });
         it('is empty for no network authors', () => {
             expect(peopleFromItems([])).toEqual([]);
+        });
+        // TICKET-147 root cause: the pins arrive in recency order, so a first-seen
+        // roster reshuffles under the open sheet and the row a tap lands on changes
+        // identity ("only one ticks at a time"). The roster MUST be stable no matter
+        // what order the pins come in.
+        it('is STABLE: same authors in a different pin order → identical roster', () => {
+            const a = networkPinsToMapItems([
+                pin({ restaurant_id: 'r1', author: { id: 'u-zoe', name: 'Zoe', avatar: null } }),
+                pin({ restaurant_id: 'r2', author: { id: 'u-ada', name: 'Ada', avatar: null } }),
+                pin({ restaurant_id: 'r3', author: { id: 'u-mia', name: 'Mia', avatar: null } }),
+            ]);
+            // Same three authors, pins in the reverse (a fresh-recency) order.
+            const b = networkPinsToMapItems([
+                pin({ restaurant_id: 'r3', author: { id: 'u-mia', name: 'Mia', avatar: null } }),
+                pin({ restaurant_id: 'r2', author: { id: 'u-ada', name: 'Ada', avatar: null } }),
+                pin({ restaurant_id: 'r1', author: { id: 'u-zoe', name: 'Zoe', avatar: null } }),
+            ]);
+            expect(peopleFromItems(a)).toEqual(peopleFromItems(b));
+            // …and the stable order is alphabetical, not pin order.
+            expect(peopleFromItems(a).map((p) => p.name)).toEqual(['Ada', 'Mia', 'Zoe']);
+        });
+        it('breaks name ties on id so the order is total/deterministic', () => {
+            const dupName = networkPinsToMapItems([
+                pin({ restaurant_id: 'r1', author: { id: 'id-b', name: 'Sam', avatar: null } }),
+                pin({ restaurant_id: 'r2', author: { id: 'id-a', name: 'sam', avatar: null } }),
+            ]);
+            expect(peopleFromItems(dupName).map((p) => p.id)).toEqual(['id-a', 'id-b']);
+        });
+    });
+
+    describe('matchPeople (client-side search)', () => {
+        const roster = peopleFromItems(items); // [Clara, Thomas]
+        it('blank query = pass-through (same list)', () => {
+            expect(matchPeople(roster, '')).toEqual(roster);
+            expect(matchPeople(roster, '   ')).toEqual(roster);
+        });
+        it('case-insensitive substring match on name', () => {
+            expect(matchPeople(roster, 'th').map((p) => p.name)).toEqual(['Thomas']);
+            expect(matchPeople(roster, 'LAR').map((p) => p.name)).toEqual(['Clara']);
+        });
+        it('no match → empty', () => {
+            expect(matchPeople(roster, 'zzz')).toEqual([]);
         });
     });
 
@@ -230,6 +274,31 @@ describe('Discover people picker (TICKET-137)', () => {
         });
         it('more than one → "N people"', () => {
             expect(peopleChipLabel(new Set(['clara', 'thomas']), people)).toBe('2 people');
+        });
+    });
+
+    describe('peopleCountLine (live count feedback)', () => {
+        // `items` = 3 network pins (r1/r3 Clara, r2 Thomas) + 1 author-less spot.
+        // The count uses filterByCheckedPeople, so the author-less pin never counts
+        // under a selection — the number matches the network layer on the map.
+        it('empty set → "from everyone" over all network pins', () => {
+            expect(peopleCountLine(items, new Set())).toBe('showing 4 places from everyone');
+        });
+        it('one person → "from 1 person" with that person\'s place count', () => {
+            expect(peopleCountLine(items, new Set(['clara']))).toBe('showing 2 places from 1 person');
+        });
+        it('two people → "from 2 people"', () => {
+            expect(peopleCountLine(items, new Set(['clara', 'thomas']))).toBe(
+                'showing 3 places from 2 people',
+            );
+        });
+        it('pluralizes a single place', () => {
+            expect(peopleCountLine(items, new Set(['thomas']))).toBe('showing 1 place from 1 person');
+        });
+        it('matches filterByCheckedPeople exactly (never lies vs the map)', () => {
+            const checked = new Set(['clara']);
+            const shown = filterByCheckedPeople(items, checked).length;
+            expect(peopleCountLine(items, checked)).toContain(`showing ${shown} `);
         });
     });
 });

@@ -11,14 +11,17 @@
  * to dismiss, inner Pressable swallows taps, warm-dusk backdrop (no black scrim).
  * Copy economy: one Manrope header line; rows carry no prose.
  */
-import React from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Radius } from '@/constants/theme';
-import type { DiscoverPerson } from './mapItems';
+import { matchPeople, type DiscoverPerson } from './mapItems';
+
+/** Above this many rows, the roster gets a client-side search field. */
+const SEARCH_THRESHOLD = 8;
 
 interface Props {
     visible: boolean;
@@ -27,6 +30,12 @@ interface Props {
     people: DiscoverPerson[];
     /** Empty = everyone; else the checked (exclusive-include) author ids. */
     checkedIds: ReadonlySet<string>;
+    /**
+     * Quiet live count line (TICKET-147): `showing N places from everyone` /
+     * `… from 2 people`. Computed by the screen with the same filter helper the
+     * map uses, so the number matches the pins on the map.
+     */
+    countLabel?: string;
     /** Toggle one person in/out of the checked set. */
     onToggle: (id: string) => void;
     /** Clear back to everyone (the `Everyone` row). */
@@ -54,6 +63,7 @@ export function DiscoverPeopleSheet({
     palette,
     people,
     checkedIds,
+    countLabel,
     onToggle,
     onEveryone,
     tableRows,
@@ -61,6 +71,15 @@ export function DiscoverPeopleSheet({
 }: Props) {
     const insets = useSafeAreaInsets();
     const everyone = checkedIds.size === 0;
+
+    // Client-side people search — shown only for long rosters (short lists don't
+    // need it and the keyboard would just be in the way). Resets on close.
+    const [query, setQuery] = useState('');
+    useEffect(() => {
+        if (!visible) setQuery('');
+    }, [visible]);
+    const showSearch = people.length > SEARCH_THRESHOLD;
+    const shownPeople = showSearch ? matchPeople(people, query) : people;
 
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
@@ -75,6 +94,32 @@ export function DiscoverPeopleSheet({
                     <View style={[styles.grabber, { backgroundColor: palette.ruleWarmNib }]} />
 
                     <Text style={[styles.header, { color: palette.textMuted }]}>Show pins from</Text>
+
+                    {countLabel ? (
+                        <Text style={[styles.count, { color: palette.textMuted }]}>{countLabel}</Text>
+                    ) : null}
+
+                    {showSearch ? (
+                        <View
+                            style={[
+                                styles.searchField,
+                                { backgroundColor: palette.surfaceContainer, borderColor: palette.ruleWarmNib },
+                            ]}
+                        >
+                            <Ionicons name="search" size={16} color={palette.textMuted} />
+                            <TextInput
+                                style={[styles.searchInput, { color: palette.text }]}
+                                value={query}
+                                onChangeText={setQuery}
+                                placeholder="Search people"
+                                placeholderTextColor={palette.textMuted}
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                                returnKeyType="search"
+                                clearButtonMode="while-editing"
+                            />
+                        </View>
+                    ) : null}
 
                     <ScrollView
                         style={styles.scroll}
@@ -142,7 +187,7 @@ export function DiscoverPeopleSheet({
                             ) : null}
                         </Pressable>
 
-                        {people.map((p) => {
+                        {shownPeople.map((p) => {
                             const checked = checkedIds.has(p.id);
                             return (
                                 <Pressable
@@ -219,6 +264,30 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
         paddingTop: 10,
         paddingBottom: 2,
+    },
+    // Live count feedback — the sheet's only prose, and it's data.
+    count: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        paddingHorizontal: 24,
+        paddingBottom: 6,
+    },
+    searchField: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: 24,
+        marginBottom: 4,
+        paddingHorizontal: 12,
+        height: 40,
+        borderRadius: Radius.md,
+        borderWidth: 1,
+    },
+    searchInput: {
+        flex: 1,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 15,
+        paddingVertical: 0,
     },
     scroll: {
         maxHeight: 400,

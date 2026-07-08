@@ -225,7 +225,15 @@ export interface DiscoverPerson {
 
 /**
  * Distinct authors across the network layer — the picker's roster ("everyone you
- * follow who has pins"). First-seen order; deterministic.
+ * follow who has pins").
+ *
+ * STABLE ORDER (TICKET-147 multi-select fix). The network pins arrive in the
+ * RPC's recency order (`ORDER BY sort_date DESC`), so a first-seen roster would
+ * reshuffle every time a followee logs a meal or the query re-settles — the row
+ * a tap lands on could change identity between renders, which read on device as
+ * "only one person ticks at a time" (the interior rows move; the ends move
+ * least). We dedupe, then sort by name (case-insensitive) with an id tiebreak,
+ * so the picker rows are pinned regardless of pin order. Pure/deterministic.
  */
 export function peopleFromItems(items: WishlistMapItem[]): DiscoverPerson[] {
     const seen = new Map<string, DiscoverPerson>();
@@ -233,7 +241,24 @@ export function peopleFromItems(items: WishlistMapItem[]): DiscoverPerson[] {
         const a = it.author;
         if (a && !seen.has(a.id)) seen.set(a.id, { id: a.id, name: a.name, avatar: a.avatar });
     }
-    return [...seen.values()];
+    return [...seen.values()].sort((a, b) => {
+        const an = a.name.trim().toLowerCase();
+        const bn = b.name.trim().toLowerCase();
+        if (an < bn) return -1;
+        if (an > bn) return 1;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+}
+
+/**
+ * Client-side people search (TICKET-147) — case-insensitive name substring
+ * match. Empty/blank query = pass-through. Pure so the picker's search is
+ * unit-tested; the sheet only owns the query string.
+ */
+export function matchPeople(people: DiscoverPerson[], query: string): DiscoverPerson[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return people;
+    return people.filter((p) => p.name.toLowerCase().includes(q));
 }
 
 /**
@@ -262,4 +287,25 @@ export function peopleChipLabel(
         return people.find((p) => p.id === only)?.name ?? '1 person';
     }
     return `${checkedIds.size} people`;
+}
+
+/**
+ * The picker's live count line (TICKET-147): `showing N places from everyone` /
+ * `showing N places from 2 people`. The place count is computed with the SAME
+ * `filterByCheckedPeople` the map's Discover layer uses, so the number can never
+ * disagree with the network pins actually rendered. `who` pluralizes: `everyone`
+ * (empty set) · `1 person` · `N people`. Pure; unit-tested.
+ */
+export function peopleCountLine(
+    networkItems: WishlistMapItem[],
+    checkedIds: ReadonlySet<string>,
+): string {
+    const places = filterByCheckedPeople(networkItems, checkedIds).length;
+    const who =
+        checkedIds.size === 0
+            ? 'everyone'
+            : checkedIds.size === 1
+              ? '1 person'
+              : `${checkedIds.size} people`;
+    return `showing ${places} ${places === 1 ? 'place' : 'places'} from ${who}`;
 }
