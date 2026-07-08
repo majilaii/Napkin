@@ -19,6 +19,7 @@ import {
     filterByCheckedPeople,
     peopleChipLabel,
     peopleCountLine,
+    discoverItemsFor,
     overlapToMapItems,
     mergeDiscoverItems,
     supperPinsToMapItems,
@@ -277,28 +278,75 @@ describe('Discover people picker (TICKET-137)', () => {
         });
     });
 
+    describe('discoverItemsFor (shared map/count derivation)', () => {
+        // Overlap fixture: one restaurant shared with the network (r2) + one only
+        // the table saved (r9).
+        const overlap: WishlistMapItem[] = [
+            { id: 'r2', name: 'Shared', city: null, cuisine: null, lat: 1, lng: 1, overlap: { count: 2, tableId: 't', tableName: 'T', members: [] } },
+            { id: 'r9', name: 'TableOnly', city: null, cuisine: null, lat: 2, lng: 2, overlap: { count: 3, tableId: 't', tableName: 'T', members: [] } },
+        ];
+        it('everyone = overlap ∪ network deduped, overlap winning shared ids', () => {
+            const out = discoverItemsFor(items, overlap, new Set());
+            expect(out.map((i) => i.id).sort()).toEqual(['r1', 'r2', 'r3', 'r4', 'r9']);
+            expect(out.find((i) => i.id === 'r2')?.overlap).toBeTruthy(); // overlap won
+        });
+        it('non-empty checked set = network only (overlap pins hidden)', () => {
+            const out = discoverItemsFor(items, overlap, new Set(['clara', 'thomas']));
+            expect(out.map((i) => i.id).sort()).toEqual(['r1', 'r2', 'r3']);
+            expect(out.every((i) => i.overlap == null)).toBe(true);
+        });
+        it('dedupes two followees on ONE restaurant in the checked branch (first/most-recent wins)', () => {
+            const dup = networkPinsToMapItems([
+                pin({ restaurant_id: 'r5', author: { id: 'clara', name: 'Clara', avatar: null } }),
+                pin({ restaurant_id: 'r5', author: { id: 'thomas', name: 'Thomas', avatar: null } }),
+            ]);
+            const out = discoverItemsFor(dup, [], new Set(['clara', 'thomas']));
+            expect(out).toHaveLength(1);
+            expect(out[0].author?.id).toBe('clara'); // first occurrence kept
+        });
+    });
+
     describe('peopleCountLine (live count feedback)', () => {
         // `items` = 3 network pins (r1/r3 Clara, r2 Thomas) + 1 author-less spot.
-        // The count uses filterByCheckedPeople, so the author-less pin never counts
-        // under a selection — the number matches the network layer on the map.
+        // The count is discoverItemsFor(...).length — the EXACT array the map
+        // renders — so dedupe + everyone-mode overlap merge are included.
         it('empty set → "from everyone" over all network pins', () => {
-            expect(peopleCountLine(items, new Set())).toBe('showing 4 places from everyone');
+            expect(peopleCountLine(items, [], new Set())).toBe('showing 4 places from everyone');
         });
         it('one person → "from 1 person" with that person\'s place count', () => {
-            expect(peopleCountLine(items, new Set(['clara']))).toBe('showing 2 places from 1 person');
+            expect(peopleCountLine(items, [], new Set(['clara']))).toBe('showing 2 places from 1 person');
         });
         it('two people → "from 2 people"', () => {
-            expect(peopleCountLine(items, new Set(['clara', 'thomas']))).toBe(
+            expect(peopleCountLine(items, [], new Set(['clara', 'thomas']))).toBe(
                 'showing 3 places from 2 people',
             );
         });
         it('pluralizes a single place', () => {
-            expect(peopleCountLine(items, new Set(['thomas']))).toBe('showing 1 place from 1 person');
+            expect(peopleCountLine(items, [], new Set(['thomas']))).toBe('showing 1 place from 1 person');
         });
-        it('matches filterByCheckedPeople exactly (never lies vs the map)', () => {
+        it('everyone-mode counts the overlap merge exactly as the map renders it (review P2-a)', () => {
+            const overlap: WishlistMapItem[] = [
+                // r1 shared with network (merged, not double-counted); r9 table-only (adds one).
+                { id: 'r1', name: 'A', city: null, cuisine: null, lat: 1, lng: 1, overlap: { count: 2, tableId: 't', tableName: 'T', members: [] } },
+                { id: 'r9', name: 'B', city: null, cuisine: null, lat: 2, lng: 2, overlap: { count: 2, tableId: 't', tableName: 'T', members: [] } },
+            ];
+            const rendered = discoverItemsFor(items, overlap, new Set()).length; // 4 + 1
+            expect(rendered).toBe(5);
+            expect(peopleCountLine(items, overlap, new Set())).toBe('showing 5 places from everyone');
+        });
+        it('two followees on one restaurant → count matches the deduped rendered pins', () => {
+            const dup = networkPinsToMapItems([
+                pin({ restaurant_id: 'r5', author: { id: 'clara', name: 'Clara', avatar: null } }),
+                pin({ restaurant_id: 'r5', author: { id: 'thomas', name: 'Thomas', avatar: null } }),
+            ]);
+            const checked = new Set(['clara', 'thomas']);
+            expect(discoverItemsFor(dup, [], checked)).toHaveLength(1);
+            expect(peopleCountLine(dup, [], checked)).toBe('showing 1 place from 2 people');
+        });
+        it('always equals the rendered discoverItems length (never lies vs the map)', () => {
             const checked = new Set(['clara']);
-            const shown = filterByCheckedPeople(items, checked).length;
-            expect(peopleCountLine(items, checked)).toContain(`showing ${shown} `);
+            const shown = discoverItemsFor(items, [], checked).length;
+            expect(peopleCountLine(items, [], checked)).toContain(`showing ${shown} `);
         });
     });
 });

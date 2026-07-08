@@ -65,11 +65,10 @@ import {
     filterItemsByCuisine,
     mergeYourItems,
     peopleFromItems,
-    filterByCheckedPeople,
     peopleChipLabel,
     peopleCountLine,
+    discoverItemsFor,
     overlapToMapItems,
-    mergeDiscoverItems,
 } from '@/components/wishlist/mapItems';
 import { useTablesOverlap } from '@/hooks/wishlist/useTablesOverlap';
 import { GatherSheet } from '@/components/gatherings';
@@ -642,45 +641,31 @@ export default function WishlistScreen() {
         [overlapSources, cuisineFilter],
     );
 
-    // Discover: network pins EXCLUSIVE-include filtered by the picker (empty = all).
-    // People filter OFF → overlap + network merged (overlap wins the dedupe);
-    // ON → network only. An exclusive-include promises "only these people", which
-    // table overlap pins would break (TICKET-138) — so they hide whenever the
-    // checked set is non-empty.
+    // Discover: the shared derivation (mapItems.discoverItemsFor) — empty checked
+    // set = overlap + network merged (overlap wins the dedupe); a non-empty
+    // exclusive-include = ONLY those people's network pins (overlap bubbles would
+    // break the "only these people" promise — TICKET-138). Shared with the
+    // picker's count line so the narration can never disagree with the pins.
     const discoverItems = useMemo(
-        () =>
-            checkedPeople.size === 0
-                ? mergeDiscoverItems(overlapItems, filterByCheckedPeople(networkItems, checkedPeople))
-                : filterByCheckedPeople(networkItems, checkedPeople),
+        () => discoverItemsFor(networkItems, overlapItems, checkedPeople),
         [overlapItems, networkItems, checkedPeople],
     );
 
     const activeMapItems = mapSource === 'discover' ? discoverItems : yourItems;
 
-    // Chip label reflects the checked set: Everyone · one name · N people.
+    // Chip label reflects the APPLIED set: Everyone · one name · N people.
     const peopleLabel = useMemo(
         () => peopleChipLabel(checkedPeople, discoverPeople),
         [checkedPeople, discoverPeople],
     );
 
     // Live count line for the picker — `showing N places from everyone/2 people`.
-    // Uses the SAME filterByCheckedPeople the map applies, so it never disagrees
-    // with the network pins on the map (TICKET-147).
-    const peopleCountLabel = useMemo(
-        () => peopleCountLine(networkItems, checkedPeople),
-        [networkItems, checkedPeople],
+    // Called by the sheet with its DRAFT set (draft-apply); same derivation the
+    // map renders, so the number matches the pins that will show on apply.
+    const peopleCountFor = useCallback(
+        (checked: ReadonlySet<string>) => peopleCountLine(networkItems, overlapItems, checked),
+        [networkItems, overlapItems],
     );
-
-    // Picker toggles: plain add/remove (exclusive-include); Everyone clears the set.
-    const handleTogglePerson = useCallback((id: string) => {
-        setCheckedPeople((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
-    }, []);
-    const handleEveryone = useCallback(() => setCheckedPeople(new Set()), []);
 
     const handleConfirm = useCallback((item: PersonalWishlistItem) => {
         setCorrectItem(item);
@@ -1069,20 +1054,20 @@ export default function WishlistScreen() {
                 onCancel={() => setRemoveItem(null)}
             />
 
-            {/* TICKET-137: Discover people picker (exclusive-include). */}
+            {/* TICKET-137: Discover people picker (exclusive-include, draft-apply:
+                the sheet owns a local draft; the map applies once on dismiss so it
+                never reconciles markers under the open Modal — TICKET-147). */}
             <DiscoverPeopleSheet
                 visible={peopleSheetOpen}
                 onDismiss={() => setPeopleSheetOpen(false)}
                 palette={palette}
                 people={discoverPeople}
                 checkedIds={checkedPeople}
-                countLabel={peopleCountLabel}
-                onToggle={handleTogglePerson}
-                onEveryone={handleEveryone}
-                // TICKET-139: "your table" rows — one tap includes only that table's
+                onApply={setCheckedPeople}
+                countFor={peopleCountFor}
+                // TICKET-139: "your table" rows — one tap drafts only that table's
                 // members (overlap pins then hide per 138; their visits show).
                 tableRows={tableRows}
-                onSelectTable={(ids) => setCheckedPeople(new Set(ids))}
             />
 
             {/* TICKET-137: peek Save pill → the shared save sheet (wishlist / list /

@@ -197,16 +197,18 @@ export function GatheringDetail({
     // Kicker date "FRI 10 JUL" (reuses the leaf pieces; the standalone date tile
     // is killed). Provenance = just the platform ("tiktok"), tappable to source.
     const kickerDate = leaf ? `${leaf.wd} ${leaf.day} ${leaf.mo}` : null;
+    const relDay = relativeDay(gather_on);
     const provenance =
         source_url != null
             ? source_type
                 ? source_type.toLowerCase().replace(/_/g, ' ')
                 : 'link'
             : null;
-    // Roster counts line — only for larger tables (the roster owns counts, not
-    // the When row). "2 in · 1 out · 1 waiting" (omit empty parts).
+    // Roster counts line — proposed only (mirrors the old in-count line: RSVP
+    // tallies are stale noise on a dispatched/expired gathering) and only for
+    // larger tables. "2 in · 1 out · 1 waiting" (omit empty parts).
     const countsLine =
-        memberCount > 4
+        isProposed && memberCount > 4
             ? [
                   `${ins.length} in`,
                   outs.length > 0 ? `${outs.length} out` : null,
@@ -276,10 +278,8 @@ export function GatheringDetail({
                         <Text style={[styles.whenDate, { color: palette.text }]} numberOfLines={1}>
                             {longDate(gather_on)}
                         </Text>
-                        {relativeDay(gather_on) ? (
-                            <Text style={[styles.whenRel, { color: palette.textMuted }]}>
-                                {relativeDay(gather_on)}
-                            </Text>
+                        {relDay ? (
+                            <Text style={[styles.whenRel, { color: palette.textMuted }]}>{relDay}</Text>
                         ) : null}
                     </View>
 

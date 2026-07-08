@@ -227,13 +227,13 @@ export interface DiscoverPerson {
  * Distinct authors across the network layer — the picker's roster ("everyone you
  * follow who has pins").
  *
- * STABLE ORDER (TICKET-147 multi-select fix). The network pins arrive in the
- * RPC's recency order (`ORDER BY sort_date DESC`), so a first-seen roster would
- * reshuffle every time a followee logs a meal or the query re-settles — the row
- * a tap lands on could change identity between renders, which read on device as
- * "only one person ticks at a time" (the interior rows move; the ends move
- * least). We dedupe, then sort by name (case-insensitive) with an id tiebreak,
- * so the picker rows are pinned regardless of pin order. Pure/deterministic.
+ * STABLE ORDER (TICKET-147). Network pins arrive in the RPC's recency order
+ * (`ORDER BY sort_date DESC`), so a first-seen roster would re-rank whenever a
+ * followee logs a meal — people jumping between sessions. Dedupe, then sort by
+ * name (case-insensitive) with an id tiebreak: deterministic regardless of pin
+ * order. (This is a UX/robustness win, NOT the multi-select fix — the cold
+ * review showed row order was already referentially stable across a tapping
+ * session; the multi-select mechanism is killed by the sheet's draft-apply.)
  */
 export function peopleFromItems(items: WishlistMapItem[]): DiscoverPerson[] {
     const seen = new Map<string, DiscoverPerson>();
@@ -290,17 +290,46 @@ export function peopleChipLabel(
 }
 
 /**
+ * The Discover layer derivation — ONE source of truth shared by the map (the
+ * items it renders) and `peopleCountLine` (the picker's narration), so the two
+ * can never disagree (TICKET-147 review P2-a).
+ *
+ * Empty checked set = everyone: network ∪ table-overlap merged one marker per
+ * restaurant (overlap wins — `mergeDiscoverItems`). A non-empty exclusive-
+ * include shows ONLY those people's network pins (a table overlap bubble would
+ * break the "only these people" promise — TICKET-138), deduped by restaurant id
+ * (first occurrence wins: network rows arrive most-recent-first, mirroring the
+ * RPC's rn=1 primary-author rule). The RPC already emits one row per restaurant,
+ * so that dedupe is belt-and-braces — but it keeps the map's "never two items
+ * for one id" invariant true by construction for any input.
+ */
+export function discoverItemsFor(
+    networkItems: WishlistMapItem[],
+    overlapItems: WishlistMapItem[],
+    checkedIds: ReadonlySet<string>,
+): WishlistMapItem[] {
+    if (checkedIds.size === 0) return mergeDiscoverItems(overlapItems, networkItems);
+    const byId = new Map<string, WishlistMapItem>();
+    for (const it of filterByCheckedPeople(networkItems, checkedIds)) {
+        if (!byId.has(it.id)) byId.set(it.id, it);
+    }
+    return [...byId.values()];
+}
+
+/**
  * The picker's live count line (TICKET-147): `showing N places from everyone` /
- * `showing N places from 2 people`. The place count is computed with the SAME
- * `filterByCheckedPeople` the map's Discover layer uses, so the number can never
- * disagree with the network pins actually rendered. `who` pluralizes: `everyone`
- * (empty set) · `1 person` · `N people`. Pure; unit-tested.
+ * `showing N places from 2 people`. The place count is `discoverItemsFor(...)`
+ * .length — the EXACT array the map renders (restaurant-id dedupe + everyone-
+ * mode overlap merge included), so the number can never lie against the pins.
+ * `who` pluralizes: `everyone` (empty set) · `1 person` · `N people`. Pure;
+ * unit-tested.
  */
 export function peopleCountLine(
     networkItems: WishlistMapItem[],
+    overlapItems: WishlistMapItem[],
     checkedIds: ReadonlySet<string>,
 ): string {
-    const places = filterByCheckedPeople(networkItems, checkedIds).length;
+    const places = discoverItemsFor(networkItems, overlapItems, checkedIds).length;
     const who =
         checkedIds.size === 0
             ? 'everyone'
