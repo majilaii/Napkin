@@ -237,23 +237,33 @@ async function callEdgeFnOnce<T = unknown>(
     }
 
     // POST via supabase-js invoke (auto-attaches auth).
-    // If `params` is provided, append them as a query string on the function
-    // name — supabase-js preserves query strings in the function name. This
-    // is required by edge functions that route on `?action=` instead of body
-    // (e.g. table-management mark_seen / add_member / leave_table).
+    // `action` and any `params` are appended to the function name as a query
+    // string — supabase-js preserves query strings in the function name. This
+    // mirrors the GET and postWithFetch paths so a top-level `action` reaches
+    // the query string on EVERY transport: functions that route POST on
+    // `?action=` (e.g. table-management, index.ts:51) work whether the caller
+    // passes `action` at the top level or via `params: { action }`. `action`
+    // is ALSO kept in the body (invokeBody) so body-reading functions are
+    // unaffected — this is purely additive. Closes the misroute footgun behind
+    // the TICKET-121 "Name is required" fire (top_four_get/set, mark_welcomed).
     const invokeBody = action
         ? { action, ...((body as object | undefined) ?? {}) }
         : body;
     let invokeName = name;
+    const qs = new URLSearchParams();
+    if (action) qs.set('action', action);
+    // If a caller ever passed BOTH a top-level `action` and `params.action`
+    // (none does today), `params.action` wins the query here — consistent with
+    // the GET path and postWithFetch. The two are equivalent only when not both
+    // are supplied.
     if (params) {
-        const qs = new URLSearchParams();
         for (const [k, v] of Object.entries(params)) {
             if (v === undefined || v === null) continue;
             qs.set(k, String(v));
         }
-        const queryStr = qs.toString();
-        if (queryStr) invokeName = `${name}?${queryStr}`;
     }
+    const queryStr = qs.toString();
+    if (queryStr) invokeName = `${name}?${queryStr}`;
     const { data, error } = await supabase.functions.invoke(invokeName, {
         body: invokeBody as Record<string, unknown> | undefined,
     });
