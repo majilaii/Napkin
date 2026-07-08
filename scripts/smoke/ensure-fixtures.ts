@@ -195,68 +195,6 @@ async function ensureProfilePublic(token: string, userId: string): Promise<void>
     throw lastErr ?? new Error('update_privacy failed');
 }
 
-// ── TICKET-139 follow-up: the table-atlas map_pins MEMBER-path smoke needs the
-// smoke table to hold ≥1 group meal at a coord-bearing restaurant. Seed a
-// host-only supper via entry?action=set-table — the app's write path (anchor +
-// supper_members roster in one call), NEVER a direct DB write. Idempotent: once
-// map_pins returns any row (any supper/round with coords), never writes again.
-// The empty-seats supper card this creates is confined to the demo account's
-// own solo "Smoke Table" feed — same fixture-noise budget as the entry fixtures.
-// Discovery uses the SAME first-listed-table rule as edge-functions.ts, and the
-// smoke step runs immediately after this script in the same workflow, so seed
-// and check always target the same table.
-async function discoverTableId(token: string): Promise<string> {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/table-management`, {
-        method: 'GET',
-        headers: { apikey: ANON_KEY!, Authorization: `Bearer ${token}` },
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-        throw new Error(`table-management list → HTTP ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
-    }
-    const memberships: Array<{ tables?: { id?: string } | Array<{ id?: string }> }> =
-        Array.isArray(json?.data) ? json.data : [];
-    const embedded = memberships[0]?.tables;
-    const tableId = Array.isArray(embedded) ? embedded[0]?.id : embedded?.id;
-    if (!tableId) throw new Error('no table id discoverable after ensureTable — list shape drifted?');
-    return tableId;
-}
-
-async function mapPinRows(token: string, tableId: string): Promise<unknown[]> {
-    const rows = await edge(token, 'table-atlas', { action: 'map_pins', table_id: tableId });
-    if (!Array.isArray(rows)) {
-        throw new Error(`map_pins returned no array: ${JSON.stringify(rows).slice(0, 200)}`);
-    }
-    return rows;
-}
-
-async function ensureSupperPin(token: string): Promise<void> {
-    const tableId = await discoverTableId(token);
-    let rows = await mapPinRows(token, tableId);
-    if (rows.length > 0) {
-        console.log(`✓ smoke table has ${rows.length} map pin(s) — nothing to seed`);
-        return;
-    }
-
-    console.log('→ smoke table has no group-meal pins — creating a host-only supper via entry set-table…');
-    const supper = await edge(token, 'entry', {
-        action: 'set-table',
-        table_id: tableId,
-        restaurant_id: RESTAURANT_ID,
-        member_ids: [],
-    });
-    console.log(`  ✓ supper ${supper?.id ?? '(no id in response)'} created`);
-
-    rows = await mapPinRows(token, tableId);
-    if (rows.length === 0) {
-        console.error(
-            '✗ supper created but map_pins still returns 0 rows — SMOKE_TEST_RESTAURANT_ID most likely has no lat/lng. Point it at a coord-bearing persisted restaurant.',
-        );
-        Deno.exit(1);
-    }
-    console.log(`✓ map_pins fixture ready (${rows.length} row(s))`);
-}
-
 async function main() {
     const { token, userId } = await signIn();
     const have = await reviewsCount(token, userId);
