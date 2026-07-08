@@ -19,6 +19,7 @@ import {
     filterByCheckedPeople,
     peopleChipLabel,
     peopleCountLine,
+    buildTableRows,
     discoverItemsFor,
     overlapToMapItems,
     mergeDiscoverItems,
@@ -595,5 +596,48 @@ describe('supperPinsToMapItems (TICKET-139)', () => {
     it('tolerates null/undefined input', () => {
         expect(supperPinsToMapItems(null)).toEqual([]);
         expect(supperPinsToMapItems(undefined)).toEqual([]);
+    });
+});
+
+// ── buildTableRows — de-aliasing the "your table" picker rows (2026-07-09) ────
+describe('buildTableRows', () => {
+    const people = [
+        { id: 'a', name: 'Autumn', avatar: null },
+        { id: 'b', name: 'Ben', avatar: null },
+    ];
+    it('drops a table whose effective roster is one visible person (the founder alias repro)', () => {
+        const rows = buildTableRows(
+            [{ tableId: 't1', name: 'Sunday Roast club', memberIds: ['self', 'a'] }],
+            'self',
+            people,
+        );
+        expect(rows).toEqual([]);
+    });
+    it('keeps a table with ≥2 visible non-self members, minus self and pin-less ids', () => {
+        const rows = buildTableRows(
+            [{ tableId: 't1', name: 'Crew', memberIds: ['self', 'a', 'b', 'ghost'] }],
+            'self',
+            people,
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0].memberIds.sort()).toEqual(['a', 'b']);
+    });
+    it('dedupes member ids and tolerates null self', () => {
+        const rows = buildTableRows(
+            [{ tableId: 't1', name: 'Crew', memberIds: ['a', 'a', 'b'] }],
+            null,
+            people,
+        );
+        expect(rows[0].memberIds.sort()).toEqual(['a', 'b']);
+    });
+});
+
+// ── peopleCountLine — who-count uses VISIBLE people only (2026-07-09) ──────────
+describe('peopleCountLine visible-who', () => {
+    const net = [
+        { id: 'r1', name: 'X', city: null, cuisine: null, lat: 1, lng: 1, author: { id: 'a', name: 'A', avatar: null }, entryId: 'e1' },
+    ] as any[];
+    it('does not count checked ids that have no pins', () => {
+        expect(peopleCountLine(net, [], new Set(['a', 'dead']))).toBe('showing 1 place from 1 person');
     });
 });
