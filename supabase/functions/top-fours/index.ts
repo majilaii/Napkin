@@ -28,6 +28,10 @@ import { reportError } from '../_shared/report.ts';
 interface PickInput {
     position: number;
     restaurant_id: string;
+    // TICKET-144 pt2 — profile Top 4 only: per-slot chosen-memory hero photo.
+    // Rides inside each pick; the RPC validates it is the user's OWN photo at
+    // this restaurant. Regional Top-4 flows ignore this field.
+    hero_entry_photo_id?: string | null;
 }
 
 interface ClaimedCity {
@@ -661,13 +665,24 @@ serve(async (req) => {
                 }
 
                 try {
+                    // The RPC validates each hero_entry_photo_id belongs to the
+                    // user AT that restaurant (consent boundary). picks pass
+                    // through with hero_entry_photo_id inside each element.
                     const { error: rpcErr } = await supabase.rpc('set_profile_top_four_picks', {
                         p_user_id: user.id,
                         p_picks: picks,
                     });
-                    if (rpcErr) return errResponse('RPC_ERROR', rpcErr.message);
+                    if (rpcErr) {
+                        if (rpcErr.message?.includes('PHOTO_NOT_OWNED')) {
+                            return errResponse('PHOTO_NOT_OWNED', 'That photo is not yours at this restaurant');
+                        }
+                        return errResponse('RPC_ERROR', rpcErr.message);
+                    }
                 } catch (e) {
                     const msg = e instanceof Error ? e.message : String(e);
+                    if (msg.includes('PHOTO_NOT_OWNED')) {
+                        return errResponse('PHOTO_NOT_OWNED', 'That photo is not yours at this restaurant');
+                    }
                     return errResponse('RPC_ERROR', msg);
                 }
 
@@ -750,6 +765,36 @@ serve(async (req) => {
                 }
 
                 return jsonResponse({ data: { success: true } });
+            }
+
+            // ── my_restaurant_photos (TICKET-144 pt2 — chosen-memory picker) ──
+            // Self-only: the OWNER's own entry photos across ALL their visits to a
+            // restaurant, to feed the Top-4 hero picker. Caller-scoped (user.id) —
+            // never accepts a target user. Any visibility (they are the owner).
+            // Doctrine: never any other image source (no restaurants.photo_url,
+            // no Places, no other users' photos).
+            if (postAction === 'my_restaurant_photos') {
+                const { restaurant_id } = body as { restaurant_id?: string };
+                if (!restaurant_id) return errResponse('BAD_REQUEST', 'restaurant_id is required');
+
+                const { data, error } = await supabase
+                    .from('entry_photos')
+                    .select('id, photo_url, created_at, entries!inner(user_id, restaurant_id)')
+                    .eq('entries.user_id', user.id)
+                    .eq('entries.restaurant_id', restaurant_id)
+                    .not('photo_url', 'is', null)
+                    .order('created_at', { ascending: false });
+
+                if (error) return errResponse('DB_ERROR', error.message, 500);
+
+                return jsonResponse({
+                    data: {
+                        photos: (data ?? []).map((r: any) => ({
+                            entry_photo_id: r.id,
+                            photo_url: r.photo_url,
+                        })),
+                    },
+                });
             }
 
             return errResponse('BAD_REQUEST', `Unknown POST action: ${postAction}`);

@@ -86,6 +86,16 @@ export type TopPick = {
     /** TICKET-146: marquee-plate mark seed (engraving registry). null → monogram. */
     cuisine: string | null;
     photo_url: string | null;
+    /**
+     * TICKET-144 pt2: the owner's chosen hero photo (their OWN entry photo at
+     * this restaurant), servable on the public profile because choosing it is
+     * the explicit publish. Absent on older cached payloads and on auto-derived
+     * picks. null/absent → the plate renders typographic.
+     */
+    hero_photo_url?: string | null;
+    /** OWNER-ONLY: the photo-row id, so the editor re-saves untouched slots
+     * losslessly. Absent/null on public reads (the id never leaks to strangers). */
+    hero_entry_photo_id?: string | null;
     max_rating: number | null;
     visit_count: number;
     last_visited_at: string | null;

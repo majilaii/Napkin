@@ -187,6 +187,20 @@ const CHECKS: Check[] = [
         },
     },
     {
+        // TICKET-144 pt2: chosen-memory hero picker (self-only own photos). An
+        // empty photos array is legit (the smoke user has no photos there).
+        name: 'top-fours?action=my_restaurant_photos (TICKET-144 pt2 hero picker)',
+        method: 'POST',
+        fn: 'top-fours',
+        body: { action: 'my_restaurant_photos', restaurant_id: RESTAURANT_ID },
+        shape: (json) => {
+            const data = (json as { data?: { photos?: unknown[] } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.photos)) return 'data.photos is not an array';
+            return null;
+        },
+    },
+    {
         name: 'notifications?action=inbox',
         method: 'POST',
         fn: 'notifications',

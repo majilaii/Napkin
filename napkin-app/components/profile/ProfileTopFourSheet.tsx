@@ -21,22 +21,31 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSetProfileTopFour } from '@/hooks/users/useSetProfileTopFour';
 import { TopFourSearchScreen, type TopFourSearchPick } from './TopFourSearchScreen';
+import { ChooseMemorySheet } from './ChooseMemorySheet';
+import { toProfileTopFourPicks } from './topFourPicks';
 
 export interface ProfileTopFourPick {
     restaurant_id: string;
     name: string;
     photo_url: string | null;
+    /** TICKET-144 pt2 — chosen-memory hero (the owner's own entry photo). */
+    hero_entry_photo_id?: string | null;
+    hero_photo_url?: string | null;
 }
 
 interface SlotData {
     restaurant_id: string;
     name: string;
     photo_url: string | null;
+    /** TICKET-144 pt2 — per-slot chosen-memory hero + its URL for preview. */
+    hero_entry_photo_id: string | null;
+    hero_photo_url: string | null;
 }
 
 interface Props {
@@ -56,12 +65,14 @@ function SlotCard({
     palette,
     onPress,
     onClear,
+    onChooseMemory,
 }: {
     index: number;
     slot: SlotData | null;
     palette: typeof Colors.light;
     onPress: () => void;
     onClear: () => void;
+    onChooseMemory: () => void;
 }) {
     const filled = !!slot;
     return (
@@ -101,6 +112,28 @@ function SlotCard({
                     >
                         <Ionicons name="close" size={15} color={palette.textMuted} />
                     </Pressable>
+
+                    {/* Choose-a-memory affordance — a hero thumbnail once set. */}
+                    <Pressable
+                        onPress={onChooseMemory}
+                        hitSlop={6}
+                        style={styles.memoryAffordance}
+                        accessibilityLabel={
+                            slot!.hero_photo_url ? `Change the featured photo for ${slot!.name}` : `Add a featured photo for ${slot!.name}`
+                        }
+                    >
+                        {slot!.hero_photo_url ? (
+                            <>
+                                <Image source={{ uri: slot!.hero_photo_url }} style={styles.memoryThumb} contentFit="cover" />
+                                <Text style={[styles.memoryLabel, { color: palette.primary }]}>photo</Text>
+                            </>
+                        ) : (
+                            <>
+                                <Ionicons name="image-outline" size={13} color={palette.textMuted} />
+                                <Text style={[styles.memoryLabel, { color: palette.textMuted }]}>add photo</Text>
+                            </>
+                        )}
+                    </Pressable>
                 </>
             ) : (
                 <Ionicons name="add" size={24} color={palette.primary} />
@@ -122,6 +155,8 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
     const [slots, setSlots] = useState<(SlotData | null)[]>([null, null, null, null]);
     // Which slot the search is filling (null = search closed).
     const [addingSlot, setAddingSlot] = useState<number | null>(null);
+    // Which slot the chosen-memory picker is filling (null = picker closed).
+    const [choosingSlot, setChoosingSlot] = useState<number | null>(null);
 
     // Seed from currentPicks only on the closed→open transition, so a profile
     // refetch (new currentPicks identity) can't clobber an in-progress edit.
@@ -130,10 +165,17 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
         if (visible && !wasVisible.current) {
             const next: (SlotData | null)[] = [null, null, null, null];
             currentPicks.slice(0, SLOT_COUNT).forEach((p, i) => {
-                next[i] = { restaurant_id: p.restaurant_id, name: p.name, photo_url: p.photo_url };
+                next[i] = {
+                    restaurant_id: p.restaurant_id,
+                    name: p.name,
+                    photo_url: p.photo_url,
+                    hero_entry_photo_id: p.hero_entry_photo_id ?? null,
+                    hero_photo_url: p.hero_photo_url ?? null,
+                };
             });
             setSlots(next);
             setAddingSlot(null);
+            setChoosingSlot(null);
         }
         wasVisible.current = visible;
     }, [visible, currentPicks]);
@@ -150,7 +192,11 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
 
     const hasDiff = useMemo(() => {
         if (filled.length !== currentPicks.length) return true;
-        return filled.some((d, i) => d.restaurant_id !== currentPicks[i]?.restaurant_id);
+        return filled.some(
+            (d, i) =>
+                d.restaurant_id !== currentPicks[i]?.restaurant_id ||
+                (d.hero_entry_photo_id ?? null) !== (currentPicks[i]?.hero_entry_photo_id ?? null),
+        );
     }, [filled, currentPicks]);
 
     const handlePick = useCallback(
@@ -162,16 +208,37 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                     return prev;
                 }
                 const next = [...prev];
+                // Swapping to a DIFFERENT restaurant invalidates the old hero
+                // (it belonged to the previous spot); re-picking the same one keeps it.
+                const existing = prev[addingSlot];
+                const sameRestaurant = existing?.restaurant_id === pick.restaurant_id;
                 next[addingSlot] = {
                     restaurant_id: pick.restaurant_id,
                     name: pick.name,
                     photo_url: pick.photo_url,
+                    hero_entry_photo_id: sameRestaurant ? existing!.hero_entry_photo_id : null,
+                    hero_photo_url: sameRestaurant ? existing!.hero_photo_url : null,
                 };
                 return next;
             });
             setAddingSlot(null);
         },
         [addingSlot],
+    );
+
+    // Chosen-memory picker committed a photo (or "none") for `choosingSlot`.
+    const handleChooseMemory = useCallback(
+        (entryPhotoId: string | null, photoUrl: string | null) => {
+            setSlots((prev) => {
+                if (choosingSlot == null) return prev;
+                const cur = prev[choosingSlot];
+                if (!cur) return prev;
+                const next = [...prev];
+                next[choosingSlot] = { ...cur, hero_entry_photo_id: entryPhotoId, hero_photo_url: photoUrl };
+                return next;
+            });
+        },
+        [choosingSlot],
     );
 
     const clearSlot = useCallback((i: number) => {
@@ -184,10 +251,9 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
 
     const handleSave = useCallback(() => {
         if (!hasDiff) return;
-        const picks = filled.map((d, i) => ({
-            position: (i + 1) as 1 | 2 | 3 | 4,
-            restaurant_id: d.restaurant_id,
-        }));
+        // Only position · restaurant_id · hero_entry_photo_id ride to the server
+        // (consent contract) — preview-only fields never leave the client.
+        const picks = toProfileTopFourPicks(filled);
         setPicks.mutate(picks, {
             onSuccess: onClose,
             onError: () => Alert.alert('Could not save', 'Please try again.'),
@@ -206,9 +272,11 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
     }, [hasDiff, onClose]);
 
     const isPending = setPicks.isPending;
+    const memorySlot = choosingSlot != null ? slots[choosingSlot] : null;
 
     return (
-        <Modal
+        <>
+            <Modal
             visible={visible}
             animationType="slide"
             presentationStyle="pageSheet"
@@ -272,17 +340,29 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                     {/* 2×2 fixed slots */}
                     <View style={styles.grid}>
                         <View style={styles.gridRow}>
-                            <SlotCard index={0} slot={slots[0]} palette={palette} onPress={() => setAddingSlot(0)} onClear={() => clearSlot(0)} />
-                            <SlotCard index={1} slot={slots[1]} palette={palette} onPress={() => setAddingSlot(1)} onClear={() => clearSlot(1)} />
+                            <SlotCard index={0} slot={slots[0]} palette={palette} onPress={() => setAddingSlot(0)} onClear={() => clearSlot(0)} onChooseMemory={() => setChoosingSlot(0)} />
+                            <SlotCard index={1} slot={slots[1]} palette={palette} onPress={() => setAddingSlot(1)} onClear={() => clearSlot(1)} onChooseMemory={() => setChoosingSlot(1)} />
                         </View>
                         <View style={styles.gridRow}>
-                            <SlotCard index={2} slot={slots[2]} palette={palette} onPress={() => setAddingSlot(2)} onClear={() => clearSlot(2)} />
-                            <SlotCard index={3} slot={slots[3]} palette={palette} onPress={() => setAddingSlot(3)} onClear={() => clearSlot(3)} />
+                            <SlotCard index={2} slot={slots[2]} palette={palette} onPress={() => setAddingSlot(2)} onClear={() => clearSlot(2)} onChooseMemory={() => setChoosingSlot(2)} />
+                            <SlotCard index={3} slot={slots[3]} palette={palette} onPress={() => setAddingSlot(3)} onClear={() => clearSlot(3)} onChooseMemory={() => setChoosingSlot(3)} />
                         </View>
                     </View>
                 </View>
             )}
-        </Modal>
+            </Modal>
+
+            {/* Per-slot chosen-memory picker (own Modal — overlays the grid). */}
+            <ChooseMemorySheet
+                visible={choosingSlot != null}
+                onClose={() => setChoosingSlot(null)}
+                userId={userId}
+                restaurantId={memorySlot?.restaurant_id ?? null}
+                restaurantName={memorySlot?.name}
+                currentPhotoId={memorySlot?.hero_entry_photo_id ?? null}
+                onSelect={handleChooseMemory}
+            />
+        </>
     );
 }
 
@@ -336,5 +416,24 @@ const styles = StyleSheet.create({
         height: 28,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    memoryAffordance: {
+        position: 'absolute',
+        bottom: 7,
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    memoryThumb: {
+        width: 16,
+        height: 16,
+        borderRadius: 3,
+    },
+    memoryLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9.5,
+        letterSpacing: 0.4,
+        textTransform: 'lowercase',
     },
 });

@@ -357,6 +357,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                         restaurant_id: p.restaurant_id,
                         name: p.name,
                         photo_url: p.photo_url,
+                        hero_entry_photo_id: p.hero_entry_photo_id ?? null,
+                        hero_photo_url: p.hero_photo_url ?? null,
                     }))}
                 />
             )}

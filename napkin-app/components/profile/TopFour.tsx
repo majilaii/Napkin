@@ -67,6 +67,7 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                             city={pick.city}
                             rating={pick.max_rating}
                             rank={i + 1}
+                            photoUrl={pick.hero_photo_url}
                             onPress={() => openPick(pick)}
                         />
                     ) : (
