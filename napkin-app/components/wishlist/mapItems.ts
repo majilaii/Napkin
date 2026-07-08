@@ -330,11 +330,39 @@ export function peopleCountLine(
     checkedIds: ReadonlySet<string>,
 ): string {
     const places = discoverItemsFor(networkItems, overlapItems, checkedIds).length;
-    const who =
-        checkedIds.size === 0
-            ? 'everyone'
-            : checkedIds.size === 1
-              ? '1 person'
-              : `${checkedIds.size} people`;
+    // Who-count = checked ids that are VISIBLE people (authors of actual pins).
+    // A draft carrying a pin-less id must not inflate the label — "from 2
+    // people" when one is invisible is a lie (founder repro, 2026-07-09).
+    const authorIds = new Set(
+        networkItems.map((it) => it.author?.id).filter((id): id is string => id != null),
+    );
+    const visible = [...checkedIds].filter((id) => authorIds.has(id)).length;
+    const who = checkedIds.size === 0 ? 'everyone' : visible === 1 ? '1 person' : `${visible} people`;
     return `showing ${places} ${places === 1 ? 'place' : 'places'} from ${who}`;
+}
+
+/**
+ * "Your table" picker rows (TICKET-139), de-aliased (founder repro 2026-07-09):
+ * a table row whose EFFECTIVE selection is one visible person is
+ * indistinguishable from that person's own row — tapping either lights both
+ * ("both entries show up at the same time"). Effective roster = member ids
+ * MINUS the viewer (their own pins aren't in Discover) INTERSECTED with the
+ * visible people (pin authors). Rows render only when that set has ≥2 people —
+ * a bulk-select over one person is pure ambiguity, not a feature. Pure;
+ * unit-tested.
+ */
+export function buildTableRows(
+    raw: { tableId: string; name: string; memberIds: string[] }[],
+    selfId: string | null | undefined,
+    people: DiscoverPerson[],
+): { tableId: string; name: string; memberIds: string[] }[] {
+    const peopleIds = new Set(people.map((p) => p.id));
+    return raw
+        .map((r) => ({
+            ...r,
+            memberIds: [...new Set(r.memberIds)].filter(
+                (id) => id !== selfId && peopleIds.has(id),
+            ),
+        }))
+        .filter((r) => r.memberIds.length >= 2);
 }

@@ -65,6 +65,7 @@ import {
     filterItemsByCuisine,
     mergeYourItems,
     peopleFromItems,
+    buildTableRows,
     peopleChipLabel,
     peopleCountLine,
     discoverItemsFor,
@@ -448,15 +449,16 @@ export default function WishlistScreen() {
             staleTime: 1000 * 60 * 5,
         })),
     });
-    // member_id (NOT user_id) is the table_members column (member_id trap). Rows
-    // appear once their roster is loaded (non-empty) so a tap always includes a set.
-    const tableRows = rosterTables
-        .map((t, i) => ({
-            tableId: t.id,
-            name: t.name,
-            memberIds: (rosterResults[i]?.data ?? []).map((m) => m.member_id),
-        }))
-        .filter((r) => r.memberIds.length > 0);
+    // member_id (NOT user_id) is the table_members column (member_id trap). Raw
+    // rosters only; the EFFECTIVE picker rows (minus self ∩ visible people, ≥2)
+    // derive below once discoverPeople exists — buildTableRows kills the
+    // one-member alias bug (founder repro 2026-07-09: table row ≡ its only
+    // pin-holding member, so tapping either lit both).
+    const rawTableRows = rosterTables.map((t, i) => ({
+        tableId: t.id,
+        name: t.name,
+        memberIds: (rosterResults[i]?.data ?? []).map((m) => m.member_id),
+    }));
     // Watch position live while sorting by nearest or viewing the map, so distances
     // re-rank as you walk (Amsterdam-stroll fix) instead of freezing until restart.
     const { coords, status: locationStatus, request: requestLocation } = useNearbyLocation({
@@ -632,6 +634,13 @@ export default function WishlistScreen() {
     // Picker roster — distinct authors across the network layer (no new endpoint;
     // reuses useNetworkMapPins). "Everyone you follow who has pins."
     const discoverPeople = useMemo(() => peopleFromItems(networkItems), [networkItems]);
+
+    // Effective "your table" picker rows: minus self, intersected with visible
+    // people, rendered only at ≥2 — see buildTableRows (founder repro 2026-07-09).
+    const tableRows = useMemo(
+        () => buildTableRows(rawTableRows, user?.id, discoverPeople),
+        [rawTableRows, user?.id, discoverPeople],
+    );
 
     // Table overlap items (≥2 members saved) — amber count bubbles, max-count
     // table winning per restaurant. The active cuisine filter applies (same as the
