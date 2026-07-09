@@ -599,15 +599,24 @@ describe('supperPinsToMapItems (TICKET-139)', () => {
     });
 });
 
-// ── buildTableRows — de-aliasing the "your table" picker rows (2026-07-09) ────
+// ── buildTableRows — "your table" picker rows, ≥1-visible gate (2026-07-09) ────
 describe('buildTableRows', () => {
     const people = [
         { id: 'a', name: 'Autumn', avatar: null },
         { id: 'b', name: 'Ben', avatar: null },
     ];
-    it('drops a table whose effective roster is one visible person (the founder alias repro)', () => {
+    it('keeps a table whose effective roster is one visible person (≥1 gate, founder call)', () => {
         const rows = buildTableRows(
             [{ tableId: 't1', name: 'Sunday Roast club', memberIds: ['self', 'a'] }],
+            'self',
+            people,
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0].memberIds).toEqual(['a']);
+    });
+    it('drops a table with no visible members left after minus-self and pin-less filter', () => {
+        const rows = buildTableRows(
+            [{ tableId: 't1', name: 'Ghosts', memberIds: ['self', 'ghost'] }],
             'self',
             people,
         );

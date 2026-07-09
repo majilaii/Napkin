@@ -21,7 +21,17 @@
  * Copy economy: one Manrope header line; rows carry no prose.
  */
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput } from 'react-native';
+import {
+    View,
+    Text,
+    Pressable,
+    StyleSheet,
+    Modal,
+    ScrollView,
+    TextInput,
+    KeyboardAvoidingView,
+    Platform,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -111,6 +121,14 @@ export function DiscoverPeopleSheet({
 
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={applyAndDismiss}>
+            {/* Ride the sheet above the keyboard when the search field is focused —
+                without this the keyboard slides over the bottom-pinned sheet and
+                buries the roster (founder repro 2026-07-09). Same idiom as
+                PlacePickerModal: padding on iOS, height on Android. */}
+            <KeyboardAvoidingView
+                style={styles.avoider}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            >
             <Pressable style={styles.backdrop} onPress={applyAndDismiss}>
                 <Pressable
                     style={[
@@ -260,11 +278,16 @@ export function DiscoverPeopleSheet({
                     </ScrollView>
                 </Pressable>
             </Pressable>
+            </KeyboardAvoidingView>
         </Modal>
     );
 }
 
 const styles = StyleSheet.create({
+    // Fills the modal so behavior="padding" can lift the flex-end sheet.
+    avoider: {
+        flex: 1,
+    },
     backdrop: {
         flex: 1,
         justifyContent: 'flex-end',

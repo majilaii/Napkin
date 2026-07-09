@@ -30,6 +30,7 @@ jest.mock('react-native', () => {
         Text: mk('Text'),
         ScrollView: mk('ScrollView'),
         TextInput: mk('TextInput'),
+        KeyboardAvoidingView: mk('KeyboardAvoidingView'),
         Modal: (props: any) => (props.visible ? React.createElement('Modal', props, props.children) : null),
         Pressable: mk('Pressable'),
     };

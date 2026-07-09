@@ -342,14 +342,16 @@ export function peopleCountLine(
 }
 
 /**
- * "Your table" picker rows (TICKET-139), de-aliased (founder repro 2026-07-09):
- * a table row whose EFFECTIVE selection is one visible person is
- * indistinguishable from that person's own row — tapping either lights both
- * ("both entries show up at the same time"). Effective roster = member ids
- * MINUS the viewer (their own pins aren't in Discover) INTERSECTED with the
- * visible people (pin authors). Rows render only when that set has ≥2 people —
- * a bulk-select over one person is pure ambiguity, not a feature. Pure;
- * unit-tested.
+ * "Your table" picker rows (TICKET-139). Effective roster = member ids MINUS the
+ * viewer (their own pins aren't in Discover) INTERSECTED with the visible people
+ * (pin authors). Rows render when that set has ≥1 person (founder call
+ * 2026-07-09): the ≥2 de-alias gate (PR #183) made a table vanish from the picker
+ * whenever only one tablemate had pins, reading as a removed feature. With
+ * draft-apply already killing the dropped-tap multi-select bug, the only residue
+ * of the single-member case is a cosmetic double-check (the table row and that
+ * one person's row both light) — acceptable to keep the table always reachable
+ * as long as any member is visible. The 0-visible case stays hidden: selecting it
+ * would filter to nothing. Pure; unit-tested.
  */
 export function buildTableRows(
     raw: { tableId: string; name: string; memberIds: string[] }[],
@@ -364,5 +366,5 @@ export function buildTableRows(
                 (id) => id !== selfId && peopleIds.has(id),
             ),
         }))
-        .filter((r) => r.memberIds.length >= 2);
+        .filter((r) => r.memberIds.length >= 1);
 }

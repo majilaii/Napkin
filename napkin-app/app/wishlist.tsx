@@ -636,7 +636,8 @@ export default function WishlistScreen() {
     const discoverPeople = useMemo(() => peopleFromItems(networkItems), [networkItems]);
 
     // Effective "your table" picker rows: minus self, intersected with visible
-    // people, rendered only at ≥2 — see buildTableRows (founder repro 2026-07-09).
+    // people, rendered whenever ≥1 remains — see buildTableRows (founder call
+    // 2026-07-09; a table shouldn't vanish just because only one member posted).
     const tableRows = useMemo(
         () => buildTableRows(rawTableRows, user?.id, discoverPeople),
         [rawTableRows, user?.id, discoverPeople],
