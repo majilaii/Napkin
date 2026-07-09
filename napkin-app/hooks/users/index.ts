@@ -13,6 +13,7 @@ export type {
 export { useCheckUsername } from './useCheckUsername';
 export { useUpdateProfile } from './useUpdateProfile';
 export { useUpdatePrivacy } from './useUpdatePrivacy';
+export { useUpdateUsername } from './useUpdateUsername';
 export { useUpdateReplyPermission } from './useUpdateReplyPermission';
 export { useUserSearch } from './useUserSearch';
 export type { UserSearchResult } from './useUserSearch';

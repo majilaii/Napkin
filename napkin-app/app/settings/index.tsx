@@ -4,8 +4,8 @@
  * Reachable via the gear on own profile / Tables header. Route: /settings.
  *
  * Sections (each a `note`-card group with ghosted warm rules between rows):
- *   profile     — avatar · Name · Username · Bio   → the existing editors on
- *                 /settings/privacy (no new editors built here)
+ *   profile     — Photo · Name · Username · Bio → one dedicated editor each
+ *                 (/settings/{photo,name,username,bio})
  *   account     — Account visibility (Public/Private pill → /settings/privacy) ·
  *                 Email (read-only)
  *   privacy     — Blocked
@@ -223,7 +223,7 @@ export default function SettingsScreen() {
                     <Row
                         label="Photo"
                         palette={palette}
-                        onPress={goPrivacy}
+                        onPress={() => router.push('/settings/photo')}
                         leading={
                             <Avatar
                                 name={profile?.display_name ?? ''}
@@ -237,19 +237,19 @@ export default function SettingsScreen() {
                         label="Name"
                         value={profile?.display_name || '—'}
                         palette={palette}
-                        onPress={goPrivacy}
+                        onPress={() => router.push('/settings/name')}
                     />
                     <Row
                         label="Username"
                         value={profile?.username ? `@${profile.username}` : 'not set'}
                         palette={palette}
-                        onPress={goPrivacy}
+                        onPress={() => router.push('/settings/username')}
                     />
                     <Row
                         label="Bio"
                         value={profile?.bio || '—'}
                         palette={palette}
-                        onPress={goPrivacy}
+                        onPress={() => router.push('/settings/bio')}
                         last
                     />
                 </Section>
