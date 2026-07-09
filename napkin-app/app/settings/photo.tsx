@@ -14,12 +14,12 @@ import { View, Text, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile, useUpdateProfile } from '@/hooks/users';
 import { Avatar } from '@/components/feed/Avatar';
-import { PressableScale } from '@/components/ui/napkin/PressableScale';
+import { PillButton, PressableScale } from '@/components/ui/napkin';
 import { EditorScreen } from '@/components/settings';
 import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
 
@@ -45,17 +45,21 @@ export default function EditPhotoScreen() {
 
     const pick = async () => {
         if (working || !user?.id) return;
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-            Alert.alert('Photo access needed', 'Allow photo access to add a profile photo.');
+        // SDK 54: the system library picker (PHPicker / Android Photo Picker) is
+        // out-of-process and needs NO permission — awaiting a pre-gate was pure
+        // latency. Launch straight away; a throw is the only failure to catch.
+        let picked;
+        try {
+            picked = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.85, // recompressed to 512² @0.8 on upload — no need for max here
+            });
+        } catch {
+            Alert.alert("Couldn't open your library", 'Please try again.');
             return;
         }
-        const picked = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.85, // recompressed to 512² @0.8 on upload — no need for max here
-        });
         if (picked.canceled || !picked.assets?.length) return;
 
         // busy spans the whole op (upload + save) so the spinner never clears
@@ -104,12 +108,16 @@ export default function EditPhotoScreen() {
     return (
         <EditorScreen title="Photo">
             <View style={styles.stage}>
+                {/* Portrait mounted on a warm vellum plate — the centerpiece.
+                    Structure comes from the background shift + ambient shadow,
+                    never a border. Tapping the plate opens the library. */}
                 <PressableScale
                     onPress={pick}
                     disabled={working}
                     haptic="selection"
                     accessibilityRole="button"
                     accessibilityLabel="Choose a profile photo"
+                    style={[styles.plate, { backgroundColor: palette.surfaceJournalLow }]}
                 >
                     <View>
                         <Avatar name={name} url={avatarUrl} size={132} palette={palette} />
@@ -121,7 +129,7 @@ export default function EditPhotoScreen() {
                             <View
                                 style={[
                                     styles.badge,
-                                    { backgroundColor: palette.primary, borderColor: palette.background },
+                                    { backgroundColor: palette.primary, borderColor: palette.surfaceJournalLow },
                                 ]}
                             >
                                 <Ionicons name="camera-outline" size={18} color={palette.textInverse} />
@@ -130,17 +138,17 @@ export default function EditPhotoScreen() {
                     </View>
                 </PressableScale>
 
-                <PressableScale onPress={pick} disabled={working} haptic="selection" accessibilityRole="button">
-                    <Text style={[styles.action, { color: palette.primary }]}>
+                <View style={styles.actions}>
+                    <PillButton filled={false} onPress={pick} disabled={working}>
                         {avatarUrl ? 'Change photo' : 'Add a photo'}
-                    </Text>
-                </PressableScale>
+                    </PillButton>
 
-                {avatarUrl ? (
-                    <PressableScale onPress={remove} disabled={working} haptic="selection" accessibilityRole="button">
-                        <Text style={[styles.action, { color: palette.textMuted }]}>Remove photo</Text>
-                    </PressableScale>
-                ) : null}
+                    {avatarUrl ? (
+                        <PressableScale onPress={remove} disabled={working} haptic="selection" accessibilityRole="button">
+                            <Text style={[styles.remove, { color: palette.textMuted }]}>Remove photo</Text>
+                        </PressableScale>
+                    ) : null}
+                </View>
             </View>
         </EditorScreen>
     );
@@ -149,8 +157,19 @@ export default function EditPhotoScreen() {
 const styles = StyleSheet.create({
     stage: {
         alignItems: 'center',
-        gap: Spacing.lg,
+        gap: Spacing.xl,
         marginTop: Spacing.xxl,
+    },
+    plate: {
+        padding: Spacing.xl,
+        borderRadius: Radius.xxxl,
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Shadow.ambient,
+    },
+    actions: {
+        alignItems: 'center',
+        gap: Spacing.md,
     },
     overlay: {
         ...StyleSheet.absoluteFillObject,
@@ -169,7 +188,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    action: {
+    remove: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 14,
         letterSpacing: 0.2,

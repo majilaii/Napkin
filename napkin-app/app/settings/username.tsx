@@ -7,7 +7,7 @@
  * writes username through make-public.
  */
 import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, StyleSheet, ActivityIndicator, InteractionManager } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
@@ -35,6 +35,14 @@ export default function EditUsernameScreen() {
 
     const [value, setValue] = useState('');
     const [state, setState] = useState<UsernameState>('idle');
+
+    // Focus after the push transition completes — raising the keyboard mid-push
+    // reads as flicker.
+    const inputRef = React.useRef<TextInput>(null);
+    React.useEffect(() => {
+        const task = InteractionManager.runAfterInteractions(() => inputRef.current?.focus());
+        return () => task.cancel();
+    }, []);
 
     // Seed once from the loaded profile; the touched guard prevents a late
     // profile fetch from clobbering keystrokes typed into the autoFocused field.
@@ -115,13 +123,13 @@ export default function EditUsernameScreen() {
             <View style={[styles.inputRow, { borderColor: palette.outlineVariant }]}>
                 <Text style={[Type.body, { color: palette.textMuted }]}>@</Text>
                 <TextInput
+                    ref={inputRef}
                     value={value}
                     onChangeText={handleChange}
                     onBlur={handleBlur}
                     style={[styles.input, { color: palette.text }]}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    autoFocus
                     placeholder="yourname"
                     placeholderTextColor={palette.textMuted}
                     returnKeyType="done"
