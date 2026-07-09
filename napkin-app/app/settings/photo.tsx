@@ -3,18 +3,23 @@
  *
  * Tap the circle (or "Change photo") to pick from the library; the pick is
  * square-cropped to 512² and uploaded to the avatars bucket, then written to
- * the profile via useUpdateProfile. Changes apply immediately — no Save button.
- * "Remove photo" clears avatar_url (→ monogram) and deletes the stored file.
+ * the profile via useUpdateProfile. The write is optimistic — the new photo
+ * appears instantly on every surface (this circle, the settings list, the
+ * profile header) without waiting on a refetch. Changes apply immediately —
+ * no Save button. "Remove photo" clears avatar_url (→ monogram) and deletes
+ * the stored file.
  */
 import React, { useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile, useUpdateProfile } from '@/hooks/users';
 import { Avatar } from '@/components/feed/Avatar';
+import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import { EditorScreen } from '@/components/settings';
 import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
 
@@ -31,8 +36,15 @@ export default function EditPhotoScreen() {
     const avatarUrl = profile?.avatar_url ?? null;
     const name = profile?.display_name || 'You';
 
+    // busy covers the upload span (before the save's isPending kicks in);
+    // update.isPending covers the save POST for BOTH pick and remove. Gating
+    // every control on the union serializes mutations — you can't start a
+    // second write (e.g. re-add) while a remove's save is still in flight, so
+    // two optimistic patches / rollbacks can never race the same cache key.
+    const working = busy || update.isPending;
+
     const pick = async () => {
-        if (busy || !user?.id) return;
+        if (working || !user?.id) return;
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted) {
             Alert.alert('Photo access needed', 'Allow photo access to add a profile photo.');
@@ -42,70 +54,60 @@ export default function EditPhotoScreen() {
             mediaTypes: ['images'],
             allowsEditing: true,
             aspect: [1, 1],
-            quality: 1,
+            quality: 0.85, // recompressed to 512² @0.8 on upload — no need for max here
         });
         if (picked.canceled || !picked.assets?.length) return;
 
+        // busy spans the whole op (upload + save) so the spinner never clears
+        // early. mutateAsync's optimistic patch flips the avatar the moment the
+        // save starts — the photo shows without waiting on a refetch.
         setBusy(true);
+        const previous = avatarUrl;
+        let uploaded: string | null = null;
         try {
-            const previous = avatarUrl;
-            const url = await compressAndUploadAvatar(picked.assets[0].uri, user.id);
-            update.mutate(
-                { avatar_url: url },
-                {
-                    onSuccess: () => {
-                        // Best-effort: the replaced upload is now orphaned.
-                        if (previous && previous !== url) {
-                            void removeUploadedAvatar(previous).catch(() => {});
-                        }
-                    },
-                    onError: () => {
-                        // Save failed — don't leave the fresh upload orphaned.
-                        void removeUploadedAvatar(url).catch(() => {});
-                        Alert.alert("Couldn't save that photo", 'Please try again.');
-                    },
-                },
-            );
+            uploaded = await compressAndUploadAvatar(picked.assets[0].uri, user.id);
+            await update.mutateAsync({ avatar_url: uploaded });
+            // Saved — the replaced upload is now orphaned. Best-effort cleanup.
+            if (previous && previous !== uploaded) {
+                void removeUploadedAvatar(previous).catch(() => {});
+            }
         } catch {
-            Alert.alert("Couldn't add that photo", 'Please try another one.');
+            // Upload OR save failed. If we uploaded but the save threw, the fresh
+            // file is orphaned — clean it up (the hook already rolled the cache back).
+            if (uploaded) void removeUploadedAvatar(uploaded).catch(() => {});
+            Alert.alert("Couldn't save that photo", 'Please try again.');
         } finally {
             setBusy(false);
         }
     };
 
     const remove = () => {
-        if (busy || !avatarUrl) return;
+        if (working || !avatarUrl) return;
         Alert.alert('Remove photo?', 'Your monogram will show instead.', [
             { text: 'Cancel', style: 'cancel' },
             {
                 text: 'Remove',
                 style: 'destructive',
-                onPress: () => {
+                onPress: async () => {
                     const previous = avatarUrl;
-                    update.mutate(
-                        { avatar_url: null },
-                        {
-                            onSuccess: () => {
-                                void removeUploadedAvatar(previous).catch(() => {});
-                            },
-                            onError: () => {
-                                Alert.alert("Couldn't remove that photo", 'Please try again.');
-                            },
-                        },
-                    );
+                    try {
+                        await update.mutateAsync({ avatar_url: null });
+                        void removeUploadedAvatar(previous).catch(() => {});
+                    } catch {
+                        Alert.alert("Couldn't remove that photo", 'Please try again.');
+                    }
                 },
             },
         ]);
     };
 
-    const working = busy || update.isPending;
-
     return (
         <EditorScreen title="Photo">
             <View style={styles.stage}>
-                <Pressable
+                <PressableScale
                     onPress={pick}
                     disabled={working}
+                    haptic="selection"
                     accessibilityRole="button"
                     accessibilityLabel="Choose a profile photo"
                 >
@@ -115,20 +117,29 @@ export default function EditPhotoScreen() {
                             <View style={[styles.overlay, { backgroundColor: palette.scrimDark }]}>
                                 <ActivityIndicator color={palette.textInverse} />
                             </View>
-                        ) : null}
+                        ) : (
+                            <View
+                                style={[
+                                    styles.badge,
+                                    { backgroundColor: palette.primary, borderColor: palette.background },
+                                ]}
+                            >
+                                <Ionicons name="camera-outline" size={18} color={palette.textInverse} />
+                            </View>
+                        )}
                     </View>
-                </Pressable>
+                </PressableScale>
 
-                <Pressable onPress={pick} disabled={working} hitSlop={8} accessibilityRole="button">
+                <PressableScale onPress={pick} disabled={working} haptic="selection" accessibilityRole="button">
                     <Text style={[styles.action, { color: palette.primary }]}>
                         {avatarUrl ? 'Change photo' : 'Add a photo'}
                     </Text>
-                </Pressable>
+                </PressableScale>
 
                 {avatarUrl ? (
-                    <Pressable onPress={remove} disabled={working} hitSlop={8} accessibilityRole="button">
+                    <PressableScale onPress={remove} disabled={working} haptic="selection" accessibilityRole="button">
                         <Text style={[styles.action, { color: palette.textMuted }]}>Remove photo</Text>
-                    </Pressable>
+                    </PressableScale>
                 ) : null}
             </View>
         </EditorScreen>
@@ -144,6 +155,17 @@ const styles = StyleSheet.create({
     overlay: {
         ...StyleSheet.absoluteFillObject,
         borderRadius: 66,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    badge: {
+        position: 'absolute',
+        right: 2,
+        bottom: 2,
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        borderWidth: 3,
         alignItems: 'center',
         justifyContent: 'center',
     },
