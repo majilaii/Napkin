@@ -95,12 +95,33 @@ export function DiscoverPeopleSheet({
     // while the Modal is up. While open, `checkedIds` stays stable (nothing
     // applies), so this effect only fires on visibility transitions.
     const [draft, setDraft] = useState<Set<string>>(() => new Set(checkedIds));
+    // Which "your table" row is the active selection, if any. Tracks INTENT so a
+    // table whose effective roster is one person (e.g. only Jacky has pins) reads
+    // as "the table is selected" — NOT "Jacky is selected" (founder repro
+    // 2026-07-09: tapping Sunday Roast club also lit Jacky's row, since at one
+    // member the two are the same person-id filter). While a table is active we
+    // suppress the individual person checkmarks; the map still filters by the
+    // member-id set (`draft`), so the pins are identical. `null` = person-mode.
+    const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
     // Client-side people search — shown only for long rosters (short lists don't
     // need it and the keyboard would just be in the way). Resets on close.
     const [query, setQuery] = useState('');
     useEffect(() => {
-        if (visible) setDraft(new Set(checkedIds));
-        else setQuery('');
+        if (visible) {
+            setDraft(new Set(checkedIds));
+            // Seed table-mode when the applied set exactly matches a table's
+            // roster, so a table selection survives close/reopen (otherwise the
+            // reopened sheet would light the member's row again). At one member
+            // this can't be told apart from a direct person-tap across a reopen —
+            // showing the table is the friendlier read ("filtered to <table>").
+            const match = (tableRows ?? []).find((r) => isTableSelected(checkedIds, r.memberIds));
+            setSelectedTableId(match ? match.tableId : null);
+        } else {
+            setQuery('');
+        }
+        // tableRows omitted deliberately: seed ONLY on open transitions — a new
+        // tableRows array ref mid-session must never reset the live selection.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible, checkedIds]);
 
     const everyone = draft.size === 0;
@@ -108,13 +129,34 @@ export function DiscoverPeopleSheet({
         onApply(draft);
         onDismiss();
     };
-    const toggle = (id: string) =>
+    // Tapping a person = person-mode: drop any active table selection and toggle
+    // just that id. When a table was active, its members are in the draft but
+    // shown unchecked — so the first person tap must rebuild the draft from the
+    // tapped id alone, not toggle within the hidden member set.
+    const toggle = (id: string) => {
         setDraft((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
+            const base = selectedTableId ? new Set<string>() : new Set(prev);
+            if (base.has(id)) base.delete(id);
+            else base.add(id);
+            return base;
         });
+        setSelectedTableId(null);
+    };
+    // Tapping a table = table-mode: exclusive-include that table's members. Tap
+    // the active table again to clear back to everyone.
+    const selectTable = (tableId: string, memberIds: string[]) => {
+        if (selectedTableId === tableId) {
+            setSelectedTableId(null);
+            setDraft(new Set());
+        } else {
+            setSelectedTableId(tableId);
+            setDraft(new Set(memberIds));
+        }
+    };
+    const selectEveryone = () => {
+        setSelectedTableId(null);
+        setDraft(new Set());
+    };
 
     const showSearch = people.length > SEARCH_THRESHOLD;
     const shownPeople = showSearch ? matchPeople(people, query) : people;
@@ -175,11 +217,11 @@ export function DiscoverPeopleSheet({
                         {/* "your table" rows (TICKET-139) — one tap drafts only
                             that table's members. Rendered only for table members. */}
                         {(tableRows ?? []).map((r) => {
-                            const selected = isTableSelected(draft, r.memberIds);
+                            const selected = selectedTableId === r.tableId;
                             return (
                                 <Pressable
                                     key={r.tableId}
-                                    onPress={() => setDraft(new Set(r.memberIds))}
+                                    onPress={() => selectTable(r.tableId, r.memberIds)}
                                     style={styles.row}
                                     accessibilityRole="button"
                                     accessibilityState={{ selected }}
@@ -206,9 +248,9 @@ export function DiscoverPeopleSheet({
                             );
                         })}
 
-                        {/* Everyone — clears the DRAFT (stays open; dismissal applies). */}
+                        {/* Everyone — clears the DRAFT + table-mode (stays open; dismissal applies). */}
                         <Pressable
-                            onPress={() => setDraft(new Set())}
+                            onPress={selectEveryone}
                             style={styles.row}
                             accessibilityRole="button"
                             accessibilityState={{ selected: everyone }}
@@ -234,7 +276,12 @@ export function DiscoverPeopleSheet({
                         </Pressable>
 
                         {shownPeople.map((p) => {
-                            const checked = draft.has(p.id);
+                            // Suppressed while a table is active: the table's
+                            // members ARE in the draft, but showing them checked is
+                            // the exact "tapped the table, tagged the person"
+                            // confusion we're killing. Table-mode → only the table
+                            // row reads as selected.
+                            const checked = selectedTableId === null && draft.has(p.id);
                             return (
                                 <Pressable
                                     key={p.id}
