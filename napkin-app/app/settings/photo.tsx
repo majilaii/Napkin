@@ -36,8 +36,15 @@ export default function EditPhotoScreen() {
     const avatarUrl = profile?.avatar_url ?? null;
     const name = profile?.display_name || 'You';
 
+    // busy covers the upload span (before the save's isPending kicks in);
+    // update.isPending covers the save POST for BOTH pick and remove. Gating
+    // every control on the union serializes mutations — you can't start a
+    // second write (e.g. re-add) while a remove's save is still in flight, so
+    // two optimistic patches / rollbacks can never race the same cache key.
+    const working = busy || update.isPending;
+
     const pick = async () => {
-        if (busy || !user?.id) return;
+        if (working || !user?.id) return;
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted) {
             Alert.alert('Photo access needed', 'Allow photo access to add a profile photo.');
@@ -75,7 +82,7 @@ export default function EditPhotoScreen() {
     };
 
     const remove = () => {
-        if (busy || !avatarUrl) return;
+        if (working || !avatarUrl) return;
         Alert.alert('Remove photo?', 'Your monogram will show instead.', [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -99,14 +106,14 @@ export default function EditPhotoScreen() {
             <View style={styles.stage}>
                 <PressableScale
                     onPress={pick}
-                    disabled={busy}
+                    disabled={working}
                     haptic="selection"
                     accessibilityRole="button"
                     accessibilityLabel="Choose a profile photo"
                 >
                     <View>
                         <Avatar name={name} url={avatarUrl} size={132} palette={palette} />
-                        {busy ? (
+                        {working ? (
                             <View style={[styles.overlay, { backgroundColor: palette.scrimDark }]}>
                                 <ActivityIndicator color={palette.textInverse} />
                             </View>
@@ -123,14 +130,14 @@ export default function EditPhotoScreen() {
                     </View>
                 </PressableScale>
 
-                <PressableScale onPress={pick} disabled={busy} haptic="selection" accessibilityRole="button">
+                <PressableScale onPress={pick} disabled={working} haptic="selection" accessibilityRole="button">
                     <Text style={[styles.action, { color: palette.primary }]}>
                         {avatarUrl ? 'Change photo' : 'Add a photo'}
                     </Text>
                 </PressableScale>
 
                 {avatarUrl ? (
-                    <PressableScale onPress={remove} disabled={busy} haptic="selection" accessibilityRole="button">
+                    <PressableScale onPress={remove} disabled={working} haptic="selection" accessibilityRole="button">
                         <Text style={[styles.action, { color: palette.textMuted }]}>Remove photo</Text>
                     </PressableScale>
                 ) : null}
