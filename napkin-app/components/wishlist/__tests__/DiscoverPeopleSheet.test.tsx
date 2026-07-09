@@ -139,14 +139,66 @@ it('un-toggling removes from the draft; count line narrates the draft live', () 
     expect([...onApply.mock.calls[0][0]]).toEqual(['bob']);
 });
 
-it('a "your table" row drafts exactly that member set', () => {
+it('a "your table" row selects ONLY the table row (members stay unchecked) but applies the member set', () => {
     const { root, onApply } = renderSheet({
         tableRows: [{ tableId: 't1', name: 'The Table', memberIds: ['ada', 'cai'] }],
     });
     press(root, 'The Table');
-    expect(selectedLabels(root).sort()).toEqual(['Ada', 'Cai', 'The Table']);
+    // Distinct table-mode: the table reads as selected, its members do NOT (the
+    // "tapped the table, tagged the person" confusion is gone).
+    expect(selectedLabels(root)).toEqual(['The Table']);
     dismiss(root);
+    // ...yet the map still filters by the members.
     expect([...onApply.mock.calls[0][0]].sort()).toEqual(['ada', 'cai']);
+});
+
+it('a one-member table (founder repro) selects the table, NOT the lone person', () => {
+    const { root, onApply } = renderSheet({
+        // Only 'ada' is a visible member — the Sunday-Roast-club/Jacky case.
+        tableRows: [{ tableId: 't1', name: 'Sunday Roast club', memberIds: ['ada'] }],
+    });
+    press(root, 'Sunday Roast club');
+    expect(selectedLabels(root)).toEqual(['Sunday Roast club']);
+    // Ada's own row is NOT lit.
+    expect(selectedLabels(root)).not.toContain('Ada');
+    dismiss(root);
+    expect([...onApply.mock.calls[0][0]]).toEqual(['ada']);
+});
+
+it('tapping a person after a table switches to person-mode (table clears)', () => {
+    const { root, onApply } = renderSheet({
+        tableRows: [{ tableId: 't1', name: 'The Table', memberIds: ['ada', 'cai'] }],
+    });
+    press(root, 'The Table');
+    expect(selectedLabels(root)).toEqual(['The Table']);
+    press(root, 'Bob');
+    // Person-mode: only Bob, table deselected.
+    expect(selectedLabels(root)).toEqual(['Bob']);
+    dismiss(root);
+    expect([...onApply.mock.calls[0][0]]).toEqual(['bob']);
+});
+
+it('tapping the active table again clears back to everyone', () => {
+    const { root, onApply } = renderSheet({
+        tableRows: [{ tableId: 't1', name: 'The Table', memberIds: ['ada', 'cai'] }],
+    });
+    press(root, 'The Table');
+    press(root, 'The Table');
+    expect(selectedLabels(root)).toEqual(['everyone']);
+    dismiss(root);
+    expect(onApply.mock.calls[0][0].size).toBe(0);
+});
+
+it('re-opening with the applied set == a table roster seeds table-mode (not the members)', () => {
+    const tableRows = [{ tableId: 't1', name: 'The Table', memberIds: ['ada', 'cai'] }];
+    const { root, props } = renderSheet({ tableRows, visible: false });
+    act(() => {
+        root.update(
+            <DiscoverPeopleSheet {...props} visible checkedIds={new Set(['ada', 'cai'])} tableRows={tableRows} />,
+        );
+    });
+    // Seeded as the table, with member rows suppressed.
+    expect(selectedLabels(root)).toEqual(['The Table']);
 });
 
 it('re-opening seeds the draft from the applied set (no stale draft)', () => {
