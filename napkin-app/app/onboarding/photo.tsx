@@ -33,17 +33,21 @@ export default function OnboardingPhotoScreen() {
 
     const pick = async () => {
         if (uploading || !user?.id) return;
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-            Alert.alert('Photo access needed', 'Allow photo access to add a profile photo.');
+        // SDK 54: the system library picker (PHPicker / Android Photo Picker) is
+        // out-of-process and needs NO permission — awaiting a pre-gate was pure
+        // latency. Launch straight away; a throw is the only failure to catch.
+        let result;
+        try {
+            result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 1,
+            });
+        } catch {
+            Alert.alert("Couldn't open your library", 'Please try another one.');
             return;
         }
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 1,
-        });
         if (result.canceled || !result.assets?.length) return;
 
         setUploading(true);

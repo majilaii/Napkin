@@ -715,12 +715,16 @@ function EntryDetailScreen() {
     };
 
     const pickFromLibrary = async () => {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Photo Library Access Required', 'Please enable photo library access in Settings.');
+        // SDK 54: the system library picker (PHPicker / Android Photo Picker) is
+        // out-of-process and needs NO permission — awaiting a pre-gate was pure
+        // latency. Launch straight away; a throw is the only failure to catch.
+        let result;
+        try {
+            result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+        } catch {
+            Alert.alert('Photo Library Unavailable', 'Please try again.');
             return;
         }
-        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
         if (!result.canceled && result.assets[0]) {
             addNewPhotoSlot(result.assets[0].uri);
         }

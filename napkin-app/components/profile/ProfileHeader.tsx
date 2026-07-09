@@ -7,10 +7,13 @@
  *   Identity block: display name (serif italic 24) + @handle + bio (italic serif 13)
  *   Numbers row below: logs · places · avg
  *
- * No centering. No circle avatar. Gear renders inline, not floating.
+ * No centering. The avatar shape stays a rounded square (radius 10), NOT a circle.
+ * When `profile.avatar_url` is set, the photo layers absolutely OVER the monogram
+ * plate (same 72x72 footprint) — a broken/absent image falls through to the
+ * initials with no state to track. Gear renders inline, not floating.
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -125,6 +128,14 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                     <Text style={styles.avatarInitials}>
                         {initials(profile.display_name)}
                     </Text>
+                    {profile.avatar_url ? (
+                        // Layer the photo OVER the monogram so a failed load falls
+                        // through to the initials — no error state to track.
+                        <Image
+                            source={{ uri: profile.avatar_url }}
+                            style={styles.avatarPhoto}
+                        />
+                    ) : null}
                 </View>
 
                 <View style={styles.identity}>
@@ -264,6 +275,14 @@ const styles = StyleSheet.create({
         color: 'rgba(255,255,255,0.92)',
         fontSize: 22,
         letterSpacing: 0.5,
+    },
+    // Photo fills the monogram footprint. Hairline outline matches Avatar.tsx so
+    // photos read as consistent depth on warm paper.
+    avatarPhoto: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.08)',
     },
     identity: {
         flex: 1,
