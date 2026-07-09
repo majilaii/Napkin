@@ -174,6 +174,9 @@ export const queryKeys = {
             tableId
                 ? ['restaurantPage', restaurantId, tableId] as const
                 : ['restaurantPage', restaurantId] as const,
+        /** TICKET-149: lazily-resolved direct booking-page URL (Reserve pill). */
+        reserveLink: (restaurantId: string) =>
+            ['restaurantReserveLink', restaurantId] as const,
     },
 
     // Misc per-entry caches (entry-detail screen ad-hoc queries)

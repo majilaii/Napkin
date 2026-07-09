@@ -1,7 +1,10 @@
 /**
- * UtilityPills — Call · Website · Directions, centered under the hero
- * (design 2a). Each pill renders only when its datum exists; directions is
- * always resolvable (canonical google_maps_uri, else a maps search).
+ * UtilityPills — Call · Website · Directions · Reserve, centered under the
+ * hero (design 2a). Each pill renders only when its datum exists; directions
+ * is always resolvable (canonical google_maps_uri, else a maps search).
+ * Reserve (TICKET-149) opens the venue's real booking page — resolved
+ * server-side from its website — and stays hidden when none exists (no
+ * lying pill that dumps the user on an OpenTable search).
  *
  * Carries the quiet hours line beneath (tap toggles the full week) — the one
  * useful Places datum the pills don't hold.
@@ -27,6 +30,8 @@ interface Props {
     name: string;
     city: string | null;
     hours: RestaurantHours | null;
+    /** Direct booking-page URL (TICKET-149). Null → the pill doesn't render. */
+    reserveUrl: string | null;
     palette: Palette;
 }
 
@@ -70,7 +75,7 @@ function Pill({ icon, label, onPress, palette, borderColor }: PillProps) {
     );
 }
 
-export function UtilityPills({ phone, website, googleMapsUri, name, city, hours, palette }: Props) {
+export function UtilityPills({ phone, website, googleMapsUri, name, city, hours, reserveUrl, palette }: Props) {
     const [expanded, setExpanded] = useState(false);
 
     // App is light-locked (use-color-scheme forces 'light'); ink hairline per canvas.
@@ -109,19 +114,15 @@ export function UtilityPills({ phone, website, googleMapsUri, name, city, hours,
                     palette={palette}
                     borderColor={borderColor}
                 />
-                <Pill
-                    icon="calendar-outline"
-                    label="Reserve"
-                    onPress={() =>
-                        openUrl(
-                            `https://www.opentable.com/s?term=${encodeURIComponent(
-                                [name, city].filter(Boolean).join(' '),
-                            )}`,
-                        )
-                    }
-                    palette={palette}
-                    borderColor={borderColor}
-                />
+                {reserveUrl ? (
+                    <Pill
+                        icon="calendar-outline"
+                        label="Reserve"
+                        onPress={() => openUrl(reserveUrl)}
+                        palette={palette}
+                        borderColor={borderColor}
+                    />
+                ) : null}
             </View>
 
             {todayLine ? (

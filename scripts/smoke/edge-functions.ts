@@ -156,6 +156,21 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-149: booking-page resolver behind the Reserve pill. Value is
+    // fixture-dependent (usually null, cached on the row after first run) —
+    // assert the envelope key only.
+    {
+        name: 'restaurant-history?action=reserve_link (TICKET-149 Reserve pill)',
+        method: 'GET',
+        fn: 'restaurant-history',
+        query: `action=reserve_link&restaurant_id=${RESTAURANT_ID}`,
+        shape: (json) => {
+            const data = (json as { data?: Record<string, unknown> }).data;
+            if (!data) return 'missing data envelope';
+            if (!('reserve_url' in data)) return 'missing data.reserve_url';
+            return null;
+        },
+    },
     // TICKET-098: feed-friends replaces the deleted legacy `feed` fn. Page
     // envelope check — an empty rows array is a legitimate zero-follow state.
     {
