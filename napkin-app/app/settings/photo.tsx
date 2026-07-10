@@ -1,17 +1,16 @@
 /**
  * /settings/photo — change or remove the profile photo.
  *
- * Tap the circle (or "Change photo") to pick from the library; the pick is
- * square-cropped to 512² and uploaded to the avatars bucket, then written to
- * the profile via useUpdateProfile. The write is optimistic — the new photo
- * appears instantly on every surface (this circle, the settings list, the
- * profile header) without waiting on a refetch. Changes apply immediately —
- * no Save button. "Remove photo" clears avatar_url (→ monogram) and deletes
- * the stored file.
+ * Tap the circle (or "Change photo") for the instant source sheet (Take photo /
+ * Choose from library — lib/avatarPicker); the pick is square-cropped to 512²
+ * and uploaded to the avatars bucket, then written to the profile via
+ * useUpdateProfile. The write is optimistic — the new photo appears instantly
+ * on every surface (this circle, the settings list, the profile header)
+ * without waiting on a refetch. Changes apply immediately — no Save button.
+ * "Remove photo" clears avatar_url (→ monogram) and deletes the stored file.
  */
 import React, { useState } from 'react';
 import { View, Text, ActivityIndicator, Alert, StyleSheet } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
@@ -21,6 +20,7 @@ import { useUserProfile, useUpdateProfile } from '@/hooks/users';
 import { Avatar } from '@/components/feed/Avatar';
 import { PillButton, PressableScale } from '@/components/ui/napkin';
 import { EditorScreen } from '@/components/settings';
+import { chooseAvatarAsset } from '@/lib/avatarPicker';
 import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
 
 export default function EditPhotoScreen() {
@@ -45,31 +45,23 @@ export default function EditPhotoScreen() {
 
     const pick = async () => {
         if (working || !user?.id) return;
-        // SDK 54: the system library picker (PHPicker / Android Photo Picker) is
-        // out-of-process and needs NO permission — awaiting a pre-gate was pure
-        // latency. Launch straight away; a throw is the only failure to catch.
-        let picked;
-        try {
-            picked = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                allowsEditing: true,
-                aspect: [1, 1],
-                quality: 0.85, // recompressed to 512² @0.8 on upload — no need for max here
-            });
-        } catch {
-            Alert.alert("Couldn't open your library", 'Please try again.');
+        // Instant source sheet; busy goes up the moment a source is chosen so
+        // the spinner covers the system picker's ~1–2s presentation gap (the
+        // picker promise doesn't resolve until dismissal, so busy also rides
+        // through pick → crop and straight into the upload below).
+        const asset = await chooseAvatarAsset(() => setBusy(true));
+        if (!asset) {
+            setBusy(false);
             return;
         }
-        if (picked.canceled || !picked.assets?.length) return;
 
-        // busy spans the whole op (upload + save) so the spinner never clears
-        // early. mutateAsync's optimistic patch flips the avatar the moment the
-        // save starts — the photo shows without waiting on a refetch.
-        setBusy(true);
+        // busy spans the whole op (picker + upload + save) so the spinner never
+        // clears early. mutateAsync's optimistic patch flips the avatar the
+        // moment the save starts — the photo shows without waiting on a refetch.
         const previous = avatarUrl;
         let uploaded: string | null = null;
         try {
-            uploaded = await compressAndUploadAvatar(picked.assets[0].uri, user.id);
+            uploaded = await compressAndUploadAvatar(asset.uri, user.id);
             await update.mutateAsync({ avatar_url: uploaded });
             // Saved — the replaced upload is now orphaned. Best-effort cleanup.
             if (previous && previous !== uploaded) {
