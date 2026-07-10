@@ -1,9 +1,11 @@
 /**
- * /wishlist — personal wishlist + lists area (TICKET-069 canvas restyle, TICKET-074).
+ * /wishlist — Map-first saved places workspace.
  *
- * Canvas anatomy:
- *   Header: italic serif 26 "Wishlist" + quiet "share · import" affordances
- *           (+ back ‹ when pushed). Share promoted from the kicker murmur (074).
+ * Workspace anatomy:
+ *   Persistent Places header + Map/List switch + Import entry point.
+ *   Map keeps the import/review inbox visible above the bottom controls.
+ *   List is an alternate presentation; lists are a collection action, not a
+ *   peer destination beside pinned places.
  *   Imports section: PendingSaveCard rows (pending / needs_confirm captures)
  *   "PINNED · {N}" kicker + flat rows: 52px r12 initial-tile · italic serif 17 name
  *                                        muted 12 meta (city · cuisine) · pin icon
@@ -47,6 +49,8 @@ import {
     type FilterOption,
     ImportInboxCard,
     DiscoverPeopleSheet,
+    PlacesWorkspaceHeader,
+    PLACES_WORKSPACE_HEADER_HEIGHT,
 } from '@/components/wishlist';
 import { AddToListSheet } from '@/components/lists';
 import { priceTierLabel } from '@/lib/priceLevel';
@@ -87,7 +91,6 @@ import { useToast } from '@/providers/ToastProvider';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { haversineMiles, formatDistance } from '@/lib/geo';
 import { callEdgeFn } from '@/lib/edgeInvoke';
-import type { WishlistSourceHandoff } from '@/lib/types/wishlistSource';
 
 // ── Inline Places search for correction ────────────────────────────────────────
 
@@ -699,11 +702,23 @@ export default function WishlistScreen() {
         });
     }, [removeItem, wishlistRemove, toast]);
 
-    // Switching to map opts into location lazily.
+    // Map/List are presentations of the same saved-places workspace. Selecting
+    // either presentation always returns from the collections section to places.
+    // Switching to map also opts into location lazily.
     const handleSelectView = useCallback((mode: 'list' | 'map') => {
+        setActiveTab('pinned');
         setViewMode(mode);
         if (mode === 'map') requestLocation();
     }, [requestLocation]);
+
+    const handleToggleLists = useCallback(() => {
+        if (viewMode === 'list' && activeTab === 'lists') {
+            setActiveTab('pinned');
+            return;
+        }
+        setViewMode('list');
+        setActiveTab('lists');
+    }, [activeTab, viewMode]);
 
     const totalPinned = pinnedRows.length;
     const listsCount = myLists?.length ?? 0;
@@ -730,40 +745,6 @@ export default function WishlistScreen() {
             ? hasActiveFilters || !showSaved || !showBeen
             : !!cuisineFilter;
 
-    // One trigger replaces the pill-per-sheet strip. List mode only since
-    // TICKET-131 — map mode's trigger is the frosted Filter chip floating on the
-    // map itself (WishlistMapView's onOpenFilters), opening the same sheet.
-    const filtersTriggerRow = (
-        <View style={styles.rFilterBar}>
-            <Pressable
-                onPress={() => setFiltersOpen(true)}
-                style={[
-                    styles.rFilterPill,
-                    { backgroundColor: filtersActive ? palette.primaryMuted : palette.surfaceJournalHi },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="filters"
-            >
-                <Ionicons
-                    name="options-outline"
-                    size={15}
-                    color={filtersActive ? palette.primary : palette.textSecondary}
-                />
-                <Text
-                    style={[
-                        styles.rFilterPillText,
-                        { color: filtersActive ? palette.primary : palette.textSecondary },
-                    ]}
-                >
-                    Filters
-                </Text>
-                {filtersActive ? (
-                    <View style={[styles.rFilterDot, { backgroundColor: palette.primary }]} />
-                ) : null}
-            </Pressable>
-        </View>
-    );
-
     // ── Full-bleed map — ALWAYS mounted (the Map tab's hero). The list is an
     // opaque overlay ON TOP when viewMode==='list' (TICKET-134). Your map merges
     // saved+been; Discover shows the network layer + friend rail. The Filter chip
@@ -784,7 +765,17 @@ export default function WishlistScreen() {
                     params: { entryId, viewAs: 'public' },
                 })
             }
-            onSwitchToList={() => setViewMode('list')}
+            bottomDock={
+                importSlot ? (
+                    <ImportInboxCard
+                        title={importSlot.title}
+                        sublabel={importSlot.sublabel}
+                        iconName={importSlot.icon}
+                        palette={palette}
+                        onPress={() => router.push(importSlot.route as any)}
+                    />
+                ) : undefined
+            }
             sources={{
                 options: [
                     { key: 'your', label: 'Your map' },
@@ -803,9 +794,7 @@ export default function WishlistScreen() {
             // TICKET-138: overlap peek cards render "gather here" (only overlap
             // items call this; reachable on Discover with the people filter off).
             onGather={(item) => setGatherItem(item)}
-            onOpenFilters={() => setFiltersOpen(true)}
-            filtersActive={mapFiltersActive}
-            chromeTopOffset={insets.top + 8}
+            chromeTopOffset={insets.top + PLACES_WORKSPACE_HEADER_HEIGHT + Spacing.sm}
             palette={palette}
         />
     );
@@ -817,194 +806,177 @@ export default function WishlistScreen() {
             {/* Full-bleed map — always mounted, edge to edge, behind the nav pill. */}
             {mapSurface}
 
-            {/* List overlay — the entire wishlist surface (title · Import ·
-                segmented · ledger · lists), opaque over the map. Toggled by the
-                corner Map/List pills (viewMode). TICKET-134. */}
+            {/* List is an alternate presentation of the same Places workspace.
+                The shared header renders above both surfaces. */}
             {viewMode === 'list' ? (
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: palette.background }]}>
-
-            {/* Header — title left, share + Import right (redesign) */}
-            <View style={[styles.rHeader, { paddingTop: insets.top + Spacing.sm }]}>
-                <Text style={[styles.rTitle, { color: palette.text }]}>Wishlist</Text>
-                <View style={styles.rHeaderActions}>
-                    {totalPinned > 0 ? (
-                        <Pressable
-                            onPress={() => setShareTarget({ count: totalPinned })}
-                            style={[styles.rHeaderIcon, { backgroundColor: palette.surfaceJournalHi }]}
-                            hitSlop={8}
-                            accessibilityLabel="share wishlist"
-                        >
-                            <Ionicons name="share-outline" size={17} color={palette.textSecondary} />
-                        </Pressable>
-                    ) : null}
-                    <Pressable
-                        onPress={() => setImportSheetVisible(true)}
-                        style={[styles.rImportBtn, { backgroundColor: palette.primary }]}
-                        hitSlop={8}
-                        accessibilityLabel="import from a link"
-                    >
-                        <Ionicons name="download-outline" size={15} color="#fff" />
-                        <Text style={styles.rImportText}>Import</Text>
-                    </Pressable>
-                </View>
-            </View>
-
-            {/* Segmented: Pinned ↔ Lists */}
-            <View style={styles.rSegWrap}>
-                <View style={[styles.rSeg, { backgroundColor: palette.surfaceJournalHi }]}>
-                    {(['pinned', 'lists'] as const).map((tab) => {
-                        const active = activeTab === tab;
-                        const label = tab === 'pinned' ? `Pinned · ${totalPinned}` : `Lists · ${listsCount}`;
-                        return (
-                            <Pressable
-                                key={tab}
-                                onPress={() => setActiveTab(tab)}
-                                style={[
-                                    styles.rSegBtn,
-                                    active && [styles.rSegBtnActive, { backgroundColor: palette.surfaceNote }],
+                <View
+                    style={[
+                        StyleSheet.absoluteFill,
+                        styles.listOverlay,
+                        {
+                            backgroundColor: palette.background,
+                            paddingTop: insets.top + PLACES_WORKSPACE_HEADER_HEIGHT,
+                        },
+                    ]}
+                >
+                    {activeTab === 'pinned' ? (
+                        isLoading && allItems.length === 0 ? (
+                            <View style={styles.loadingCenter}>
+                                <ActivityIndicator color={palette.primary} />
+                            </View>
+                        ) : totalPinned === 0 && !hasActiveFilters ? (
+                            <WishlistEmptyState
+                                palette={palette}
+                                onImport={() => setImportSheetVisible(true)}
+                                onSearch={() => router.push('/search' as any)}
+                                hasImported={hasImported}
+                                onImportsHub={() => router.push('/import-progress' as any)}
+                            />
+                        ) : (
+                            <ScrollView
+                                contentContainerStyle={[
+                                    styles.rListContent,
+                                    { paddingBottom: insets.bottom + 150 },
                                 ]}
-                                accessibilityRole="button"
-                                accessibilityState={{ selected: active }}
+                                showsVerticalScrollIndicator={false}
                             >
-                                <Text style={[styles.rSegText, { color: active ? palette.primary : palette.textMuted }]}>
-                                    {label}
-                                </Text>
-                            </Pressable>
-                        );
-                    })}
-                </View>
-            </View>
+                                {importSlot ? (
+                                    <ImportInboxCard
+                                        title={importSlot.title}
+                                        sublabel={importSlot.sublabel}
+                                        iconName={importSlot.icon}
+                                        palette={palette}
+                                        onPress={() => router.push(importSlot.route as any)}
+                                    />
+                                ) : null}
 
-            {/* ───────── PINNED ───────── */}
-            {activeTab === 'pinned' ? (
-                isLoading && allItems.length === 0 ? (
-                    <View style={styles.loadingCenter}>
-                        <ActivityIndicator color={palette.primary} />
-                    </View>
-                ) : totalPinned === 0 && !hasActiveFilters ? (
-                    <WishlistEmptyState
-                        palette={palette}
-                        onImport={() => setImportSheetVisible(true)}
-                        onSearch={() => router.push('/search' as any)}
-                        hasImported={hasImported}
-                        onImportsHub={() => router.push('/import-progress' as any)}
-                    />
-                ) : (
-                    <View style={{ flex: 1 }}>
-                        {/* Filter bar — one "Filters" trigger → tabbed sheet */}
-                        {filtersTriggerRow}
+                                {pendingRows.map((item) => (
+                                    <PendingSaveCard
+                                        key={item.id}
+                                        status={item.extraction_status as 'pending' | 'needs_confirm'}
+                                        restaurantName={item.restaurant?.name}
+                                        restaurantCity={item.restaurant?.city}
+                                        restaurantCuisine={item.restaurant?.cuisine}
+                                        restaurantPhotoUrl={item.restaurant?.photo_url}
+                                        onConfirm={
+                                            item.extraction_status === 'needs_confirm'
+                                                ? () => handleConfirm(item)
+                                                : undefined
+                                        }
+                                    />
+                                ))}
 
+                                <View style={styles.rSpotsHeading}>
+                                    <Text
+                                        style={[
+                                            styles.rSpotsKicker,
+                                            styles.rSpotsKickerFlex,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        {`${displayedRows.length} ${displayedRows.length === 1 ? 'spot' : 'spots'}${filterSuffix}`}
+                                    </Text>
+                                    {totalPinned > 0 ? (
+                                        <Pressable
+                                            onPress={() => setShareTarget({ count: totalPinned })}
+                                            style={({ pressed }) => [
+                                                styles.rShareButton,
+                                                {
+                                                    backgroundColor: palette.surfaceJournalHi,
+                                                    opacity: pressed ? 0.78 : 1,
+                                                    transform: [{ scale: pressed ? 0.96 : 1 }],
+                                                },
+                                            ]}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="share saved places"
+                                        >
+                                            <Ionicons name="share-outline" size={16} color={palette.textSecondary} />
+                                        </Pressable>
+                                    ) : null}
+                                </View>
+
+                                {displayedRows.length === 0 ? (
+                                    <View style={styles.rNoResults}>
+                                        <Text style={[styles.rNoResultsTitle, { color: palette.text }]}>Nothing matches that</Text>
+                                        <Text style={[styles.rNoResultsHint, { color: palette.textMuted }]}>Try loosening a filter.</Text>
+                                        <Pressable
+                                            onPress={clearFilters}
+                                            style={[styles.rClearBtn, { borderColor: palette.terracottaBorder }]}
+                                            accessibilityRole="button"
+                                        >
+                                            <Text style={[styles.rClearText, { color: palette.primary }]}>Clear filters</Text>
+                                        </Pressable>
+                                    </View>
+                                ) : (
+                                    displayedRows.map(({ item, distanceLabel }, i) => (
+                                        <WishlistSpotRow
+                                            key={item.id}
+                                            index={i + 1}
+                                            item={item}
+                                            distanceLabel={distanceLabel}
+                                            palette={palette}
+                                            onPress={() => handlePinnedRowPress(item)}
+                                            onLongPress={() => setRemoveItem(item)}
+                                            onRemove={() => setRemoveItem(item)}
+                                        />
+                                    ))
+                                )}
+
+                                {hasNextPage && !isFetchingNextPage ? (
+                                    <Pressable onPress={() => fetchNextPage()} style={styles.loadMoreRow}>
+                                        <Text style={[styles.loadMoreLabel, { color: palette.textMuted }]}>more</Text>
+                                    </Pressable>
+                                ) : isFetchingNextPage ? (
+                                    <ActivityIndicator color={palette.primary} style={styles.loadMoreRow} size="small" />
+                                ) : null}
+                            </ScrollView>
+                        )
+                    ) : (
                         <ScrollView
-                            contentContainerStyle={[styles.rListContent, { paddingBottom: insets.bottom + 150 }]}
+                            contentContainerStyle={[
+                                styles.rListContent,
+                                { paddingBottom: insets.bottom + 150 },
+                            ]}
                             showsVerticalScrollIndicator={false}
                         >
-                            {/* The import slot — one card, one state, one destination */}
-                            {importSlot ? (
-                                <ImportInboxCard
-                                    title={importSlot.title}
-                                    sublabel={importSlot.sublabel}
-                                    iconName={importSlot.icon}
+                            <Text style={[styles.rSpotsKicker, { color: palette.textMuted }]}>
+                                {`${listsCount} ${listsCount === 1 ? 'list' : 'lists'}`}
+                            </Text>
+                            {(myLists ?? []).map((list) => (
+                                <WishlistListCardFull
+                                    key={list.id}
+                                    list={list}
                                     palette={palette}
-                                    onPress={() => router.push(importSlot.route as any)}
-                                />
-                            ) : null}
-
-                            {/* needs-confirm captures — the existing correction flow */}
-                            {pendingRows.map((item) => (
-                                <PendingSaveCard
-                                    key={item.id}
-                                    status={item.extraction_status as 'pending' | 'needs_confirm'}
-                                    restaurantName={item.restaurant?.name}
-                                    restaurantCity={item.restaurant?.city}
-                                    restaurantCuisine={item.restaurant?.cuisine}
-                                    restaurantPhotoUrl={item.restaurant?.photo_url}
-                                    onConfirm={
-                                        item.extraction_status === 'needs_confirm'
-                                            ? () => handleConfirm(item)
-                                            : undefined
-                                    }
+                                    onPress={() => router.push(`/list/${list.id}` as any)}
                                 />
                             ))}
-
-                            <Text style={[styles.rSpotsKicker, { color: palette.textMuted }]}>
-                                {`${displayedRows.length} ${displayedRows.length === 1 ? 'spot' : 'spots'}${filterSuffix}`}
-                            </Text>
-
-                            {displayedRows.length === 0 ? (
-                                <View style={styles.rNoResults}>
-                                    <Text style={[styles.rNoResultsTitle, { color: palette.text }]}>Nothing matches that</Text>
-                                    <Text style={[styles.rNoResultsHint, { color: palette.textMuted }]}>Try loosening a filter.</Text>
-                                    <Pressable
-                                        onPress={clearFilters}
-                                        style={[styles.rClearBtn, { borderColor: palette.terracottaBorder }]}
-                                        accessibilityRole="button"
-                                    >
-                                        <Text style={[styles.rClearText, { color: palette.primary }]}>Clear filters</Text>
-                                    </Pressable>
-                                </View>
-                            ) : (
-                                displayedRows.map(({ item, distanceLabel }, i) => (
-                                    <WishlistSpotRow
-                                        key={item.id}
-                                        index={i + 1}
-                                        item={item}
-                                        distanceLabel={distanceLabel}
-                                        palette={palette}
-                                        onPress={() => handlePinnedRowPress(item)}
-                                        onLongPress={() => setRemoveItem(item)}
-                                        onRemove={() => setRemoveItem(item)}
-                                    />
-                                ))
-                            )}
-
-                            {hasNextPage && !isFetchingNextPage ? (
-                                <Pressable onPress={() => fetchNextPage()} style={styles.loadMoreRow}>
-                                    <Text style={[styles.loadMoreLabel, { color: palette.textMuted }]}>more</Text>
-                                </Pressable>
-                            ) : isFetchingNextPage ? (
-                                <ActivityIndicator color={palette.primary} style={styles.loadMoreRow} size="small" />
-                            ) : null}
+                            <Pressable
+                                onPress={() => router.push('/list/new' as any)}
+                                style={[styles.rNewList, { borderColor: palette.terracottaBorder }]}
+                                accessibilityRole="button"
+                            >
+                                <Ionicons name="add" size={17} color={palette.primary} />
+                                <Text style={[styles.rNewListText, { color: palette.primary }]}>New list</Text>
+                            </Pressable>
                         </ScrollView>
-                    </View>
-                )
-            ) : (
-                /* ───────── LISTS ───────── */
-                <ScrollView
-                    contentContainerStyle={[styles.rListContent, { paddingBottom: insets.bottom + 150 }]}
-                    showsVerticalScrollIndicator={false}
-                >
-                    {(myLists ?? []).map((list) => (
-                        <WishlistListCardFull
-                            key={list.id}
-                            list={list}
-                            palette={palette}
-                            onPress={() => router.push(`/list/${list.id}` as any)}
-                        />
-                    ))}
-                    <Pressable
-                        onPress={() => router.push('/list/new' as any)}
-                        style={[styles.rNewList, { borderColor: palette.terracottaBorder }]}
-                        accessibilityRole="button"
-                    >
-                        <Ionicons name="add" size={17} color={palette.primary} />
-                        <Text style={[styles.rNewListText, { color: palette.primary }]}>New list</Text>
-                    </Pressable>
-                </ScrollView>
-            )}
-
-            {/* Map pill — bottom-RIGHT, mirrors the map's List pill (corner law v2,
-                TICKET-137: mode toggle lives bottom-right in both directions). */}
-            <Pressable
-                onPress={() => handleSelectView('map')}
-                style={[styles.rMapPill, { backgroundColor: palette.scrimFrost, bottom: insets.bottom + 92 }]}
-                accessibilityRole="button"
-                accessibilityLabel="map view"
-            >
-                <Ionicons name="map" size={15} color={palette.primary} />
-                <Text style={[styles.rMapPillText, { color: palette.primary }]}>Map</Text>
-            </Pressable>
-            </View>
+                    )}
+                </View>
             ) : null}
+
+            <View style={styles.workspaceHeaderLayer}>
+                <PlacesWorkspaceHeader
+                    topInset={insets.top}
+                    viewMode={viewMode}
+                    section={activeTab === 'lists' ? 'lists' : 'places'}
+                    listsCount={listsCount}
+                    filtersActive={viewMode === 'map' ? mapFiltersActive : filtersActive}
+                    palette={palette}
+                    onSelectView={handleSelectView}
+                    onOpenFilters={() => setFiltersOpen(true)}
+                    onToggleLists={handleToggleLists}
+                    onImport={() => setImportSheetVisible(true)}
+                />
+            </View>
 
             <ImportLinkSheet
                 visible={importSheetVisible}
@@ -1114,106 +1086,26 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
-    // ── Wishlist Redesign ────────────────────────────────────────────────────
-    rHeader: {
-        flexDirection: 'row',
-        alignItems: 'flex-end',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-        paddingBottom: 4,
+    workspaceHeaderLayer: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 20,
     },
-    rTitle: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 30,
-        letterSpacing: -0.5,
-    },
-    rHeaderActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    rHeaderIcon: {
-        width: 38,
-        height: 38,
-        borderRadius: 999,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    rImportBtn: {
-        height: 38,
-        borderRadius: 999,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 15,
-    },
-    rImportText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
-        letterSpacing: 0.3,
-        color: '#fff',
-    },
-    rSegWrap: {
-        paddingHorizontal: 20,
-        paddingTop: 16,
-        paddingBottom: 6,
-    },
-    rSeg: {
-        flexDirection: 'row',
-        gap: 4,
-        borderRadius: 13,
-        padding: 4,
-    },
-    rSegBtn: {
-        flex: 1,
-        alignItems: 'center',
-        paddingVertical: 10,
-        borderRadius: 10,
-    },
-    rSegBtnActive: {
-        shadowColor: '#1c1c19',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.06,
-        shadowRadius: 3,
-        elevation: 1,
-    },
-    rSegText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 14,
-        letterSpacing: 0.2,
-    },
-    rFilterBarScroll: {
-        flexGrow: 0,
-    },
-    rFilterBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        paddingHorizontal: 20,
-        paddingTop: 8,
-        paddingBottom: 8,
-    },
-    rFilterPill: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-        paddingHorizontal: 13,
-        paddingVertical: 8,
-        borderRadius: 999,
-    },
-    rFilterPillText: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-    },
-    // Active-dot on the "Filters" trigger — a filter (or near sort) is engaged.
-    rFilterDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
+    listOverlay: {
+        zIndex: 10,
     },
     rListContent: {
         paddingHorizontal: 20,
-        paddingTop: 4,
+        paddingTop: Spacing.sm,
+    },
+    rSpotsHeading: {
+        minHeight: 44,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: Spacing.sm,
     },
     rSpotsKicker: {
         fontFamily: 'Manrope_700Bold',
@@ -1222,6 +1114,16 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         paddingTop: 14,
         paddingBottom: 2,
+    },
+    rSpotsKickerFlex: {
+        flex: 1,
+    },
+    rShareButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     rNoResults: {
         alignItems: 'center',
@@ -1248,27 +1150,6 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
         fontSize: 12,
         letterSpacing: 0.3,
-    },
-    // Map pill — bottom-RIGHT frosted (mirrors the map's List pill; corner law v2,
-    // TICKET-137, ⑨ h42·13/800). Same frost family, same corner as the List pill.
-    rMapPill: {
-        position: 'absolute',
-        right: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 7,
-        borderRadius: 999,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        shadowColor: '#1c1c19',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.06,
-        shadowRadius: 30,
-    },
-    rMapPillText: {
-        fontFamily: 'Manrope_800ExtraBold',
-        fontSize: 13,
-        letterSpacing: 0.4,
     },
     rNewList: {
         flexDirection: 'row',

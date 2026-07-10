@@ -1169,11 +1169,10 @@ function EntryDetailScreen() {
                             <Pressable
                                 style={({ pressed }) => [
                                     styles.placeLink,
-                                    { opacity: pressed ? 0.65 : 1 },
+                                    { opacity: pressed && entry.restaurant_id ? 0.65 : 1 },
                                 ]}
-                                disabled={!entry.restaurant_id}
-                                onPress={goToRestaurant}
-                                accessibilityRole={entry.restaurant_id ? 'link' : undefined}
+                                onPress={entry.restaurant_id ? goToRestaurant : undefined}
+                                accessibilityRole={entry.restaurant_id ? 'link' : 'text'}
                                 accessibilityLabel={
                                     entry.restaurant_id
                                         ? `Open ${restaurantName} restaurant page`

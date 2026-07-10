@@ -180,6 +180,11 @@ interface Props {
      * to the corner position (no stack offset over a pill that isn't there). */
     onSwitchToList?: () => void;
     /**
+     * Optional primary workflow dock above the bottom map controls. The map owns
+     * its placement so it can hide the dock whenever a peek carousel is open.
+     */
+    bottomDock?: React.ReactNode;
+    /**
      * TICKET-131: source pills — frosted segmented control floating top-LEFT on
      * the map (Saved · Been · Network on the wishlist; Mine · Network on
      * /dining-map). The OWNER of the state is the screen; this just draws the
@@ -588,6 +593,7 @@ export function WishlistMapView({
     onOpenRestaurant,
     onOpenReview,
     onSwitchToList,
+    bottomDock,
     sources,
     save,
     onGather,
@@ -934,6 +940,18 @@ export function WishlistMapView({
             </Pressable>
         ) : null;
 
+    const renderBottomDock = (visible: boolean) =>
+        visible && bottomDock ? (
+            <View
+                style={[
+                    styles.bottomDock,
+                    { bottom: insets.bottom + NAV_CLEARANCE + RIGHT_STACK_OFFSET },
+                ]}
+            >
+                {bottomDock}
+            </View>
+        ) : null;
+
     // ── Empty (per-source copy; pills/chip/List stay so you can always leave) ──
     if (items.length === 0) {
         // TICKET-134: wishlist keys are your/discover; dining-map still passes
@@ -957,6 +975,7 @@ export function WishlistMapView({
                 {renderSourcePills(true)}
                 {renderFilterChip()}
                 {renderListPill(true)}
+                {renderBottomDock(true)}
             </View>
         );
     }
@@ -1136,6 +1155,8 @@ export function WishlistMapView({
                     </Text>
                 </Pressable>
             ) : null}
+
+            {renderBottomDock(!selected)}
 
             {/* Attribution — ToS-required ghosted caption, maptiler mode only
                 (TICKET-137: ToS needs it solely when their tiles render). Hidden
@@ -1833,6 +1854,12 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
         fontSize: 13,
         letterSpacing: 0.3,
+    },
+    // Primary import/review workflow — above the lower map controls and nav.
+    bottomDock: {
+        position: 'absolute',
+        left: 12,
+        right: 12,
     },
     // Ghosted ToS attribution caption — bottom-center, above the nav clearance.
     attribution: {

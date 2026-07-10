@@ -1,0 +1,165 @@
+/**
+ * resolvespots.test.ts — TICKET-152 Phase A unit tests.
+ *
+ * Tests the pure DECISION helpers for the large-maps-list import path:
+ *   resolve_spots arg validation, the pin_wishlist branch (RPC vs upsert-only /
+ *   verified vs ghost), and the RESOLVE_SPOTS_GHOST_ONLY kill-switch gate.
+ *
+ * No live DB / network — the network-touching resolve core stays in index.ts and
+ * is exercised by smoke, not here (mirrors savespots.test.ts's scope).
+ */
+
+import {
+    assertEquals,
+} from 'https://deno.land/std@0.224.0/assert/mod.ts';
+import {
+    validateResolveSpotsArgs,
+    normalizePinWishlist,
+    listOnlySaveKind,
+    isGhostOnlyMode,
+} from './_helpers.ts';
+import { mapsItemsToStaged } from './mapsList.ts';
+
+// ── 1. validateResolveSpotsArgs — the paid-amplifier arg gates (L3) ───────────
+//
+// Arg validation runs BEFORE the rate check and any Places call, so a malformed
+// request 400s deterministically (the empty-items smoke depends on this) and
+// never burns an import_spots token.
+
+Deno.test('validateResolveSpotsArgs: empty items → reject (the smoke case)', () => {
+    const r = validateResolveSpotsArgs('smoke', []);
+    assertEquals(r.ok, false, 'empty items must be rejected → 400 INVALID_BODY');
+});
+
+Deno.test('validateResolveSpotsArgs: > 20 items → reject (hard cap, paid amplifier)', () => {
+    const items = Array.from({ length: 21 }, (_, i) => ({
+        name: `Spot ${i}`, address: `${i} Main St`, client_nonce: `n${i}`,
+    }));
+    const r = validateResolveSpotsArgs('nonce', items);
+    assertEquals(r.ok, false, '21 items must be rejected (cap is 20)');
+});
+
+Deno.test('validateResolveSpotsArgs: exactly 20 items → ok (cap boundary)', () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({
+        name: `Spot ${i}`, address: `${i} Main St`, client_nonce: `n${i}`,
+    }));
+    const r = validateResolveSpotsArgs('nonce', items);
+    assertEquals(r.ok, true, '20 items is the inclusive upper bound');
+    if (r.ok) assertEquals(r.items.length, 20);
+});
+
+Deno.test('validateResolveSpotsArgs: missing/empty import_nonce → reject', () => {
+    const items = [{ name: 'Carbone', address: '181 Thompson St', client_nonce: 'n1' }];
+    assertEquals(validateResolveSpotsArgs(undefined, items).ok, false, 'missing nonce rejected');
+    assertEquals(validateResolveSpotsArgs('', items).ok, false, 'empty nonce rejected');
+    assertEquals(validateResolveSpotsArgs('   ', items).ok, false, 'whitespace nonce rejected');
+    assertEquals(validateResolveSpotsArgs(42, items).ok, false, 'non-string nonce rejected');
+});
+
+Deno.test('validateResolveSpotsArgs: item missing name or client_nonce → reject', () => {
+    assertEquals(
+        validateResolveSpotsArgs('nonce', [{ address: 'x', client_nonce: 'n1' }]).ok,
+        false, 'an item without a name is rejected (name is the Places query seed)',
+    );
+    assertEquals(
+        validateResolveSpotsArgs('nonce', [{ name: 'Carbone', address: 'x' }]).ok,
+        false, 'an item without a client_nonce is rejected (it is the echo-join key)',
+    );
+});
+
+Deno.test('validateResolveSpotsArgs: happy path normalizes (address absent → null, trims)', () => {
+    const r = validateResolveSpotsArgs('  job-nonce  ', [
+        { name: '  Carbone  ', address: '  181 Thompson St  ', client_nonce: '  n1  ' },
+        { name: 'Ghost Diner', client_nonce: 'n2' }, // no address
+    ]);
+    assertEquals(r.ok, true);
+    if (r.ok) {
+        assertEquals(r.items[0], { name: 'Carbone', address: '181 Thompson St', client_nonce: 'n1' });
+        assertEquals(r.items[1], { name: 'Ghost Diner', address: null, client_nonce: 'n2' });
+    }
+});
+
+Deno.test('validateResolveSpotsArgs: normalized items stage 1:1 by index (echo-join alignment)', () => {
+    // The client maps result→item by client_nonce; the server aligns results to
+    // input by index (mapsItemsToStaged preserves order + caps at 20). This asserts
+    // the staged array is index-aligned so results[i] ↔ items[i].client_nonce holds.
+    const r = validateResolveSpotsArgs('nonce', [
+        { name: 'A', address: '1 St', client_nonce: 'na' },
+        { name: 'B', address: '2 St', client_nonce: 'nb' },
+        { name: 'C', address: '3 St', client_nonce: 'nc' },
+    ]);
+    assertEquals(r.ok, true);
+    if (!r.ok) return;
+    const staged = mapsItemsToStaged(r.items.map((i) => ({ name: i.name, address: i.address })), 20);
+    assertEquals(staged.length, r.items.length, 'staging preserves count (no drop under cap)');
+    staged.forEach((s, i) => {
+        assertEquals(s.extracted.name, r.items[i].name, `staged[${i}] must align with items[${i}]`);
+        assertEquals(s.ordinal, i, 'ordinal must be the input index (join alignment)');
+    });
+});
+
+// ── 2. normalizePinWishlist — default-true / explicit-false-only ──────────────
+//
+// Only a real boolean `false` turns pinning off; every legacy caller omits the
+// field → true → today's wishlist-pin behavior byte-for-byte.
+
+Deno.test('normalizePinWishlist: absent (undefined) → true (back-compat default)', () => {
+    assertEquals(normalizePinWishlist(undefined), true);
+});
+
+Deno.test('normalizePinWishlist: explicit true → true', () => {
+    assertEquals(normalizePinWishlist(true), true);
+});
+
+Deno.test('normalizePinWishlist: explicit false → false (list-only import)', () => {
+    assertEquals(normalizePinWishlist(false), false);
+});
+
+Deno.test('normalizePinWishlist: non-boolean truthy/falsy → true (only literal false disables)', () => {
+    assertEquals(normalizePinWishlist('false'), true, 'a string "false" must NOT disable pinning');
+    assertEquals(normalizePinWishlist(0), true);
+    assertEquals(normalizePinWishlist(null), true);
+    assertEquals(normalizePinWishlist(1), true);
+});
+
+// ── 3. listOnlySaveKind — pin_wishlist=false branch (upsert-only vs ghost) ────
+//
+// M1: a list-only spot never touches fn_save_import_spot. It either reuses a
+// restaurant_id in hand, upserts a verified row from a real external_id, or mints
+// a deterministic unverified ghost (so a list-only job never silently drops a spot
+// and lazy verify-on-open still repairs it).
+
+Deno.test('listOnlySaveKind: restaurant_id in hand → existing (status saved)', () => {
+    assertEquals(listOnlySaveKind('rid-1', 'ChIJabc'), 'existing');
+    assertEquals(listOnlySaveKind('rid-1', null), 'existing', 'restaurant_id wins even without external_id');
+});
+
+Deno.test('listOnlySaveKind: real external_id, no restaurant_id → verified (upsert verified)', () => {
+    assertEquals(listOnlySaveKind(null, 'ChIJabc'), 'verified');
+    assertEquals(listOnlySaveKind(undefined, 'ChIJabc'), 'verified');
+});
+
+Deno.test('listOnlySaveKind: no external_id at all → ghost (mint unverified deterministic row)', () => {
+    assertEquals(listOnlySaveKind(null, null), 'ghost');
+    assertEquals(listOnlySaveKind(undefined, undefined), 'ghost');
+    assertEquals(listOnlySaveKind(null, ''), 'ghost', 'empty external_id is not resolvable');
+});
+
+// ── 4. isGhostOnlyMode — kill-switch env gate ────────────────────────────────
+
+Deno.test('isGhostOnlyMode: unset / empty / falsy strings → off', () => {
+    assertEquals(isGhostOnlyMode(undefined), false);
+    assertEquals(isGhostOnlyMode(null), false);
+    assertEquals(isGhostOnlyMode(''), false);
+    assertEquals(isGhostOnlyMode('0'), false);
+    assertEquals(isGhostOnlyMode('false'), false);
+    assertEquals(isGhostOnlyMode('off'), false);
+    assertEquals(isGhostOnlyMode('  FALSE  '), false, 'trims + case-insensitive');
+});
+
+Deno.test('isGhostOnlyMode: any truthy value → on', () => {
+    assertEquals(isGhostOnlyMode('1'), true);
+    assertEquals(isGhostOnlyMode('true'), true);
+    assertEquals(isGhostOnlyMode('on'), true);
+    assertEquals(isGhostOnlyMode('yes'), true);
+});
