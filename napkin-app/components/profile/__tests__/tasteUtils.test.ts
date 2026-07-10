@@ -7,9 +7,11 @@
  */
 import {
     HISTOGRAM_BINS,
+    JUNK_VENUE_TYPES,
     deriveHardestAxis,
     deriveCityLedger,
     deriveRegular,
+    deriveTaste,
     fillHistogram,
 } from '../tasteUtils';
 import type { TasteData } from '@/hooks/users/useUserTaste';
@@ -155,6 +157,48 @@ describe('deriveCityLedger', () => {
     it('treats a zero/garbage visit_count as one meal', () => {
         const ledger = deriveCityLedger([spot({ city: 'Paris', visit_count: 0 })]);
         expect(ledger.rows).toEqual([{ city: 'Paris', meals: 1 }]);
+    });
+});
+
+describe('deriveTaste (band aggregate, junk venue types filtered)', () => {
+    it('never counts generic venue types as cuisines; coverage unaffected', () => {
+        const taste = deriveTaste([
+            spot({ cuisine: 'Restaurant', city: 'Hong Kong', country: 'Hong Kong', visit_count: 12 }),
+            spot({ cuisine: 'Hotel', city: 'Macau', country: 'Macau', visit_count: 3 }),
+            spot({ cuisine: 'Ramen', city: 'Tokyo', country: 'Japan', visit_count: 2 }),
+            spot({ cuisine: 'Indian', city: 'Hong Kong', country: 'Hong Kong', visit_count: 3 }),
+        ]);
+        // "restaurant" (12 visits) and "hotel" would have dominated before the filter.
+        expect(taste.topCuisines).toEqual(['indian', 'ramen']);
+        expect(taste.cityCount).toBe(3);     // junk-cuisine spots still count for coverage
+        expect(taste.countryCount).toBe(3);
+    });
+
+    it('matches junk case-insensitively and after trimming', () => {
+        const taste = deriveTaste([
+            spot({ cuisine: '  RESTAURANT ', visit_count: 9 }),
+            spot({ cuisine: 'Sushi', visit_count: 1 }),
+        ]);
+        expect(taste.topCuisines).toEqual(['sushi']);
+    });
+
+    it('ranks by visit_count and caps at three', () => {
+        const taste = deriveTaste([
+            spot({ cuisine: 'Ramen', visit_count: 5 }),
+            spot({ cuisine: 'Sushi', visit_count: 4 }),
+            spot({ cuisine: 'Thai', visit_count: 3 }),
+            spot({ cuisine: 'Indian', visit_count: 2 }),
+        ]);
+        expect(taste.topCuisines).toEqual(['ramen', 'sushi', 'thai']);
+    });
+
+    it('junk list stays lowercased (matches the fn_user_taste v2 SQL list)', () => {
+        for (const junk of JUNK_VENUE_TYPES) {
+            expect(junk).toBe(junk.toLowerCase().trim());
+        }
+        expect(JUNK_VENUE_TYPES.has('restaurant')).toBe(true);
+        expect(JUNK_VENUE_TYPES.has('hotel')).toBe(true);
+        expect(JUNK_VENUE_TYPES.size).toBe(15);
     });
 });
 

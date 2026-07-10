@@ -46,26 +46,8 @@ export function useUserSpots(identifier: string | null | undefined) {
     });
 }
 
-/** Aggregate for the taste band: top cuisines + city/country coverage. */
-export function deriveTaste(spots: SpotSummary[]): {
-    topCuisines: string[];
-    cityCount: number;
-    countryCount: number;
-} {
-    const cuisineCounts = new Map<string, number>();
-    const cities = new Set<string>();
-    const countries = new Set<string>();
-    for (const s of spots) {
-        if (s.cuisine) {
-            const c = s.cuisine.trim().toLowerCase();
-            if (c) cuisineCounts.set(c, (cuisineCounts.get(c) ?? 0) + s.visit_count);
-        }
-        if (s.city) cities.add(s.city.trim().toLowerCase());
-        if (s.country) countries.add(s.country.trim().toLowerCase());
-    }
-    const topCuisines = [...cuisineCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([c]) => c);
-    return { topCuisines, cityCount: cities.size, countryCount: countries.size };
-}
+// Taste-band aggregate (top cuisines + coverage) moved to the pure sibling so
+// it unit-tests without this file's supabase pull (TICKET-150 follow-up — it
+// now filters JUNK_VENUE_TYPES out of the cuisine counts). Re-exported here so
+// callers keep one import path.
+export { deriveTaste } from '@/components/profile/tasteUtils';
