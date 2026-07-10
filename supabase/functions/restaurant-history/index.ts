@@ -526,15 +526,18 @@ serve(async (req) => {
                 { p_viewer: user.id, p_restaurant_id: resolvedId },
             );
             if (rpcErr) {
-                // Fail-open ONLY when 155's RPC isn't applied yet on this stack
-                // (undefined_function / PostgREST not-found) — the rail degrades to
-                // empty, never 500s the request. Any other error is a real fault.
+                // Fail-open ONLY when 155's RPC isn't applied yet on this stack —
+                // keyed on ERROR CODES alone (undefined_function / PostgREST
+                // not-found). A message regex would also match a PRESENT-but-broken
+                // RPC (a missing dependency throws "… does not exist" under a
+                // different code) and silently mask a real fault as an empty rail
+                // (review WARN-1, 2026-07-10). Any other error reports + rethrows.
                 const code = (rpcErr as { code?: string }).code ?? '';
-                const msg = (rpcErr as { message?: string }).message ?? '';
-                if (code === '42883' || code === 'PGRST202' || /does not exist|could not find/i.test(msg)) {
+                if (code === '42883' || code === 'PGRST202') {
                     console.warn('social_clippings: fn_restaurant_saves_visible absent — returning empty rail');
                     return json({ data: { rows: [] } });
                 }
+                reportError(rpcErr, { fn: 'restaurant-history', action: 'social_clippings' });
                 throw rpcErr;
             }
 

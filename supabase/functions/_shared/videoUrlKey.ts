@@ -63,7 +63,10 @@ export function canonicalizeVideoUrl(url: string): string {
     if (host === 'instagram.com' || host.endsWith('.instagram.com') || host === 'instagr.am') {
         const m = path.match(/\/(?:reels?|p|tv)\/([A-Za-z0-9_-]+)/);
         if (m) return `instagram:${m[1]}`;
-        // /share/… indirection links carry no shortcode here (N3) → verbatim.
+        // Note: /share/reel/<code> DOES fold via the regex above (it matches the
+        // inner /reel/ segment); only shortcode-less /share/ forms reach this
+        // verbatim fallback. Keys stay consistent either way — every consumer
+        // folds the SAME stored string (review NIT-2, 2026-07-10).
         return `${host}${path}`.toLowerCase();
     }
 

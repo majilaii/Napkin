@@ -1526,6 +1526,8 @@ async function handleCacheClipThumb(
     }
 
     // W1: hard decoded cap + JPEG magic-byte validation BEFORE upload.
+    // Residual risk accepted (review NIT-1): a 3-byte JPEG prefix on garbage
+    // passes and first-write-wins persists it — bounded to public-frame stakes.
     if (bytes.length === 0 || bytes.length > 512 * 1024) {
         return errorResponse('IMAGE_TOO_LARGE', 'thumbnail must be 1B–512KB', 413);
     }
