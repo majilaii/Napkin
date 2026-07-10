@@ -20,6 +20,7 @@ import { useRouter } from 'expo-router';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUpcomingGatherings, type UpcomingGathering } from '@/hooks/gatherings/useUpcomingGatherings';
+import { useReminderWindow } from '@/hooks/gatherings/useReminderWindow';
 import { reconcileGatherReminders } from '@/lib/gatherReminders';
 
 type Palette = typeof Colors.light;
@@ -90,15 +91,19 @@ export function UpcomingStrip({ tableId, tableName }: UpcomingStripProps) {
 
     const { data: rows } = useUpcomingGatherings(tableId);
 
-    // Part B — reconcile day-of reminders whenever the upcoming set (re)hydrates.
-    // Fires on the `rows` reference changing (a real refetch), so identical data is a
-    // no-op; also runs on an empty (but loaded) set so dropped-off plans get cancelled.
-    // Must sit BEFORE the empty early-return below (rules of hooks). Fully guarded /
-    // silent without OS permission — reconcileGatherReminders never prompts.
+    // TICKET-159 — reconcile BOTH device pings (day-of + morning-after) against
+    // the authoritative reconcile window (yesterday..+90d INCLUDING cancelled/
+    // expired rows), whenever it (re)hydrates. Keep/cancel is decided from that
+    // state — never from a row's absence in the upcoming strip. Fires on the
+    // `windowRows` reference changing (a real refetch); also runs on an empty
+    // (but loaded) window so dropped-off plans get cancelled. Must sit BEFORE
+    // the empty early-return below (rules of hooks). Fully guarded / silent
+    // without OS permission — reconcileGatherReminders never prompts.
+    const { data: windowRows } = useReminderWindow(tableId);
     React.useEffect(() => {
-        if (rows === undefined) return; // still loading — don't reconcile on nothing
-        void reconcileGatherReminders(rows, tableName, tableId);
-    }, [rows, tableName, tableId]);
+        if (windowRows === undefined) return; // still loading — don't reconcile on nothing
+        void reconcileGatherReminders(windowRows, tableName, tableId);
+    }, [windowRows, tableName, tableId]);
 
     if (!rows || rows.length === 0) return null; // AC2 — render nothing when empty
 

@@ -51,7 +51,13 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useUserProfile } from '@/hooks/users/useUserProfile';
-import { useAddSupperTake } from '@/hooks/suppers';
+import {
+    useAddSupperTake,
+    useAttachTakeToSupper,
+    isAttachConflict,
+    type SupperSuggestion,
+} from '@/hooks/suppers';
+import { StitchConfirmSheet } from '@/components/suppers';
 import { useToast } from '@/providers/ToastProvider';
 import { queryKeys } from '@/lib/queryKeys';
 import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
@@ -277,6 +283,12 @@ export default function LogMealScreen() {
 
     const createEntry = useCreateEntry(user?.id, null);
     const addSupperTake = useAddSupperTake();
+    const attachTake = useAttachTakeToSupper();
+
+    // TICKET-159 stray-log stitch: when the create response carries a
+    // supper_suggestion, the save holds on this sheet instead of popping
+    // straight back — the author decides; the entry never auto-attaches.
+    const [stitch, setStitch] = useState<{ suggestion: SupperSuggestion; entryId: string } | null>(null);
 
     // ── Form state ──────────────────────────────────────────────────────
     const [rating, setRating] = useState(0);
@@ -582,7 +594,7 @@ export default function LogMealScreen() {
                 ...payload,
             } as any,
             {
-                onSuccess: () => {
+                onSuccess: (result) => {
                     // Mark saved BEFORE navigating: the unmount cleanup must
                     // not delete photos now owned by the entry (TICKET-071 bug).
                     savedRef.current = true;
@@ -598,6 +610,15 @@ export default function LogMealScreen() {
                         });
                     }
                     toast.show(`tried ${restaurant.name}`);
+                    // TICKET-159: a supper_suggestion holds the pop-back for the
+                    // "add this to the table?" confirm; both answers land back.
+                    const suggestion = (result as { supper_suggestion?: SupperSuggestion | null })
+                        ?.supper_suggestion;
+                    const entryId = (result as { id?: string })?.id;
+                    if (suggestion?.supper_id && entryId) {
+                        setStitch({ suggestion, entryId });
+                        return;
+                    }
                     router.back();
                 },
                 onError: (err) => {
@@ -1019,6 +1040,41 @@ export default function LogMealScreen() {
                     palette={palette}
                 />
             )}
+
+            {/* TICKET-159 stray-log stitch — "add this to the table?" */}
+            <StitchConfirmSheet
+                visible={!!stitch}
+                suggestion={stitch?.suggestion ?? null}
+                pending={attachTake.isPending}
+                onConfirm={() => {
+                    if (!stitch) return;
+                    attachTake.mutate(
+                        { entry_id: stitch.entryId, supper_id: stitch.suggestion.supper_id },
+                        {
+                            onSuccess: () => {
+                                toast.show('added your take');
+                                setStitch(null);
+                                router.back();
+                            },
+                            onError: (err) => {
+                                // A stale/duplicate confirm is a quiet outcome, not an error.
+                                toast.show(
+                                    isAttachConflict(err)
+                                        ? 'already added to this table'
+                                        : "couldn't add it — kept as your log",
+                                );
+                                setStitch(null);
+                                router.back();
+                            },
+                        },
+                    );
+                }}
+                onDismiss={() => {
+                    // NEGATIVE (never auto-attach): the entry stays standalone.
+                    setStitch(null);
+                    router.back();
+                }}
+            />
         </>
     );
 }

@@ -116,4 +116,31 @@ describe('useGatheringViewModel', () => {
         // A non-host never sees the clear affordance.
         expect(useGatheringViewModel(dead, VIEWER).canClear).toBe(false);
     });
+
+    // ── TICKET-159 rescue derivations ─────────────────────────────────────────
+    it('canRescue: host-only, EXPIRED-only, unlinked-only', () => {
+        const expired = makeGathering({ status: 'expired', supper_id: null });
+        expect(useGatheringViewModel(expired, HOST).canRescue).toBe(true);
+        expect(useGatheringViewModel(expired, HOST).canClear).toBe(true);
+        // Non-host never sees the rescue.
+        expect(useGatheringViewModel(expired, VIEWER).canRescue).toBe(false);
+        // NEGATIVE: never on proposed/dispatched — a rescue can't pre-date gather_on.
+        expect(useGatheringViewModel(makeGathering({ status: 'proposed' }), HOST).canRescue).toBe(false);
+        expect(
+            useGatheringViewModel(makeGathering({ status: 'dispatched', supper_id: 's-1' }), HOST).canRescue,
+        ).toBe(false);
+        // Already rescued → no second rescue.
+        expect(
+            useGatheringViewModel(makeGathering({ status: 'expired', supper_id: 's-1' }), HOST).canRescue,
+        ).toBe(false);
+    });
+
+    it('a RESCUED gathering (expired + supper_id) is isRescued and NOT clearable', () => {
+        const rescued = makeGathering({ status: 'expired', supper_id: 's-1' });
+        const vm = useGatheringViewModel(rescued, HOST);
+        expect(vm.isRescued).toBe(true);
+        expect(vm.canClear).toBe(false); // mirrors the server's tightened delete guard
+        // Everyone sees the rescued state (the see-the-table affordance).
+        expect(useGatheringViewModel(rescued, VIEWER).isRescued).toBe(true);
+    });
 });

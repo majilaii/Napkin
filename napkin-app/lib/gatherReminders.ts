@@ -1,28 +1,43 @@
 /**
- * gatherReminders — day-of LOCAL reminders for booked gatherings (TICKET-128 Part B).
+ * gatherReminders — device-LOCAL reminders for gatherings, per-channel
+ * (TICKET-128 Part B day-of; TICKET-159 morning-after + stateful reconcile).
  *
- * When a member is `in` on an upcoming gathering, their own device schedules a local
- * notification for the morning of `gather_on` (10:00 local): `tonight — Kono with <table>`.
- * NO remote push, NO server — this is entirely client-side state, reconciled on every
- * upcoming-gatherings refetch. Reuses TICKET-120's expo-notifications binding discipline
- * (getPermissionState + the lazy-require idiom) but owns its own file — localNotify.ts
- * stays untouched (it's separately tested).
+ * Two channels per gathering, each its own one-shot OS notification:
+ *   day_of        — 10:00 local on gather_on:      `tonight — <restaurant> with <table>`
+ *   morning_after — 10:00 local on gather_on + 1:  `last night — <restaurant> · add your take`
+ * Both deep-link `/gathering/<id>` via content.data.url (the gathering screen
+ * routes onward by live state — dispatched → see the table, expired → the
+ * rescue CTA). NO remote push, NO server (doctrine) — this is entirely
+ * client-side, reconciled against the `reconcile_window` read.
  *
- * Reconcile pass (idempotent):
- *   - schedule for every row where viewer_response === 'in' and gather_on >= today,
- *   - cancel for gatherings that dropped off (cancelled/expired/past or viewer no longer in),
- *   - reschedule (cancel old + schedule new) when gather_on moved (TICKET-127 re-date).
- * Idempotency is an AsyncStorage map gathering_id → { notifId, gather_on }.
+ * TICKET-159 reconcile model (findings 5/12/13):
+ *   - Driven by the AUTHORITATIVE window read (yesterday..+90d INCLUDING
+ *     cancelled/expired rows, with viewer_response + restaurant id/name).
+ *     Keep/cancel is decided purely from STATE: cancelled → cancel; viewer no
+ *     longer 'in' → cancel; date moved → reschedule; restaurant id OR name
+ *     changed → reschedule with fresh copy. Expired rows KEEP the
+ *     morning-after ping (it lands on the rescue CTA — intended). A row absent
+ *     from the window can only mean hard-deleted → cancel.
+ *   - Records are keyed (gathering_id, channel) and persist
+ *     { notifId, gather_on, restaurant_id, restaurant_name, table_id }.
+ *   - Reconciliation is SERIALIZED through a module-level promise queue (no
+ *     concurrent-pass races) and cross-checked against
+ *     getAllScheduledNotificationsAsync() via the stable
+ *     content.data = { gatheringId, channel, tableId } identity.
+ *   - Exactly-once per device install: a one-shot schedule + the past-fire
+ *     guard (never schedule a moment that already passed) + post-fire record
+ *     cleanup ⇒ never a re-nudge, even if the take is still unadded.
+ *     Multi-device / reinstall may double-ping — accepted and documented.
  *
- * The diff decision (planReminders) is PURE — no native, no storage — so the whole
- * schedule/cancel/reschedule matrix is unit-testable without a build. The native
- * schedule/cancel calls + storage I/O live in reconcileGatherReminders and are all
- * try/catch guarded; a missing module or an OS denial makes the pass a silent no-op
- * (AC9 — never prompts; TICKET-120's soft-prompt cadence owns asking).
+ * The diff decision (planChannelReminders) is PURE — no native, no storage —
+ * so the whole schedule/cancel/reschedule matrix is unit-testable without a
+ * build. Native calls + storage I/O live in the impure pass and are all
+ * try/catch guarded; a missing module or an OS denial makes the pass a silent
+ * no-op (never prompts; TICKET-120's soft-prompt cadence owns asking).
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getPermissionState } from '@/lib/localNotify';
-import type { UpcomingGathering } from '@/hooks/gatherings/useUpcomingGatherings';
+import type { ReminderWindowRow } from '@/hooks/gatherings/useReminderWindow';
 
 // LAZY native binding — identical idiom to localNotify.ts. `require` throws when the
 // module isn't in this build; resolve on first CALL, cache null so we probe once.
@@ -40,45 +55,62 @@ function getNotif(): ExpoNotifications | null {
     return notifModule;
 }
 
-// ── Storage map (gathering_id → scheduled reminder) ─────────────────────────────
+// ── Storage (per-channel records) ────────────────────────────────────────────
 
-export const GATHER_REMINDERS_KEY = 'napkin.gatherReminders.v1';
+/** TICKET-128's single-channel v1 map — drained once, then removed. */
+export const GATHER_REMINDERS_LEGACY_KEY = 'napkin.gatherReminders.v1';
+/** The per-channel record map (TICKET-159). */
+export const GATHER_REMINDERS_KEY = 'napkin.gatherReminders.v2';
 
-/** One scheduled reminder, keyed in the map by gathering id. */
-export interface StoredReminder {
+export type ReminderChannel = 'day_of' | 'morning_after';
+
+/** One scheduled channel reminder, keyed in the map by `${gatheringId}:${channel}`. */
+export interface StoredChannelReminder {
     /** The OS notification identifier (used to cancel). */
     notifId: string;
-    /** 'YYYY-MM-DD' the notif was scheduled for — drives re-date detection. */
+    gathering_id: string;
+    channel: ReminderChannel;
+    /** 'YYYY-MM-DD' the gathering was scheduled for — drives re-date detection. */
     gather_on: string;
-    /**
-     * The table this reminder belongs to — scopes the cancel/drop path so a
-     * reconcile for one table never cancels another table's reminders. An empty
-     * string is the LEGACY sentinel for pre-scoping entries (written before this
-     * field existed); they're dropped-and-cancelled defensively on the first pass
-     * that touches them, then rescheduled fresh by their own table's next pass.
-     */
+    /** Restaurant identity + name at schedule time — either changing = copy refresh. */
+    restaurant_id: string;
+    restaurant_name: string;
+    /** Scopes cancel/drop so one table's pass never touches another's records. */
     table_id: string;
 }
 
-/** gathering_id → StoredReminder. */
-export type ReminderMap = Record<string, StoredReminder>;
+/** `${gathering_id}:${channel}` → StoredChannelReminder. */
+export type ChannelReminderMap = Record<string, StoredChannelReminder>;
 
-export async function readReminderMap(): Promise<ReminderMap> {
+export function reminderKey(gatheringId: string, channel: ReminderChannel): string {
+    return `${gatheringId}:${channel}`;
+}
+
+export async function readReminderMap(): Promise<ChannelReminderMap> {
     try {
         const raw = await AsyncStorage.getItem(GATHER_REMINDERS_KEY);
         if (!raw) return {};
         const parsed = JSON.parse(raw) as unknown;
         if (!parsed || typeof parsed !== 'object') return {};
-        const out: ReminderMap = {};
-        for (const [id, v] of Object.entries(parsed as Record<string, unknown>)) {
-            const r = v as Partial<StoredReminder> | null;
-            if (r && typeof r.notifId === 'string' && typeof r.gather_on === 'string') {
-                // Tolerate legacy entries written before table_id existed: keep them
-                // with the '' sentinel so planReminders can migrate them defensively.
-                out[id] = {
+        const out: ChannelReminderMap = {};
+        for (const [key, v] of Object.entries(parsed as Record<string, unknown>)) {
+            const r = v as Partial<StoredChannelReminder> | null;
+            if (
+                r &&
+                typeof r.notifId === 'string' &&
+                typeof r.gathering_id === 'string' &&
+                (r.channel === 'day_of' || r.channel === 'morning_after') &&
+                typeof r.gather_on === 'string' &&
+                typeof r.table_id === 'string'
+            ) {
+                out[key] = {
                     notifId: r.notifId,
+                    gathering_id: r.gathering_id,
+                    channel: r.channel,
                     gather_on: r.gather_on,
-                    table_id: typeof r.table_id === 'string' ? r.table_id : '',
+                    restaurant_id: typeof r.restaurant_id === 'string' ? r.restaurant_id : '',
+                    restaurant_name: typeof r.restaurant_name === 'string' ? r.restaurant_name : '',
+                    table_id: r.table_id,
                 };
             }
         }
@@ -88,7 +120,7 @@ export async function readReminderMap(): Promise<ReminderMap> {
     }
 }
 
-async function writeReminderMap(map: ReminderMap): Promise<void> {
+async function writeReminderMap(map: ChannelReminderMap): Promise<void> {
     try {
         await AsyncStorage.setItem(GATHER_REMINDERS_KEY, JSON.stringify(map));
     } catch {
@@ -96,84 +128,7 @@ async function writeReminderMap(map: ReminderMap): Promise<void> {
     }
 }
 
-// ── Pure diff (no native, no storage — the unit-tested core) ─────────────────────
-
-/** The set of actions a reconcile pass must take, derived purely from inputs. */
-export interface ReminderPlan {
-    /** Gatherings needing a fresh OS schedule (brand-new or re-dated). */
-    toSchedule: { id: string; gather_on: string }[];
-    /** OS notifIds to cancel (superseded re-dates + gatherings that dropped off). */
-    toCancel: string[];
-    /** gathering_ids to remove from the map (dropped off — cancelled/past/out/gone). */
-    toDrop: string[];
-    /** gathering_ids left exactly as they are (already scheduled for the right day). */
-    unchanged: string[];
-}
-
-/** True when the viewer should carry a day-of reminder for this row. */
-function isReminderEligible(row: UpcomingGathering, todayYmd: string): boolean {
-    // 'in' on a still-future (or today) plan — proposed OR dispatched both count.
-    return row.viewer_response === 'in' && row.gather_on >= todayYmd;
-}
-
-/**
- * Pure schedule/cancel/reschedule decision for ONE table's reconcile pass.
- * `rows` are that table's upcoming gatherings; `existing` is the whole cross-table
- * map. `todayYmd` is the local 'YYYY-MM-DD' — string comparison against gather_on
- * is correct for the ISO date form.
- *
- * The drop path is TABLE-SCOPED: only map entries owned by `tableId` (or the ''
- * legacy sentinel, migrated defensively) are considered for cancel + drop. Entries
- * belonging to OTHER tables pass through untouched — this pass has none of their
- * rows, so it must not mistake their absence for a drop-off (the P0 that this fixes).
- */
-export function planReminders(
-    rows: UpcomingGathering[],
-    existing: ReminderMap,
-    todayYmd: string,
-    tableId: string,
-): ReminderPlan {
-    const plan: ReminderPlan = { toSchedule: [], toCancel: [], toDrop: [], unchanged: [] };
-
-    // Desired state: eligible rows → gather_on. Last write wins on a duplicate id.
-    const desired = new Map<string, string>();
-    for (const row of rows) {
-        if (isReminderEligible(row, todayYmd)) desired.set(row.id, row.gather_on);
-    }
-
-    // New / rescheduled / unchanged.
-    for (const [id, gather_on] of desired) {
-        const prev = existing[id];
-        if (!prev) {
-            plan.toSchedule.push({ id, gather_on });
-        } else if (prev.gather_on !== gather_on) {
-            // Re-dated (TICKET-127): cancel the stale notif, schedule the new day.
-            plan.toCancel.push(prev.notifId);
-            plan.toSchedule.push({ id, gather_on });
-        } else {
-            plan.unchanged.push(id);
-        }
-    }
-
-    // Dropped off: owned by THIS table (or legacy) but no longer an eligible row →
-    // cancel + forget. Other tables' entries are out of scope for this pass.
-    for (const [id, prev] of Object.entries(existing)) {
-        const inScope = prev.table_id === tableId || prev.table_id === '';
-        if (inScope && !desired.has(id)) {
-            plan.toCancel.push(prev.notifId);
-            plan.toDrop.push(id);
-        }
-    }
-
-    return plan;
-}
-
-/** True when the plan changes nothing — lets the impure pass skip all I/O. */
-export function isNoopPlan(plan: ReminderPlan): boolean {
-    return plan.toSchedule.length === 0 && plan.toCancel.length === 0 && plan.toDrop.length === 0;
-}
-
-// ── Native schedule/cancel (guarded) ─────────────────────────────────────────────
+// ── Pure helpers ─────────────────────────────────────────────────────────────
 
 /** Local 'YYYY-MM-DD' for `date` (defaults to now). */
 export function localTodayYmd(date: Date = new Date()): string {
@@ -183,40 +138,243 @@ export function localTodayYmd(date: Date = new Date()): string {
     return `${y}-${m}-${d}`;
 }
 
-/** Reminder body copy — lowercase, em-dash: `tonight — Kono with the usuals`. */
-export function reminderBody(restaurantName: string, tableName: string): string {
-    return `tonight — ${restaurantName} with ${tableName}`;
+/** 'YYYY-MM-DD' + n days → 'YYYY-MM-DD' (UTC-safe day arithmetic). */
+export function addDaysYmd(ymd: string, days: number): string {
+    const d = new Date(`${ymd}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return ymd;
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
 }
 
 /**
- * Schedule one one-shot notif at 10:00 local on `gather_on`. Returns the OS notifId,
- * or null if the module is absent, the day is malformed, the 10:00 moment is already
- * past, or the native call throws. Never throws.
- *
- * Uses the cross-platform DATE trigger (fires once at an absolute moment) rather than
- * the iOS-only CALENDAR trigger — one code path, no Platform branch. `fireAt` is the
- * absolute 10:00-local instant already computed for the past-guard.
+ * The absolute local fire moment for a channel: 10:00 local on gather_on
+ * (day_of) or gather_on + 1 (morning_after). NaN when the day is malformed.
  */
-async function scheduleOne(gatherOn: string, body: string): Promise<string | null> {
+export function fireMomentMs(channel: ReminderChannel, gatherOn: string): number {
+    const day = channel === 'morning_after' ? addDaysYmd(gatherOn, 1) : gatherOn;
+    const parts = day.split('-');
+    if (parts.length !== 3) return Number.NaN;
+    const year = Number(parts[0]);
+    const month = Number(parts[1]); // 1-based
+    const dayNum = Number(parts[2]);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(dayNum)) {
+        return Number.NaN;
+    }
+    return new Date(year, month - 1, dayNum, 10, 0, 0, 0).getTime();
+}
+
+/** Reminder body copy per channel — lowercase, Heirloom punctuation. */
+export function reminderBody(
+    channel: ReminderChannel,
+    restaurantName: string,
+    tableName: string,
+): string {
+    return channel === 'day_of'
+        ? `tonight — ${restaurantName} with ${tableName}`
+        : `last night — ${restaurantName} · add your take`;
+}
+
+/** True when the viewer should carry this channel's ping for this row — pure STATE. */
+export function isChannelEligible(
+    row: ReminderWindowRow,
+    channel: ReminderChannel,
+    nowMs: number,
+): boolean {
+    // The viewer's RSVP at the last reconcile approximates the confirmed roster
+    // (accepted); flipping out of 'in' cancels on the next pass.
+    if (row.viewer_response !== 'in') return false;
+    // Cancelled gathers hold no ping, either channel.
+    if (row.status === 'cancelled') return false;
+    // The day-of reminder is a *plan* nudge — a dead plan (expired) doesn't get
+    // one. The morning-after ping deliberately survives expiry (rescue CTA).
+    if (channel === 'day_of' && row.status !== 'proposed' && row.status !== 'dispatched') {
+        return false;
+    }
+    // Past-fire guard: never (re)schedule a moment that already passed — this is
+    // both the "never nag twice" rule and the natural date-window gate.
+    const fireAt = fireMomentMs(channel, row.gather_on);
+    return Number.isFinite(fireAt) && fireAt > nowMs;
+}
+
+// ── Pure diff (no native, no storage — the unit-tested core) ─────────────────
+
+/** One OS-scheduled gather notification, as identified by its stable data payload. */
+export interface OsScheduledReminder {
+    notifId: string;
+    gatheringId: string;
+    channel: ReminderChannel;
+    tableId: string;
+}
+
+/** One (gathering, channel) the impure pass must schedule fresh. */
+export interface ChannelToSchedule {
+    key: string;
+    gatheringId: string;
+    channel: ReminderChannel;
+    gather_on: string;
+    restaurant_id: string;
+    restaurant_name: string;
+}
+
+/** The set of actions a reconcile pass must take, derived purely from inputs. */
+export interface ChannelReminderPlan {
+    toSchedule: ChannelToSchedule[];
+    /** OS notifIds to cancel (superseded/reschedules + state says "no ping"). */
+    toCancel: string[];
+    /** map keys to remove (cancelled/dropped/fired records). */
+    toDrop: string[];
+    /** map keys left exactly as they are. */
+    unchanged: string[];
+}
+
+/**
+ * Pure per-table reconcile decision. `rows` is the table's reconcile window
+ * (INCLUDING cancelled/expired); `existing` is the whole cross-table record
+ * map; `osScheduled` is the OS's actual scheduled set (matched by the stable
+ * data identity); `nowMs` anchors the past-fire guard.
+ *
+ * Scoping: only records/OS items owned by `tableId` are ever cancelled or
+ * dropped — other tables' state passes through untouched.
+ */
+export function planChannelReminders(
+    rows: ReminderWindowRow[],
+    existing: ChannelReminderMap,
+    osScheduled: OsScheduledReminder[],
+    nowMs: number,
+    tableId: string,
+): ChannelReminderPlan {
+    const plan: ChannelReminderPlan = { toSchedule: [], toCancel: [], toDrop: [], unchanged: [] };
+    const CHANNELS: ReminderChannel[] = ['day_of', 'morning_after'];
+
+    // Desired state, from STATE alone.
+    const desired = new Map<string, { row: ReminderWindowRow; channel: ReminderChannel }>();
+    for (const row of rows) {
+        for (const channel of CHANNELS) {
+            if (isChannelEligible(row, channel, nowMs)) {
+                desired.set(reminderKey(row.id, channel), { row, channel });
+            }
+        }
+    }
+
+    const osByKey = new Map<string, OsScheduledReminder>();
+    for (const os of osScheduled) {
+        osByKey.set(reminderKey(os.gatheringId, os.channel), os);
+    }
+
+    const scheduleFresh = (key: string, row: ReminderWindowRow, channel: ReminderChannel) => {
+        plan.toSchedule.push({
+            key,
+            gatheringId: row.id,
+            channel,
+            gather_on: row.gather_on,
+            restaurant_id: row.restaurant?.id ?? '',
+            restaurant_name: row.restaurant?.name ?? '',
+        });
+    };
+
+    // 1) Desired keys: new / rescheduled / copy-refresh / unchanged.
+    for (const [key, { row, channel }] of desired) {
+        const prev = existing[key];
+        const os = osByKey.get(key);
+        if (!prev) {
+            // No record. If the OS still holds one for this key (lost storage),
+            // supersede it — cancel + schedule fresh — so a rebuilt map can
+            // never leave TWO live pings for the same (gathering, channel).
+            if (os) plan.toCancel.push(os.notifId);
+            scheduleFresh(key, row, channel);
+            continue;
+        }
+        const dateMoved = prev.gather_on !== row.gather_on;
+        const copyChanged =
+            prev.restaurant_id !== (row.restaurant?.id ?? '') ||
+            prev.restaurant_name !== (row.restaurant?.name ?? '');
+        if (dateMoved || copyChanged) {
+            // Reschedule: cancel the stale notif(s), schedule the fresh day/copy.
+            plan.toCancel.push(prev.notifId);
+            if (os && os.notifId !== prev.notifId) plan.toCancel.push(os.notifId);
+            scheduleFresh(key, row, channel);
+            continue;
+        }
+        // Same date + same copy — but trust the OS, not the map: a record whose
+        // notification the OS no longer holds (purged/reinstall) is re-scheduled
+        // while its moment is still ahead (the past-fire guard above already
+        // filtered fired ones out of `desired`).
+        if (!os) {
+            scheduleFresh(key, row, channel);
+            continue;
+        }
+        plan.unchanged.push(key);
+    }
+
+    // 2) Existing records owned by THIS table that are no longer desired.
+    for (const [key, prev] of Object.entries(existing)) {
+        const inScope = prev.table_id === tableId || prev.table_id === '';
+        if (!inScope || desired.has(key)) continue;
+        const fireAt = fireMomentMs(prev.channel, prev.gather_on);
+        if (Number.isFinite(fireAt) && fireAt <= nowMs) {
+            // Post-fire cleanup: the moment passed (it fired or never will) —
+            // drop the record; nothing to cancel. NEVER re-nudge.
+            plan.toDrop.push(key);
+        } else {
+            // State says no ping (cancelled / viewer flipped out / expired
+            // day-of / row hard-deleted from the window) → cancel + forget.
+            plan.toCancel.push(prev.notifId);
+            plan.toDrop.push(key);
+        }
+    }
+
+    // 3) OS orphans owned by THIS table: scheduled notifications neither the
+    // map nor the desired state knows about (lost storage + the plan died /
+    // viewer opted out) → cancel, so a lost map can never leave a stale ping
+    // behind. Desired-but-unmapped keys were already superseded in step 1.
+    const cancelling = new Set(plan.toCancel);
+    for (const [key, os] of osByKey) {
+        if (os.tableId !== tableId) continue;
+        if (existing[key] || desired.has(key) || cancelling.has(os.notifId)) continue;
+        plan.toCancel.push(os.notifId);
+    }
+
+    return plan;
+}
+
+/** True when the plan changes nothing — lets the impure pass skip all I/O. */
+export function isNoopPlan(plan: ChannelReminderPlan): boolean {
+    return plan.toSchedule.length === 0 && plan.toCancel.length === 0 && plan.toDrop.length === 0;
+}
+
+// ── Native schedule/cancel (guarded) ─────────────────────────────────────────
+
+/**
+ * Schedule one one-shot notif for a channel. Returns the OS notifId, or null if
+ * the module is absent, the day is malformed, the moment already passed, or the
+ * native call throws. Never throws. content.data carries the stable
+ * { gatheringId, channel, tableId } identity + the `/gathering/<id>` deep link
+ * (the root layout's tap listener routes data.url generically).
+ */
+async function scheduleOne(
+    item: ChannelToSchedule,
+    tableId: string,
+    body: string,
+): Promise<string | null> {
     const N = getNotif();
     if (!N) return null;
-    const parts = gatherOn.split('-');
-    if (parts.length !== 3) return null;
-    const year = Number(parts[0]);
-    const month = Number(parts[1]); // 1-based YYYY-MM-DD component
-    const day = Number(parts[2]);
-    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
-
-    // Don't schedule a moment that's already gone (e.g. app opened after 10:00 on the day).
-    const fireAt = new Date(year, month - 1, day, 10, 0, 0, 0);
-    if (Number.isNaN(fireAt.getTime()) || fireAt.getTime() <= Date.now()) return null;
+    const fireAtMs = fireMomentMs(item.channel, item.gather_on);
+    if (!Number.isFinite(fireAtMs) || fireAtMs <= Date.now()) return null;
 
     try {
         const id = await N.scheduleNotificationAsync({
-            content: { body },
+            content: {
+                body,
+                data: {
+                    gatheringId: item.gatheringId,
+                    channel: item.channel,
+                    tableId,
+                    url: `/gathering/${item.gatheringId}`,
+                },
+            },
             trigger: {
                 type: N.SchedulableTriggerInputTypes.DATE,
-                date: fireAt,
+                date: new Date(fireAtMs),
             },
         });
         return typeof id === 'string' ? id : null;
@@ -235,62 +393,135 @@ async function cancelOne(notifId: string): Promise<void> {
     }
 }
 
-// ── The reconcile pass (the one entry point) ─────────────────────────────────────
+/** The OS's actual scheduled gather reminders, identified by content.data. */
+async function readOsScheduled(): Promise<OsScheduledReminder[]> {
+    const N = getNotif();
+    if (!N) return [];
+    try {
+        const all = await N.getAllScheduledNotificationsAsync();
+        const out: OsScheduledReminder[] = [];
+        for (const req of all ?? []) {
+            const data = (req as { content?: { data?: Record<string, unknown> } })?.content?.data;
+            const gatheringId = data?.gatheringId;
+            const channel = data?.channel;
+            const tableId = data?.tableId;
+            const notifId = (req as { identifier?: unknown })?.identifier;
+            if (
+                typeof notifId === 'string' &&
+                typeof gatheringId === 'string' &&
+                (channel === 'day_of' || channel === 'morning_after') &&
+                typeof tableId === 'string'
+            ) {
+                out.push({ notifId, gatheringId, channel, tableId });
+            }
+        }
+        return out;
+    } catch {
+        return [];
+    }
+}
+
+/** One-time v1 drain: cancel TICKET-128's single-channel notifs + drop the key.
+ *  v1 records carried no data payload and no channel — they're superseded, and
+ *  the next pass reschedules everything fresh under v2. */
+async function drainLegacyV1(): Promise<void> {
+    try {
+        const raw = await AsyncStorage.getItem(GATHER_REMINDERS_LEGACY_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Record<string, { notifId?: unknown }> | null;
+        if (parsed && typeof parsed === 'object') {
+            for (const v of Object.values(parsed)) {
+                if (typeof v?.notifId === 'string') await cancelOne(v.notifId);
+            }
+        }
+        await AsyncStorage.removeItem(GATHER_REMINDERS_LEGACY_KEY);
+    } catch {
+        /* best-effort — worst case the v1 notif fires once with the old copy */
+    }
+}
+
+// ── The reconcile pass (serialized — the one entry point) ────────────────────
+
+/** Module-level promise queue: passes NEVER interleave (finding 12). */
+let reconcileChain: Promise<void> = Promise.resolve();
 
 /**
- * Reconcile the device's scheduled day-of reminders against the current upcoming rows.
- * Schedules for rows the viewer is `in` on, cancels ones that dropped off, reschedules
- * re-dated ones. Silent no-op without OS permission (AC9 — never prompts) or when the
- * native module is absent. Fully guarded; safe to call on every refetch.
+ * Reconcile the device's scheduled gather reminders (both channels) against the
+ * table's reconcile-window rows. Serialized across callers; silent no-op
+ * without OS permission (never prompts) or when the native module is absent.
+ * Fully guarded; safe to call on every refetch.
  *
- * @param rows      current upcoming gatherings for the selected table
- * @param tableName the table's display name (for the notif body)
- * @param tableId   the table these rows belong to — scopes the cancel/drop path
+ * @param rows      the table's reconcile-window rows (incl. cancelled/expired)
+ * @param tableName the table's display name (day-of body copy)
+ * @param tableId   the table these rows belong to — scopes cancel/drop
  */
-export async function reconcileGatherReminders(
-    rows: UpcomingGathering[],
+export function reconcileGatherReminders(
+    rows: ReminderWindowRow[],
+    tableName: string,
+    tableId: string,
+): Promise<void> {
+    reconcileChain = reconcileChain
+        .then(() => doReconcile(rows, tableName, tableId))
+        .catch(() => {
+            /* never let a reminder pass surface an error into the UI */
+        });
+    return reconcileChain;
+}
+
+async function doReconcile(
+    rows: ReminderWindowRow[],
     tableName: string,
     tableId: string,
 ): Promise<void> {
     try {
-        // AC9: no permission → don't schedule anything and don't prompt. Cancel every
-        // notif we still track (cancelScheduledNotificationAsync works regardless of
-        // authorization) BEFORE clearing the map, so a later re-grant can't leave
-        // orphaned OS notifs and double-schedule. Permission is device-global, so a
-        // denial moots every table's reminders — clearing the whole map is correct.
         if (getNotif() === null) return;
+
+        // No permission → don't schedule anything and don't prompt. Cancel every
+        // notif we still track (cancel works regardless of authorization) BEFORE
+        // clearing the map, so a later re-grant can't double-schedule. Permission
+        // is device-global, so a denial moots every table's reminders.
         const permission = await getPermissionState();
         if (permission !== 'granted') {
             const existing = await readReminderMap();
-            const ids = Object.keys(existing);
-            if (ids.length > 0) {
-                for (const id of ids) await cancelOne(existing[id].notifId);
+            const keys = Object.keys(existing);
+            if (keys.length > 0) {
+                for (const key of keys) await cancelOne(existing[key].notifId);
                 await writeReminderMap({});
             }
+            await drainLegacyV1();
             return;
         }
 
+        await drainLegacyV1();
+
         const existing = await readReminderMap();
-        const plan = planReminders(rows, existing, localTodayYmd(), tableId);
+        const osScheduled = await readOsScheduled();
+        const plan = planChannelReminders(rows, existing, osScheduled, Date.now(), tableId);
         if (isNoopPlan(plan)) return;
 
-        // Restaurant name lookup for the bodies of the rows we're (re)scheduling.
-        const nameById = new Map<string, string>();
-        for (const row of rows) nameById.set(row.id, row.restaurant?.name ?? 'a spot');
+        const next: ChannelReminderMap = { ...existing };
 
-        const next: ReminderMap = { ...existing };
-
-        // Cancel first (covers both re-date supersedes and drop-offs).
+        // Cancel first (reschedule supersedes + drop-offs + OS orphans).
         for (const notifId of plan.toCancel) await cancelOne(notifId);
-        for (const id of plan.toDrop) delete next[id];
-        // Re-dated ids keep their (now-cancelled) map entry until the reschedule below
-        // replaces it; drop them now so a failed reschedule doesn't leave a dead id.
-        for (const { id } of plan.toSchedule) delete next[id];
+        for (const key of plan.toDrop) delete next[key];
+        // Re-scheduled keys keep their (now-cancelled) entry until the schedule
+        // below replaces it; drop them now so a failed schedule leaves no dead id.
+        for (const { key } of plan.toSchedule) delete next[key];
 
-        // Schedule the new/re-dated ones — stamp table_id so future passes scope right.
-        for (const { id, gather_on } of plan.toSchedule) {
-            const notifId = await scheduleOne(gather_on, reminderBody(nameById.get(id) ?? 'a spot', tableName));
-            if (notifId) next[id] = { notifId, gather_on, table_id: tableId };
+        for (const item of plan.toSchedule) {
+            const body = reminderBody(item.channel, item.restaurant_name || 'a spot', tableName);
+            const notifId = await scheduleOne(item, tableId, body);
+            if (notifId) {
+                next[item.key] = {
+                    notifId,
+                    gathering_id: item.gatheringId,
+                    channel: item.channel,
+                    gather_on: item.gather_on,
+                    restaurant_id: item.restaurant_id,
+                    restaurant_name: item.restaurant_name,
+                    table_id: tableId,
+                };
+            }
         }
 
         await writeReminderMap(next);

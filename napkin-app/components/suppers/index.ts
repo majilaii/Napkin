@@ -5,4 +5,5 @@ export { InitialsAvatar } from './InitialsAvatar';
 export { SupperCard } from './SupperCard';
 export { SetTableSheet } from './SetTableSheet';
 export { GatheredView } from './GatheredView';
+export { StitchConfirmSheet } from './StitchConfirmSheet';
 export { SupperNudgeBanner } from './SupperNudgeBanner';

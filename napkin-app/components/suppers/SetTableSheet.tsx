@@ -6,8 +6,16 @@
  *   confirm → "the table is set" — ghosted seats, add-your-take-now / maybe-later.
  *
  * No review is taken here. "set the table" creates the supper anchor + seeds the
- * roster (useSetTable); takes attach later. The restaurant is pre-filled by the
- * caller (restaurant-anchored). Modal + spring shell cloned from CompanionPickerSheet.
+ * roster; takes attach later. The restaurant is pre-filled by the caller
+ * (restaurant-anchored). Modal + spring shell cloned from CompanionPickerSheet.
+ *
+ * TICKET-159 (finding 16): the sheet takes a SUBMIT-ADAPTER, not a mode enum —
+ * set-mode injects nothing (the internal useSetTable adapter runs), rescue-mode
+ * injects useRescueGathering via `onSubmit`. Both resolve to the same
+ * SetTableResult, so the confirm step never branches. `lockedTableId` pins the
+ * Table (rescue recovers THIS plan's table — the picker never renders), and
+ * `initialMemberIds` preselects the crew (rescue: the gather's in/counter
+ * members) instead of the whole-table default.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -30,7 +38,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
-import { useSetTable, type SetTableResult } from '@/hooks/suppers';
+import { useSetTable, type SetTableInput, type SetTableResult } from '@/hooks/suppers';
 import { InitialsAvatar } from './InitialsAvatar';
 
 type Palette = typeof Colors.light;
@@ -48,12 +56,31 @@ interface SetTableSheetProps {
     restaurant: SetTableRestaurant;
     /** Preselected Table (when launched from a Table feed). Else the user picks. */
     tableId?: string | null;
+    /**
+     * TICKET-159 submit-adapter: when provided, the sheet submits through THIS
+     * instead of the internal useSetTable (rescue-mode injects
+     * useRescueGathering here). Must resolve to a SetTableResult.
+     */
+    onSubmit?: (input: SetTableInput) => Promise<SetTableResult>;
+    /** Locks the Table to this id — the picker never renders (rescue-mode). */
+    lockedTableId?: string | null;
+    /** Preselected crew ids (rescue: the gather's in/counter members). When
+     *  omitted, the crew defaults to the whole Table minus you (set-mode). */
+    initialMemberIds?: string[];
 }
 
 const SHEET_HEIGHT = 640;
 const DRAG_DISMISS_THRESHOLD = 80;
 
-export function SetTableSheet({ visible, onClose, restaurant, tableId }: SetTableSheetProps) {
+export function SetTableSheet({
+    visible,
+    onClose,
+    restaurant,
+    tableId,
+    onSubmit,
+    lockedTableId,
+    initialMemberIds,
+}: SetTableSheetProps) {
     const scheme = 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
@@ -72,29 +99,45 @@ export function SetTableSheet({ visible, onClose, restaurant, tableId }: SetTabl
     );
 
     const [step, setStep] = useState<'compose' | 'confirm'>('compose');
-    const [selectedTableId, setSelectedTableId] = useState<string | null>(tableId ?? null);
+    const [selectedTableId, setSelectedTableId] = useState<string | null>(
+        lockedTableId ?? tableId ?? null,
+    );
     const [crew, setCrew] = useState<Set<string>>(new Set());
     const [crewInit, setCrewInit] = useState(false);
     const [result, setResult] = useState<SetTableResult | null>(null);
+    // Adapter submissions track their own pending flag (useSetTable.isPending
+    // only covers the internal set-mode adapter).
+    const [submitting, setSubmitting] = useState(false);
 
     const setTable = useSetTable();
     const { data: members, isLoading: loadingMembers } = useTableMembers(selectedTableId);
 
-    // Default the Table to the only one (or the prop) when the sheet opens.
+    // Default the Table to the lock, the prop, or the only one when the sheet opens.
     useEffect(() => {
         if (!visible) return;
+        if (lockedTableId && selectedTableId !== lockedTableId) {
+            setSelectedTableId(lockedTableId);
+            return;
+        }
         if (!selectedTableId) {
             setSelectedTableId(tableId ?? (tableList.length === 1 ? tableList[0]?.id ?? null : null));
         }
-    }, [visible, tableId, tableList, selectedTableId]);
+    }, [visible, tableId, lockedTableId, tableList, selectedTableId]);
 
-    // Default the crew to the whole Table (minus you) once members load.
+    // Default the crew once members load: the caller's preselection (rescue —
+    // the gather's in/counter members, intersected with current members) when
+    // provided, else the whole Table minus you. Host can still toggle freely.
     useEffect(() => {
         if (!members || crewInit) return;
         const others = members.map((m) => m.member_id).filter((id) => id !== user?.id);
-        setCrew(new Set(others));
+        if (initialMemberIds) {
+            const preselect = new Set(initialMemberIds);
+            setCrew(new Set(others.filter((id) => preselect.has(id))));
+        } else {
+            setCrew(new Set(others));
+        }
         setCrewInit(true);
-    }, [members, crewInit, user?.id]);
+    }, [members, crewInit, user?.id, initialMemberIds]);
 
     // Reset everything when the sheet closes.
     useEffect(() => {
@@ -103,8 +146,9 @@ export function SetTableSheet({ visible, onClose, restaurant, tableId }: SetTabl
         setResult(null);
         setCrew(new Set());
         setCrewInit(false);
-        setSelectedTableId(tableId ?? null);
-    }, [visible, tableId]);
+        setSubmitting(false);
+        setSelectedTableId(lockedTableId ?? tableId ?? null);
+    }, [visible, tableId, lockedTableId]);
 
     // ── Open / close animation ───────────────────────────────────────────────
     useEffect(() => {
@@ -139,7 +183,8 @@ export function SetTableSheet({ visible, onClose, restaurant, tableId }: SetTabl
 
     const others = (members ?? []).filter((m) => m.member_id !== user?.id);
     const seatCount = 1 + crew.size;
-    const canSet = !!selectedTableId && !!restaurant.id && !setTable.isPending;
+    const isPending = submitting || setTable.isPending;
+    const canSet = !!selectedTableId && !!restaurant.id && !isPending;
 
     const toggleCrew = (memberId: string) => {
         setCrew((prev) => {
@@ -150,19 +195,27 @@ export function SetTableSheet({ visible, onClose, restaurant, tableId }: SetTabl
         });
     };
 
-    const handleSetTable = () => {
+    const handleSetTable = async () => {
         if (!canSet || !selectedTableId || !restaurant.id) return;
-        setTable.mutate(
-            { table_id: selectedTableId, restaurant_id: restaurant.id, member_ids: [...crew] },
-            {
-                onSuccess: (res) => {
-                    setResult(res);
-                    setStep('confirm');
-                    toast.show(`table set — ${res.member_count} seats, 0 gathered`);
-                },
-                onError: () => toast.show("couldn't set the table"),
-            },
-        );
+        const input: SetTableInput = {
+            table_id: selectedTableId,
+            restaurant_id: restaurant.id,
+            member_ids: [...crew],
+        };
+        // Submit-adapter (TICKET-159): the caller's adapter (rescue) or the
+        // internal set-mode default — same input, same SetTableResult out.
+        const submit = onSubmit ?? ((i: SetTableInput) => setTable.mutateAsync(i));
+        setSubmitting(true);
+        try {
+            const res = await submit(input);
+            setResult(res);
+            setStep('confirm');
+            toast.show(`table set — ${res.member_count} seats, 0 gathered`);
+        } catch {
+            toast.show("couldn't set the table");
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     const handleAddTakeNow = () => {
@@ -239,8 +292,10 @@ export function SetTableSheet({ visible, onClose, restaurant, tableId }: SetTabl
                                 </View>
                             </View>
 
-                            {/* Table picker — only when the user has more than one */}
-                            {tableList.length > 1 ? (
+                            {/* Table picker — only when the user has more than one AND
+                                the caller didn't lock it (rescue recovers THIS plan's
+                                table, so the picker never renders in rescue-mode). */}
+                            {!lockedTableId && tableList.length > 1 ? (
                                 <>
                                     <Text style={[styles.kicker, { color: palette.textMuted, marginTop: 22 }]}>The table</Text>
                                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tableChips}>
@@ -314,7 +369,7 @@ export function SetTableSheet({ visible, onClose, restaurant, tableId }: SetTabl
                             accessibilityRole="button"
                             accessibilityLabel="set the table"
                         >
-                            {setTable.isPending ? (
+                            {isPending ? (
                                 <ActivityIndicator size="small" color="#fff" />
                             ) : (
                                 <Text style={styles.ctaText}>set the table</Text>

@@ -60,6 +60,12 @@ import {
 import { MergeCandidateCard } from '@/components/create-entry/MergeCandidateCard';
 import { useMergeCandidate } from '@/hooks/rounds/useMergeCandidate';
 import { useCreateEntryWithMerge } from '@/hooks/rounds/useCreateEntryWithMerge';
+import {
+    useAttachTakeToSupper,
+    isAttachConflict,
+    type SupperSuggestion,
+} from '@/hooks/suppers';
+import { StitchConfirmSheet } from '@/components/suppers';
 import { useToast } from '@/providers/ToastProvider';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import { safeRandomUUID } from '@/lib/uuid';
@@ -197,6 +203,11 @@ export default function CreateEntryScreen() {
     const startRound = useStartRound(user?.id, roundTableId);
     // TICKET-044: combined merge mutation for the in-flow [merge] action.
     const createEntryWithMerge = useCreateEntryWithMerge();
+    // TICKET-159 stray-log stitch: the create response may carry a
+    // supper_suggestion — the save then holds on a confirm sheet instead of
+    // popping straight back (the entry never auto-attaches).
+    const attachTake = useAttachTakeToSupper();
+    const [stitch, setStitch] = useState<{ suggestion: SupperSuggestion; entryId: string } | null>(null);
     const toast = useToast();
 
     // TICKET-075: route a refreshed-and-still-401 session expiry to re-auth.
@@ -699,6 +710,8 @@ export default function CreateEntryScreen() {
         const restaurantLabel = selectedPlace?.name ?? query.trim();
 
         try {
+            // TICKET-159: the entry create response may carry a supper_suggestion.
+            let entryResult: { id?: string; supper_suggestion?: SupperSuggestion | null } | null = null;
             if (postMode === 'round') {
                 // Frozen payload shape lives in lib/composer.ts (jest-covered).
                 await startRound.mutateAsync({
@@ -711,7 +724,7 @@ export default function CreateEntryScreen() {
                 });
             } else {
                 // TICKET-043: table_ids (multi-Table). Frozen shape in lib/composer.ts.
-                await createEntry.mutateAsync({
+                entryResult = await createEntry.mutateAsync({
                     restaurant: restaurantData,
                     ...buildEntryPayload({
                         rating, notes, dish, photos, breakdown,
@@ -724,6 +737,12 @@ export default function CreateEntryScreen() {
             // Post-save toast: brand grammar lowercase past-tense
             if (restaurantLabel) {
                 toast.show(`tried ${restaurantLabel}`);
+            }
+            // TICKET-159: a supper_suggestion holds the pop-back for the
+            // "add this to the table?" confirm; both answers land back.
+            if (entryResult?.supper_suggestion?.supper_id && entryResult?.id) {
+                setStitch({ suggestion: entryResult.supper_suggestion, entryId: entryResult.id });
+                return;
             }
             router.back();
         } catch (e: any) {
@@ -1114,6 +1133,41 @@ export default function CreateEntryScreen() {
                 value={visitedAt}
                 onChange={handleCalendarChange}
                 onClose={() => setCalendarVisible(false)}
+            />
+
+            {/* TICKET-159 stray-log stitch — "add this to the table?" */}
+            <StitchConfirmSheet
+                visible={!!stitch}
+                suggestion={stitch?.suggestion ?? null}
+                pending={attachTake.isPending}
+                onConfirm={() => {
+                    if (!stitch) return;
+                    attachTake.mutate(
+                        { entry_id: stitch.entryId, supper_id: stitch.suggestion.supper_id },
+                        {
+                            onSuccess: () => {
+                                toast.show('added your take');
+                                setStitch(null);
+                                router.back();
+                            },
+                            onError: (err) => {
+                                // A stale/duplicate confirm is a quiet outcome, not an error.
+                                toast.show(
+                                    isAttachConflict(err)
+                                        ? 'already added to this table'
+                                        : "couldn't add it — kept as your log",
+                                );
+                                setStitch(null);
+                                router.back();
+                            },
+                        },
+                    );
+                }}
+                onDismiss={() => {
+                    // NEGATIVE (never auto-attach): the entry stays standalone.
+                    setStitch(null);
+                    router.back();
+                }}
             />
         </>
     );

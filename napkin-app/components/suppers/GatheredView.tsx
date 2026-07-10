@@ -40,8 +40,21 @@ function firstLine(content: string | null): string | null {
     return line.length > 80 ? `${line.slice(0, 79)}…` : line;
 }
 
+/**
+ * TICKET-159 lineage dates — short-date, lowercase, HKT: '30 jun'.
+ * Accepts an ISO timestamptz (planned) or a 'YYYY-MM-DD' (gathered — parsed as
+ * UTC midnight, which formats to the same calendar day in HKT).
+ */
+function lineageDate(iso: string): string {
+    const d = new Date(iso.includes('T') ? iso : `${iso}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d
+        .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Hong_Kong' })
+        .toLowerCase();
+}
+
 export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, onAddTake }: GatheredViewProps) {
-    const { restaurant, roster, takes } = detail;
+    const { restaurant, roster, takes, lineage } = detail;
     const restaurantName = restaurant?.name ?? 'the table';
 
     const takeByUser = useMemo(() => new Map(takes.map((t) => [t.user_id, t])), [takes]);
@@ -102,6 +115,13 @@ export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, on
                     <Text style={[styles.title, { color: palette.text }]}>
                         {headCount} gathered at {restaurantName}
                     </Text>
+                    {/* TICKET-159 provenance — one quiet meta line, only for a
+                        gather-born supper: `planned 30 jun · gathered 10 jul`. */}
+                    {lineage ? (
+                        <Text style={[styles.lineage, { color: palette.textMuted }]} numberOfLines={1}>
+                            planned {lineageDate(lineage.planned)} · gathered {lineageDate(lineage.gathered)}
+                        </Text>
+                    ) : null}
                     <View style={styles.headerMeta}>
                         <View style={styles.avatarRow}>
                             {roster.slice(0, 5).map((r, i) => (
@@ -253,6 +273,8 @@ const styles = StyleSheet.create({
     backText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
     header: { paddingHorizontal: Spacing.lg, paddingTop: 4 },
     title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 24, letterSpacing: -0.3 },
+    // Lineage — muted Manrope meta under the title; context, never content.
+    lineage: { fontFamily: 'Manrope_500Medium', fontSize: 12, letterSpacing: 0.2, marginTop: 6 },
     headerMeta: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 10 },
     avatarRow: { flexDirection: 'row' },
     metaKicker: { fontFamily: 'Manrope_700Bold', fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase' },
