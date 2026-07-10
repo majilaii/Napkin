@@ -2,9 +2,8 @@
  * TICKET-125 — For You block composition, pure so the "everything empty" answer
  * and block ordering are verified, not eyeballed (mirrors railMode.test.ts).
  *
- * Rule (TICKET-130 Gazette mix order): fixed order trending → public_lists →
- * people → discovery; only visible blocks are included; all-false ⇒ [] (⇒ For
- * You empty fallback).
+ * Rule: fixed order public_lists → trending → people; only visible blocks are
+ * included; all-false ⇒ [] (⇒ For You empty fallback).
  */
 import { visibleForYouBlocks, type ForYouFlags } from '../forYouBlocks';
 
@@ -12,7 +11,6 @@ const NONE: ForYouFlags = {
     hasPublicLists: false,
     railVisible: false,
     hasCoDiners: false,
-    hasDiscovery: false,
 };
 
 function types(flags: ForYouFlags): string[] {
@@ -30,9 +28,8 @@ describe('visibleForYouBlocks', () => {
                 hasPublicLists: true,
                 railVisible: true,
                 hasCoDiners: true,
-                hasDiscovery: true,
             }),
-        ).toEqual(['trending', 'public_lists', 'people', 'discovery']);
+        ).toEqual(['public_lists', 'trending', 'people']);
     });
 
     it('public lists only', () => {
@@ -47,10 +44,6 @@ describe('visibleForYouBlocks', () => {
         expect(types({ ...NONE, hasCoDiners: true })).toEqual(['people']);
     });
 
-    it('discovery only', () => {
-        expect(types({ ...NONE, hasDiscovery: true })).toEqual(['discovery']);
-    });
-
     it('order is stable regardless of which subset is on (people + public_lists)', () => {
         // Flags supplied "out of order" — output must still be public_lists first.
         expect(types({ ...NONE, hasCoDiners: true, hasPublicLists: true })).toEqual([
@@ -59,35 +52,27 @@ describe('visibleForYouBlocks', () => {
         ]);
     });
 
-    it('trending + public_lists (trending leads the Gazette mix)', () => {
+    it('trending + public_lists (authored lists lead the feed)', () => {
         expect(types({ ...NONE, railVisible: true, hasPublicLists: true })).toEqual([
-            'trending',
             'public_lists',
+            'trending',
         ]);
     });
 
-    it('trending + people (rail owns discovery, so no discovery block)', () => {
+    it('trending + people', () => {
         expect(types({ ...NONE, railVisible: true, hasCoDiners: true })).toEqual([
             'trending',
             'people',
         ]);
     });
 
-    it('public_lists + discovery (rail hidden path)', () => {
-        expect(types({ ...NONE, hasPublicLists: true, hasDiscovery: true })).toEqual([
-            'public_lists',
-            'discovery',
-        ]);
-    });
-
     it('every flag combination yields a subset in canonical order', () => {
-        const ORDER = ['trending', 'public_lists', 'people', 'discovery'];
-        for (let mask = 0; mask < 16; mask++) {
+        const ORDER = ['public_lists', 'trending', 'people'];
+        for (let mask = 0; mask < 8; mask++) {
             const flags: ForYouFlags = {
                 hasPublicLists: !!(mask & 1),
                 railVisible: !!(mask & 2),
                 hasCoDiners: !!(mask & 4),
-                hasDiscovery: !!(mask & 8),
             };
             const out = types(flags);
             // Result is always a subsequence of the canonical order.
@@ -99,7 +84,6 @@ describe('visibleForYouBlocks', () => {
                 flags.hasPublicLists,
                 flags.railVisible,
                 flags.hasCoDiners,
-                flags.hasDiscovery,
             ].filter(Boolean).length;
             expect(out).toHaveLength(trueCount);
         }

@@ -999,9 +999,38 @@ serve(async (req) => {
             });
             if (rpcErr) throw rpcErr;
 
-            // The RPC returns an explicit column list (no table_id) already
-            // recency-ordered and capped at p_limit — return the rows verbatim.
-            return jsonResponse({ data: { rows: rpcRows ?? [] } });
+            // The browse surface is visual rather than a plain search-result list.
+            // Attach one honest cover: the first restaurant in each author's list,
+            // ordered exactly as the author ordered it. The browse cap is six, so
+            // this bounded fan-out is deliberate and keeps the public-list RPC
+            // focused on its privacy gate + ranking contract.
+            const rows = (rpcRows ?? []) as Array<ListRow & Record<string, unknown>>;
+            const enrichedRows = await Promise.all(
+                rows.map(async (list) => {
+                    const orderCol = list.ranked ? 'position' : 'created_at';
+                    const orderAsc = list.ranked;
+                    const { data: firstEntry, error: coverErr } = await supabase
+                        .from('list_entries')
+                        .select('restaurant:restaurants(photo_url)')
+                        .eq('list_id', list.id)
+                        .order(orderCol, { ascending: orderAsc })
+                        .limit(1)
+                        .maybeSingle();
+                    if (coverErr) throw coverErr;
+
+                    return {
+                        ...list,
+                        cover_photo_url:
+                            (firstEntry?.restaurant as { photo_url?: string | null } | null)
+                                ?.photo_url ?? null,
+                    };
+                }),
+            );
+
+            // The RPC returns an explicit public projection (never table_id),
+            // already recency-ordered and capped at p_limit. Keep that projection
+            // intact and add only the restaurant photo URL above.
+            return jsonResponse({ data: { rows: enrichedRows } });
         }
 
         return jsonResponse({ error: 'Unknown action' }, 400);

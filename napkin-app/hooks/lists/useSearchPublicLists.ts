@@ -22,6 +22,12 @@ export interface PublicListResult {
     owner_display_name: string | null;
     owner_avatar_url: string | null;
     owner_username: string | null;
+    /**
+     * First restaurant photo in the list. Present for the Feed browse response;
+     * optional so search results from an older deployed edge function remain
+     * compatible while the function rolls out.
+     */
+    cover_photo_url?: string | null;
 }
 
 async function fetchPublicListsPage(
