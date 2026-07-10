@@ -29,8 +29,6 @@ import {
     Platform,
     KeyboardAvoidingView,
     Modal,
-    findNodeHandle,
-    UIManager,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
@@ -70,8 +68,6 @@ import {
     effectiveCommentCount,
 } from '@/hooks/posts/usePostInteractions';
 import type { Comment, Scope, TargetType } from '@/hooks/posts/usePostInteractions';
-import { ReactionPicker } from '@/components/feed/ReactionPicker';
-import { ReactorsSheet } from '@/components/posts/ReactorsSheet';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -1714,7 +1710,6 @@ function EntryDetailScreen() {
                         scope={interactionScope}
                         tableId={entry.table_id ?? undefined}
                         myReactions={myReactions}
-                        allReactions={interactions?.reactions ?? []}
                         repliesDisabled={repliesDisabled}
                         bottomInset={insets.bottom}
                         autoFocusReply={replyFocus}
@@ -2200,10 +2195,10 @@ function ReplyBubble({
 
 // ── PosterComposer ────────────────────────────────────────────────────────────
 //
-// Persistent bottom bar: a heart toggle (tap = ❤️ on/off, long-press = emoji
-// picker in table scope / reactors sheet in public scope) and an inline reply
-// composer. Replaces the old floating pill + slide-up composer. KeyboardAvoiding
-// keeps it pinned above the keyboard.
+// Persistent bottom bar: a heart toggle (like / unlike — heart-only since
+// 2026-07-10, no emoji picker) and an inline reply composer. Replaces the old
+// floating pill + slide-up composer. KeyboardAvoiding keeps it pinned above
+// the keyboard.
 
 interface PosterComposerProps {
     entryId: string;
@@ -2211,7 +2206,6 @@ interface PosterComposerProps {
     scope?: Scope;
     tableId?: string;
     myReactions: string[];
-    allReactions?: import('@/hooks/posts/usePostInteractions').Reaction[];
     repliesDisabled?: boolean;
     bottomInset: number;
     autoFocusReply?: boolean;
@@ -2227,7 +2221,6 @@ function PosterComposer({
     scope = 'table',
     tableId,
     myReactions,
-    allReactions = [],
     repliesDisabled = false,
     bottomInset,
     autoFocusReply = false,
@@ -2238,10 +2231,7 @@ function PosterComposer({
     const toggleReaction = useToggleReaction();
     const addComment = useAddComment();
 
-    const anchorRef = useRef<View>(null);
     const inputRef = useRef<TextInput>(null);
-    const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
-    const [reactorsEmoji, setReactorsEmoji] = useState<string | null>(null);
     const [body, setBody] = useState('');
     const [sendError, setSendError] = useState<string | null>(null);
 
@@ -2252,33 +2242,12 @@ function PosterComposer({
         }
     }, [autoFocusReply, replyingTo, repliesDisabled]);
 
-    const likedEmoji = myReactions.includes('❤️') ? '❤️' : myReactions[0] ?? null;
-    const liked = !!likedEmoji;
+    // Liked = any reaction of mine (legacy emoji rows count and unlike the same way).
+    const liked = myReactions.length > 0;
 
-    const applyToggle = (emoji: string) => {
-        // If switching from one emoji to another, remove the old one first.
-        if (!myReactions.includes(emoji) && likedEmoji && likedEmoji !== emoji) {
-            toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji: likedEmoji, scope, tableId });
-        }
+    const handleTapLike = () => {
+        const emoji = myReactions[0] ?? '❤️';
         toggleReaction.mutate({ targetType: 'entry', targetId: entryId, emoji, scope, tableId });
-    };
-
-    const handleTapLike = () => applyToggle(liked ? likedEmoji! : '❤️');
-
-    const handleLongPress = () => {
-        if (scope === 'public') {
-            setReactorsEmoji(likedEmoji ?? '❤️');
-            return;
-        }
-        if (!anchorRef.current) return;
-        const handle = findNodeHandle(anchorRef.current);
-        if (handle == null) return;
-        UIManager.measureInWindow(handle, (x, y) => setPickerAnchor({ x, y }));
-    };
-
-    const handlePick = (emoji: string) => {
-        setPickerAnchor(null);
-        applyToggle(emoji);
     };
 
     const trimmed = body.trim();
@@ -2337,10 +2306,7 @@ function PosterComposer({
                 ) : null}
                 <View style={styles.composerRow}>
                     <Pressable
-                        ref={anchorRef}
                         onPress={handleTapLike}
-                        onLongPress={handleLongPress}
-                        delayLongPress={220}
                         hitSlop={6}
                         style={[
                             styles.composerHeart,
@@ -2350,17 +2316,13 @@ function PosterComposer({
                             },
                         ]}
                         accessibilityRole="button"
-                        accessibilityLabel={liked ? 'Unlike' : 'Like (long-press to pick an emoji)'}
+                        accessibilityLabel={liked ? 'Unlike' : 'Like'}
                     >
-                        {liked && likedEmoji !== '❤️' ? (
-                            <Text style={styles.composerHeartEmoji} allowFontScaling={false}>{likedEmoji}</Text>
-                        ) : (
-                            <Ionicons
-                                name={liked ? 'heart' : 'heart-outline'}
-                                size={22}
-                                color={liked ? palette.primary : palette.textSecondary}
-                            />
-                        )}
+                        <Ionicons
+                            name={liked ? 'heart' : 'heart-outline'}
+                            size={22}
+                            color={liked ? palette.primary : palette.textSecondary}
+                        />
                     </Pressable>
 
                     {!repliesDisabled ? (
@@ -2409,22 +2371,6 @@ function PosterComposer({
                     )}
                 </View>
             </View>
-
-            <ReactionPicker
-                visible={!!pickerAnchor}
-                anchor={pickerAnchor}
-                onPick={handlePick}
-                onClose={() => setPickerAnchor(null)}
-            />
-
-            {reactorsEmoji !== null && (
-                <ReactorsSheet
-                    emoji={reactorsEmoji}
-                    reactors={allReactions.filter((r) => r.emoji === reactorsEmoji)}
-                    onClose={() => setReactorsEmoji(null)}
-                    scope={scope}
-                />
-            )}
         </KeyboardAvoidingView>
     );
 }
@@ -2699,7 +2645,6 @@ const styles = StyleSheet.create({
     },
     composerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     composerHeart: { width: 48, height: 48, borderRadius: 24, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
-    composerHeartEmoji: { fontSize: 20, lineHeight: 24 },
     composerInputPill: {
         flex: 1,
         minHeight: 48,

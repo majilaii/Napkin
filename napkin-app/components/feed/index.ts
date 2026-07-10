@@ -11,7 +11,6 @@ export { DateSectionHeader } from './DateSectionHeader';
 export { CompactEntryRow } from './CompactEntryRow';
 export { ActiveRoundsShelf } from './ActiveRoundsShelf';
 export { FeedActionRow } from './FeedActionRow';
-export { ReactionPicker } from './ReactionPicker';
 
 // TICKET-060: multimodal import feed cards
 export { SharedSaveCard, type SharedSaveCardProps, type SharedSaveCardRestaurant } from './SharedSaveCard';

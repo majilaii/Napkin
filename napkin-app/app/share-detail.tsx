@@ -1,12 +1,15 @@
 /**
  * share-detail — the thread for a shared_save (a restaurant a Tablemate posted to
- * the Table feed). Makes a share a first-class post: react with any emoji and reply
- * ("let's go", "next weekend?") instead of the old single 👀 "I'm in" toggle.
+ * the Table feed). A share is a first-class post: heart it and reply
+ * ("let's go", "next weekend?").
  *
  * Reuses the post-interaction stack with targetType='table_share', scope='table':
  * usePostInteractions / useToggleReaction / useAddComment / CommentRow. The share's
  * display data (author, restaurant, note) is passed via params so the header renders
  * without an extra fetch; reactions + comments load live.
+ *
+ * Hearts are like/unlike (heart-only, 2026-07-10). Any legacy emoji reaction the
+ * viewer still holds counts as "liked" and toggles off the same way.
  *
  * The author can retract the share here (useRemoveShare) — the orphan fix.
  */
@@ -39,8 +42,6 @@ import { useRemoveShare } from '@/hooks/posts/useRemoveShare';
 import { CommentRow } from '@/components/posts/CommentRow';
 import { OwnerActionsSheet } from '@/components/common';
 import { safeRandomUUID } from '@/lib/uuid';
-
-const EMOJIS = ['🔥', '😋', '❤️', '💯', '👀'] as const;
 
 interface SharePayload {
     author?: { user_id?: string; display_name?: string | null; avatar_url?: string | null };
@@ -86,23 +87,21 @@ export default function ShareDetailScreen() {
     const [retractSheet, setRetractSheet] = useState(false);
     const inputRef = useRef<TextInput>(null);
 
-    const myReactions = useMemo(
-        () => new Set((interactions?.reactions ?? []).filter((r: any) => r.user_id === user?.id).map((r: any) => r.emoji)),
+    // Liked = the viewer holds ANY reaction (legacy emoji rows count too).
+    const myReactionEmojis = useMemo(
+        () => (interactions?.reactions ?? []).filter((r: any) => r.user_id === user?.id).map((r: any) => r.emoji as string),
         [interactions?.reactions, user?.id],
     );
-    const countFor = useCallback(
-        (emoji: string) =>
-            (interactions?.counts?.top_emojis ?? []).find((t: any) => t.emoji === emoji)?.count ?? 0,
-        [interactions?.counts?.top_emojis],
-    );
+    const liked = myReactionEmojis.length > 0;
+    const likeCount = interactions?.counts?.reactions ?? 0;
 
-    const handleReact = useCallback(
-        (emoji: string) => {
-            if (!shareId) return;
-            toggleReaction.mutate({ targetType: 'table_share', targetId: shareId, emoji, tableId, scope: 'table' });
-        },
-        [toggleReaction, shareId, tableId],
-    );
+    const handleToggleLike = useCallback(() => {
+        if (!shareId) return;
+        // Unliking a legacy reaction sends its own emoji so the optimistic
+        // patch matches the cached row; the server removes any reaction either way.
+        const emoji = myReactionEmojis[0] ?? '❤️';
+        toggleReaction.mutate({ targetType: 'table_share', targetId: shareId, emoji, tableId, scope: 'table' });
+    }, [toggleReaction, shareId, tableId, myReactionEmojis]);
 
     const handleSend = useCallback(() => {
         const trimmed = body.trim();
@@ -206,40 +205,35 @@ export default function ShareDetailScreen() {
                         <Text style={[styles.note, { color: palette.text }]}>{`— ${share.note}`}</Text>
                     ) : null}
 
-                    {/* Reaction row — any emoji, not a single "I'm in" */}
-                    <View style={styles.reactionRow}>
-                        {EMOJIS.map((e) => {
-                            const active = myReactions.has(e);
-                            const n = countFor(e);
-                            return (
-                                <Pressable
-                                    key={e}
-                                    onPress={() => handleReact(e)}
-                                    style={[
-                                        styles.reactionPill,
-                                        {
-                                            backgroundColor: active ? palette.primaryMuted : palette.surfaceJournalLow,
-                                        },
-                                    ]}
-                                    accessibilityLabel={`react ${e}`}
-                                >
-                                    <Text style={styles.reactionEmoji}>{e}</Text>
-                                    {n > 0 ? (
-                                        <Text style={[styles.reactionCount, { color: active ? palette.primary : palette.textMuted }]}>{n}</Text>
-                                    ) : null}
-                                </Pressable>
-                            );
-                        })}
+                    {/* Heart — like / unlike */}
+                    <View style={styles.likeRow}>
+                        <Pressable
+                            onPress={handleToggleLike}
+                            hitSlop={8}
+                            style={[
+                                styles.likePill,
+                                {
+                                    backgroundColor: liked ? palette.primaryMuted : palette.surfaceJournalLow,
+                                },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel={liked ? 'Unlike' : 'Like'}
+                        >
+                            <Ionicons
+                                name={liked ? 'heart' : 'heart-outline'}
+                                size={18}
+                                color={liked ? palette.primary : palette.textSecondary}
+                            />
+                            {likeCount > 0 ? (
+                                <Text style={[styles.likeCount, { color: liked ? palette.primary : palette.textMuted }]}>{likeCount}</Text>
+                            ) : null}
+                        </Pressable>
                     </View>
                 </View>
 
-                {/* Comments */}
+                {/* Comments — no empty-state prompt; the composer carries the invite. */}
                 <View style={styles.commentsWrap}>
-                    {comments.length === 0 ? (
-                        <Text style={[Type.bodySmall, { color: palette.textMuted, paddingHorizontal: 14, paddingVertical: Spacing.sm }]}>
-                            {'be the first to say something — “let’s go?”'}
-                        </Text>
-                    ) : (
+                    {comments.length === 0 ? null : (
                         threadRoots.map((root: any) => (
                             <React.Fragment key={root.id}>
                                 <CommentRow
@@ -344,10 +338,9 @@ const styles = StyleSheet.create({
     restaurantRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm },
     restaurantName: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 20, lineHeight: 24 },
     note: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 16, lineHeight: 24, marginBottom: Spacing.md },
-    reactionRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-    reactionPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, minHeight: 34 },
-    reactionEmoji: { fontSize: 15 },
-    reactionCount: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
+    likeRow: { flexDirection: 'row' },
+    likePill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, minHeight: 34 },
+    likeCount: { fontFamily: 'Manrope_600SemiBold', fontSize: 12, fontVariant: ['tabular-nums'] },
     commentsWrap: { borderTopWidth: 1, borderTopColor: 'rgba(28,28,25,0.06)', paddingTop: Spacing.sm },
     removeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: Spacing.lg, paddingVertical: Spacing.md },
     removeLabel: { fontFamily: 'Manrope_500Medium', fontSize: 13 },

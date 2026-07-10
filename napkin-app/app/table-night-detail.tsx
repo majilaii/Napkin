@@ -517,7 +517,6 @@ export default function TableNightDetailScreen() {
                             <FeedActionRow
                                 targetType="table_night"
                                 targetId={nightId}
-                                topEmojis={interactions?.counts.top_emojis ?? []}
                                 reactionCount={interactions?.counts.reactions ?? 0}
                                 commentCount={effectiveCommentCount(interactions)}
                                 myReactions={
