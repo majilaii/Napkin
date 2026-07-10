@@ -564,18 +564,25 @@ grant execute on function public.fn_supper_stitch_suggestion(uuid, uuid, timesta
 
 -- ── 13. pg_cron: the hourly gathering sweep ──────────────────────────────────
 -- pg_cron is a HARD prerequisite on prod (the prod-deploy.yml gate fails smoke
--- → auto-revert when cron.job lacks 'gathering-sweep'). The replay/CI
--- throwaway DB may lack the extension binary entirely, so BOTH the CREATE
--- EXTENSION and the schedule are guarded — replay stays green while prod gets
--- the job. Distinct dollar-quote tags ($do$ / $job$ — 20260504000001 idiom).
--- cron.schedule upserts by jobname, so re-applying never duplicates the job.
+-- → auto-revert when cron.job lacks 'gathering-sweep'). A replay/throwaway DB
+-- may lack the extension binary entirely, so the whole block is guarded twice:
+-- pg_available_extensions gates the CREATE (never even attempt a load when the
+-- control file is absent), and an EXCEPTION handler catches a failed install
+-- (wrong cron.database_name, no shared_preload_libraries, …) — replay stays
+-- green while prod gets the job. Distinct dollar-quote tags ($do$ / $job$ —
+-- 20260504000001 idiom). cron.schedule upserts by jobname, so re-applying
+-- never duplicates the job.
 do $do$
 begin
-    begin
-        create extension if not exists pg_cron;
-    exception when others then
-        raise warning 'TICKET-159: pg_cron unavailable in this database (%) — gathering-sweep NOT scheduled here. Prod presence is enforced by the deploy gate.', sqlerrm;
-    end;
+    if exists (select 1 from pg_available_extensions where name = 'pg_cron') then
+        begin
+            create extension if not exists pg_cron;
+        exception when others then
+            raise warning 'TICKET-159: pg_cron install failed in this database (%) — gathering-sweep NOT scheduled here. Prod presence is enforced by the deploy gate.', sqlerrm;
+        end;
+    else
+        raise warning 'TICKET-159: pg_cron is not available in this database — gathering-sweep NOT scheduled here. Prod presence is enforced by the deploy gate.';
+    end if;
 
     if exists (select 1 from pg_extension where extname = 'pg_cron') then
         perform cron.schedule(
