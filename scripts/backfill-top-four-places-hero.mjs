@@ -157,7 +157,9 @@ async function fetchAll(pathAndQuery) {
     const all = [];
     for (;;) {
         const sep = pathAndQuery.includes('?') ? '&' : '?';
-        const url = `${SB_URL}/rest/v1/${pathAndQuery}${sep}limit=${pageSize}&offset=${offset}`;
+        // order=id: PostgREST adds no implicit sort, and offset pagination over an
+        // unordered scan can skip/duplicate rows between pages (review WARN, 2026-07-10).
+        const url = `${SB_URL}/rest/v1/${pathAndQuery}${sep}order=id&limit=${pageSize}&offset=${offset}`;
         const res = await fetch(url, { headers: REST_HEADERS });
         if (!res.ok) {
             const b = await res.text();
