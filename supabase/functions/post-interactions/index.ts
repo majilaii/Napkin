@@ -40,6 +40,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 
+// Heart-only since 2026-07-10: the client only ever sends ❤️ (a reaction IS a
+// like). The other four stay accepted for old builds in the field — the react
+// toggle treats any of them as "liked" and stored rows were canonicalized to ❤️
+// by migration 20260710170000.
 const VALID_EMOJIS = ['🔥', '😋', '❤️', '💯', '👀'] as const;
 type ValidEmoji = typeof VALID_EMOJIS[number];
 
@@ -464,22 +468,29 @@ serve(async (req) => {
                     }
                 }
 
-                // Toggle: delete if exists, insert if missing
-                const { data: existing } = await supabase
+                // Like/unlike toggle (heart-only client). ANY existing reaction by
+                // this user in this scope counts as "liked" — legacy 🔥/😋/💯/👀
+                // rows and old builds still sending them toggle off the same way.
+                // The 20260710170000 migration enforces one row per
+                // (target_type, target_id, user_id, scope).
+                const { data: existingRows, error: existingErr } = await supabase
                     .from('post_reactions')
                     .select('id')
                     .eq('target_type', target_type)
                     .eq('target_id', target_id)
                     .eq('user_id', user.id)
-                    .eq('emoji', emoji)
-                    .eq('scope', scope)
-                    .maybeSingle();
+                    .eq('scope', scope);
+                if (existingErr) throw existingErr;
 
-                if (existing) {
-                    await supabase
+                if ((existingRows ?? []).length > 0) {
+                    const { error: deleteErr } = await supabase
                         .from('post_reactions')
                         .delete()
-                        .eq('id', existing.id);
+                        .eq('target_type', target_type)
+                        .eq('target_id', target_id)
+                        .eq('user_id', user.id)
+                        .eq('scope', scope);
+                    if (deleteErr) throw deleteErr;
 
                     const counts = await readReactionCounts(target_type, target_id, scope);
                     return json({ added: false, removed: true, reaction: null, counts });
@@ -495,13 +506,31 @@ serve(async (req) => {
                     // (the trigger handles it, but we pass it if known)
                     if (insertTableId) insertPayload.table_id = insertTableId;
 
-                    const { data: reaction, error: insertError } = await supabase
+                    let reaction: Record<string, unknown> | null = null;
+                    const { data: inserted, error: insertError } = await supabase
                         .from('post_reactions')
                         .insert(insertPayload)
                         .select()
                         .single();
 
-                    if (insertError) throw insertError;
+                    if (insertError) {
+                        // SELECT-then-INSERT race: a concurrent double-tap landed the
+                        // row first and the one-per-user-per-scope constraint rejected
+                        // ours. That's "already liked", not a 500 — return the winner.
+                        if ((insertError as { code?: string }).code !== '23505') throw insertError;
+                        const { data: winner, error: winnerErr } = await supabase
+                            .from('post_reactions')
+                            .select()
+                            .eq('target_type', target_type)
+                            .eq('target_id', target_id)
+                            .eq('user_id', user.id)
+                            .eq('scope', scope)
+                            .maybeSingle();
+                        if (winnerErr) throw winnerErr;
+                        reaction = winner;
+                    } else {
+                        reaction = inserted;
+                    }
 
                     // Hydrate the reactor's profile so the client can render
                     // avatar/name without a follow-up fetch.
@@ -515,7 +544,7 @@ serve(async (req) => {
                     return json({
                         added: true,
                         removed: false,
-                        reaction: { ...reaction, profiles: reactorProfile ?? null },
+                        reaction: reaction ? { ...reaction, profiles: reactorProfile ?? null } : null,
                         counts,
                     });
                 }

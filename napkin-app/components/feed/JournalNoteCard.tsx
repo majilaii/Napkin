@@ -15,27 +15,20 @@
  *
  * Does NOT use extractHighlight — empty note handling is deliberate and explicit.
  */
-import React, { useRef, useState } from 'react';
+import React from 'react';
 import {
     View,
     Text,
     StyleSheet,
     Pressable,
-    findNodeHandle,
-    UIManager,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
-import { queryKeys } from '@/lib/queryKeys';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
-import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { formatCompanions } from '@/lib/companions';
 import { PullQuote, GiantRatingNumeral } from '@/components/ui/napkin';
 import { FeedActionRow } from './FeedActionRow';
-import { ReactionPicker } from './ReactionPicker';
 
 type Palette = typeof Colors.light;
 
@@ -80,8 +73,6 @@ function emptyNoteText(dish: string | null | undefined): string {
 
 export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
     const router = useRouter();
-    const toggleReaction = useToggleReaction();
-    const queryClient = useQueryClient();
 
     const restaurantName = item.restaurants?.name ?? 'somewhere';
     const neighborhoodOrCity = item.restaurants?.city ?? item.restaurants?.address ?? null;
@@ -100,44 +91,12 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
     const hasNote = !!(item.content && item.content.trim().length > 0);
     const hasRating = item.rating != null;
 
-    const cardRef = useRef<View>(null);
-    const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
-
-    const handleLongPress = () => {
-        const handle = findNodeHandle(cardRef.current);
-        if (handle == null) return;
-        Haptics.selectionAsync().catch(() => undefined);
-        UIManager.measureInWindow(handle, (x, y, width) => {
-            setPickerAnchor({ x: x + width - 40, y: y + 12 });
-        });
-    };
-
-    const handlePickEmoji = (emoji: string) => {
-        setPickerAnchor(null);
-        toggleReaction.mutate(
-            { targetType: 'entry', targetId: item.id, emoji, scope: 'table' },
-            {
-                onSuccess: () => {
-                    if (tableId) {
-                        queryClient.invalidateQueries({
-                            queryKey: queryKeys.tables.activityForTable(tableId),
-                            exact: false,
-                        });
-                    }
-                },
-            },
-        );
-    };
-
     return (
         <Pressable
             onPress={() => router.push({ pathname: '/entry-detail', params: { entryId: item.id } })}
-            onLongPress={handleLongPress}
-            delayLongPress={500}
             style={({ pressed }) => ({ opacity: pressed ? 0.95 : 1 })}
         >
             <View
-                ref={cardRef}
                 style={[
                     styles.card,
                     { backgroundColor: palette.surfaceContainerLow },
@@ -195,7 +154,6 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
                     <FeedActionRow
                         targetType="entry"
                         targetId={item.id}
-                        topEmojis={item.top_emojis ?? []}
                         reactionCount={item.reaction_count ?? 0}
                         commentCount={item.comment_count ?? 0}
                         myReactions={item.my_reactions ?? []}
@@ -206,13 +164,6 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
                     />
                 </View>
             </View>
-
-            <ReactionPicker
-                visible={!!pickerAnchor}
-                anchor={pickerAnchor}
-                onPick={handlePickEmoji}
-                onClose={() => setPickerAnchor(null)}
-            />
         </Pressable>
     );
 }

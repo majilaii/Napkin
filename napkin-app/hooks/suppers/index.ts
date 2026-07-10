@@ -14,3 +14,5 @@ export type { SetTableInput, SetTableResult } from './useSetTable';
 
 export { useAttachTakeToSupper, isAttachConflict } from './useAttachTakeToSupper';
 export type { SupperSuggestion, AttachTakeInput } from './useAttachTakeToSupper';
+export { useDeleteSupper, isSupperGone } from './useDeleteSupper';
+export type { DeleteSupperInput, DeleteSupperResult } from './useDeleteSupper';

@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
         paddingBottom: 80,
     },
     header: { paddingHorizontal: 22, paddingBottom: Spacing.md },
-    title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 26, lineHeight: 30 },
+    title: { ...Type.screenTitle },
     subtitleRow: {
         flexDirection: 'row',
         alignItems: 'baseline',

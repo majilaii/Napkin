@@ -498,6 +498,11 @@ import {
     isSpotPinnable,
     detectSourceTypeFromHost,
     isWebExtractionSource,
+    // TICKET-152: resolve_spots + pin_wishlist decision helpers.
+    validateResolveSpotsArgs,
+    normalizePinWishlist,
+    listOnlySaveKind,
+    isGhostOnlyMode,
     type SourceType,
 } from './_helpers.ts';
 export { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds };
@@ -623,7 +628,13 @@ async function resolveCandidateToPlace(
         // name overlap → ghost instead; the review UI already handles ghosts.
         if (top && !namesOverlap(candidate.name, top.name)) return null;
         return top;
-    } catch {
+    } catch (e: any) {
+        // A Places THROTTLE must stay distinguishable by callers that surface it as
+        // a resumable 503 (TICKET-152 M3: resolve_spots reserves 429 for the import
+        // budget only). Every existing caller wraps this in `catch → null`, so
+        // re-throwing the throttle is behavior-preserving for them (→ null → ghost),
+        // exactly as before. Any other failure still degrades to a ghost here.
+        if (e?.code === 'PLACES_RATE_LIMITED') throw e;
         return null;
     }
 }
@@ -651,6 +662,42 @@ function buildPlacesPayloadFromDb(row: any, fallback: ExtractedCandidate): Place
             locality: row.city ?? undefined,
         },
     };
+}
+
+// ── Shared staged→Places resolution core (TICKET-152) ─────────────────────────
+//
+// The network-touching core the maps-list branch of handleUrlResolve and the new
+// resolve_spots action both run: resolve each staged candidate to a Place in
+// parallel (the TICKET-086c similarity gate lives inside resolveCandidateToPlace).
+// It MUST stay here, not in the pure `_helpers.ts` — it does I/O (only the decision
+// helpers are pure-testable). Returns places index-aligned with `staged`, plus a
+// `throttled` flag set when a Places sub-call was rate-limited: handleUrlResolve
+// ignores it (a throttled candidate stays null → ghost, exactly as before), while
+// resolve_spots surfaces it as a resumable 503 (M3 — a transient Places throttle
+// must never be mistaken for the terminal import_spots budget).
+async function resolveStagedPlacesParallel(
+    supabase: any,
+    staged: StagedCandidate[],
+    authHeader: string,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
+    placeSignal: AbortSignal,
+): Promise<{ places: (PlacesPayload | null)[]; throttled: boolean }> {
+    let throttled = false;
+    const places = await Promise.all(
+        staged.map(async (s) => {
+            if (placeSignal.aborted) return null;
+            try {
+                return await resolveCandidateToPlace(
+                    supabase, s.extracted, authHeader, supabaseUrl, supabaseAnonKey, placeSignal,
+                );
+            } catch (e: any) {
+                if (e?.code === 'PLACES_RATE_LIMITED') throttled = true;
+                return null;
+            }
+        }),
+    );
+    return { places, throttled };
 }
 
 // ── Vision helpers (original single-candidate paths, unchanged) ───────────────
@@ -1191,6 +1238,10 @@ async function handleSaveSpots(
     // cf. table-shares/index.ts:227 canonical pattern.
     const source = body['source'] as unknown;
     const note = typeof body['note'] === 'string' ? body['note'] : null;
+    // TICKET-152: default TRUE (back-compat). `false` = list-only import — the spot
+    // lands only in the destination list, NOT the personal wishlist, so the RPC
+    // (which unconditionally pins) is skipped in favor of a direct restaurant upsert.
+    const pinWishlist = normalizePinWishlist(body['pin_wishlist']);
 
     if (!importNonce || !Array.isArray(spots) || spots.length === 0) {
         return errorResponse('INVALID_BODY', 'import_nonce and spots[] are required', 400);
@@ -1293,7 +1344,10 @@ async function handleSaveSpots(
     const results: Array<{
         candidate_id: string;
         client_nonce: string;
-        status: 'saved' | 'already_pinned' | 'failed';
+        // TICKET-152: 'ghost' is only ever produced by the pin_wishlist=false
+        // (list-only) branch below — the RPC path returns saved|already_pinned|failed,
+        // so old callers never see it.
+        status: 'saved' | 'already_pinned' | 'ghost' | 'failed';
         wishlist_id?: string | null;
         restaurant_id?: string | null;
         error?: string;
@@ -1374,6 +1428,87 @@ async function handleSaveSpots(
             }
         }
 
+        // ── TICKET-152: pin_wishlist=false → LIST-ONLY save (skip the RPC) ──────
+        // The RPC (fn_save_import_spot) unconditionally pins to the personal
+        // wishlist, so a list-only import routes AROUND it: yield a restaurant_id
+        // (for the client's destination-list add_entries) via a direct upsert, and
+        // ALWAYS mint a DB row — even for ghosts (M1) — so list-only never silently
+        // drops a spot and the lazy verify-on-open repair still fires. wishlist_id is
+        // null in every branch (nothing is pinned), which is how the digest knows to
+        // show replace·remove (no "unpin"). No migration: upsertRestaurant writes
+        // only `restaurants` and is already used above (FIX#4).
+        if (!pinWishlist) {
+            try {
+                const kind = listOnlySaveKind(resolvedRestaurantId, safeExternalId);
+                let listRestaurantId = resolvedRestaurantId;
+                if (kind === 'verified') {
+                    // Real external_id but FIX#4 didn't already produce an id — upsert now.
+                    const p = spot.place;
+                    listRestaurantId = await upsertRestaurant(supabase, {
+                        external_id: safeExternalId!,
+                        name: p?.name ?? spot.restaurant_name ?? 'Unknown',
+                        location: {
+                            address: p?.location?.address ?? undefined,
+                            locality: p?.location?.locality ?? spot.restaurant_city ?? undefined,
+                            country: p?.location?.country ?? undefined,
+                        },
+                        latitude: p?.latitude ?? undefined,
+                        longitude: p?.longitude ?? undefined,
+                        photoReference: p?.photoReference ?? undefined,
+                        photoAttributionHtml: p?.photoAttributionHtml ?? null,
+                        googleRating: p?.googleRating ?? undefined,
+                        googleRatingCount: p?.googleRatingCount ?? undefined,
+                        priceLevel: p?.priceLevel ?? undefined,
+                        cuisine: p?.cuisine ?? undefined,
+                        phone: p?.phone ?? undefined,
+                        website: p?.website ?? undefined,
+                        googleMapsUri: p?.googleMapsUri ?? p?.google_maps_uri ?? undefined,
+                        hours: p?.hours ?? undefined,
+                        verification: 'verified',
+                    });
+                } else if (kind === 'ghost') {
+                    // Mint a DETERMINISTIC unverified ghost row keyed on (user, nonce),
+                    // matching fn_save_import_spot's own 'ghost_{user}_{nonce}' convention
+                    // so a resume re-upserts the SAME row (ON CONFLICT external_id) — no dup.
+                    listRestaurantId = await upsertRestaurant(supabase, {
+                        external_id: buildGhostExternalId(user.id, spot.client_nonce),
+                        name: spot.restaurant_name ?? spot.place?.name ?? 'Unknown',
+                        location: {
+                            address: spot.place?.location?.address ?? undefined,
+                            locality: spot.restaurant_city ?? spot.place?.location?.locality ?? undefined,
+                        },
+                        verification: 'unverified',
+                    });
+                }
+                if (!listRestaurantId) {
+                    // A verified/existing branch that still yielded no id (upsert failed)
+                    // is a per-spot failure — never poisons the job (client marks needsLook).
+                    results.push({
+                        candidate_id: spot.candidate_id,
+                        client_nonce: spot.client_nonce,
+                        status: 'failed',
+                        error: 'could not resolve a restaurant_id for list-only save',
+                    });
+                    continue;
+                }
+                results.push({
+                    candidate_id: spot.candidate_id,
+                    client_nonce: spot.client_nonce,
+                    status: kind === 'ghost' ? 'ghost' : 'saved',
+                    wishlist_id: null,
+                    restaurant_id: listRestaurantId,
+                });
+            } catch (e: any) {
+                results.push({
+                    candidate_id: spot.candidate_id,
+                    client_nonce: spot.client_nonce,
+                    status: 'failed',
+                    error: e?.message ?? 'list-only save failed',
+                });
+            }
+            continue;
+        }
+
         try {
             const { data: rpcResult, error: rpcError } = await supabase.rpc('fn_save_import_spot', {
                 p_user_id: user.id,
@@ -1423,6 +1558,9 @@ async function handleSaveSpots(
     const savedCount = results.filter((r) => r.status === 'saved').length;
     const alreadyCount = results.filter((r) => r.status === 'already_pinned').length;
     const failedCount = results.filter((r) => r.status === 'failed').length;
+    // TICKET-152: ghost is only produced by the list-only branch; 0 for every
+    // legacy (pin_wishlist omitted) caller, so the summary stays back-compatible.
+    const ghostCount = results.filter((r) => r.status === 'ghost').length;
 
     // The batch's server job_id (minted by the RPC keyed on import_nonce) so the
     // client toast can deep-link to /imports/[jobId] for review/fix. Nested
@@ -1458,7 +1596,12 @@ async function handleSaveSpots(
     return jsonResponse({
         data: {
             results,
-            summary: { saved: savedCount, already_pinned: alreadyCount, failed: failedCount },
+            summary: {
+                saved: savedCount,
+                already_pinned: alreadyCount,
+                ghost: ghostCount,
+                failed: failedCount,
+            },
             job_id: batchJobId,
         },
     });
@@ -1561,6 +1704,173 @@ async function handleCacheClipThumb(
     return jsonResponse({ data: { ok: true } });
 }
 
+// ── resolve_spots action (TICKET-152 — large Maps-list chunked resolution) ────
+
+/**
+ * Resolve one drain chunk (≤20 {name,address,client_nonce}) of a large Maps-list
+ * import job to Places candidates. Routed like handleUrlResolve (NOT save_spots):
+ * it owns its Deadline + a stageSignal(2500) for the ≤20 parallel Places calls and
+ * threads authHeader/supabaseUrl/supabaseAnonKey into the shared resolve core so
+ * the user JWT (and thus places-search's own bucket + auth) applies (L2).
+ *
+ * Guard order is explicit (L3): arg validation → kill-switch → rate check →
+ * Places. Malformed requests 400 before burning an import_spots token; the
+ * kill-switch degrades to ghost-mode with zero Places spend and no token spend.
+ *
+ * Response nests inside `data` (callEdgeFn strips the outer envelope). It echoes
+ * every input client_nonce back as the deterministic join key — one result per
+ * item, NEVER dropping duplicates: a within-chunk true-dupe returns the same
+ * external_id twice and collapses at SAVE time (save_spots already_pinned), whereas
+ * dropping it would strand its nonce and the client would ghost-save a real dupe.
+ */
+async function handleResolveSpots(
+    supabase: any,
+    user: { id: string },
+    body: Record<string, unknown>,
+    authHeader: string,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
+): Promise<Response> {
+    // ── Guard 1 (L3): arg validation FIRST — before the rate check / any Places ──
+    const validation = validateResolveSpotsArgs(body['import_nonce'], body['items']);
+    if (validation.ok === false) {
+        return errorResponse('INVALID_BODY', validation.message, 400);
+    }
+    const items = validation.items;
+    const importNonce = body['import_nonce'] as string;
+
+    // ── Guard 2: kill-switch — global Places-spend-cap degradation lever ────────
+    // Zero Places calls AND no rate-token spend (pointless to burn a user's daily
+    // budget during a global degradation). The client ghost-saves the chunk locally.
+    if (isGhostOnlyMode(Deno.env.get('RESOLVE_SPOTS_GHOST_ONLY'))) {
+        return jsonResponse({ data: { results: [], ghost_mode: true } });
+    }
+
+    // ── Guard 3: import_spots rate bucket — AFTER validation, BEFORE Places ─────
+    // Distinct from places_search (120/hr) and resolve_url (30/hr) so imports never
+    // starve interactive search and vice-versa. Fail-CLOSED (TICKET-091). The RPC
+    // increments by 1/call and each call is ≤20 items, so p_max is requests/day.
+    // 86400s = a fixed UTC-day bucket (resets 00:00 UTC). A 429 here means ONE thing
+    // only — the import budget — so the drain reads it as budget-exhausted (M3).
+    const rawMax = Number(Deno.env.get('IMPORT_SPOTS_MAX_PER_DAY') ?? '40');
+    const importSpotsMax = Number.isFinite(rawMax) && rawMax > 0 ? Math.floor(rawMax) : 40;
+    const { data: rlRows, error: rlErr } = await supabase.rpc('check_and_increment_rate_limit', {
+        p_user_id: user.id, p_bucket_key: 'import_spots', p_max: importSpotsMax, p_window_seconds: 86400,
+    });
+    const rlRow = rlRows?.[0];
+    if (rlErr || !rlRow || !rlRow.allowed) {
+        if (rlErr) console.error('resolve-url resolve_spots rate check failed:', rlErr);
+        return jsonResponse(
+            {
+                error: {
+                    code: 'RATE_LIMITED',
+                    message: 'Daily import budget reached — try again tomorrow',
+                    details: { retry_after_seconds: rlRow?.retry_after_seconds ?? 3600 },
+                },
+            },
+            429,
+        );
+    }
+
+    // ── Places resolution — own Deadline + stageSignal for ≤20 parallel calls ──
+    const deadline = new Deadline(12000);
+    // Stage through the SAME helper the maps-list branch uses (full address rides in
+    // `area`). Output is index-aligned with `items`, so results zip back by index →
+    // client_nonce (validateResolveSpotsArgs already enforced ≤20 + nonce presence).
+    const staged = mapsItemsToStaged(
+        items.map((it) => ({ name: it.name, address: it.address })),
+        MAPS_LIST_CAP,
+    );
+    const placeSignal = deadline.stageSignal(2500);
+    const { places, throttled } = await resolveStagedPlacesParallel(
+        supabase, staged, authHeader, supabaseUrl, supabaseAnonKey, placeSignal,
+    );
+
+    // ── M3: an inner places-search throttle surfaces as 503 (NOT 429) so the drain
+    // treats it as a resumable transient, never a budget-exhaustion ghost-degrade.
+    if (throttled) {
+        return errorResponse('PLACES_RATE_LIMITED', 'Search is temporarily unavailable — try again', 503);
+    }
+
+    // ── restaurant_id is set ONLY for an existing VERIFIED DB row (mirrors the URL
+    // path) — an unverified row stays unmapped so the client's save flows the
+    // external_id path and the save-time upsert promotes it to verified.
+    const resolvedPlaceIds = places
+        .map((p) => p?.id)
+        .filter((id): id is string => !!id);
+    const { data: restaurantRows } = resolvedPlaceIds.length > 0
+        ? await supabase.from('restaurants').select('id, external_id, verification').in('external_id', resolvedPlaceIds)
+        : { data: [] };
+    const placeIdToRestaurantId = mapVerifiedRestaurantIds(restaurantRows ?? []);
+
+    const results = await Promise.all(
+        staged.map(async (s, i) => {
+            const clientNonce = items[i].client_nonce;
+            const candidateId = await computeCandidateId(importNonce, normalizeName(s.extracted.name), i);
+            const place = places[i];
+            if (place && place.id) {
+                const restaurant: PlacesPayload = {
+                    ...place,
+                    external_id: place.id,
+                    location: {
+                        address: place.formattedAddress ?? undefined,
+                        locality: place.city ?? undefined,
+                        country: place.country ?? undefined,
+                    },
+                };
+                return {
+                    client_nonce: clientNonce,
+                    candidate_id: candidateId,
+                    restaurant_id: placeIdToRestaurantId.get(place.id) ?? null,
+                    external_id: place.id,
+                    restaurant_name: place.name,
+                    restaurant_city: place.city,
+                    place: restaurant,
+                    confidence: 'high' as Confidence,
+                    ghost: false,
+                };
+            }
+            // Ghost — no Places match (similarity-gate miss / no result). Client saves
+            // it as a ghost via save_spots (external_id null) and marks it needsLook.
+            const ghostPayload: PlacesPayload = {
+                id: '',
+                name: s.extracted.name,
+                formattedAddress: s.extracted.address,
+                city: s.extracted.city,
+                country: null,
+                latitude: null,
+                longitude: null,
+                categories: [],
+                cuisine: s.extracted.cuisine,
+                googleRating: null,
+                googleRatingCount: null,
+                priceLevel: null,
+                photoReference: null,
+                website: null,
+                link: null,
+                external_id: null,
+                location: {
+                    address: s.extracted.address ?? undefined,
+                    locality: s.extracted.city ?? undefined,
+                },
+            };
+            return {
+                client_nonce: clientNonce,
+                candidate_id: candidateId,
+                restaurant_id: null,
+                external_id: null,
+                restaurant_name: s.extracted.name,
+                restaurant_city: s.extracted.city,
+                place: ghostPayload,
+                confidence: 'low' as Confidence,
+                ghost: true,
+            };
+        }),
+    );
+
+    return jsonResponse({ data: { results, ghost_mode: false } });
+}
+
 // ── Main pipeline (TICKET-063 multi-candidate URL path) ───────────────────────
 
 async function handleUrlResolve(
@@ -1573,6 +1883,10 @@ async function handleUrlResolve(
     authHeader: string,
     supabaseUrl: string,
     supabaseAnonKey: string,
+    // TICKET-152: the client advertises large-list support. When set AND the
+    // parsed Maps list exceeds the sync cap, we enumerate (name+address only) and
+    // hand the list back for the client-pumped chunked job — no Places spend here.
+    supportsLargeLists = false,
 ): Promise<Response> {
     // 086c: 8s → 12s. The 2.5s text-LLM stage aborted routinely, silently
     // falling back to a raw 3-place caption search — the founder's "3 random
@@ -1640,6 +1954,26 @@ async function handleUrlResolve(
             query = title.replace(/\s*[\|—\-]\s*.+$/, '').trim();
             oEmbedCaption = title;
         }
+    }
+
+    // ── Step 1b: large-list short-circuit (TICKET-152) ────────────────────────
+    // A Maps list exceeding the sync cap, when the client advertises
+    // supports_large_lists, is ENUMERATED here (every {name,address}, uncapped) and
+    // handed back for the client-pumped chunked import job — with NO Places call on
+    // this invocation. The discriminator is `mode: 'large_list'` (its absence ⇒ an
+    // old server / the sub-cap path). Nested inside `data` (callEdgeFn strips the
+    // outer envelope, dropping any sibling top-level fields). Old clients never send
+    // the flag → fall through to today's ≤20 truncated resolution, byte-for-byte.
+    if (mapsList && mapsList.items.length > MAPS_LIST_CAP && supportsLargeLists) {
+        return jsonResponse({
+            data: {
+                source_type: sourceType,
+                mode: 'large_list',
+                title: mapsList.title,
+                items: mapsList.items.map((it) => ({ name: it.name, address: it.address })),
+                list_count: mapsList.items.length,
+            },
+        });
     }
 
     // ── Step 2: cache check ───────────────────────────────────────────────────
@@ -1796,7 +2130,10 @@ async function handleUrlResolve(
                 note_prefill: notePrefill,
                 candidates,
                 partial_source: partialSource,
-                list_count: listMarker.count,
+                // TICKET-152 P2-4: a google_maps SINGLE-place resolve must not emit
+                // the ≤6 listicle-heuristic denominator (it is a fake "N of M" for a
+                // lone place). Omit it so clients never render a phantom count.
+                list_count: null,
             } satisfies ResolveUrlResponse,
         });
     }
@@ -1840,19 +2177,12 @@ async function handleUrlResolve(
         );
     }
 
-    // Resolve staged model candidates to Places in parallel (≤6)
+    // Resolve staged model candidates to Places in parallel (≤6) via the shared
+    // core (TICKET-152). `throttled` is ignored here: a throttled candidate stays
+    // null → ghost, byte-for-byte the prior inline `catch → null` behavior.
     const placeSignal = deadline.stageSignal(2500);
-    const placeResults = await Promise.all(
-        staged.map(async (s) => {
-            if (placeSignal.aborted) return null;
-            try {
-                return await resolveCandidateToPlace(
-                    supabase, s.extracted, authHeader, supabaseUrl, supabaseAnonKey, placeSignal,
-                );
-            } catch {
-                return null;
-            }
-        })
+    const { places: placeResults } = await resolveStagedPlacesParallel(
+        supabase, staged, authHeader, supabaseUrl, supabaseAnonKey, placeSignal,
     );
 
     // ── Step 8: post-Places dedupe by google_place_id ─────────────────────────
@@ -2298,6 +2628,12 @@ serve(async (req) => {
         note?: string;
         /** TICKET-123: opt-in — write the durable import_done inbox row on this save. */
         notify_done?: boolean;
+        /** TICKET-152: save_spots — pin to the personal wishlist (default true). */
+        pin_wishlist?: boolean;
+        /** TICKET-152: resolve_spots — the drain chunk of {name,address,client_nonce}. */
+        items?: unknown[];
+        /** TICKET-152: URL resolve — client can handle the large-list job path. */
+        supports_large_lists?: boolean;
     };
     try {
         body = await req.json();
@@ -2358,6 +2694,26 @@ serve(async (req) => {
     // the underlying save.
     if (body?.action === 'cache_clip_thumb') {
         return handleCacheClipThumb(supabase, body as Record<string, unknown>);
+    }
+
+    // ── resolve_spots action (TICKET-152 — large Maps-list chunked resolution) ─
+    // Routed like handleUrlResolve (threads auth + owns its own Deadline), NOT
+    // save_spots-style. Its own guard order (arg validation → kill-switch → the
+    // import_spots rate bucket → Places) lives inside the handler.
+    if (body?.action === 'resolve_spots') {
+        try {
+            return await handleResolveSpots(
+                supabase, user, body as Record<string, unknown>,
+                authHeader, supabaseUrl, supabaseAnonKey,
+            );
+        } catch (e: any) {
+            if (e?.name === 'AbortError') {
+                return errorResponse('TIMEOUT', 'Resolver timed out', 503);
+            }
+            console.error('resolve-url resolve_spots error:', e);
+            reportError(e, { fn: 'resolve-url', action: 'resolve_spots' });
+            return errorResponse('INTERNAL', 'Internal server error', 500);
+        }
     }
 
     // ── Video text path (TICKET-082): on-device OCR/transcript supplied ────────
@@ -2466,6 +2822,9 @@ serve(async (req) => {
             authHeader,
             supabaseUrl,
             supabaseAnonKey,
+            // TICKET-152: flag-gated — only a client that advertises support gets the
+            // large_list enumeration response; old clients keep the ≤20 truncation.
+            body?.supports_large_lists === true,
         );
     } catch (e: any) {
         if (e?.name === 'AbortError') {

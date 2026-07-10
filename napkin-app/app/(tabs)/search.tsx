@@ -468,9 +468,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.sm,
         paddingBottom: 0,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 26,
-        lineHeight: 30,
+        ...Type.screenTitle,
     },
     emptyContainer: {
         flex: 1,

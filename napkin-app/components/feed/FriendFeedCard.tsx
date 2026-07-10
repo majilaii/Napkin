@@ -52,18 +52,18 @@ function useRowNav(row: FriendFeedRow) {
             params: isOwn ? { entryId: row.id } : { entryId: row.id, viewAs: 'public' },
         });
 
+    // Liked = any reaction of mine (legacy emoji rows count and unlike the same way).
     const myReactions = row.my_reactions ?? [];
-    const likedEmoji = myReactions.includes('❤️') ? '❤️' : myReactions[0] ?? null;
-    const liked = !!likedEmoji;
+    const liked = myReactions.length > 0;
     const handleToggleLike = () =>
         toggleReaction.mutate({
             targetType: 'entry',
             targetId: row.id,
-            emoji: liked ? likedEmoji! : '❤️',
+            emoji: myReactions[0] ?? '❤️',
             scope: 'public',
         });
 
-    return { rating, onPress, liked, likedEmoji, handleToggleLike, isOwn };
+    return { rating, onPress, liked, handleToggleLike, isOwn };
 }
 
 export function FriendFeedCard({ row }: Props) {
@@ -109,7 +109,7 @@ export function FriendFeedCard({ row }: Props) {
 function NoteCard({ row, onLongPress }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const { rating, onPress, liked, likedEmoji, handleToggleLike } = useRowNav(row);
+    const { rating, onPress, liked, handleToggleLike } = useRowNav(row);
 
     const restaurantName = row.restaurant?.name ?? 'somewhere';
     const hasContent = !!row.content && row.content.trim().length > 0;
@@ -179,16 +179,14 @@ function NoteCard({ row, onLongPress }: Props) {
                     onPress={handleToggleLike}
                     hitSlop={10}
                     accessibilityRole="button"
-                    accessibilityLabel={liked ? 'Unlike' : 'React'}
+                    accessibilityLabel={liked ? 'Unlike' : 'Like'}
                     style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 4, opacity: pressed ? 0.55 : 1 })}
                 >
-                    {liked ? (
-                        <Text style={{ fontSize: 12, lineHeight: 14 }} allowFontScaling={false}>
-                            {likedEmoji}
-                        </Text>
-                    ) : (
-                        <Ionicons name="heart-outline" size={13} color={palette.textMuted} />
-                    )}
+                    <Ionicons
+                        name={liked ? 'heart' : 'heart-outline'}
+                        size={13}
+                        color={liked ? palette.primary : palette.textMuted}
+                    />
                     {row.reaction_count > 0 && (
                         <Text style={{ fontSize: 10.5, color: palette.textMuted, fontFamily: 'Manrope_400Regular' }}>
                             {row.reaction_count}

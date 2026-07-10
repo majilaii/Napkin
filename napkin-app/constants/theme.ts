@@ -318,6 +318,19 @@ export const Type = {
   } as TextStyle,
 
   // Titles — Manrope for functional
+  /**
+   * Screen/page masthead — Manrope, NOT italic serif (locked 2026-07-10).
+   * Newsreader italic is the CONTENT voice (restaurant names, Table names,
+   * rating numerals, quotes, the wordmark); navigation chrome is functional
+   * and reads in sans. Every screen title uses this one token.
+   */
+  screenTitle: {
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: -0.3,
+  } as TextStyle,
   titleLarge: {
     fontSize: 18,
     fontWeight: '600' as const,

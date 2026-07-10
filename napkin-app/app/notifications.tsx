@@ -25,7 +25,7 @@ import {
 import { Stack, useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import {
@@ -604,10 +604,7 @@ const styles = StyleSheet.create({
         lineHeight: 28,
     },
     title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
-        fontStyle: 'italic',
-        fontWeight: '500',
+        ...Type.screenTitle,
         textAlign: 'center',
         flex: 1,
     },

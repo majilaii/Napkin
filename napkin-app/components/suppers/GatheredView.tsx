@@ -27,6 +27,12 @@ interface GatheredViewProps {
     onOpenTake: (entryId: string) => void;
     /** Shown when the viewer is a roster member who hasn't taken yet. */
     onAddTake?: () => void;
+    /**
+     * Host-only: opens the delete-supper confirm sheet (TICKET-161). When passed,
+     * an ⋯ overflow renders at the right end of the back row — same grammar as
+     * entry-detail's owner ⋯. Absent (not disabled) for non-hosts.
+     */
+    onRequestDelete?: () => void;
 }
 
 function avg(nums: Array<number | null | undefined>): number | null {
@@ -53,7 +59,7 @@ function lineageDate(iso: string): string {
         .toLowerCase();
 }
 
-export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, onAddTake }: GatheredViewProps) {
+export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, onAddTake, onRequestDelete }: GatheredViewProps) {
     const { restaurant, roster, takes, lineage } = detail;
     const restaurantName = restaurant?.name ?? 'the table';
 
@@ -103,11 +109,20 @@ export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, on
 
     return (
         <View style={[styles.screen, { backgroundColor: palette.surface }]}>
-            {/* Top bar */}
-            <Pressable onPress={onBack} hitSlop={10} style={styles.backRow} accessibilityRole="button" accessibilityLabel="back to the table">
-                <Ionicons name="chevron-back" size={22} color={palette.text} />
-                <Text style={[styles.backText, { color: palette.textMuted }]}>back</Text>
-            </Pressable>
+            {/* Top bar — back (left) + host-only ⋯ overflow (right). The row is a
+                plain container; back and ⋯ are SIBLING Pressables so the ⋯ tap
+                isn't swallowed by an outer full-row onPress. */}
+            <View style={styles.topBar}>
+                <Pressable onPress={onBack} hitSlop={10} style={styles.backRow} accessibilityRole="button" accessibilityLabel="back to the table">
+                    <Ionicons name="chevron-back" size={22} color={palette.text} />
+                    <Text style={[styles.backText, { color: palette.textMuted }]}>back</Text>
+                </Pressable>
+                {onRequestDelete ? (
+                    <Pressable onPress={onRequestDelete} hitSlop={10} style={styles.moreBtn} accessibilityRole="button" accessibilityLabel="more options">
+                        <Ionicons name="ellipsis-horizontal" size={20} color={palette.textMuted} />
+                    </Pressable>
+                ) : null}
+            </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
                 {/* Header */}
@@ -269,8 +284,10 @@ export function GatheredView({ detail, viewerId, palette, onBack, onOpenTake, on
 
 const styles = StyleSheet.create({
     screen: { flex: 1 },
-    backRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: Spacing.md, paddingVertical: 10 },
+    topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.md, paddingVertical: 10 },
+    backRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     backText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
+    moreBtn: { padding: 2 },
     header: { paddingHorizontal: Spacing.lg, paddingTop: 4 },
     title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 24, letterSpacing: -0.3 },
     // Lineage — muted Manrope meta under the title; context, never content.

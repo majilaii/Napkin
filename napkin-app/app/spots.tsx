@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserSpots, type SpotSummary } from '@/hooks/users/useUserSpots';
@@ -51,7 +51,7 @@ export default function SpotsScreen() {
                 <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back} accessibilityLabel="back">
                     <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
                 </Pressable>
-                <Text style={[styles.title, { color: palette.text }]}>spots</Text>
+                <Text style={[styles.title, { color: palette.text }]}>Spots</Text>
                 <View style={styles.back} />
             </View>
 
@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.xs,
     },
     back: { width: 32, alignItems: 'flex-start' },
-    title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 22 },
+    title: { ...Type.screenTitle },
     segmentWrap: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 6 },
     segmentTrack: { flexDirection: 'row', gap: 4, borderRadius: 13, padding: 4 },
     segmentBtn: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10 },

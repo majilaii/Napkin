@@ -22,7 +22,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useMySoloEntries } from '@/hooks/entries';
@@ -146,9 +146,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.sm,
     },
     title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 26,
-        lineHeight: 30,
+        ...Type.screenTitle,
     },
     kicker: {
         fontFamily: 'Manrope_600SemiBold',

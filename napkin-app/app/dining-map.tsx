@@ -152,7 +152,7 @@ export default function DiningMapScreen() {
             </Pressable>
 
             <View style={[styles.titleChip, { top: insets.top + 12, backgroundColor: 'rgba(253,246,236,0.92)' }]}>
-                <Text style={[styles.titleText, { color: palette.text }]}>dining map</Text>
+                <Text style={[styles.titleText, { color: palette.text }]}>Dining map</Text>
             </View>
         </View>
     );
@@ -176,5 +176,5 @@ const styles = StyleSheet.create({
         paddingVertical: 7,
         borderRadius: 999,
     },
-    titleText: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 16 },
+    titleText: { fontFamily: 'Manrope_700Bold', fontSize: 13 },
 });

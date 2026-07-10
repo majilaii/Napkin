@@ -123,9 +123,7 @@ const styles = StyleSheet.create({
         lineHeight: 28,
     },
     title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
-        fontWeight: '500',
+        ...Type.screenTitle,
     },
     subtitleBand: {
         paddingHorizontal: Spacing.lg,

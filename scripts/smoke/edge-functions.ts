@@ -143,6 +143,22 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-152: resolve_spots — exercises module load, routing to the new action,
+    // the JWT auth block, and the arg-validation guard. Empty items[] rejects at the
+    // FIRST guard (validation runs before the rate check / any Places call), so this
+    // is DETERMINISTIC and burns ZERO Places quota. A broken deploy of the new action
+    // turns this 400 into a 500.
+    {
+        name: 'resolve-url action=resolve_spots empty items → 400 (routing + auth, no Places spend)',
+        method: 'POST',
+        fn: 'resolve-url',
+        body: { action: 'resolve_spots', import_nonce: 'smoke', items: [] },
+        expectedStatus: 400,
+        shape: (json) =>
+            (json as { error?: { code?: string } }).error?.code === 'INVALID_BODY'
+                ? null
+                : 'expected INVALID_BODY',
+    },
     {
         name: 'restaurant-history?action=page (the one that 500d on 2026-04-30)',
         method: 'GET',
@@ -324,6 +340,26 @@ const CHECKS: Check[] = [
         method: 'GET',
         fn: 'entry',
         query: 'action=supper-detail&supper_id=00000000-0000-0000-0000-000000000000',
+        expectedStatus: 404,
+        shape: (json) => {
+            const err = (json as { error?: { code?: string } }).error;
+            if (!err) return 'missing error envelope';
+            if (err.code !== 'NOT_FOUND') return `expected error.code NOT_FOUND, got ${err.code}`;
+            return null;
+        },
+    },
+    // TICKET-161: entry action=delete-supper bogus id → HTTP 404 (host gate). A
+    // random UUID is never a supper the SMOKE_TEST_JWT user HOSTS, so the host check
+    // (suppers.host_user_id === caller) refuses with a generic 404 BEFORE any
+    // re-home insert or anchor delete — the probe has ZERO side effects. This
+    // exercises the new destructive POST action's routing + the suppers-row read
+    // (catches a missing-table / column / RLS drift); a 500 here means the delete
+    // path drifted. Mirrors the supper-detail bogus-id smoke.
+    {
+        name: 'entry?action=delete-supper bogus id → 404 host gate (TICKET-161)',
+        method: 'POST',
+        fn: 'entry',
+        body: { action: 'delete-supper', supper_id: '00000000-0000-0000-0000-000000000000' },
         expectedStatus: 404,
         shape: (json) => {
             const err = (json as { error?: { code?: string } }).error;

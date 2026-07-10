@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Shadow } from '@/constants/theme';
+import { Colors, Spacing, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export function EditorScreen({
@@ -114,8 +114,7 @@ const styles = StyleSheet.create({
         alignItems: 'flex-end',
     },
     title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
+        ...Type.screenTitle,
     },
     save: {
         fontFamily: 'Manrope_600SemiBold',
