@@ -12,7 +12,7 @@ import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useImportBatch, type ImportBatchItem } from '@/hooks/wishlist/useImportBatch';
@@ -140,7 +140,7 @@ export default function ImportBatchScreen() {
                     ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
                     ListHeaderComponent={
                         <View style={styles.header}>
-                            <Text style={[styles.title, { color: palette.text }]}>this import</Text>
+                            <Text style={[styles.title, { color: palette.text }]}>This import</Text>
                             <Text style={[styles.subtitle, { color: palette.textMuted }]}>{subtitle}</Text>
                             <Pressable
                                 onPress={() => setPicker({ kind: 'add' })}
@@ -242,7 +242,7 @@ const styles = StyleSheet.create({
     topBar: { paddingHorizontal: 22, paddingBottom: Spacing.xs },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xl },
     header: { paddingTop: Spacing.sm, paddingBottom: Spacing.md },
-    title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 26, lineHeight: 30 },
+    title: { ...Type.screenTitle },
     subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 13, marginTop: 6 },
     addRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: Spacing.md },
     addLabel: { fontFamily: 'Manrope_700Bold', fontSize: 13, letterSpacing: 0.3 },

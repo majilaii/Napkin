@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Shadow } from '@/constants/theme';
+import { Colors, Spacing, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ErrorState } from '@/components/ErrorState';
 import { useRestaurantReviews } from '@/hooks/restaurants/useRestaurantReviews';
@@ -46,7 +46,7 @@ export default function RestaurantReviewsScreen() {
                     <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
                 </Pressable>
                 <View style={styles.titleWrap}>
-                    <Text style={[styles.title, { color: palette.text }]}>reviews</Text>
+                    <Text style={[styles.title, { color: palette.text }]}>Reviews</Text>
                     {name ? (
                         <Text style={[styles.subtitle, { color: palette.textMuted }]} numberOfLines={1}>
                             {name}
@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
     },
     back: { width: 32, alignItems: 'flex-start' },
     titleWrap: { alignItems: 'center', flexShrink: 1 },
-    title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 22 },
+    title: { ...Type.screenTitle },
     subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 11, marginTop: 1 },
     emptyWrap: { paddingTop: 80, alignItems: 'center', paddingHorizontal: 40 },
     emptyMurmur: {

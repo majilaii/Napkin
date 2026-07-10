@@ -162,6 +162,7 @@ const styles = StyleSheet.create({
     container: { flex: 1 },
     topBar: { paddingHorizontal: 22, paddingTop: Spacing.sm, paddingBottom: Spacing.xs },
     emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 80 },
+    // The imported list's NAME — content voice, stays italic serif (not chrome).
     title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 30, lineHeight: 34, marginTop: Spacing.sm },
     count: { fontFamily: 'Manrope_500Medium', fontSize: 14, marginTop: 6 },
     divider: { height: StyleSheet.hairlineWidth, marginVertical: Spacing.lg, opacity: 0.6 },

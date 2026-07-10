@@ -179,11 +179,19 @@ interface Props {
      * chrome (dining map, TICKET-092) omit it: the pill hides AND the FAB drops
      * to the corner position (no stack offset over a pill that isn't there). */
     onSwitchToList?: () => void;
-    /**
-     * Optional primary workflow dock above the bottom map controls. The map owns
-     * its placement so it can hide the dock whenever a peek carousel is open.
-     */
-    bottomDock?: React.ReactNode;
+    /** Import entry point — frosted chip top-RIGHT under the filter chip
+     * (chrome diet, TICKET-163: replaces the workspace header's Import button).
+     * Optional — dining-map / table-map omit it. */
+    onImport?: () => void;
+    /** Pending-import state, shrunk to a corner chip (the old full-width inbox
+     * card no longer squats over the pins). `count` renders next to the icon
+     * (review state); working/failed states pass icon-only. */
+    importStatus?: {
+        icon: keyof typeof Ionicons.glyphMap;
+        count?: number | null;
+        accessibilityLabel: string;
+        onPress: () => void;
+    };
     /**
      * TICKET-131: source pills — frosted segmented control floating top-LEFT on
      * the map (Saved · Been · Network on the wishlist; Mine · Network on
@@ -254,6 +262,8 @@ const NAV_CLEARANCE = 92;
  * pill in the bottom-RIGHT corner. Offset = List-pill height (~42) + gap (~10),
  * so the FAB's bottom edge clears the pill's top edge by the gap. */
 const RIGHT_STACK_OFFSET = 52;
+/** Vertical rhythm of the top-RIGHT chip stack (filter → import → status). */
+const TOP_STACK_OFFSET = 46;
 /** Dark-scheme frost pair for the floating chrome (light uses palette.scrimFrost).
  * Inline by design — no new theme tokens (TICKET-131). */
 const FROST_DARK = 'rgba(42,39,36,0.92)';
@@ -593,7 +603,8 @@ export function WishlistMapView({
     onOpenRestaurant,
     onOpenReview,
     onSwitchToList,
-    bottomDock,
+    onImport,
+    importStatus,
     sources,
     save,
     onGather,
@@ -940,17 +951,52 @@ export function WishlistMapView({
             </Pressable>
         ) : null;
 
-    const renderBottomDock = (visible: boolean) =>
-        visible && bottomDock ? (
-            <View
-                style={[
-                    styles.bottomDock,
-                    { bottom: insets.bottom + NAV_CLEARANCE + RIGHT_STACK_OFFSET },
-                ]}
-            >
-                {bottomDock}
-            </View>
-        ) : null;
+    // ── Import chip — top-right under the filter chip; the map's import entry
+    // point now that the workspace header is gone (chrome diet, TICKET-163).
+    // Below it, an optional status chip carries the pending-review count
+    // (sparkles + n) or a working/failed glyph — the old full-width inbox card
+    // squatting over the pins, shrunk to a corner chip.
+    const renderImportChips = () => (
+        <>
+            {onImport ? (
+                <Pressable
+                    onPress={onImport}
+                    style={[
+                        styles.importChip,
+                        { backgroundColor: frostBg, top: chromeTop + TOP_STACK_OFFSET },
+                        Shadow.ambient,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="import spots"
+                >
+                    <Ionicons name="download-outline" size={14} color={palette.textSecondary} />
+                    <Text style={[styles.importChipText, { color: palette.textSecondary }]}>Import</Text>
+                </Pressable>
+            ) : null}
+            {importStatus ? (
+                <Pressable
+                    onPress={importStatus.onPress}
+                    style={[
+                        styles.importChip,
+                        {
+                            backgroundColor: frostBg,
+                            top: chromeTop + TOP_STACK_OFFSET * (onImport ? 2 : 1),
+                        },
+                        Shadow.ambient,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={importStatus.accessibilityLabel}
+                >
+                    <Ionicons name={importStatus.icon} size={14} color={palette.primary} />
+                    {importStatus.count != null ? (
+                        <Text style={[styles.importChipText, { color: palette.primary }]}>
+                            {importStatus.count}
+                        </Text>
+                    ) : null}
+                </Pressable>
+            ) : null}
+        </>
+    );
 
     // ── Empty (per-source copy; pills/chip/List stay so you can always leave) ──
     if (items.length === 0) {
@@ -974,8 +1020,8 @@ export function WishlistMapView({
                 </View>
                 {renderSourcePills(true)}
                 {renderFilterChip()}
+                {renderImportChips()}
                 {renderListPill(true)}
-                {renderBottomDock(true)}
             </View>
         );
     }
@@ -1081,6 +1127,9 @@ export function WishlistMapView({
             {/* Filter chip — top-right, frosted (shared with the empty branch). */}
             {renderFilterChip()}
 
+            {/* Import + review-status chips — top-right stack under the filter chip. */}
+            {renderImportChips()}
+
             {/* Unmappable murmur — saved layer only (parents pass 0 otherwise),
                 frost family, tucked below the source pills. */}
             {unmappableCount > 0 ? (
@@ -1155,8 +1204,6 @@ export function WishlistMapView({
                     </Text>
                 </Pressable>
             ) : null}
-
-            {renderBottomDock(!selected)}
 
             {/* Attribution — ToS-required ghosted caption, maptiler mode only
                 (TICKET-137: ToS needs it solely when their tiles render). Hidden
@@ -1856,10 +1903,20 @@ const styles = StyleSheet.create({
         letterSpacing: 0.3,
     },
     // Primary import/review workflow — above the lower map controls and nav.
-    bottomDock: {
+    // Import + status chips — frosted, top-right stack under the filter chip.
+    importChip: {
         position: 'absolute',
-        left: 12,
         right: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        borderRadius: 999,
+        paddingHorizontal: 13,
+        paddingVertical: 10,
+    },
+    importChipText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
     },
     // Ghosted ToS attribution caption — bottom-center, above the nav clearance.
     attribution: {
