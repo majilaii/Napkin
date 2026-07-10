@@ -96,7 +96,11 @@ npx eas submit --platform ios --path ./build-*.ipa
    **1320×2868** (ASC also accepts 1290×2796). First 3 sell it — captions from
    the ASO pack: ① wishlist/import "Save every spot you see on TikTok"
    ② restaurant page "Your taste, not strangers' stars" ③ The Poster
-   "Remember every meal" ④ Table masthead. No iPad set needed.
+   "Remember every meal" ④ Table masthead ⑤ map. No iPad set needed.
+   **Designed artboards live at [`wireframes/store-screenshots.html`](../wireframes/store-screenshots.html)**
+   (rec'd-style composites in Heirloom language) — open in Chrome, drop real
+   captures into the device slots, export each board via DevTools → "Capture
+   node screenshot" = exact 1320×2868 PNGs.
 7. **App Review Information** — demo account
    `jackyieong+applereview@mainrichinternational.com` (run
    `scripts/seed/demo-accounts.ts`; password goes ONLY into ASC, never git).
