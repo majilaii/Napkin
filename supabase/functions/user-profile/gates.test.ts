@@ -38,6 +38,13 @@ Deno.test('computeRelationship: private, no shared tables → none', () => {
     assertEquals(computeRelationship(VIEWER, 'private', []), 'none');
 });
 
+Deno.test('computeRelationship: TICKET-155 — private + no shared table STILL maps to none (now drives the reachable stub, not a 404)', () => {
+    // 155 changes what the profile action DOES with 'none' (stub, not notFound),
+    // NOT the relationship mapping itself. This pins that the stub fires for
+    // exactly the private, non-tablemate, non-self case.
+    assertEquals(computeRelationship(VIEWER, 'private', []), 'none');
+});
+
 // ── strangerCanReadPalate — the full matrix ──────────────────────────────────
 
 const RELATIONSHIPS: ViewerRelationship[] = [

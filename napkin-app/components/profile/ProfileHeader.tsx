@@ -64,6 +64,13 @@ interface Props {
     /** TICKET-090: opens the report/block menu. Rendered as a quiet ⋯ beside
      * the follow button on non-self profiles. */
     onSafetyMenu?: () => void;
+    /**
+     * TICKET-155: when false, the follower/following counts render NON-tappable
+     * (no /follows tap-through). Used only on the reachable private-account stub
+     * tier — follow_list still 404s a non-tablemate viewer of a private account,
+     * so a tappable count would dead-end. Defaults to true (every other tier).
+     */
+    countsInteractive?: boolean;
 }
 
 function initials(displayName: string): string {
@@ -72,7 +79,7 @@ function initials(displayName: string): string {
     return displayName.slice(0, 1).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship, stats, social, isFollowingViewer = false, followsViewer = false, calibration, viewerRatedEntryCount, onSafetyMenu }: Props) {
+export function ProfileHeader({ profile, isSelf, relationship, stats, social, isFollowingViewer = false, followsViewer = false, calibration, viewerRatedEntryCount, onSafetyMenu, countsInteractive = true }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -99,11 +106,16 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
           ? social.following_count
           : null;
     // meals only when stats are present (a withheld tablemate shows none, not 0).
-    const statSegments = profileStatSegments({
-        meals: stats ? (stats.total_logs ?? 0) : null,
-        following: followingCount,
-        followers: followersCount,
-    });
+    // TICKET-155: countsInteractive=false on the private-account stub tier keeps
+    // the follow segments non-tappable (follow_list 404s that viewer).
+    const statSegments = profileStatSegments(
+        {
+            meals: stats ? (stats.total_logs ?? 0) : null,
+            following: followingCount,
+            followers: followersCount,
+        },
+        { countsInteractive },
+    );
 
     // One terse relationship meta line (non-self only). 'follows you' wins when
     // the target follows back; otherwise flag an unreciprocated outbound follow.

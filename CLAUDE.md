@@ -25,7 +25,7 @@ Before implementing ANY screen, component, or visual change:
 - Never pure black. Use `#1c1c19`.
 - No 1px solid borders for sectioning. Structure = background shifts + spacing + ghosted warm rules.
 - Ambient shadows only (`0 8px 30px rgba(28,28,25,0.06)`). No hard drop shadows.
-- Verbs are lowercase past-tense: `noted` / `tried` / `pinned` / `voted` / `gathered`. Never "posted/shared."
+- Verbs are lowercase past-tense: `noted` / `tried` / `pinned` / `voted` / `gathered` / `clipped`. Never "posted/shared."
 - Middle dot `·` separates metadata. Em dash `—` prefixes pull-quotes.
 - No emoji in chrome. Only as user-generated reactions.
 - Ionicons outline @ 24px. Fills avoided.
@@ -51,6 +51,8 @@ Napkin is **"Letterboxd for restaurants, with a private supper club."** A mobile
 - **Logs vs. lists have different defaults:**
   - **Logs** (rating + note): private by default. Only surface publicly if the account is opted-in AND the log has real review content.
   - **Lists** (curatorial, themed): per-list public/private picker at creation; lists are made to share, so public per list is the expected default — but account-level privacy still gates world visibility.
+- **Saves (wishlist pins) are public-by-default signals** (2026-07-10, TICKET-155). A save is low-intimacy ("tempted"), not a diary entry — like a Letterboxd watchlist add. When the account is public (the default), a user's saves AND their source clipping (the TikTok/IG it came from) are visible to anyone, strangers included. **Private account → saves stay self + Table-mates only** (unchanged). Gated ONLY by `account_privacy` — **no per-item/per-save toggle** (consistent with the rejected per-log-toggle doctrine). **Clipping visible ⟺ save visible.** The read predicate is the `SECURITY DEFINER` `fn_restaurant_saves_visible` RPC — the both-direction block check MUST live in a definer, never an RLS `USING` clause (`blocked_users`' own RLS hides the saver→viewer block row and would fail open). Non-owners get a sanitized source allowlist `{type,url,author_handle,author_name,thumbnail_url}`; the owner gets the raw source. The `wishlist_items` SELECT policy is unchanged (owner + Table-mate) — legacy defence-in-depth, NOT the doctrine surface.
+- **Private accounts stay reachable, searchable, and followable** (2026-07-10, TICKET-155). A private profile is not a UX dead-end: it appears in search and stays followable, and tapping in shows a quiet **"their journal is private"** state — identity (name/avatar/username/bio) + follower/following counts + a working follow button, with ALL palate withheld. **NO follow-request/approve machinery** — follow always resolves immediately. Going private still means something (logs/palate stay hidden; saves drop to self + Table-mates); it just isn't a wall.
 - **Engagement on public content:** emoji reactions allowed; replies gated by a profile-level toggle. Public replies live in a **separate comment scope** from Table threads — they never bleed into the Table feed.
 - **Two concentric trust rings:**
   - **Ring 1:** your Table(s). Small (3–8 ppl), bounded by real social reality. High trust per signal.
@@ -64,6 +66,8 @@ Napkin is **"Letterboxd for restaurants, with a private supper club."** A mobile
 - Per-log privacy toggles — rejected. Account-level toggle only.
 - Private-by-default profiles (old 2026-04-17 stance) — superseded 2026-04-20. Profiles now public-default with opt-out.
 - "Path A — no public layer ever" — superseded. Public surfaces exist; Tables still never public.
+- Circle-gated saves (wishlist pins visible only to self + Table overlap) — superseded 2026-07-10 (TICKET-155). Saves are public-by-default signals gated by `account_privacy`; private savers still surface to Table-mates only, and the source clipping rides along (clipping visible ⟺ save visible).
+- Private accounts as UX dead-ends (private profile → 404 / "make your profile public for friending to mean anything") — superseded 2026-07-10 (TICKET-155). Private accounts stay searchable + followable with a quiet "their journal is private" state; no follow-request/approve flow. (Tables-never-public and logs-private-default are UNCHANGED — this loosened saves + profile reachability only.)
 
 ## Core thesis: Individual-first. Tables emerge. (2026-04-20)
 

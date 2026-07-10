@@ -36,21 +36,32 @@ function plural(n: number, one: string, many: string): string {
     return `${n} ${n === 1 ? one : many}`;
 }
 
-/** Build the ordered, present-only segments: meals · following · follower(s). */
-export function profileStatSegments(counts: StatCounts): StatSegment[] {
+/**
+ * Build the ordered, present-only segments: meals · following · follower(s).
+ *
+ * `countsInteractive` (default true): whether the follower/following segments tap
+ * through to /follows. TICKET-155 passes `false` on the reachable private-account
+ * stub tier — `follow_list` still 404s a non-tablemate viewer of a private
+ * account, so a tappable count would dead-end. `meals` is never tappable.
+ */
+export function profileStatSegments(
+    counts: StatCounts,
+    opts?: { countsInteractive?: boolean },
+): StatSegment[] {
+    const countsInteractive = opts?.countsInteractive ?? true;
     const segments: StatSegment[] = [];
     if (counts.meals != null) {
         segments.push({ key: 'meals', text: plural(counts.meals, 'meal', 'meals'), tappable: false });
     }
     if (counts.following != null) {
         // "following" is invariant (no singular/plural swing).
-        segments.push({ key: 'following', text: `${counts.following} following`, tappable: true });
+        segments.push({ key: 'following', text: `${counts.following} following`, tappable: countsInteractive });
     }
     if (counts.followers != null) {
         segments.push({
             key: 'followers',
             text: plural(counts.followers, 'follower', 'followers'),
-            tappable: true,
+            tappable: countsInteractive,
         });
     }
     return segments;

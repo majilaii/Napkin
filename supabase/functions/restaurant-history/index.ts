@@ -29,6 +29,10 @@ import { resolveReserveUrl } from '../_shared/reserveLink.ts';
 import { buildPage, decodeCursor, encodeCursor } from '../_shared/pagination.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { projectRound } from '../_shared/round_projection.ts';
+// TICKET-156: the single content-key authority for the On Socials rail — the
+// SAME normalizer the capture action and backfill import, so read/capture/
+// backfill keys never diverge.
+import { contentKey } from '../_shared/videoUrlKey.ts';
 
 type Visit = {
     kind: 'round' | 'solo';
@@ -259,7 +263,7 @@ serve(async (req) => {
         if (req.method !== 'GET' && req.method !== 'POST') {
             return fail('Method not allowed', 405);
         }
-        if (req.method === 'POST' && action !== 'reviews') {
+        if (req.method === 'POST' && action !== 'reviews' && action !== 'social_clippings') {
             return fail('Method not allowed', 405);
         }
 
@@ -480,6 +484,176 @@ serve(async (req) => {
             const page = buildPage(cards, pageSize, (row) =>
                 ({ sort_date: row.created_at, id: row.entry_id }));
             return json({ data: page });
+        }
+
+        // ── On Socials rail (TICKET-156) — your circle's + strangers' clippings ──
+        // POST { restaurant_id }. Reads TICKET-155's block-aware SECURITY DEFINER
+        // predicate (fn_restaurant_saves_visible) — the SINGLE visibility referent
+        // for self, circle, AND strangers — filters to social sources
+        // (tiktok / IG-web / video), dedupes by canonical-video content key
+        // (tier-then-recency winner + also_count), caps at 12, and joins the
+        // durable clip_thumbs cache for thumbnail URLs (NEVER the rotting provider
+        // CDN link). callEdgeFn strips the outer { data } envelope, so the rows
+        // nest under data.
+        //
+        // MUST stay above the global `if (!restaurantId)` query-param guard below —
+        // this action reads restaurant_id from the POST body first (clients mirror
+        // it into the query too; the 2026-07-10 #193→#199 deploy smoke caught
+        // exactly this ordering bug on the sibling `reviews` action).
+        if (action === 'social_clippings') {
+            const body = await req.json().catch(() => ({}));
+            const rid = (body?.restaurant_id ?? restaurantId) as string | null;
+            if (!rid) return fail('restaurant_id is required');
+
+            // Accept UUID or external_id, like action=page / action=reviews.
+            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            let resolvedId = rid;
+            if (!uuidPattern.test(rid)) {
+                const { data: r, error: ridErr } = await supabase
+                    .from('restaurants')
+                    .select('id')
+                    .eq('external_id', rid)
+                    .maybeSingle();
+                if (ridErr) throw ridErr;
+                if (!r) return json({ data: { rows: [] } });
+                resolvedId = r.id as string;
+            }
+
+            // 155's predicate. p_viewer = the JWT-validated caller (unspoofable —
+            // the RPC is service_role-only EXECUTE, invoked here after getUser).
+            const { data: saverRows, error: rpcErr } = await supabase.rpc(
+                'fn_restaurant_saves_visible',
+                { p_viewer: user.id, p_restaurant_id: resolvedId },
+            );
+            if (rpcErr) {
+                // Fail-open ONLY when 155's RPC isn't applied yet on this stack —
+                // keyed on ERROR CODES alone (undefined_function / PostgREST
+                // not-found). A message regex would also match a PRESENT-but-broken
+                // RPC (a missing dependency throws "… does not exist" under a
+                // different code) and silently mask a real fault as an empty rail
+                // (review WARN-1, 2026-07-10). Any other error reports + rethrows.
+                const code = (rpcErr as { code?: string }).code ?? '';
+                if (code === '42883' || code === 'PGRST202') {
+                    console.warn('social_clippings: fn_restaurant_saves_visible absent — returning empty rail');
+                    return json({ data: { rows: [] } });
+                }
+                reportError(rpcErr, { fn: 'restaurant-history', action: 'social_clippings' });
+                throw rpcErr;
+            }
+
+            // Tier precedence mirrors 155's enum: self > tablemate > following > stranger.
+            const TIER_RANK: Record<string, number> = { self: 0, tablemate: 1, following: 2, stranger: 3 };
+            const isEligible = (src: any): boolean => {
+                const t = src?.type;
+                if (t === 'tiktok' || t === 'video') return true;
+                if (t === 'web') {
+                    const u = typeof src?.url === 'string' ? src.url : '';
+                    return /instagram\.com|instagr\.am/i.test(u);
+                }
+                return false;
+            };
+
+            type Elig = { raw: any; src: any; rank: number; url: string | null; key: string | null };
+            const eligible: Elig[] = [];
+            for (const row of (saverRows ?? []) as any[]) {
+                const src = row.source;
+                if (!isEligible(src)) continue;
+                const url = typeof src?.url === 'string' ? src.url : null;
+                eligible.push({
+                    raw: row,
+                    src,
+                    rank: TIER_RANK[row.relationship as string] ?? 3,
+                    url,
+                    // video-type (and any url-less row) has no key → its own card,
+                    // never deduped, never a photo.
+                    key: url ? await contentKey(url) : null,
+                });
+            }
+
+            // Dedupe url-bearing rows by content key: winner = lowest tier rank,
+            // tiebreak newest; losers fold into also_count. Keyless (video) rows
+            // pass through untouched.
+            const byKey = new Map<string, { winner: Elig; count: number }>();
+            const keyless: Elig[] = [];
+            for (const e of eligible) {
+                if (!e.key) { keyless.push(e); continue; }
+                const g = byKey.get(e.key);
+                if (!g) {
+                    byKey.set(e.key, { winner: e, count: 1 });
+                } else {
+                    g.count += 1;
+                    const cur = g.winner;
+                    const better =
+                        e.rank < cur.rank ||
+                        (e.rank === cur.rank && e.raw.created_at > cur.raw.created_at);
+                    if (better) g.winner = e;
+                }
+            }
+
+            const buildCard = (e: Elig, alsoCount: number) => ({
+                saver: {
+                    user_id: e.raw.saver_id as string,
+                    display_name: (e.raw.display_name as string | null) ?? 'Someone',
+                    avatar_url: (e.raw.avatar_url as string | null) ?? null,
+                },
+                relationship: e.raw.relationship as string,
+                // Return ONLY {type, url, author_handle} — never thumbnail_url (a
+                // rotting provider CDN link; AC "never hotlink"). The durable
+                // thumb_url is joined from clip_thumbs below.
+                source: {
+                    type: (e.src?.type as string | null) ?? null,
+                    url: e.url,
+                    author_handle: typeof e.src?.author_handle === 'string' ? e.src.author_handle : null,
+                },
+                also_count: alsoCount,
+                created_at: e.raw.created_at as string,
+                _key: e.key,
+                _rank: e.rank,
+            });
+
+            const cards = [
+                ...[...byKey.values()].map((g) => buildCard(g.winner, g.count - 1)),
+                ...keyless.map((e) => buildCard(e, 0)),
+            ];
+
+            // self → circle → strangers; within a tier, most-recent first.
+            cards.sort((a, b) =>
+                a._rank - b._rank ||
+                (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+
+            const capped = cards.slice(0, 12);
+
+            // Join durable thumbnails for the winners' keys (status='cached' only —
+            // a 'gone' row stays typographic). Never returns a provider URL.
+            const wantKeys = capped.map((c) => c._key).filter((k): k is string => !!k);
+            const thumbByKey = new Map<string, string>();
+            if (wantKeys.length > 0) {
+                const { data: thumbRows, error: thumbErr } = await supabase
+                    .from('clip_thumbs')
+                    .select('content_key, storage_path')
+                    .in('content_key', wantKeys)
+                    .eq('status', 'cached');
+                if (thumbErr) throw thumbErr;
+                for (const t of (thumbRows ?? []) as any[]) {
+                    if (t.storage_path) thumbByKey.set(t.content_key as string, t.storage_path as string);
+                }
+            }
+
+            const rows = capped.map((c) => {
+                const storagePath = c._key ? thumbByKey.get(c._key) ?? null : null;
+                return {
+                    saver: c.saver,
+                    relationship: c.relationship,
+                    source: c.source,
+                    thumb_url: storagePath
+                        ? `${supabaseUrl ?? ''}/storage/v1/object/public/clip-thumbs/${storagePath}`
+                        : null,
+                    also_count: c.also_count,
+                    created_at: c.created_at,
+                };
+            });
+
+            return json({ data: { rows } });
         }
 
 

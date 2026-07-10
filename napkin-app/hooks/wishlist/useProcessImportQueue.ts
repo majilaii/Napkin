@@ -63,6 +63,7 @@ import {
     deleteCachedTikTokVideo,
 } from '@/lib/tiktokPerception';
 import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
+import { captureClipThumbFromUrl, type ClipThumbSourceType } from '@/lib/clipThumbCapture';
 import { isMapsShareUrl } from '@/lib/mapsShare';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
 import type { SaveImportSpotsResult } from './useSaveImportSpots';
@@ -163,6 +164,18 @@ export function useProcessImportQueue() {
             // overwrites it below. The toast reads THIS local, never m.listCount:
             // setImportListCount writes the file without mutating this in-memory m.
             let listCount: number | null = m.listCount ?? null;
+
+            // TICKET-156 [ARCH-REVIEW W1/W2]: hoisted to processOne scope because
+            // `perception` (and `provider`) are block-scoped to the fresh-resolve
+            // branch below, but the IG handle is read at the source build and the
+            // clip cover is captured only AFTER save_spots succeeds. Assigned in
+            // the fresh-resolve branch; both stay null on a re-drain (spots already
+            // persisted → no fresh perception → no capture; the thumb was cached on
+            // the first pass). A re-drain losing the handle is accepted (no manifest
+            // persistence needed).
+            let igAuthorHandle: string | null = null;
+            let clipThumbUrl: string | null = null;
+            let clipProvider: ClipThumbSourceType | null = null;
 
             // First process: acquire candidates (OCR for video / caption for url),
             // build + PERSIST spots (frozen nonces) before the save.
@@ -274,6 +287,18 @@ export function useProcessImportQueue() {
                         };
                         console.log('[import] channels', JSON.stringify(diag));
                         setImportDiagnostics(m.jobId, diag);
+
+                        // TICKET-156: capture the fresh (unexpired) provider cover
+                        // + IG handle from the LAST perception (the retry loop may
+                        // have re-fetched it). Read at the source build / post-save
+                        // below. tiktok+instagram only — never `video`.
+                        clipProvider = provider;
+                        clipThumbUrl =
+                            (perception as { thumbnailUrl?: string | null })?.thumbnailUrl ?? null;
+                        if (provider === 'instagram') {
+                            igAuthorHandle =
+                                (perception as { authorHandle?: string | null })?.authorHandle ?? null;
+                        }
                     }
                     // Same proven contract as the video path: extracted_text
                     // rides alone (never alongside url).
@@ -430,13 +455,19 @@ export function useProcessImportQueue() {
             // Instagram deliberately saves as 'web' (still taps out to the reel):
             // the wishlist_items_source_shape DB CHECK whitelists source types, so
             // a first-class 'instagram' variant needs a migration — separate ticket.
+            // TICKET-156: an Instagram save carries author_handle (when perception
+            // resolved one) on its `web` source, so the rail can render the @handle
+            // row. Plain web links stay {type,url}; the DB CHECK permits the extra
+            // key unchanged (validated in _shared/wishlistSource.ts too).
             const source: Record<string, string> =
                 m.kind === 'url' && m.url
                     ? /tiktok\.com/i.test(m.url)
                         ? { type: 'tiktok', url: m.url }
                         : isMapsShareUrl(m.url)
                             ? { type: 'google_maps', url: m.url }
-                            : { type: 'web', url: m.url }
+                            : isInstagramUrl(m.url) && igAuthorHandle
+                                ? { type: 'web', url: m.url, author_handle: igAuthorHandle }
+                                : { type: 'web', url: m.url }
                     : { type: 'video' };
 
             // Multi-table fan-out: one save_spots call per destination table (same
@@ -502,6 +533,16 @@ export function useProcessImportQueue() {
 
             removeImport(m.jobId);
             safeDeleteMov(m.videoPath);
+
+            // TICKET-156 [ARCH-REVIEW W1]: cache the clip's cover frame AFTER
+            // save_spots succeeded (we're past it — a throw would have propagated),
+            // so a thumb is bound to a real save. Fire-and-forget; keyed by VIDEO
+            // (shared across savers), idempotent server-side. tiktok+instagram only;
+            // null on a re-drain (no fresh perception) — the thumb was cached on the
+            // first pass. Never blocks or fails the import.
+            if (clipProvider && clipThumbUrl && m.url) {
+                void captureClipThumbFromUrl(m.url, clipThumbUrl, clipProvider);
+            }
 
             const saved = result?.summary?.saved ?? 0;
             const already = result?.summary?.already_pinned ?? 0;

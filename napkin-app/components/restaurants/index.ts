@@ -26,6 +26,9 @@ export { ProfessionalTakesBand } from './ProfessionalTakesBand';
 export { CriticRow } from './CriticRow';
 // TICKET-054: TikTok source panel
 export { SavedFromTikTokPanel } from './SavedFromTikTokPanel';
+// TICKET-156: On Socials rail — social clippings
+export { OnSocialsRail } from './OnSocialsRail';
+export { ClippingCard, type ClippingCardData } from './ClippingCard';
 // Restaurant page 2a "Dossier, map hero" (design handoff 2026-07-01):
 // map hero + utility pills + score band; dock = reworked BottomActionBar
 export { MapHero } from './MapHero';

@@ -192,6 +192,16 @@ export type UserProfileData = {
     /** TICKET-090: true when the viewer has blocked this profile — server returns
      * a minimal stub (profile row only) so the client can offer "unblock". */
     blocked_by_viewer?: boolean;
+    /**
+     * TICKET-155: true when the target is an EXISTING private account the viewer
+     * doesn't share a Table with. The server returns a reachable stub — identity
+     * (name/avatar/username/bio) + follower/following counts + follow state, with
+     * ALL palate withheld (stats/diary/top four/spots/regulars/lists) — instead
+     * of a 404, so the viewer can confirm + follow (no request/approve). The
+     * counts are NON-INTERACTIVE (follow_list 404s a non-tablemate viewer of a
+     * private account). Absent → falsy → older cached payloads render as before.
+     */
+    private_stub?: boolean;
 };
 
 export type UserProfileResult = {

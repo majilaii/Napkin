@@ -174,6 +174,24 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-156: On Socials rail read path (social clippings). Calls TICKET-155's
+    // block-aware saves predicate + joins the clip_thumbs cache. An empty rows
+    // array is the legitimate state for the smoke user (no visible social saves) —
+    // assert the { rows: [] } envelope shape only. restaurant_id mirrored in the
+    // query (the fn has a global query-param guard; body is the canonical carrier).
+    {
+        name: 'restaurant-history?action=social_clippings (TICKET-156 On Socials rail)',
+        method: 'POST',
+        fn: 'restaurant-history',
+        query: `action=social_clippings&restaurant_id=${RESTAURANT_ID}`,
+        body: { restaurant_id: RESTAURANT_ID },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown[] } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            return null;
+        },
+    },
     // TICKET-149: booking-page resolver behind the Reserve pill. Value is
     // fixture-dependent (usually null, cached on the row after first run) —
     // assert the envelope key only.
