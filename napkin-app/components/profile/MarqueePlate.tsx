@@ -14,7 +14,7 @@
  * The mark chain lives in engraving.ts (never per-item); this component only
  * renders the discriminated `Mark` union at plate scale.
  */
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, type ViewStyle, type StyleProp } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -33,6 +33,12 @@ interface MarqueePlateProps {
     rating?: number | null; // terracotta italic, bottom-right; hidden when null
     rank: number; // ghosted top-left "1"
     photoUrl?: string | null; // truthy → photo variant; undefined → typographic
+    /**
+     * TICKET-157: apply the warm Places wash over the photo (borrowed venue photo,
+     * not the owner's own). Resolver output — true ONLY on the gated Places tier;
+     * a chosen-memory photo is always `false` (never washed).
+     */
+    placesWash?: boolean;
     onPress?: () => void;
     style?: StyleProp<ViewStyle>;
 }
@@ -70,13 +76,18 @@ export function MarqueePlate({
     rating,
     rank,
     photoUrl,
+    placesWash,
     onPress,
     style,
 }: MarqueePlateProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const mark = markFor({ name, cuisine, listEmoji });
-    const isPhoto = !!photoUrl;
+    // TICKET-157 [ARCH-REVIEW W3]: a failed image load falls to typographic; reset
+    // the sticky error when the source changes (in-place slot swaps reuse this node).
+    const [imgError, setImgError] = useState(false);
+    useEffect(() => setImgError(false), [photoUrl]);
+    const isPhoto = !!photoUrl && !imgError;
 
     return (
         <Pressable
@@ -93,7 +104,30 @@ export function MarqueePlate({
         >
             {isPhoto ? (
                 <>
-                    <Image source={{ uri: photoUrl! }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                    <Image
+                        source={{ uri: photoUrl! }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        transition={200}
+                        recyclingKey={photoUrl ?? restaurantId}
+                        onError={() => setImgError(true)}
+                    />
+                    {/* TICKET-157: warm Places wash — layered between the photo and the
+                        bottom scrim so borrowed venue photos read distinct from the
+                        owner's chosen-memory shots. Never applied to chosen-memory
+                        (placesWash is false for the custom tier). */}
+                    {placesWash ? (
+                        <View
+                            style={[
+                                StyleSheet.absoluteFill,
+                                {
+                                    backgroundColor: palette.placesOverlayTint,
+                                    opacity: palette.placesOverlayOpacity,
+                                },
+                            ]}
+                            pointerEvents="none"
+                        />
+                    ) : null}
                     <LinearGradient
                         colors={['transparent', 'rgba(28,28,25,0.62)']}
                         style={styles.scrim}

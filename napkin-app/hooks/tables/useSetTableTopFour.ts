@@ -78,7 +78,7 @@ function patchSlots(
                           ...s,
                           restaurant_id: optimisticId,
                           restaurant: change.place
-                              ? { id: optimisticId, name: optimisticName, city: optimisticCity, country: null, photo_url: null, external_id: change.place.external_id }
+                              ? { id: optimisticId, name: optimisticName, city: optimisticCity, country: null, photo_url: null, photo_source: null, external_id: change.place.external_id }
                               : s.restaurant,
                       }
                     : s,
@@ -99,6 +99,9 @@ function patchSlots(
                         city: optimisticCity,
                         country: null,
                         photo_url: null,
+                        // TICKET-157: a freshly-added slot has no mirrored Places
+                        // photo; null falls to typographic until the server reconcile.
+                        photo_source: null,
                         external_id: change.place?.external_id ?? null,
                     },
                 },

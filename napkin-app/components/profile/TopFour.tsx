@@ -16,6 +16,8 @@ import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { FRIEND_TEST } from '@/constants/flags';
+import { resolveTilePhoto } from '@/lib/restaurantPhoto';
 import { SectionHeader } from './SectionHeader';
 import { MarqueePlate } from './MarqueePlate';
 import type { TopPick } from '@/hooks/users/useUserProfile';
@@ -55,8 +57,35 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                 onRightLabelPress={onEdit}
             />
             <View style={styles.row}>
-                {slots.map((pick, i) =>
-                    pick ? (
+                {slots.map((pick, i) => {
+                    if (!pick) {
+                        return (
+                            <Pressable
+                                key={i}
+                                style={[
+                                    styles.plate,
+                                    styles.emptyPlate,
+                                    { borderColor: palette.outlineVariant, backgroundColor: palette.surfaceContainerLow },
+                                ]}
+                                onPress={isOwner && onEdit ? onEdit : undefined}
+                                accessibilityRole={isOwner && onEdit ? 'button' : undefined}
+                                accessibilityLabel={isOwner && onEdit ? 'Add to your Top 4' : undefined}
+                            >
+                                <Text style={[styles.plus, { color: palette.textMuted }]}>+</Text>
+                            </Pressable>
+                        );
+                    }
+                    // TICKET-157: chosen-memory (hero_photo_url) → custom tier (absolute
+                    // precedence, never washed) → gated Places tier (`photo_source ===
+                    // 'places'` + flag) → typographic. Flag read here, not in the resolver.
+                    const resolved = resolveTilePhoto({
+                        custom_photo_url: pick.hero_photo_url,
+                        primary_photo_url: pick.photo_url,
+                        photo_source: pick.photo_source,
+                        places_hero_enabled: FRIEND_TEST.topFourPlacesHero,
+                        restaurant_name: pick.name,
+                    });
+                    return (
                         <MarqueePlate
                             key={i}
                             style={styles.plate}
@@ -67,25 +96,12 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                             city={pick.city}
                             rating={pick.max_rating}
                             rank={i + 1}
-                            photoUrl={pick.hero_photo_url}
+                            photoUrl={resolved.kind === 'url' ? resolved.url : null}
+                            placesWash={resolved.kind === 'url' && resolved.isPlaces}
                             onPress={() => openPick(pick)}
                         />
-                    ) : (
-                        <Pressable
-                            key={i}
-                            style={[
-                                styles.plate,
-                                styles.emptyPlate,
-                                { borderColor: palette.outlineVariant, backgroundColor: palette.surfaceContainerLow },
-                            ]}
-                            onPress={isOwner && onEdit ? onEdit : undefined}
-                            accessibilityRole={isOwner && onEdit ? 'button' : undefined}
-                            accessibilityLabel={isOwner && onEdit ? 'Add to your Top 4' : undefined}
-                        >
-                            <Text style={[styles.plus, { color: palette.textMuted }]}>+</Text>
-                        </Pressable>
-                    )
-                )}
+                    );
+                })}
             </View>
         </View>
     );

@@ -12,7 +12,7 @@
  * Returns null when slots.length === 0 (caller shows TableTopFourPlaceholder instead).
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -21,7 +21,9 @@ import {
     Image,
     useWindowDimensions,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { Colors, Spacing, Radius } from '@/constants/theme';
+import { FRIEND_TEST } from '@/constants/flags';
 import { resolveTilePhoto } from '@/lib/restaurantPhoto';
 import type { TopFourSlot, TopFourLastEvent } from '@/hooks/tables/useTableTopFour';
 
@@ -76,13 +78,22 @@ function FilledTile({ slot, tileWidth, palette, onPress }: FilledTileProps) {
     const [imgError, setImgError] = useState(false);
     const tileHeight = (tileWidth * 4) / 3;
 
+    // TICKET-157: custom_photo_url (no writer yet — chain position preserved) →
+    // gated Places tier (`photo_source === 'places'` + flag) → ghost. Flag read
+    // here, not in the resolver.
     const photo = resolveTilePhoto({
         custom_photo_url: slot.custom_photo_url,
         primary_photo_url: slot.restaurant?.photo_url,
+        photo_source: slot.restaurant?.photo_source,
+        places_hero_enabled: FRIEND_TEST.topFourPlacesHero,
         restaurant_name: slot.restaurant?.name,
     });
 
-    const showGhost = photo.kind === 'ghost' || imgError;
+    const resolvedUrl = photo.kind === 'url' ? photo.url : null;
+    // [ARCH-REVIEW W3]: reset the sticky error when the source changes (the grid
+    // reuses tile nodes across in-place slot swaps).
+    useEffect(() => setImgError(false), [resolvedUrl]);
+    const showGhost = resolvedUrl === null || imgError;
 
     return (
         <Pressable
@@ -103,7 +114,7 @@ function FilledTile({ slot, tileWidth, palette, onPress }: FilledTileProps) {
                     },
                 ]}
             >
-                {showGhost ? (
+                {showGhost || photo.kind !== 'url' ? (
                     <View
                         style={[
                             styles.ghostTile,
@@ -111,12 +122,30 @@ function FilledTile({ slot, tileWidth, palette, onPress }: FilledTileProps) {
                         ]}
                     />
                 ) : (
-                    <Image
-                        source={{ uri: (photo as any).url }}
-                        style={StyleSheet.absoluteFill}
-                        resizeMode="cover"
-                        onError={() => setImgError(true)}
-                    />
+                    <>
+                        <ExpoImage
+                            source={{ uri: photo.url }}
+                            style={StyleSheet.absoluteFill}
+                            contentFit="cover"
+                            transition={200}
+                            recyclingKey={photo.url}
+                            onError={() => setImgError(true)}
+                        />
+                        {/* TICKET-157: warm Places wash over the borrowed venue photo,
+                            between the image and the bottom label overlay. */}
+                        {photo.isPlaces ? (
+                            <View
+                                style={[
+                                    StyleSheet.absoluteFill,
+                                    {
+                                        backgroundColor: palette.placesOverlayTint,
+                                        opacity: palette.placesOverlayOpacity,
+                                    },
+                                ]}
+                                pointerEvents="none"
+                            />
+                        ) : null}
+                    </>
                 )}
 
                 {/* Bottom label overlay */}

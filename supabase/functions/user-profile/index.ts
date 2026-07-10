@@ -119,6 +119,8 @@ type TopPick = {
     // TICKET-146: drives the marquee-plate mark (engraving registry). null → monogram.
     cuisine: string | null;
     photo_url: string | null;
+    // TICKET-157: gates the Places-hero plate tier client-side (`=== 'places'` + flag).
+    photo_source: string | null;
     // TICKET-144 pt2: the owner's chosen hero photo (their OWN entry photo at this
     // restaurant), served regardless of the source entry's visibility BECAUSE
     // choosing it is the explicit publish. ONLY the URL rides on the PUBLIC read —
@@ -560,7 +562,7 @@ async function buildPicksFromIds(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, cuisine, photo_url')
+        .select('id, name, city, cuisine, photo_url, photo_source')
         .in('id', orderedIds);
     if (restErr) throw restErr;
 
@@ -592,6 +594,7 @@ async function buildPicksFromIds(
                 city: rest.city ?? null,
                 cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
+                photo_source: rest.photo_source ?? null,
                 hero_photo_url: heroByRestaurant
                     ? (heroUrlById.get(heroByRestaurant.get(rid) ?? '') ?? null)
                     : null,
@@ -709,7 +712,7 @@ async function fetchTopFour(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, cuisine, photo_url')
+        .select('id, name, city, cuisine, photo_url, photo_source')
         .in('id', ranked.map((r) => r.restaurant_id));
     if (restErr) throw restErr;
 
@@ -724,6 +727,7 @@ async function fetchTopFour(
                 city: rest.city ?? null,
                 cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
+                photo_source: rest.photo_source ?? null,
                 // Heroes are a curated-only feature; auto-derived picks never carry one.
                 hero_photo_url: null,
                 hero_entry_photo_id: null,
