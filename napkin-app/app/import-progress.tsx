@@ -32,6 +32,8 @@ const PHASE_COPY: Record<ActiveImport['phase'], string> = {
     saving: 'saving your spots…',
     review: 'ready to review',
     failed: "couldn't import",
+    // TICKET-152: a large Maps list enumerated and is awaiting its kickoff sheet.
+    kickoff: 'ready to import',
 };
 
 export default function ImportProgressScreen() {
@@ -61,8 +63,10 @@ export default function ImportProgressScreen() {
     };
 
     // Bulk actions across every batch awaiting review (founder: entering each
-    // batch to save it is busywork when several pile up).
-    const reviewBatches = active.filter((m) => m.phase === 'review');
+    // batch to save it is busywork when several pile up). TICKET-152: a large
+    // Maps-list job also reports phase 'review' (→ digest), but its spots[] is
+    // empty and its save path is different — exclude it from the ≤20 bulk approve.
+    const reviewBatches = active.filter((m) => m.phase === 'review' && !m.large);
     const reviewSpotTotal = reviewBatches.reduce((sum, m) => sum + m.spotCount, 0);
     // Approve-all saves the review DEFAULTS — warned spots ("called overrated")
     // default to unticked, so they're excluded here just like in the screen.
@@ -138,49 +142,87 @@ export default function ImportProgressScreen() {
                 ) : (
                     // One row grammar for everything — same as EARLIER below.
                     active.map((m) => {
-                        const spotNames = (m.manifest.spots ?? [])
-                            .map((s) => s.restaurant_name)
+                        const large = m.large; // TICKET-152 large Maps-list job (if any)
+                        const isWorking = m.phase === 'reading' || m.phase === 'saving';
+                        const isKickoff = m.phase === 'kickoff'; // large: awaiting sheet
+                        const isLargeDone = !!large && m.phase === 'review'; // large → digest
+                        const isReview = m.phase === 'review' && !large; // ≤20 → import-review
+                        // Where a tap on this row lands (hierarchical — the hub is the
+                        // parent; back returns here).
+                        const pressTo = isKickoff
+                            ? `/import-kickoff?jobId=${m.jobId}`
+                            : isLargeDone
+                              ? `/import-digest?jobId=${m.jobId}`
+                              : isReview
+                                ? `/import-review?jobId=${m.jobId}`
+                                : null;
+                        // A few names to hint what's inside.
+                        const previewNames = (
+                            large
+                                ? (m.manifest.largeJob?.items ?? []).map((s) => s.restaurant_name ?? s.name)
+                                : (m.manifest.spots ?? []).map((s) => s.restaurant_name)
+                        )
                             .filter(Boolean)
                             .slice(0, 3) as string[];
-                        const isWorking = m.phase === 'reading' || m.phase === 'saving';
-                        const isReview = m.phase === 'review';
+                        // The title line.
+                        let title: string;
+                        if (large) {
+                            if (isKickoff) {
+                                title = `${large.listCount} ${large.listCount === 1 ? 'place' : 'places'} · ready to import`;
+                            } else if (m.phase === 'saving') {
+                                title = `${large.cursor} of ${large.listCount} · saving your spots…`;
+                            } else {
+                                title =
+                                    large.needsLook > 0
+                                        ? `${large.imported} imported · ${large.needsLook} need a look`
+                                        : `${large.imported} imported`;
+                            }
+                        } else {
+                            title =
+                                isReview || m.phase === 'saving'
+                                    ? `${m.spotCount} ${m.spotCount === 1 ? 'spot' : 'spots'} · ${PHASE_COPY[m.phase]}`
+                                    : PHASE_COPY[m.phase];
+                        }
                         return (
                             <Pressable
                                 key={m.jobId}
-                                disabled={!isReview}
-                                onPress={
-                                    isReview
-                                        ? () => router.push(`/import-review?jobId=${m.jobId}` as any)
-                                        : undefined
-                                }
+                                disabled={pressTo === null}
+                                onPress={pressTo ? () => router.push(pressTo as any) : undefined}
                                 style={({ pressed }) => [
                                     styles.recentRow,
                                     { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.7 : 1 },
                                 ]}
-                                accessibilityRole={isReview ? 'button' : undefined}
-                                accessibilityLabel={
-                                    isReview ? `review ${m.spotCount} spots` : PHASE_COPY[m.phase]
-                                }
+                                accessibilityRole={pressTo ? 'button' : undefined}
+                                accessibilityLabel={title}
                             >
                                 {isWorking ? (
                                     <ActivityIndicator size="small" color={palette.primary} />
                                 ) : (
                                     <Ionicons
-                                        name={isReview ? 'sparkles-outline' : 'alert-circle-outline'}
+                                        name={
+                                            isKickoff
+                                                ? 'download-outline'
+                                                : isReview || isLargeDone
+                                                  ? 'sparkles-outline'
+                                                  : 'alert-circle-outline'
+                                        }
                                         size={16}
-                                        color={isReview ? palette.primary : palette.textMuted}
+                                        color={pressTo ? palette.primary : palette.textMuted}
                                     />
                                 )}
                                 <View style={styles.recentBody}>
                                     <Text style={[styles.recentTitle, { color: palette.text }]} numberOfLines={1}>
-                                        {isReview || m.phase === 'saving'
-                                            ? `${m.spotCount} ${m.spotCount === 1 ? 'spot' : 'spots'} · ${PHASE_COPY[m.phase]}`
-                                            : PHASE_COPY[m.phase]}
+                                        {title}
                                     </Text>
-                                    {spotNames.length > 0 ? (
+                                    {previewNames.length > 0 ? (
                                         <Text style={[styles.recentNames, { color: palette.textMuted }]} numberOfLines={1}>
-                                            {spotNames.join(' · ')}
+                                            {previewNames.join(' · ')}
                                         </Text>
+                                    ) : null}
+                                    {isKickoff ? (
+                                        <View style={styles.failRow}>
+                                            <Text style={[styles.failAction, { color: palette.primary }]}>start import</Text>
+                                        </View>
                                     ) : null}
                                     {m.phase === 'failed' ? (
                                         <View style={styles.failRow}>
@@ -194,7 +236,7 @@ export default function ImportProgressScreen() {
                                         </View>
                                     ) : null}
                                 </View>
-                                {isReview ? (
+                                {pressTo ? (
                                     <Ionicons name="chevron-forward" size={14} color={palette.textMuted} />
                                 ) : null}
                             </Pressable>

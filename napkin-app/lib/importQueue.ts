@@ -21,12 +21,15 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { safeRandomUUID } from './uuid';
+import { normalizeLargeJob, type LargeImportJob } from './largeImportJob';
 import {
     listImportManifests,
     writeImportManifest,
     removeImportManifest,
     setSharedDefault,
 } from '@/modules/media-extract';
+
+export type { LargeImportJob, LargeImportJobItem } from './largeImportJob';
 
 const MAX_ATTEMPTS = 3;
 
@@ -168,6 +171,14 @@ export interface ImportManifest {
      * hold / re-drain. Deliberately NEVER set for other sources: their
      * list_count is the ≤6 listicle heuristic (TICKET-063), not a real total. */
     listCount?: number | null;
+    /**
+     * TICKET-152: the large Maps-list import JOB (>20 items). Additive — a
+     * manifest with no `largeJob` behaves EXACTLY as today (single-shot path). A
+     * manifest is either single-shot OR large, never both: `largeJob` present ⇒
+     * the drain takes `processLargeJob` and ignores `spots`/`destinations`. The
+     * durable job (frozen nonces, chunk cursor, per-item outcomes) is the
+     * dispatch-on-read work queue — survives app kill, resumes on next open. */
+    largeJob?: LargeImportJob;
 }
 
 const DEFAULT_DESTINATIONS: ImportDestinations = {
@@ -238,6 +249,11 @@ function readAll(): ImportManifest[] {
                     // TICKET-151: parse listCount back so the `{...m}` spreads in
                     // setImportSpots/setImportMode preserve it across the review hold.
                     listCount: typeof p.listCount === 'number' ? p.listCount : undefined,
+                    // TICKET-152: parse the large-import job back (untrusted extension
+                    // JSON — validate item shapes, clamp cursor). Absent/invalid ⇒
+                    // undefined → the single-shot path runs verbatim (old manifests).
+                    // Without this the `{...m}` spreads in the setters would DROP it.
+                    largeJob: normalizeLargeJob(p.largeJob),
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -375,6 +391,25 @@ export function setImportDiagnostics(jobId: string, diag: Record<string, unknown
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     writeManifest({ ...m, diag });
+}
+
+/**
+ * TICKET-152: replace the large-import job wholesale (atomic .tmp→rename write,
+ * same as every other manifest mutation). The ONE setter behind every large-job
+ * transition — enumeration (build → kickoff), the kickoff sheet confirm
+ * (kickoff → running), each chunk commit (new items + cursor + ids), completion
+ * (completionEmitted + phase done), and poison (via `opts.status:'failed'`).
+ * The drain COMPUTES the next job with the pure reducers in `largeImportJob.ts`
+ * and hands the whole object here — this layer stays a thin persist.
+ */
+export function setLargeJob(
+    jobId: string,
+    largeJob: LargeImportJob,
+    opts?: { status?: ImportManifestStatus },
+): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return;
+    writeManifest({ ...m, largeJob, ...(opts?.status ? { status: opts.status } : {}) });
 }
 
 /**

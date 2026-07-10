@@ -31,6 +31,7 @@ import { queryClient } from '@/lib/queryClient';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
 import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
+import { useLargeImportKickoffTrigger } from '@/hooks/wishlist/useLargeImportKickoffTrigger';
 import { usePublishCollectionsSnapshot } from '@/hooks/wishlist/usePublishCollectionsSnapshot';
 import { NotifPermissionSheet } from '@/components/notifications';
 import {
@@ -256,6 +257,9 @@ function RootLayoutNav() {
   // (launch + every foreground). Self-gated on session; safe no-op when signed
   // out or when the native OCR module is absent.
   useProcessImportQueue();
+
+  // TICKET-152: route to the kickoff sheet when a large Maps list enumerates.
+  useLargeImportKickoffTrigger();
 
   // Publish lists + tables to the App Group so the share extension's destination
   // picker can render them (separate process — can't read the app's cache).

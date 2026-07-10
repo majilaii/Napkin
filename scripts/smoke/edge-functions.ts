@@ -143,6 +143,22 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-152: resolve_spots — exercises module load, routing to the new action,
+    // the JWT auth block, and the arg-validation guard. Empty items[] rejects at the
+    // FIRST guard (validation runs before the rate check / any Places call), so this
+    // is DETERMINISTIC and burns ZERO Places quota. A broken deploy of the new action
+    // turns this 400 into a 500.
+    {
+        name: 'resolve-url action=resolve_spots empty items → 400 (routing + auth, no Places spend)',
+        method: 'POST',
+        fn: 'resolve-url',
+        body: { action: 'resolve_spots', import_nonce: 'smoke', items: [] },
+        expectedStatus: 400,
+        shape: (json) =>
+            (json as { error?: { code?: string } }).error?.code === 'INVALID_BODY'
+                ? null
+                : 'expected INVALID_BODY',
+    },
     {
         name: 'restaurant-history?action=page (the one that 500d on 2026-04-30)',
         method: 'GET',

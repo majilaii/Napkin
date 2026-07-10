@@ -47,6 +47,7 @@ import {
     setImportListCount,
     setImportDiagnostics,
     setDefaultImportMode,
+    setLargeJob,
     bumpImportAttempt,
     acquireDrainLock,
     releaseDrainLock,
@@ -54,7 +55,31 @@ import {
     pokeImportQueue,
     type ImportManifest,
     type PersistedImportSpot,
+    type LargeImportJob,
 } from '@/lib/importQueue';
+import {
+    buildLargeJob,
+    isLargeListEnumeration,
+    chunkBounds,
+    isDrained,
+    deriveCounts,
+    applyChunkOutcomes,
+    applyListRouting,
+    pendingListRoutes,
+    markListRouted,
+    markUnroutedNeedsLook,
+    buildResolvedSpots,
+    buildGhostSpots,
+    toChunkOutcomes,
+    classifyDrainError,
+    LARGE_JOB_MAX_CHUNK_ATTEMPTS,
+    type ChunkItemOutcome,
+    type LargeListEnumeration,
+    type ResolveSpotResult,
+    type ResolveSpotsData,
+    type LargeSaveResult,
+    type LargeImportSpotInput,
+} from '@/lib/largeImportJob';
 import { truncationNote } from '@/lib/importTruncation';
 import {
     fetchTikTokPerception,
@@ -154,8 +179,360 @@ export function useProcessImportQueue() {
     const queryClient = useQueryClient();
     const toast = useToast();
 
+    // ── TICKET-152: large Maps-list drain ─────────────────────────────────────
+    // A large job is client-pumped in chunks of 20 through resolve_spots →
+    // save_spots, advancing a persisted cursor ONLY after the post-save manifest
+    // write (frozen nonces cover the crash window). One chunk per invocation, then
+    // a deferred poke schedules the next — progress re-renders per chunk, the drain
+    // lock releases between chunks, and search stays responsive (separate bucket).
+    const processLargeJob = useCallback(
+        async (m: ImportManifest) => {
+            const job = m.largeJob;
+            if (!job) return;
+            // Kickoff is HELD for the sheet; done is owned by the digest — no drain.
+            if (job.phase !== 'running') return;
+
+            const source = { type: 'google_maps', url: m.url ?? '' };
+
+            const saveChunkSpots = (jb: LargeImportJob, spots: LargeImportSpotInput[]) =>
+                callEdgeFn<LargeSaveResult>('resolve-url', {
+                    action: 'save_spots',
+                    body: {
+                        import_nonce: m.importNonce,
+                        spots,
+                        source,
+                        // pin_wishlist honors the kickoff toggle: false = list-only
+                        // (the destination list, NOT the personal wishlist).
+                        pin_wishlist: jb.pinAll,
+                        // notify_done false on EVERY chunk — ONE completion bell is
+                        // emitted client-side at the end with the grand total.
+                        notify_done: false,
+                    },
+                });
+
+            // Deterministic (non-transient) failure at the current cursor: bump
+            // chunkAttempts; poison at MAX so /import-progress shows try-again.
+            const bumpChunkAttempts = (jb: LargeImportJob) => {
+                const attempts = jb.chunkAttempts + 1;
+                setLargeJob(
+                    m.jobId,
+                    { ...jb, chunkAttempts: attempts },
+                    attempts >= LARGE_JOB_MAX_CHUNK_ATTEMPTS ? { status: 'failed' } : undefined,
+                );
+            };
+
+            // Destination list: created ONCE, on the first chunk with ≥1 routable
+            // spot (avoids an empty list if the user backgrounds before any save).
+            // Title-deduped against the user's lists so a crash between create and
+            // persist finds the existing list rather than duplicating (mirrors
+            // resolveNewLists).
+            const ensureDestList = async (title: string): Promise<string | null> => {
+                const t = title.trim().slice(0, 60); // lists.create caps title at 60
+                if (!t) return null;
+                try {
+                    const mine =
+                        (await callEdgeFn<{ id: string; title: string }[]>('lists', {
+                            action: 'list_mine',
+                        })) ?? [];
+                    const existing = mine.find(
+                        (l) => (l.title ?? '').trim().toLowerCase() === t.toLowerCase(),
+                    );
+                    if (existing) return existing.id;
+                } catch {
+                    /* fall through to create */
+                }
+                try {
+                    const created = await callEdgeFn<{ id: string }>('lists', {
+                        action: 'create',
+                        body: { title: t },
+                    });
+                    return created?.id ?? null;
+                } catch {
+                    return null;
+                }
+            };
+
+            // Fold a chunk's outcomes into the job, route to the list, advance the
+            // cursor, and PERSIST — all in one manifest write. INVARIANT: the cursor
+            // advances only here, after the save landed (frozen-nonce dedup covers a
+            // crash between save and this write → a resume re-saves as already_pinned).
+            const commitChunk = async (
+                jb: LargeImportJob,
+                outcomes: ChunkItemOutcome[],
+                saveResult: LargeSaveResult | null,
+                newCursor: number,
+            ): Promise<LargeImportJob> => {
+                const serverJobId = jb.serverJobId ?? saveResult?.job_id ?? null;
+                const chunkRestaurantIds = outcomes
+                    .map((o) => o.restaurant_id)
+                    .filter((x): x is string => !!x);
+
+                let destListId = jb.destListId;
+                if (!destListId && jb.destListTitle && chunkRestaurantIds.length > 0) {
+                    destListId = await ensureDestList(jb.destListTitle);
+                }
+                // Route to the destination list. A failure here is tolerated (never
+                // fails the import) but RECORDED per item via the listRouted flag —
+                // the completion reconcile retries, then flags survivors needsLook
+                // (P1: list membership must never silently drop).
+                let routed = false;
+                if (destListId && chunkRestaurantIds.length > 0) {
+                    try {
+                        // ≤20 ids per chunk « the 200-cap, so no sub-chunking needed.
+                        await callEdgeFn('lists', {
+                            action: 'add_entries',
+                            body: { list_id: destListId, restaurant_ids: chunkRestaurantIds },
+                        });
+                        routed = true;
+                    } catch {
+                        /* tolerated — the completion reconcile retries (P1) */
+                    }
+                }
+                // Only a job WITH a destination list tracks routing state.
+                const routedOutcomes = jb.destListTitle
+                    ? applyListRouting(outcomes, routed)
+                    : outcomes;
+                const newItems = applyChunkOutcomes(jb.items, routedOutcomes);
+
+                const newJob: LargeImportJob = {
+                    ...jb,
+                    items: newItems,
+                    cursor: newCursor,
+                    chunkAttempts: 0, // a successful chunk resets the poison counter
+                    serverJobId,
+                    destListId,
+                    resolvedChunk: null, // the checkpoint is spent once the cursor advances (P2)
+                };
+                setLargeJob(m.jobId, newJob);
+                return newJob;
+            };
+
+            const finalizeLargeJob = async (jb: LargeImportJob) => {
+                if (jb.completionEmitted) {
+                    if (jb.phase !== 'done') setLargeJob(m.jobId, { ...jb, phase: 'done' });
+                    return;
+                }
+
+                // ── P1 reconcile: the destination list must never silently drop. ──
+                // Chunk-time add_entries is best-effort; before completing, RETRY
+                // membership for every item that never routed (add_entries is
+                // idempotent → replay-safe). This runs BEFORE the completionEmitted
+                // write — the guard stays LAST — so a crash mid-reconcile resumes
+                // right back here. Items STILL unrouted after the retry are marked
+                // needsLook: they surface in the digest (find match re-files them;
+                // remove drops them) and the header/toast counts include them,
+                // instead of existing in no user-visible surface at all.
+                let jobNow = jb;
+                if (jobNow.destListTitle) {
+                    const unrouted = pendingListRoutes(jobNow.items);
+                    if (unrouted.length > 0) {
+                        let destListId = jobNow.destListId;
+                        if (!destListId) destListId = await ensureDestList(jobNow.destListTitle);
+                        const routedIds = new Set<string>();
+                        if (destListId) {
+                            const ids = [
+                                ...new Set(
+                                    unrouted
+                                        .map((i) => i.restaurant_id)
+                                        .filter((x): x is string => !!x),
+                                ),
+                            ];
+                            // lists.add_entries caps at 200 ids/call — chunk the retry
+                            // (a 500-item job can retry up to 500 ids here).
+                            for (let i = 0; i < ids.length; i += 200) {
+                                const batch = ids.slice(i, i + 200);
+                                try {
+                                    await callEdgeFn('lists', {
+                                        action: 'add_entries',
+                                        body: { list_id: destListId, restaurant_ids: batch },
+                                    });
+                                    for (const id of batch) routedIds.add(id);
+                                } catch {
+                                    /* still unrouted → needsLook below */
+                                }
+                            }
+                        }
+                        const items = markUnroutedNeedsLook(
+                            markListRouted(jobNow.items, routedIds),
+                        );
+                        jobNow = { ...jobNow, items, destListId: destListId ?? jobNow.destListId };
+                        setLargeJob(m.jobId, jobNow);
+                    }
+                }
+
+                // L1: persist completionEmitted + phase:done FIRST so a crash before
+                // the bell can never DOUBLE-fire it (import_done has no dedup key).
+                const doneJob: LargeImportJob = { ...jobNow, completionEmitted: true, phase: 'done' };
+                setLargeJob(m.jobId, doneJob);
+
+                const counts = deriveCounts(doneJob.items);
+                // ONE completion bell. outcome:'review' — emit_self HARD-REJECTS
+                // 'saved' (the client may not forge a pinned row) and 'review' is
+                // whitelisted + semantically right (the job ends in a digest).
+                callEdgeFn('notifications', {
+                    action: 'emit_self',
+                    body: {
+                        kind: 'import_done',
+                        subject_meta: {
+                            job_id: doneJob.serverJobId,
+                            count: counts.imported,
+                            outcome: 'review',
+                        },
+                    },
+                }).catch(() => {});
+
+                track('import_completed', {
+                    spot_count: counts.imported,
+                    source_type: 'google_maps',
+                });
+                if (counts.imported > 0) markImportCompleted();
+
+                // TICKET-120: backgrounded → local notification (foreground = toast).
+                if (AppState.currentState !== 'active') {
+                    presentImportNotification({
+                        title: `imported ${counts.imported} of ${doneJob.listCount}`,
+                        body: counts.needsLook > 0 ? 'tap to see what needs a look' : 'tap to review',
+                    });
+                }
+                // Self-contained large-job toast (NOT the ≤20 truncationNote path).
+                const reviewAction = {
+                    label: 'review',
+                    onPress: () => router.push(`/import-digest?jobId=${m.jobId}` as any),
+                };
+                toast.show(
+                    counts.needsLook > 0
+                        ? `imported ${counts.imported} of ${doneJob.listCount} · ${counts.needsLook} need a look`
+                        : `imported ${counts.imported} of ${doneJob.listCount}`,
+                    reviewAction,
+                );
+
+                if (userId) {
+                    queryClient.invalidateQueries({ queryKey: queryKeys.wishlist.personal(userId) });
+                    queryClient.invalidateQueries({ queryKey: queryKeys.lists.mine(userId) });
+                    queryClient.invalidateQueries({ queryKey: queryKeys.importJobs.all(userId) });
+                }
+                if (doneJob.destListId) {
+                    queryClient.invalidateQueries({
+                        queryKey: queryKeys.lists.detail(doneJob.destListId),
+                    });
+                }
+                // Refresh the /import-progress row to its done (→ digest) state. The
+                // manifest is NOT removed here — it survives so the digest stays
+                // re-openable; removeImport fires when the user dismisses the digest.
+                pokeImportQueue();
+            };
+
+            // ── Already drained → finalize (idempotent via completionEmitted). ──
+            if (isDrained(job)) {
+                await finalizeLargeJob(job);
+                return;
+            }
+
+            // ── Process ONE chunk ──────────────────────────────────────────────
+            const { end } = chunkBounds(job.cursor, job.items.length, job.chunkSize);
+            const chunk = job.items.slice(job.cursor, end);
+
+            // Resolve — skipped entirely once the job is budget-degraded, and
+            // reused from the persisted checkpoint when a crash landed between
+            // resolve and the cursor write (P2: never pay Places twice per chunk).
+            let jobNow = job;
+            let results: ResolveSpotResult[] = [];
+            let forceGhost = jobNow.ghostDegraded;
+            if (!forceGhost) {
+                const ckpt = jobNow.resolvedChunk;
+                if (ckpt && ckpt.cursor === jobNow.cursor) {
+                    results = ckpt.results;
+                    forceGhost = ckpt.ghostMode;
+                } else {
+                    try {
+                        const resolveData = await callEdgeFn<ResolveSpotsData>('resolve-url', {
+                            action: 'resolve_spots',
+                            body: {
+                                import_nonce: m.importNonce,
+                                items: chunk.map((c) => ({
+                                    name: c.name,
+                                    address: c.address,
+                                    client_nonce: c.client_nonce,
+                                })),
+                            },
+                        });
+                        // ghost_mode = kill-switch (RESOLVE_SPOTS_GHOST_ONLY) →
+                        // ghost-save this chunk; the switch is re-read per chunk.
+                        forceGhost = resolveData?.ghost_mode === true;
+                        results = forceGhost ? [] : (resolveData?.results ?? []);
+                        // P2 checkpoint: persist the paid-for resolution BEFORE the
+                        // save, so a crash anywhere in the save/route window resumes
+                        // straight to save — no double Places spend. commitChunk
+                        // clears it when the cursor advances.
+                        jobNow = {
+                            ...jobNow,
+                            resolvedChunk: { cursor: jobNow.cursor, results, ghostMode: forceGhost },
+                        };
+                        setLargeJob(m.jobId, jobNow);
+                    } catch (err) {
+                        const cls = classifyDrainError(errStatus(err), isSessionError(err));
+                        // M3: 503 (inner Places throttle) / 5xx / network / session →
+                        // transient — pause + resume, NEVER a ghost-degrade.
+                        if (cls === 'transient') return;
+                        if (cls === 'deterministic') {
+                            // A real 4xx (malformed) → attempts/poison. Per-spot save
+                            // failures never reach here (they mark items, drain continues).
+                            bumpChunkAttempts(jobNow);
+                            return;
+                        }
+                        // 429 = import_spots budget ONLY — terminal for the session.
+                        // PERSIST the degrade decision (resume-safe, and no wasted
+                        // 429 round-trip per later chunk), then pump the REST as
+                        // ghost chunks ONE per pass exactly like the happy path —
+                        // progress stays live, the drain lock is never held across
+                        // the whole remainder, and the job still COMPLETES (never-fail).
+                        jobNow = { ...jobNow, ghostDegraded: true };
+                        setLargeJob(m.jobId, jobNow);
+                        forceGhost = true;
+                    }
+                }
+            }
+
+            // Save (idempotent on frozen nonces).
+            let saveResult: LargeSaveResult;
+            try {
+                saveResult = await saveChunkSpots(
+                    jobNow,
+                    forceGhost ? buildGhostSpots(chunk) : buildResolvedSpots(results, chunk),
+                );
+            } catch (err) {
+                // save_spots has no rate bucket — a 429 HERE is not a budget signal,
+                // so everything non-deterministic (429/503/5xx/network/session) is a
+                // plain resumable transient. The resolve checkpoint above means the
+                // retry re-saves WITHOUT re-resolving (P2). Deterministic → poison.
+                if (classifyDrainError(errStatus(err), isSessionError(err)) !== 'deterministic') {
+                    return;
+                }
+                bumpChunkAttempts(jobNow);
+                return;
+            }
+
+            const outcomes = toChunkOutcomes(chunk, results, saveResult, forceGhost);
+            const newJob = await commitChunk(jobNow, outcomes, saveResult, end);
+            if (isDrained(newJob)) {
+                await finalizeLargeJob(newJob);
+                return;
+            }
+            // Continue with the next chunk on a fresh drain (deferred so THIS drain's
+            // lock releases first — a synchronous poke would no-op behind the lock).
+            setTimeout(() => pokeImportQueue(), 0);
+        },
+        [userId, queryClient, toast],
+    );
+
     const processOne = useCallback(
         async (m: ImportManifest) => {
+            // TICKET-152: a large Maps-list job takes its own client-pumped chunk
+            // drain — never the single-shot resolve/save below.
+            if (m.largeJob) {
+                await processLargeJob(m);
+                return;
+            }
             let spots: PersistedImportSpot[] | undefined = m.spots;
             let freshlyResolved = false;
             // TICKET-151: the resolver's true Maps-list size (candidates are capped
@@ -302,9 +679,34 @@ export function useProcessImportQueue() {
                     }
                     // Same proven contract as the video path: extracted_text
                     // rides alone (never alongside url).
-                    const resolved = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                        body: extractedText ? { extracted_text: extractedText } : { url: m.url },
-                    });
+                    // TICKET-152: advertise supports_large_lists on the url tier so a
+                    // Maps list over the sync cap ENUMERATES (no Places call) instead
+                    // of truncating at 20. Harmless for non-maps urls (server ignores
+                    // the flag below the cap / for non-list sources).
+                    const resolved = await callEdgeFn<ResolveUrlData & Partial<LargeListEnumeration>>(
+                        'resolve-url',
+                        {
+                            body: extractedText
+                                ? { extracted_text: extractedText }
+                                : { url: m.url, supports_large_lists: true },
+                        },
+                    );
+                    // A large Maps list → build the durable job + HOLD for the kickoff
+                    // sheet. Feature-detect on `mode` (never a version): an old server
+                    // or a ≤20 list returns normal candidates and falls through to
+                    // today's path, byte-for-byte.
+                    if (isLargeListEnumeration(resolved)) {
+                        setLargeJob(
+                            m.jobId,
+                            buildLargeJob({
+                                title: resolved.title ?? null,
+                                items: resolved.items,
+                                list_count: resolved.list_count,
+                            }),
+                        );
+                        pokeImportQueue(); // surface the kickoff row + trip the trigger
+                        return;
+                    }
                     candidates = resolved?.candidates ?? [];
                     resolvedSourceType = resolved?.source_type ?? null;
                     // TICKET-151: only a google_maps LIST carries a truthful total here
@@ -605,7 +1007,7 @@ export function useProcessImportQueue() {
                 });
             }
         },
-        [userId, queryClient, toast],
+        [userId, queryClient, toast, processLargeJob],
     );
 
     const drain = useCallback(async () => {
