@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { ErrorState } from '@/components/ErrorState';
 import { useRestaurantReviews } from '@/hooks/restaurants/useRestaurantReviews';
 import { flattenPages } from '@/lib/pagination';
 import type { PublicReviewCard } from '@/hooks/restaurants/useRestaurantPage';
@@ -31,7 +32,7 @@ export default function RestaurantReviewsScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
         useRestaurantReviews(id);
 
     const rows = useMemo(() => flattenPages(data), [data]);
@@ -57,6 +58,8 @@ export default function RestaurantReviewsScreen() {
 
             {isLoading ? (
                 <ActivityIndicator color={palette.primary} style={{ marginTop: Spacing.xxl }} />
+            ) : isError && rows.length === 0 ? (
+                <ErrorState onRetry={refetch} />
             ) : rows.length === 0 ? (
                 <View style={styles.emptyWrap}>
                     <Text style={[styles.emptyMurmur, { color: palette.textMuted }]}>
