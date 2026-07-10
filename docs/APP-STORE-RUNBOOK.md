@@ -89,14 +89,19 @@ npx eas submit --platform ios --path ./build-*.ipa
    yes; block mechanism: yes (all four shipped — reviewers look for exactly
    these). Expect the 13+ band. Not a Kids app.
 5. **Version page** — description + promo text + keywords: paste-ready ASO
-   pack in `.kanban/LAUNCH-RUNBOOK.md`. Keyword hygiene: never include
-   competitor names (no "beli") — metadata rejections are real. Support URL:
+   pack in `.kanban/LAUNCH-RUNBOOK.md`. **Open the description with the origin
+   story** — it's the brand: *"Napkin started on an actual napkin — three
+   friends at dinner, trying to remember and rank every restaurant they'd
+   ever been to together."* Keyword hygiene: never include competitor names
+   (no "beli") — metadata rejections are real. Support URL:
    `https://napkin-legal.vercel.app/support.html`.
 6. **Screenshots** — iPhone-only, so ONE size set: 6.9″ portrait
    **1320×2868** (ASC also accepts 1290×2796). First 3 sell it — captions from
    the ASO pack: ① wishlist/import "Save every spot you see on TikTok"
    ② restaurant page "Your taste, not strangers' stars" ③ The Poster
-   "Remember every meal" ④ Table masthead ⑤ map. No iPad set needed.
+   "Remember every meal" ④ Table masthead ⑤ map ⑥ origin closer — "it
+   started on a napkin" (the handwritten-napkin slide; if the original
+   napkin still exists, photograph it and swap it in). No iPad set needed.
    **Designed artboards live at [`wireframes/store-screenshots.html`](../wireframes/store-screenshots.html)**
    (rec'd-style composites in Heirloom language) — open in Chrome, drop real
    captures into the device slots, export each board via DevTools → "Capture

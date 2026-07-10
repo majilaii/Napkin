@@ -29,7 +29,16 @@
     3  [remember] every meal                    · the Poster
     4  with the friends you [actually] eat with · table masthead
     5  all of it, [mapped]                      · the map
+    6  it started on [a napkin]                 · ORIGIN — the closer
   [brackets] = the italic-serif wash word. Max two accents per slide.
+
+  SLIDE 6 — the origin story. Three friends at dinner, reminiscing about
+  every restaurant they'd been to, arguing how they'd rank them together —
+  and writing it all down on an actual napkin. The CSS napkin below is a
+  stand-in: if the REAL napkin still exists, photograph it and swap it in.
+  Otherwise re-stage it — real napkin, real pen, warm restaurant light.
+  Handwriting font (Caveat) depicts a physical artifact, not UI chrome —
+  the two-family type rule governs interface, not photographed objects.
 
   HOW TO USE
   1. Open this file in Chrome (double-click; local fonts + photos load).
@@ -52,7 +61,7 @@
 <meta charset="utf-8">
 <title>Napkin — store screenshots</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..800;1,6..72,400..800&family=Manrope:wght@400..800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..800;1,6..72,400..800&family=Manrope:wght@400..800&family=Caveat:wght@500;600&display=swap');
 
 :root {
     --paper: #fcf9f4;
@@ -250,6 +259,43 @@ body {
     box-shadow: 0 12px 44px rgba(28,28,25,0.12);
 }
 #s5 .overlap-chip { position: absolute; }
+
+/* ════════ SLIDE 6 — the origin (closer) ════════ */
+#s6 .napkin {
+    position: absolute; left: 50%; top: 900px;
+    width: 1060px; height: 1500px;
+    transform: translateX(-50%) rotate(-2.2deg);
+    background:
+        repeating-linear-gradient(0deg, rgba(28,28,25,0.013) 0 2px, transparent 2px 7px),
+        repeating-linear-gradient(90deg, rgba(28,28,25,0.013) 0 2px, transparent 2px 7px),
+        #fffdf8;
+    border-radius: 12px;
+    box-shadow: 0 40px 120px rgba(28,28,25,0.16), 0 6px 24px rgba(28,28,25,0.07);
+    padding: 130px 110px;
+}
+#s6 .napkin::before { content: ''; position: absolute; left: 51%; top: 0; bottom: 0; width: 2px; background: rgba(28,28,25,0.045); }
+#s6 .napkin::after  { content: ''; position: absolute; top: 53%; left: 0; right: 0; height: 2px; background: rgba(28,28,25,0.045); }
+#s6 .ring {
+    position: absolute; right: -60px; top: -90px; width: 300px; height: 300px;
+    border-radius: 999px; border: 24px solid rgba(130,85,22,0.13);
+    box-shadow: inset 0 0 0 7px rgba(130,85,22,0.05);
+    transform: rotate(8deg);
+}
+#s6 .scrawl { position: relative; font: 600 82px/1.68 'Caveat', cursive; color: #3e3a31; }
+#s6 .scrawl .title { display: block; font-size: 88px; margin-bottom: 44px; transform: rotate(-1.1deg); }
+#s6 .row { display: flex; justify-content: space-between; align-items: baseline; }
+#s6 .row:nth-of-type(odd) { transform: rotate(-0.5deg); }
+#s6 .row:nth-of-type(even) { transform: rotate(0.45deg); }
+#s6 .cross { text-decoration: line-through; text-decoration-thickness: 5px; text-decoration-color: rgba(62,58,49,0.65); opacity: 0.6; }
+#s6 .winner-wrap { position: relative; display: inline-block; }
+#s6 .circle {
+    position: absolute; inset: -14px -44px -10px -38px;
+    border: 6px solid rgba(160,63,40,0.55);
+    border-radius: 46% 54% 50% 50% / 58% 42% 60% 40%;
+    transform: rotate(-2deg);
+}
+#s6 .winstar { color: var(--terracotta); font-family: var(--serif); font-size: 58px; }
+#s6 .chip { left: auto; right: 200px; top: 2320px; transform: rotate(2.5deg); z-index: 3; }
 </style>
 </head>
 <body>
@@ -396,6 +442,25 @@ body {
             <div class="mock-tag">MOCK · REPLACE</div>
         </div>
     </div>
+</section>
+
+<!-- ════════════ 6 · it started on a napkin (origin closer) ════════════ -->
+<section class="board ui-slide" id="s6">
+    <div class="wordmark"><span class="rule"></span><span class="word">Napkin</span><span class="rule"></span></div>
+    <h1 class="headline">it started on <em class="hl hl-amber">a napkin</em></h1>
+    <div class="napkin">
+        <div class="ring"></div>
+        <div class="scrawl">
+            <span class="title">every place we&rsquo;ve ever loved&nbsp;&mdash;</span>
+            <div class="row"><span>The Chairman</span><span>9</span></div>
+            <div class="row"><span>Caf&eacute; Deco</span><span>8&frac12;</span></div>
+            <div class="row cross"><span>that noodle place</span><span>6</span></div>
+            <div class="row"><span>Ho Lee Fook</span><span>8</span></div>
+            <div class="row"><span class="winner-wrap">Tatiana<span class="circle"></span></span><span>9&frac12; <span class="winstar">★</span></span></div>
+            <div class="row"><span>Osteria Marzia</span><span>9</span></div>
+        </div>
+    </div>
+    <div class="chip chip-note">EST. AT THE TABLE</div>
 </section>
 
 </div>
