@@ -282,10 +282,13 @@ export function useProcessImportQueue() {
                     });
                     candidates = resolved?.candidates ?? [];
                     resolvedSourceType = resolved?.source_type ?? null;
-                    // TICKET-151: a Maps list carries its true item count here (the
-                    // candidates array is capped at MAPS_LIST_CAP). Non-list resolves
-                    // omit it → null. The video branch below never touches listCount.
-                    listCount = resolved?.list_count ?? null;
+                    // TICKET-151: only a google_maps LIST carries a truthful total here
+                    // (candidates capped at MAPS_LIST_CAP). Every other source returns
+                    // the TICKET-063 listicle heuristic — a caption-regex guess clamped
+                    // to ≤6 — which must never render as a denominator (review P1-1).
+                    listCount = resolvedSourceType === 'google_maps'
+                        ? (resolved?.list_count ?? null)
+                        : null;
                     // Instagram's url tier is a login-walled constant (zero
                     // candidates + ig_nudge, which this queue ignores) — the
                     // fallback would burn a resolve_url rate slot for nothing.
@@ -295,6 +298,11 @@ export function useProcessImportQueue() {
                         });
                         candidates = fallback?.candidates ?? [];
                         resolvedSourceType = fallback?.source_type ?? resolvedSourceType;
+                        // listCount must describe the response that produced candidates —
+                        // same google_maps-only gate as above.
+                        listCount = fallback?.source_type === 'google_maps'
+                            ? (fallback?.list_count ?? null)
+                            : null;
                     }
                 } else {
                     let info = { exists: true, size: 1 };

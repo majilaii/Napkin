@@ -16,8 +16,9 @@
  *   truncationNote(20, 20)  -> null   (no "20 of 20" noise)
  *   truncationNote(null, 20)-> null   (non-list import / pre-change manifest)
  *
- * @param listCount  the resolver's TRUE item count for the source list, or
- *                   null/undefined for a non-list import (TikTok/IG/video/place).
+ * @param listCount  the resolver's TRUE item count for the source list. Callers
+ *                   must pass it only for sources whose count is real (google_maps
+ *                   lists — the drain gates this); null/undefined otherwise.
  * @param shownCount how many candidates we actually kept + persisted — the honest
  *                   numerator, NOT a hardcoded cap, so it stays truthful when
  *                   auto-mode filtering shrinks the batch.

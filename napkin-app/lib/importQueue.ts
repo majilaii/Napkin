@@ -162,10 +162,11 @@ export interface ImportManifest {
      * (caption chars, tiktok_asr, ocr_lines, …) — extraction is opaque without
      * a record of which channels actually contributed. */
     diag?: Record<string, unknown>;
-    /** TICKET-151: the resolver's TRUE item count for a Maps list — candidates are
-     * capped at MAPS_LIST_CAP (20) server-side. Persisted so the drain toast +
-     * review header can say "first 20 of 117" after the review hold / re-drain.
-     * undefined for non-list imports (TikTok/IG/video/single place). */
+    /** TICKET-151: the resolver's TRUE item count for a google_maps LIST —
+     * candidates are capped at MAPS_LIST_CAP (20) server-side. Persisted so the
+     * drain toast + review header can say "first 20 of 117" after the review
+     * hold / re-drain. Deliberately NEVER set for other sources: their
+     * list_count is the ≤6 listicle heuristic (TICKET-063), not a real total. */
     listCount?: number | null;
 }
 

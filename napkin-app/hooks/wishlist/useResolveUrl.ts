@@ -77,7 +77,9 @@ export interface ResolveUrlData {
     extracted_confidence?: 'exact' | 'high' | 'low';
     /** TICKET-060: whether this result needs confirmation. */
     needs_confirm?: boolean;
-    /** TICKET-063: advertised list count from the listicle heuristic (≤6). */
+    /** TICKET-063: advertised list count. Only truthful for google_maps LISTS
+     * (true item count; candidates capped at 20). All other sources: a caption
+     * heuristic clamped to ≤6 — never render it as a denominator (TICKET-151). */
     list_count?: number | null;
 }
 
