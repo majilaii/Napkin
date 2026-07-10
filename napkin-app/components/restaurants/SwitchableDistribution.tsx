@@ -2,13 +2,14 @@
  * SwitchableDistribution — the design-2a "Ratings" module.
  *
  *   RATINGS                    [You][Table][Napkin]   ← pills switch the tier
- *   ▁ ▅ ▁ ▁ █                                 4.0
- *   1 2 3 4 5                            3 ratings
+ *   ▁ ▁ ▁ ▅ ▁ ▁ ▁ ▁ █ ▁                       4.5
+ *   1   2   3   4   5                    3 ratings
  *
- * Five vertical amber bars (1★ → 5★), a big italic-serif average on the
- * right. The active pill is terracotta-filled; tiers without data don't get
- * a pill. With NO data at all the frame still renders — flat ghost tracks,
- * "—" average, "no ratings yet" — so a cold page keeps the warm page's bones.
+ * Ten vertical amber bars in half-star bins (0.5 → 5.0, TICKET-154 — a 4.5
+ * is a 4.5, never rounded to 5), a big italic-serif average on the right.
+ * The active pill is terracotta-filled; tiers without data don't get a pill.
+ * With NO data at all the frame still renders — flat ghost tracks, "—"
+ * average, "no ratings yet" — so a cold page keeps the warm page's bones.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -19,6 +20,7 @@ import type { SignalTier } from './SignalStrip';
 
 interface Props {
     activeTier: SignalTier;
+    /** 10 half-star bins per tier: index i = (i + 1) * 0.5 stars. */
     distributions: {
         you: number[];
         your_table: number[] | null;
@@ -26,6 +28,11 @@ interface Props {
     };
     onTierChange: (tier: SignalTier) => void;
 }
+
+const BIN_COUNT = 10;
+const EMPTY_BINS = new Array(BIN_COUNT).fill(0);
+/** Star value of bin i. */
+const binValue = (i: number) => (i + 1) * 0.5;
 
 type Palette = typeof Colors.light;
 
@@ -39,7 +46,7 @@ function sum(xs: number[]): number {
 function average(dist: number[]): number | null {
     const n = sum(dist);
     if (n === 0) return null;
-    return dist.reduce((acc, count, i) => acc + count * (i + 1), 0) / n;
+    return dist.reduce((acc, count, i) => acc + count * binValue(i), 0) / n;
 }
 
 export function SwitchableDistribution({ activeTier, distributions, onTierChange }: Props) {
@@ -54,7 +61,7 @@ export function SwitchableDistribution({ activeTier, distributions, onTierChange
     const pills = tiers.filter((t) => t.dist != null && sum(t.dist) > 0);
 
     const active = tiers.find((t) => t.tier === activeTier);
-    const dist = (pills.length > 0 ? active?.dist : null) ?? [0, 0, 0, 0, 0];
+    const dist = (pills.length > 0 ? active?.dist : null) ?? EMPTY_BINS;
     const total = sum(dist);
     const max = Math.max(...dist, 1);
     const avg = average(dist);
@@ -104,14 +111,14 @@ export function SwitchableDistribution({ activeTier, distributions, onTierChange
             <View style={styles.body}>
                 <View style={styles.chart}>
                     <View style={styles.bars}>
-                        {[1, 2, 3, 4, 5].map((star) => {
-                            const count = dist[star - 1] ?? 0;
+                        {EMPTY_BINS.map((_, i) => {
+                            const count = dist[i] ?? 0;
                             const h = count > 0
                                 ? Math.max(8, Math.round((count / max) * BAR_AREA_HEIGHT))
                                 : MIN_TRACK;
                             return (
                                 <View
-                                    key={star}
+                                    key={i}
                                     style={[
                                         styles.bar,
                                         {
@@ -125,9 +132,10 @@ export function SwitchableDistribution({ activeTier, distributions, onTierChange
                         })}
                     </View>
                     <View style={styles.axis}>
-                        {[1, 2, 3, 4, 5].map((star) => (
-                            <Text key={star} style={[styles.axisLabel, { color: palette.textMuted }]}>
-                                {star}
+                        {/* Whole-star labels only — one per pair of half-star bins. */}
+                        {EMPTY_BINS.map((_, i) => (
+                            <Text key={i} style={[styles.axisLabel, { color: palette.textMuted }]}>
+                                {i % 2 === 1 ? binValue(i).toFixed(0) : ''}
                             </Text>
                         ))}
                     </View>

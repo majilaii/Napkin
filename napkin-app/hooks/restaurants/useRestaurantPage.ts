@@ -13,6 +13,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
+import { halfDistFromLegacy } from '@/lib/ratingBins';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -156,7 +157,14 @@ export type RestaurantPageData = {
     public_reviews_total: number;
     // v3 additions
     distributions: {
-        you: number[];          // [1★ count, 2★, 3★, 4★, 5★]
+        you: number[];          // [1★ count, 2★, 3★, 4★, 5★] — LEGACY, frozen
+        your_table: number[] | null;
+        napkin: number[];
+    };
+    // TICKET-154: 10 half-star bins [0.5, 1.0, …, 5.0] — the histogram truth.
+    // Synthesized from the legacy buckets when the server predates the field.
+    distributions_half: {
+        you: number[];
         your_table: number[] | null;
         napkin: number[];
     };
@@ -227,6 +235,17 @@ async function fetchRestaurantPage(
     }
     if (!data.distributions) {
         data.distributions = { you: [0,0,0,0,0], your_table: null, napkin: [0,0,0,0,0] };
+    }
+    // TICKET-154: synthesize half-star bins from legacy whole-star buckets for
+    // responses predating distributions_half (counts land on whole-star bins).
+    if (!data.distributions_half) {
+        data.distributions_half = {
+            you: halfDistFromLegacy(data.distributions.you),
+            your_table: data.distributions.your_table
+                ? halfDistFromLegacy(data.distributions.your_table)
+                : null,
+            napkin: halfDistFromLegacy(data.distributions.napkin),
+        };
     }
     if (!data.napkin_aggregate) {
         data.napkin_aggregate = { average: null, count: 0 };
