@@ -24,6 +24,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -121,7 +122,7 @@ export default function MakePublicScreen() {
             {/* Top bar */}
             <View style={styles.topBar}>
                 <Pressable onPress={() => router.back()} hitSlop={12}>
-                    <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
+                    <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
                 </Pressable>
                 <View style={{ width: 40 }} />
             </View>

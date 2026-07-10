@@ -2,17 +2,21 @@
  * EditorScreen — shared scaffold for the single-field settings editors
  * (/settings/name · /settings/username · /settings/bio · /settings/photo).
  *
- * Keeps the chrome identical to the rest of settings: safe-area top bar with a
- * terracotta "← Back", a right-slot action (a Save button for text editors, or
- * nothing for the photo editor which applies immediately), and a serif title.
- * Screens supply only their field UI as children.
+ * Chrome follows the app's pushed-page grammar (see /reviews,
+ * /restaurant-reviews): chevron back on the left, centered lowercase
+ * italic-serif title, and a quiet lowercase "save" in the right slot —
+ * terracotta when armed, muted otherwise. Screens supply only their field
+ * UI as children; `editorStyles` carries the shared note-card field styles
+ * so every editor's input reads as the same warm card (background shift +
+ * ambient shadow, never a 1px box).
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export function EditorScreen({
@@ -21,11 +25,11 @@ export function EditorScreen({
     onSave,
     saveEnabled = false,
     saving = false,
-    saveLabel = 'Save',
+    saveLabel = 'save',
 }: {
     title: string;
     children: React.ReactNode;
-    /** When provided, a Save button renders in the top-bar right slot. */
+    /** When provided, a save affordance renders in the top-bar right slot. */
     onSave?: () => void;
     saveEnabled?: boolean;
     saving?: boolean;
@@ -40,38 +44,43 @@ export function EditorScreen({
         <View
             style={[
                 styles.container,
-                { backgroundColor: palette.background, paddingTop: insets.top + Spacing.sm },
+                { backgroundColor: palette.background, paddingTop: insets.top },
             ]}
         >
             <View style={styles.topBar}>
-                <Pressable onPress={() => router.back()} hitSlop={12}>
-                    <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
+                <Pressable
+                    onPress={() => router.back()}
+                    hitSlop={12}
+                    style={styles.side}
+                    accessibilityLabel="back"
+                >
+                    <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
                 </Pressable>
-
-                {onSave ? (
-                    <Pressable
-                        onPress={onSave}
-                        disabled={!saveEnabled || saving}
-                        hitSlop={12}
-                        accessibilityRole="button"
-                        accessibilityLabel={saveLabel}
-                    >
-                        {saving ? (
+                <Text style={[styles.title, { color: palette.text }]}>{title}</Text>
+                <View style={[styles.side, styles.sideRight]}>
+                    {onSave ? (
+                        saving ? (
                             <ActivityIndicator size="small" color={palette.primary} />
                         ) : (
-                            <Text
-                                style={[
-                                    Type.titleSmall,
-                                    { color: saveEnabled ? palette.primary : palette.textMuted },
-                                ]}
+                            <Pressable
+                                onPress={onSave}
+                                disabled={!saveEnabled}
+                                hitSlop={12}
+                                accessibilityRole="button"
+                                accessibilityLabel={saveLabel}
                             >
-                                {saveLabel}
-                            </Text>
-                        )}
-                    </Pressable>
-                ) : (
-                    <View style={{ width: 40 }} />
-                )}
+                                <Text
+                                    style={[
+                                        styles.save,
+                                        { color: saveEnabled ? palette.primary : palette.textMuted },
+                                    ]}
+                                >
+                                    {saveLabel}
+                                </Text>
+                            </Pressable>
+                        )
+                    ) : null}
+                </View>
             </View>
 
             <ScrollView
@@ -79,7 +88,6 @@ export function EditorScreen({
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
             >
-                <Text style={[Type.displaySmall, { color: palette.text }]}>{title}</Text>
                 {children}
             </ScrollView>
         </View>
@@ -91,14 +99,54 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     topBar: {
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.sm,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        paddingHorizontal: 18,
+        paddingTop: Spacing.sm,
+        paddingBottom: Spacing.sm,
+    },
+    side: {
+        width: 44,
+        alignItems: 'flex-start',
+    },
+    sideRight: {
+        alignItems: 'flex-end',
+    },
+    title: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
+    },
+    save: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 14,
     },
     scrollContent: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.lg,
+        paddingHorizontal: 20,
+        paddingTop: Spacing.xl,
+    },
+});
+
+/**
+ * Shared field styles — the note-card input language every editor uses.
+ * Background shift + ambient shadow carry the structure; no input borders.
+ */
+export const editorStyles = StyleSheet.create({
+    fieldCard: {
+        borderRadius: 16,
+        paddingHorizontal: Spacing.md + 2,
+        paddingVertical: 13,
+        ...Shadow.subtle,
+    },
+    fieldText: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 15.5,
+        padding: 0,
+    },
+    helper: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        marginTop: Spacing.sm,
+        paddingHorizontal: 4,
     },
 });
