@@ -32,8 +32,17 @@ on:
       - 'scripts/smoke/**'
       - '.github/workflows/prod-deploy.yml'
   # Manual re-run: db push is idempotent, fn detection diffs HEAD~1 (usually
-  # nothing), so a dispatch is effectively "run the smoke suite against prod".
+  # nothing), so a bare dispatch is effectively "run the smoke suite against
+  # prod". The `functions` input force-deploys named functions — the recovery
+  # lever for a run that failed AFTER db push but BEFORE the fn-deploy step
+  # (first needed 2026-07-10: the cron gate aborted on a wrong pooler host and
+  # stranded TICKET-159's three functions on their old bundles).
   workflow_dispatch:
+    inputs:
+      functions:
+        description: "Force-deploy these edge functions (comma-separated), or 'all'. Skips the commit-range diff."
+        required: false
+        default: ''
 
 concurrency:
   group: supabase-prod-deploy
@@ -116,7 +125,11 @@ jobs:
       # (→ the auto-revert PR opens, same as a smoke failure). On-read dispatch
       # is defense-in-depth, never the excuse for an unscheduled sweep.
       # Connects via the Supavisor session pooler (GitHub runners are IPv4-only;
-      # the direct db.<ref> host is IPv6). Region comes from the Management API.
+      # the direct db.<ref> host is IPv6). The pooler INSTANCE NUMBER varies per
+      # project (aws-0/aws-1/… — the 2026-07-10 first run guessed aws-0 and got
+      # "tenant not found"), so the host comes from the Management API's pooler
+      # config, with instance-number probing as fallback. Still fail-closed: no
+      # reachable pooler, or job absent → deploy failure → auto-revert PR.
       - name: Verify gathering sweep is scheduled (pg_cron gate)
         id: cron-gate
         env:
@@ -124,16 +137,36 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PROJECT_REF: ftvmseaqwwlcxtdlvxxz
         run: |
+          # Preferred: the project's actual pooler host from the Management API.
+          api_host=$(curl -sf -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/config/database/pooler" \
+            | grep -oE '[a-z0-9-]+\.pooler\.supabase\.com' | head -1 || true)
           region=$(curl -sf -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
             "https://api.supabase.com/v1/projects/$PROJECT_REF" | jq -r '.region')
-          if [[ -z "$region" || "$region" == "null" ]]; then
-            echo "::error::cron gate: could not resolve project region from the Management API."
+          candidates=()
+          [[ -n "$api_host" ]] && candidates+=("$api_host")
+          if [[ -n "$region" && "$region" != "null" ]]; then
+            for n in 0 1 2; do candidates+=("aws-${n}-${region}.pooler.supabase.com"); done
+          fi
+          if [[ ${#candidates[@]} -eq 0 ]]; then
+            echo "::error::cron gate: could not derive any pooler host from the Management API."
             exit 1
           fi
           export PGPASSWORD="$SUPABASE_DB_PASSWORD"
-          present=$(psql "postgresql://postgres.${PROJECT_REF}@aws-0-${region}.pooler.supabase.com:5432/postgres" \
-            -tAc "select count(*) from cron.job where jobname = 'gathering-sweep'")
-          echo "cron.job rows named gathering-sweep: ${present}" | tee -a "$GITHUB_STEP_SUMMARY"
+          present=""
+          for h in "${candidates[@]}"; do
+            if out=$(psql "postgresql://postgres.${PROJECT_REF}@${h}:5432/postgres" \
+                -tAc "select count(*) from cron.job where jobname = 'gathering-sweep'" 2>/dev/null); then
+              echo "pooler host: ${h} · cron.job rows named gathering-sweep: ${out}" \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+              present="$out"
+              break
+            fi
+          done
+          if [[ -z "$present" ]]; then
+            echo "::error::cron gate: no pooler host reachable (tried: ${candidates[*]})."
+            exit 1
+          fi
           if [[ "$present" != "1" ]]; then
             echo "::error::cron gate FAILED: pg_cron job 'gathering-sweep' is not scheduled on prod. Enable pg_cron / re-apply 20260711090000, or revert."
             exit 1
@@ -141,7 +174,31 @@ jobs:
 
       - name: Identify changed edge functions (vs previous main commit)
         id: changed-fns
+        env:
+          # workflow_dispatch force-deploy list (empty on push). Passed through
+          # env — never interpolated into the script — and validated against
+          # the real function directories below.
+          FORCE_FNS: ${{ inputs.functions }}
         run: |
+          if [[ -n "$FORCE_FNS" ]]; then
+            if [[ "$FORCE_FNS" == "all" ]]; then
+              changed=$(find supabase/functions -mindepth 1 -maxdepth 1 -type d ! -name '_*' \
+                -exec basename {} \; | sort)
+            else
+              changed=$(echo "$FORCE_FNS" | tr ',' '\n' | tr -d ' ' | grep -v '^$' | sort -u)
+              while IFS= read -r f; do
+                if [[ ! -d "supabase/functions/$f" ]]; then
+                  echo "::error::force-deploy: unknown edge function '$f'"
+                  exit 1
+                fi
+              done <<< "$changed"
+            fi
+            echo "workflow_dispatch force-deploy: $(echo $changed | tr '\n' ' ')" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "fns=$(echo $changed | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           diff_paths=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/**')
 
           # _shared/** modules and top-level files (import_map.json) are baked
