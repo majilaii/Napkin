@@ -217,6 +217,32 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-150: taste drill-in v2 — exercises fn_user_taste (histogram +
+    // junk-filtered, disjoint cuisine lists) end-to-end. Owner-only action, so
+    // the identifier is the smoke user itself. Zero rated meals is a legitimate
+    // state — assert envelope keys + types only.
+    {
+        name: 'user-profile?action=taste (TICKET-150 fn_user_taste v2)',
+        method: 'POST',
+        fn: 'user-profile',
+        body: { action: 'taste', identifier: '__SMOKE_USER_ID__' },
+        shape: (json) => {
+            const data = (json as {
+                data?: {
+                    entry_count?: unknown;
+                    top_cuisines?: unknown;
+                    bottom_cuisines?: unknown;
+                    rating_histogram?: unknown;
+                };
+            }).data;
+            if (!data) return 'missing data envelope';
+            if (typeof data.entry_count !== 'number') return 'data.entry_count is not a number';
+            if (!Array.isArray(data.top_cuisines)) return 'data.top_cuisines is not an array';
+            if (!Array.isArray(data.bottom_cuisines)) return 'data.bottom_cuisines is not an array';
+            if (!Array.isArray(data.rating_histogram)) return 'data.rating_histogram is not an array';
+            return null;
+        },
+    },
     {
         // TICKET-144 pt2: chosen-memory hero picker (self-only own photos). An
         // empty photos array is legit (the smoke user has no photos there).

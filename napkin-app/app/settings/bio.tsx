@@ -5,7 +5,7 @@
  * Save disabled until the value actually changed.
  */
 import React, { useState } from 'react';
-import { Text, TextInput, StyleSheet } from 'react-native';
+import { Text, TextInput, StyleSheet, InteractionManager } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
@@ -25,6 +25,13 @@ export default function EditBioScreen() {
     const update = useUpdateProfile(user?.id);
 
     const [value, setValue] = useState('');
+    // Focus after the push transition completes — raising the keyboard mid-push
+    // reads as flicker.
+    const inputRef = React.useRef<TextInput>(null);
+    React.useEffect(() => {
+        const task = InteractionManager.runAfterInteractions(() => inputRef.current?.focus());
+        return () => task.cancel();
+    }, []);
     // Seed once; the touched guard stops a late profile fetch from clobbering
     // keystrokes typed into the autoFocused field on a cold cache.
     const touched = React.useRef(false);
@@ -51,6 +58,7 @@ export default function EditBioScreen() {
                 Bio ({value.length}/160)
             </Text>
             <TextInput
+                ref={inputRef}
                 value={value}
                 onChangeText={(t) => {
                     touched.current = true;
@@ -59,7 +67,6 @@ export default function EditBioScreen() {
                 style={[styles.input, styles.bioInput, { color: palette.text, borderColor: palette.outlineVariant }]}
                 multiline
                 maxLength={160}
-                autoFocus
                 returnKeyType="default"
                 placeholder="A line about how you eat"
                 placeholderTextColor={palette.textMuted}

@@ -234,6 +234,19 @@ const navStyles = StyleSheet.create({
   },
 });
 
+// Nav theme pinned to warm paper. @react-navigation's DefaultTheme paints
+// card + background pure white; every screen paints Colors.light.background, so
+// the white card peeked through during every push/pop → flicker. Derive from
+// DefaultTheme (light-only, matching the app's unconditional DefaultTheme pin).
+const NavTheme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    background: Colors.light.background,
+    card: Colors.light.background,
+  },
+};
+
 function RootLayoutNav() {
   const { session, isLoading, onboardedAt } = useAuth();
   const segments = useSegments();
@@ -315,7 +328,7 @@ function RootLayoutNav() {
   }, [userId]);
 
   return (
-    <ThemeProvider value={DefaultTheme}>
+    <ThemeProvider value={NavTheme}>
       <View style={{ flex: 1 }}>
         {/* Root catch: a render error anywhere used to white-screen the whole
             app with zero trace (only entry-detail was wrapped). */}
@@ -326,7 +339,12 @@ function RootLayoutNav() {
             captureError(e, { context: 'root-boundary' });
           }}
         >
-        <Stack>
+        <Stack
+          screenOptions={{
+            // Card content never flashes white mid-transition — see NavTheme.
+            contentStyle: { backgroundColor: Colors.light.background },
+          }}
+        >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="auth" options={{ headerShown: false }} />
           {/* TICKET-107: first-sign-in onboarding stack (name · city · teach) */}

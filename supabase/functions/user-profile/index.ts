@@ -1556,6 +1556,7 @@ serve(async (req) => {
                         },
                         top_cuisines: [],
                         bottom_cuisines: [],
+                        rating_histogram: [],
                     },
                 });
             }
@@ -1572,6 +1573,7 @@ serve(async (req) => {
                     },
                     top_cuisines: row.top_cuisines ?? [],
                     bottom_cuisines: row.bottom_cuisines ?? [],
+                    rating_histogram: row.rating_histogram ?? [],
                 },
             });
         }

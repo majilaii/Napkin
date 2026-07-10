@@ -1,26 +1,26 @@
 /**
  * /settings/photo — change or remove the profile photo.
  *
- * Tap the circle (or "Change photo") to pick from the library; the pick is
- * square-cropped to 512² and uploaded to the avatars bucket, then written to
- * the profile via useUpdateProfile. The write is optimistic — the new photo
- * appears instantly on every surface (this circle, the settings list, the
- * profile header) without waiting on a refetch. Changes apply immediately —
- * no Save button. "Remove photo" clears avatar_url (→ monogram) and deletes
- * the stored file.
+ * Tap the circle (or "Change photo") for the instant source sheet (Take photo /
+ * Choose from library — lib/avatarPicker); the pick is square-cropped to 512²
+ * and uploaded to the avatars bucket, then written to the profile via
+ * useUpdateProfile. The write is optimistic — the new photo appears instantly
+ * on every surface (this circle, the settings list, the profile header)
+ * without waiting on a refetch. Changes apply immediately — no Save button.
+ * "Remove photo" clears avatar_url (→ monogram) and deletes the stored file.
  */
 import React, { useState } from 'react';
 import { View, Text, ActivityIndicator, Alert, StyleSheet } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile, useUpdateProfile } from '@/hooks/users';
 import { Avatar } from '@/components/feed/Avatar';
-import { PressableScale } from '@/components/ui/napkin/PressableScale';
+import { PillButton, PressableScale } from '@/components/ui/napkin';
 import { EditorScreen } from '@/components/settings';
+import { chooseAvatarAsset } from '@/lib/avatarPicker';
 import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
 
 export default function EditPhotoScreen() {
@@ -45,27 +45,23 @@ export default function EditPhotoScreen() {
 
     const pick = async () => {
         if (working || !user?.id) return;
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-            Alert.alert('Photo access needed', 'Allow photo access to add a profile photo.');
+        // Instant source sheet; busy goes up the moment a source is chosen so
+        // the spinner covers the system picker's ~1–2s presentation gap (the
+        // picker promise doesn't resolve until dismissal, so busy also rides
+        // through pick → crop and straight into the upload below).
+        const asset = await chooseAvatarAsset(() => setBusy(true));
+        if (!asset) {
+            setBusy(false);
             return;
         }
-        const picked = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.85, // recompressed to 512² @0.8 on upload — no need for max here
-        });
-        if (picked.canceled || !picked.assets?.length) return;
 
-        // busy spans the whole op (upload + save) so the spinner never clears
-        // early. mutateAsync's optimistic patch flips the avatar the moment the
-        // save starts — the photo shows without waiting on a refetch.
-        setBusy(true);
+        // busy spans the whole op (picker + upload + save) so the spinner never
+        // clears early. mutateAsync's optimistic patch flips the avatar the
+        // moment the save starts — the photo shows without waiting on a refetch.
         const previous = avatarUrl;
         let uploaded: string | null = null;
         try {
-            uploaded = await compressAndUploadAvatar(picked.assets[0].uri, user.id);
+            uploaded = await compressAndUploadAvatar(asset.uri, user.id);
             await update.mutateAsync({ avatar_url: uploaded });
             // Saved — the replaced upload is now orphaned. Best-effort cleanup.
             if (previous && previous !== uploaded) {
@@ -104,12 +100,16 @@ export default function EditPhotoScreen() {
     return (
         <EditorScreen title="Photo">
             <View style={styles.stage}>
+                {/* Portrait mounted on a warm vellum plate — the centerpiece.
+                    Structure comes from the background shift + ambient shadow,
+                    never a border. Tapping the plate opens the library. */}
                 <PressableScale
                     onPress={pick}
                     disabled={working}
                     haptic="selection"
                     accessibilityRole="button"
                     accessibilityLabel="Choose a profile photo"
+                    style={[styles.plate, { backgroundColor: palette.surfaceJournalLow }]}
                 >
                     <View>
                         <Avatar name={name} url={avatarUrl} size={132} palette={palette} />
@@ -121,7 +121,7 @@ export default function EditPhotoScreen() {
                             <View
                                 style={[
                                     styles.badge,
-                                    { backgroundColor: palette.primary, borderColor: palette.background },
+                                    { backgroundColor: palette.primary, borderColor: palette.surfaceJournalLow },
                                 ]}
                             >
                                 <Ionicons name="camera-outline" size={18} color={palette.textInverse} />
@@ -130,17 +130,17 @@ export default function EditPhotoScreen() {
                     </View>
                 </PressableScale>
 
-                <PressableScale onPress={pick} disabled={working} haptic="selection" accessibilityRole="button">
-                    <Text style={[styles.action, { color: palette.primary }]}>
+                <View style={styles.actions}>
+                    <PillButton filled={false} onPress={pick} disabled={working}>
                         {avatarUrl ? 'Change photo' : 'Add a photo'}
-                    </Text>
-                </PressableScale>
+                    </PillButton>
 
-                {avatarUrl ? (
-                    <PressableScale onPress={remove} disabled={working} haptic="selection" accessibilityRole="button">
-                        <Text style={[styles.action, { color: palette.textMuted }]}>Remove photo</Text>
-                    </PressableScale>
-                ) : null}
+                    {avatarUrl ? (
+                        <PressableScale onPress={remove} disabled={working} haptic="selection" accessibilityRole="button">
+                            <Text style={[styles.remove, { color: palette.textMuted }]}>Remove photo</Text>
+                        </PressableScale>
+                    ) : null}
+                </View>
             </View>
         </EditorScreen>
     );
@@ -149,8 +149,19 @@ export default function EditPhotoScreen() {
 const styles = StyleSheet.create({
     stage: {
         alignItems: 'center',
-        gap: Spacing.lg,
+        gap: Spacing.xl,
         marginTop: Spacing.xxl,
+    },
+    plate: {
+        padding: Spacing.xl,
+        borderRadius: Radius.xxxl,
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Shadow.ambient,
+    },
+    actions: {
+        alignItems: 'center',
+        gap: Spacing.md,
     },
     overlay: {
         ...StyleSheet.absoluteFillObject,
@@ -169,7 +180,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    action: {
+    remove: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 14,
         letterSpacing: 0.2,

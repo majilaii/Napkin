@@ -1,26 +1,12 @@
 /**
- * TrendingRail — the two-mode trending block (TICKET-098 Phase B + TICKET-102 +
- * TICKET-130 "Gazette mix" re-dress: horizontal cards → RANKED LEDGER).
+ * TrendingRail — actual community momentum, expressed as a ranked ledger.
  *
- * Mode 1 (trending): vertical ranked ledger of restaurants sourced from Napkin
- * intake — imports (TikTok/IG share-to-Napkin) are the HEADLINE signal, then
- * saves + list adds. Kicker "trending this week"; signal line (terracotta)
- * "{n} imported · {m} saved". Hidden below 3 qualifiers.
+ * Restaurants arrive here through real Napkin intake: imports are the headline
+ * signal, followed by saves and list adds. The block is hidden below three
+ * qualifying restaurants. It intentionally does not degrade to a Google
+ * leaderboard: non-personal data is not a useful substitute for discovery.
  *
- * Mode 2 (fallback, TICKET-102): when mode 1 is below the floor, the ledger
- * switches SOURCE to restaurants ranked by their stored Google rating. Kicker
- * "nearby, well rated"; meta "{rating} on Google" — Google is a labeled SIBLING
- * signal, NEVER a Napkin number, and stays MUTED (never terracotta).
- *
- * Rows are pictureless — rank numeral + engraved GlyphChip (line-art Ionicons
- * outline glyph on a tinted plate, NOT a photo) + name/meta/signal. No photos
- * anywhere (founder-locked 2026-07-07).
- *
- * Rules (both modes):
- *   - Max 5 rows, then it ends. No scroll, no "load more".
- *   - Exactly one mode renders — never mixed grammars (enforced by pickRailMode).
- *   - Hidden ENTIRELY when neither mode has cards (clean absence).
- *   - Tap → restaurant/[id].
+ * Max five rows, no load-more. Tap → restaurant/[id].
  */
 import React, { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -28,55 +14,37 @@ import { useRouter } from 'expo-router';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAuth } from '@/providers/AuthProvider';
-import { useTrending, type TrendingCard, type FallbackCard } from '@/hooks/feed/useTrending';
-import { useSavedRestaurantIds } from '@/hooks/feed/useSavedRestaurantIds';
-import { pickRailMode } from './railMode';
+import { useTrending, type TrendingCard } from '@/hooks/feed/useTrending';
 import { trendingSignal } from './trendingSignal';
+import { visibleTrendingCards } from './trendingRailGate';
 import { SectionKicker } from './SectionKicker';
 import { GlyphChip } from './GlyphChip';
 
-/** Ranked ledger cap — 01–05, no scroll (TICKET-130). */
+/** Ranked ledger cap — 01–05, no scroll. */
 const MAX_LEDGER_ROWS = 5;
 
 export function TrendingRail() {
-    const { user } = useAuth();
     const { data } = useTrending();
+    const cards = useMemo(() => visibleTrendingCards(data?.rows), [data?.rows]);
 
-    const savedIds = useSavedRestaurantIds(user?.id ?? null);
-    const rail = useMemo(
-        () => pickRailMode(data?.rows, data?.fallback, savedIds),
-        [data?.rows, data?.fallback, savedIds],
-    );
-
-    if (rail.mode === 'hidden') return null;
+    if (cards.length === 0) return null;
 
     return (
         <View>
-            <SectionKicker>{rail.title}</SectionKicker>
+            <SectionKicker>being passed around</SectionKicker>
             <View style={styles.rows}>
-                {rail.mode === 'trending'
-                    ? rail.cards
-                          .slice(0, MAX_LEDGER_ROWS)
-                          .map((card, i) => (
-                              <TrendingLedgerRow key={card.restaurant_id} card={card} index={i} />
-                          ))
-                    : rail.cards
-                          .slice(0, MAX_LEDGER_ROWS)
-                          .map((card, i) => (
-                              <FallbackLedgerRow key={card.restaurant_id} card={card} index={i} />
-                          ))}
+                {cards.slice(0, MAX_LEDGER_ROWS).map((card, i) => (
+                    <TrendingLedgerRow key={card.restaurant_id} card={card} index={i} />
+                ))}
             </View>
         </View>
     );
 }
 
-// ── Mode 1 — trending row (TICKET-114 import-count signal, terracotta) ───────
-
 function TrendingLedgerRow({ card, index }: { card: TrendingCard; index: number }) {
     const meta = [card.cuisine, card.neighborhood].filter(Boolean).join(' · ');
     return (
-        <BaseLedgerRow
+        <LedgerRow
             restaurantId={card.restaurant_id}
             index={index}
             cuisine={card.cuisine}
@@ -87,45 +55,24 @@ function TrendingLedgerRow({ card, index }: { card: TrendingCard; index: number 
     );
 }
 
-// ── Mode 2 — fallback row (Google as a labeled sibling signal, muted) ────────
-
-function FallbackLedgerRow({ card, index }: { card: FallbackCard; index: number }) {
-    const meta = [card.cuisine, card.neighborhood].filter(Boolean).join(' · ');
-    return (
-        <BaseLedgerRow
-            restaurantId={card.restaurant_id}
-            index={index}
-            cuisine={card.cuisine}
-            name={card.name}
-            meta={meta}
-            googleLine={`${card.google_rating.toFixed(1)} on Google`}
-        />
-    );
-}
-
-function BaseLedgerRow({
+function LedgerRow({
     restaurantId,
     index,
     cuisine,
     name,
     meta,
     signal,
-    googleLine,
 }: {
     restaurantId: string;
     index: number;
     cuisine: string | null;
     name: string;
     meta: string;
-    /** Mode 1: terracotta import/save signal line. */
-    signal?: string;
-    /** Mode 2: quiet Google sibling line — muted, never terracotta. */
-    googleLine?: string;
+    signal: string;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
-
     const rank = String(index + 1).padStart(2, '0');
 
     return (
@@ -153,11 +100,6 @@ function BaseLedgerRow({
                         {signal}
                     </Text>
                 )}
-                {!!googleLine && (
-                    <Text numberOfLines={1} style={[styles.google, { color: palette.textMuted }]}>
-                        {googleLine}
-                    </Text>
-                )}
             </View>
         </Pressable>
     );
@@ -172,6 +114,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
+        minHeight: 48,
     },
     rank: {
         fontFamily: 'Newsreader_400Regular_Italic',
@@ -179,6 +122,7 @@ const styles = StyleSheet.create({
         opacity: 0.85,
         minWidth: 34,
         flexShrink: 0,
+        fontVariant: ['tabular-nums'],
     },
     middle: {
         flex: 1,
@@ -197,12 +141,6 @@ const styles = StyleSheet.create({
     },
     signal: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-        lineHeight: 15,
-        marginTop: 3,
-    },
-    google: {
-        fontFamily: 'Manrope_400Regular',
         fontSize: 11,
         lineHeight: 15,
         marginTop: 3,

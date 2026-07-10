@@ -11,12 +11,12 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, Stack } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { Avatar } from '@/components/feed/Avatar';
+import { chooseAvatarAsset } from '@/lib/avatarPicker';
 import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
@@ -33,23 +33,18 @@ export default function OnboardingPhotoScreen() {
 
     const pick = async () => {
         if (uploading || !user?.id) return;
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-            Alert.alert('Photo access needed', 'Allow photo access to add a profile photo.');
+        // Instant source sheet (Take photo / Choose from library); uploading
+        // goes up the moment a source is chosen so the spinner covers the
+        // system picker's presentation gap.
+        const asset = await chooseAvatarAsset(() => setUploading(true));
+        if (!asset) {
+            setUploading(false);
             return;
         }
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 1,
-        });
-        if (result.canceled || !result.assets?.length) return;
 
-        setUploading(true);
         try {
             const previous = draft.avatar_url;
-            const url = await compressAndUploadAvatar(result.assets[0].uri, user.id);
+            const url = await compressAndUploadAvatar(asset.uri, user.id);
             patch({ avatar_url: url });
             // Best-effort: a re-pick orphans the prior upload — clean it up.
             if (previous && previous !== url) void removeUploadedAvatar(previous).catch(() => {});
