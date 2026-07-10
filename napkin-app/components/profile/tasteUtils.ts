@@ -35,6 +35,61 @@ export function deriveHardestAxis(cats: TasteData['categories']): string | null 
     return hardest.label;
 }
 
+/**
+ * Generic Google Places venue types that leak into `restaurants.cuisine`
+ * (humanized primaryType) but are not cuisines. Client-side mirror of the
+ * NOT IN list in fn_user_taste v2 (20260710120000) — keep the two in sync.
+ * Compare lowercased + trimmed.
+ */
+export const JUNK_VENUE_TYPES = new Set([
+    'restaurant',
+    'food',
+    'hotel',
+    'lodging',
+    'resort hotel',
+    'meal takeaway',
+    'meal delivery',
+    'point of interest',
+    'establishment',
+    'store',
+    'food court',
+    'event venue',
+    'tourist attraction',
+    'market',
+    'shopping mall',
+]);
+
+/**
+ * Aggregate for the profile taste band: top cuisines + city/country coverage.
+ * Junk venue types never count as cuisines (TICKET-150 follow-up); coverage
+ * counts are unaffected. Lives here (pure, no I/O) so it unit-tests without
+ * pulling supabase; `useUserSpots` re-exports it for callers.
+ */
+export function deriveTaste(spots: SpotSummary[]): {
+    topCuisines: string[];
+    cityCount: number;
+    countryCount: number;
+} {
+    const cuisineCounts = new Map<string, number>();
+    const cities = new Set<string>();
+    const countries = new Set<string>();
+    for (const s of spots) {
+        if (s.cuisine) {
+            const c = s.cuisine.trim().toLowerCase();
+            if (c && !JUNK_VENUE_TYPES.has(c)) {
+                cuisineCounts.set(c, (cuisineCounts.get(c) ?? 0) + s.visit_count);
+            }
+        }
+        if (s.city) cities.add(s.city.trim().toLowerCase());
+        if (s.country) countries.add(s.country.trim().toLowerCase());
+    }
+    const topCuisines = [...cuisineCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([c]) => c);
+    return { topCuisines, cityCount: cities.size, countryCount: countries.size };
+}
+
 /** The ten half-star bins, ascending. Shared by the histogram fill + render. */
 export const HISTOGRAM_BINS = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
 
