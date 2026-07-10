@@ -9,8 +9,11 @@ module.exports = {
     },
 
     // IMPORTANT: Transform these node_modules that use ESM
+    // supercluster + kdbush (TICKET-153) are ESM-only (`type: module`), so the
+    // CJS jest runner must transpile them via babel-jest (Metro handles them
+    // natively in the app bundle — this allowlist is jest-only).
     transformIgnorePatterns: [
-        'node_modules/(?!(@testing-library|@supabase|@tanstack|react-native|@react-native|expo|@expo|react-native-safe-area-context|react-native-reanimated|react-native-gesture-handler|react-native-screens)/)',
+        'node_modules/(?!(@testing-library|@supabase|@tanstack|react-native|@react-native|expo|@expo|react-native-safe-area-context|react-native-reanimated|react-native-gesture-handler|react-native-screens|supercluster|kdbush)/)',
     ],
 
     // Module resolution
