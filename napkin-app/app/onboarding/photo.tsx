@@ -11,12 +11,12 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, Stack } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { Avatar } from '@/components/feed/Avatar';
+import { chooseAvatarAsset } from '@/lib/avatarPicker';
 import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
@@ -33,27 +33,18 @@ export default function OnboardingPhotoScreen() {
 
     const pick = async () => {
         if (uploading || !user?.id) return;
-        // SDK 54: the system library picker (PHPicker / Android Photo Picker) is
-        // out-of-process and needs NO permission — awaiting a pre-gate was pure
-        // latency. Launch straight away; a throw is the only failure to catch.
-        let result;
-        try {
-            result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                allowsEditing: true,
-                aspect: [1, 1],
-                quality: 1,
-            });
-        } catch {
-            Alert.alert("Couldn't open your library", 'Please try another one.');
+        // Instant source sheet (Take photo / Choose from library); uploading
+        // goes up the moment a source is chosen so the spinner covers the
+        // system picker's presentation gap.
+        const asset = await chooseAvatarAsset(() => setUploading(true));
+        if (!asset) {
+            setUploading(false);
             return;
         }
-        if (result.canceled || !result.assets?.length) return;
 
-        setUploading(true);
         try {
             const previous = draft.avatar_url;
-            const url = await compressAndUploadAvatar(result.assets[0].uri, user.id);
+            const url = await compressAndUploadAvatar(asset.uri, user.id);
             patch({ avatar_url: url });
             // Best-effort: a re-pick orphans the prior upload — clean it up.
             if (previous && previous !== url) void removeUploadedAvatar(previous).catch(() => {});
