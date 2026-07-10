@@ -1277,10 +1277,6 @@ const styles = StyleSheet.create({
         fontSize: 13,
         letterSpacing: 0.2,
     },
-    headerActionDot: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-    },
     // List / map view toggle (under the header)
     viewToggleBar: {
         flexDirection: 'row',
