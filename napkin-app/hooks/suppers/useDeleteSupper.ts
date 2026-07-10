@@ -62,5 +62,16 @@ export function useDeleteSupper() {
             // supper (a re-entry re-fetches → 404 → "this table isn't available").
             qc.removeQueries({ queryKey: queryKeys.suppers.detail(input.supper_id) });
         },
+        onError: (error, input) => {
+            // No optimistic patch to roll back — but an already-gone refusal means
+            // this device's caches lied about the supper existing (deleted elsewhere);
+            // resync the feed and drop the stale detail, same as a success.
+            if (isSupperGone(error)) {
+                if (input.table_id) {
+                    qc.invalidateQueries({ queryKey: queryKeys.tables.activityForTable(input.table_id) });
+                }
+                qc.removeQueries({ queryKey: queryKeys.suppers.detail(input.supper_id) });
+            }
+        },
     });
 }

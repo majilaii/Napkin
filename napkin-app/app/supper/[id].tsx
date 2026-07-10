@@ -50,7 +50,9 @@ export default function SupperScreen() {
               : 'takes go private — each stays visible only to whoever wrote it.';
 
     const handleDelete = () => {
-        if (!detail) return;
+        // isPending guard: a double-tap inside the sheet's dismiss window would fire
+        // two deletes (the loser 404s into telemetry and both callbacks navigate).
+        if (!detail || del.isPending) return;
         setSheetOpen(false);
         del.mutate(
             { supper_id: id, table_id: detail.supper.table_id },
