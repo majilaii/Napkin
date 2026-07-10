@@ -80,3 +80,68 @@ export function strangerCanReadPalate(
     if (blockState !== 'none') return false;
     return relationship === 'public_only' || relationship === 'public_and_tables';
 }
+
+/**
+ * TICKET-155 — reachable private-account stub.
+ *
+ * Built as a pure function (not inline in index.ts) so the exact payload shape
+ * is executable in a unit test — index.ts calls serve() at the top level and is
+ * NOT import-safe, so a test cannot reach an inline object. Mirrors the
+ * gates.ts "extracted so semantics are executable" pattern.
+ *
+ * Fires for an EXISTING private target with relationship === 'none' (private +
+ * no shared Table + not self + not blocked-either-way — those cases already
+ * returned earlier). Returns identity + social metadata (follower/following
+ * counts, follow state) with ALL palate explicitly withheld, plus the
+ * `private_stub: true` discriminator the client renders as "their journal is
+ * private". A genuinely nonexistent target is unaffected — the `!targetProfile`
+ * guard returns not_found before this is ever reached (existence-ambiguity
+ * intact for real 404s).
+ *
+ * Social counts here are NON-INTERACTIVE on the client (follow_list still 404s a
+ * non-tablemate viewer of a private account, so a tappable count would dead-end).
+ * `viewer_target_relationship` stays 'none' — the stub is a sibling variant, not
+ * a new relationship tier.
+ */
+export function buildPrivateProfileStub<P>(
+    profile: P,
+    opts: {
+        isFollowingViewer: boolean;
+        followsViewer: boolean;
+        followersCount: number;
+        followingCount: number;
+    },
+): {
+    profile: P;
+    stats: null;
+    social: { followers_count: number; following_count: number };
+    public_lists: null;
+    recently_logged: null;
+    tables_in_common: never[];
+    top_four: never[];
+    regulars_preview: never[];
+    is_self: false;
+    is_following_viewer: boolean;
+    follows_viewer: boolean;
+    viewer_target_relationship: ViewerRelationship;
+    private_stub: true;
+} {
+    return {
+        profile,
+        stats: null,
+        social: {
+            followers_count: opts.followersCount,
+            following_count: opts.followingCount,
+        },
+        public_lists: null,
+        recently_logged: null,
+        tables_in_common: [],
+        top_four: [],
+        regulars_preview: [],
+        is_self: false,
+        is_following_viewer: opts.isFollowingViewer,
+        follows_viewer: opts.followsViewer,
+        viewer_target_relationship: 'none',
+        private_stub: true,
+    };
+}

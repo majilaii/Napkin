@@ -44,6 +44,7 @@ import {
     listPendingImports,
     removeImport,
     setImportSpots,
+    setImportListCount,
     setImportDiagnostics,
     setDefaultImportMode,
     bumpImportAttempt,
@@ -54,6 +55,7 @@ import {
     type ImportManifest,
     type PersistedImportSpot,
 } from '@/lib/importQueue';
+import { truncationNote } from '@/lib/importTruncation';
 import {
     fetchTikTokPerception,
     isTikTokUrl,
@@ -61,6 +63,7 @@ import {
     deleteCachedTikTokVideo,
 } from '@/lib/tiktokPerception';
 import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
+import { captureClipThumbFromUrl, type ClipThumbSourceType } from '@/lib/clipThumbCapture';
 import { isMapsShareUrl } from '@/lib/mapsShare';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
 import type { SaveImportSpotsResult } from './useSaveImportSpots';
@@ -155,6 +158,24 @@ export function useProcessImportQueue() {
         async (m: ImportManifest) => {
             let spots: PersistedImportSpot[] | undefined = m.spots;
             let freshlyResolved = false;
+            // TICKET-151: the resolver's true Maps-list size (candidates are capped
+            // at MAPS_LIST_CAP). Seed from the manifest so a re-drain — which skips
+            // resolve entirely — inherits the persisted value; a fresh resolve
+            // overwrites it below. The toast reads THIS local, never m.listCount:
+            // setImportListCount writes the file without mutating this in-memory m.
+            let listCount: number | null = m.listCount ?? null;
+
+            // TICKET-156 [ARCH-REVIEW W1/W2]: hoisted to processOne scope because
+            // `perception` (and `provider`) are block-scoped to the fresh-resolve
+            // branch below, but the IG handle is read at the source build and the
+            // clip cover is captured only AFTER save_spots succeeds. Assigned in
+            // the fresh-resolve branch; both stay null on a re-drain (spots already
+            // persisted → no fresh perception → no capture; the thumb was cached on
+            // the first pass). A re-drain losing the handle is accepted (no manifest
+            // persistence needed).
+            let igAuthorHandle: string | null = null;
+            let clipThumbUrl: string | null = null;
+            let clipProvider: ClipThumbSourceType | null = null;
 
             // First process: acquire candidates (OCR for video / caption for url),
             // build + PERSIST spots (frozen nonces) before the save.
@@ -266,6 +287,18 @@ export function useProcessImportQueue() {
                         };
                         console.log('[import] channels', JSON.stringify(diag));
                         setImportDiagnostics(m.jobId, diag);
+
+                        // TICKET-156: capture the fresh (unexpired) provider cover
+                        // + IG handle from the LAST perception (the retry loop may
+                        // have re-fetched it). Read at the source build / post-save
+                        // below. tiktok+instagram only — never `video`.
+                        clipProvider = provider;
+                        clipThumbUrl =
+                            (perception as { thumbnailUrl?: string | null })?.thumbnailUrl ?? null;
+                        if (provider === 'instagram') {
+                            igAuthorHandle =
+                                (perception as { authorHandle?: string | null })?.authorHandle ?? null;
+                        }
                     }
                     // Same proven contract as the video path: extracted_text
                     // rides alone (never alongside url).
@@ -274,6 +307,13 @@ export function useProcessImportQueue() {
                     });
                     candidates = resolved?.candidates ?? [];
                     resolvedSourceType = resolved?.source_type ?? null;
+                    // TICKET-151: only a google_maps LIST carries a truthful total here
+                    // (candidates capped at MAPS_LIST_CAP). Every other source returns
+                    // the TICKET-063 listicle heuristic — a caption-regex guess clamped
+                    // to ≤6 — which must never render as a denominator (review P1-1).
+                    listCount = resolvedSourceType === 'google_maps'
+                        ? (resolved?.list_count ?? null)
+                        : null;
                     // Instagram's url tier is a login-walled constant (zero
                     // candidates + ig_nudge, which this queue ignores) — the
                     // fallback would burn a resolve_url rate slot for nothing.
@@ -283,6 +323,11 @@ export function useProcessImportQueue() {
                         });
                         candidates = fallback?.candidates ?? [];
                         resolvedSourceType = fallback?.source_type ?? resolvedSourceType;
+                        // listCount must describe the response that produced candidates —
+                        // same google_maps-only gate as above.
+                        listCount = fallback?.source_type === 'google_maps'
+                            ? (fallback?.list_count ?? null)
+                            : null;
                     }
                 } else {
                     let info = { exists: true, size: 1 };
@@ -356,6 +401,9 @@ export function useProcessImportQueue() {
                     };
                 });
                 setImportSpots(m.jobId, spots);
+                // TICKET-151: checkpoint the list size alongside the spots so it
+                // survives the review hold + any re-drain (readAll parses it back).
+                if (listCount != null) setImportListCount(m.jobId, listCount);
             }
 
             // Review mode: resolved → HOLD for in-app confirmation. The review
@@ -407,13 +455,19 @@ export function useProcessImportQueue() {
             // Instagram deliberately saves as 'web' (still taps out to the reel):
             // the wishlist_items_source_shape DB CHECK whitelists source types, so
             // a first-class 'instagram' variant needs a migration — separate ticket.
+            // TICKET-156: an Instagram save carries author_handle (when perception
+            // resolved one) on its `web` source, so the rail can render the @handle
+            // row. Plain web links stay {type,url}; the DB CHECK permits the extra
+            // key unchanged (validated in _shared/wishlistSource.ts too).
             const source: Record<string, string> =
                 m.kind === 'url' && m.url
                     ? /tiktok\.com/i.test(m.url)
                         ? { type: 'tiktok', url: m.url }
                         : isMapsShareUrl(m.url)
                             ? { type: 'google_maps', url: m.url }
-                            : { type: 'web', url: m.url }
+                            : isInstagramUrl(m.url) && igAuthorHandle
+                                ? { type: 'web', url: m.url, author_handle: igAuthorHandle }
+                                : { type: 'web', url: m.url }
                     : { type: 'video' };
 
             // Multi-table fan-out: one save_spots call per destination table (same
@@ -480,6 +534,16 @@ export function useProcessImportQueue() {
             removeImport(m.jobId);
             safeDeleteMov(m.videoPath);
 
+            // TICKET-156 [ARCH-REVIEW W1]: cache the clip's cover frame AFTER
+            // save_spots succeeded (we're past it — a throw would have propagated),
+            // so a thumb is bound to a real save. Fire-and-forget; keyed by VIDEO
+            // (shared across savers), idempotent server-side. tiktok+instagram only;
+            // null on a re-drain (no fresh perception) — the thumb was cached on the
+            // first pass. Never blocks or fails the import.
+            if (clipProvider && clipThumbUrl && m.url) {
+                void captureClipThumbFromUrl(m.url, clipThumbUrl, clipProvider);
+            }
+
             const saved = result?.summary?.saved ?? 0;
             const already = result?.summary?.already_pinned ?? 0;
             // On a retry/re-drain the save may have landed on the prior pass and now
@@ -497,11 +561,21 @@ export function useProcessImportQueue() {
             const reviewAction = done > 0
                 ? { label: 'review', onPress: () => router.push('/import-progress' as any) }
                 : undefined;
+            // TICKET-151: when a Maps list was truncated (list_count > kept), say so
+            // — "pinned 18 · first 20 of 117". Null for non-list / ≤20 imports, where
+            // the toast reads exactly as before. Appended to the success + already-
+            // pinned branches only; never the error branch, never the backgrounded
+            // local-notification mirror below (a terse push title, not a metadata line).
+            const note = truncationNote(listCount, spots.length);
             toast.show(
                 saved > 0
-                    ? `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
+                    ? note
+                        ? `pinned ${saved} · ${note}`
+                        : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
                     : done > 0
-                      ? 'already in your wishlist'
+                      ? note
+                          ? `already in your wishlist · ${note}`
+                          : 'already in your wishlist'
                       : "couldn't import that",
                 reviewAction,
             );

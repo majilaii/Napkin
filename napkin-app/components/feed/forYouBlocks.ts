@@ -9,10 +9,9 @@
  * answer: `visibleForYouBlocks(flags)` returns `[]` ⇒ the For You empty
  * fallback renders. Blocks still self-guard defensively inside their components.
  *
- * Fixed order (TICKET-130 Gazette mix): trending → public lists → people →
- * discovery. Trending and discovery are MUTUALLY EXCLUSIVE (the existing
- * pickRailMode arbiter owns that split): `railVisible` and `hasDiscovery` are
- * never both true for one render.
+ * Fixed order: authored lists → actual Napkin momentum → people. This is an
+ * intentionally small editorial mix, not an endless ranked inventory. Generic
+ * Google-rated fallback results do not belong in a surface called "For You".
  *
  * IMPORTANT: For You renders NO `entry` cards — only list-, restaurant-, and
  * person-level rows. It therefore introduces no public-scope reaction/comment
@@ -24,26 +23,22 @@
 export type ForYouBlock =
     | { _type: 'public_lists' }
     | { _type: 'trending' }
-    | { _type: 'people' }
-    | { _type: 'discovery' };
+    | { _type: 'people' };
 
 export interface ForYouFlags {
     /** browse rows > 0 */
     hasPublicLists: boolean;
-    /** pickRailMode(...).mode !== 'hidden' */
+    /** at least three genuine trending cards */
     railVisible: boolean;
     /** useCoDiners length > 0 */
     hasCoDiners: boolean;
-    /** railMode === 'hidden' && visibleFallbackCards > 0 */
-    hasDiscovery: boolean;
 }
 
 /** Fixed order; only visible blocks are included. Empty array ⇒ For You empty. */
 export function visibleForYouBlocks(f: ForYouFlags): ForYouBlock[] {
     const out: ForYouBlock[] = [];
-    if (f.railVisible) out.push({ _type: 'trending' });
     if (f.hasPublicLists) out.push({ _type: 'public_lists' });
+    if (f.railVisible) out.push({ _type: 'trending' });
     if (f.hasCoDiners) out.push({ _type: 'people' });
-    if (f.hasDiscovery) out.push({ _type: 'discovery' });
     return out;
 }

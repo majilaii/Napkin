@@ -45,6 +45,17 @@ export interface InstagramPerception {
     playAddr: string | null;
     /** Referer to send when downloading playAddr (the embed page seeds the session). */
     refererUrl: string;
+    /**
+     * TICKET-156: cover frame (og:image) for the On Socials rail thumbnail cache.
+     * Fresh at fetch time; the capture path downloads its bytes now (this signed
+     * URL expires — never persist it). Null when the page yields no og:image.
+     */
+    thumbnailUrl: string | null;
+    /**
+     * TICKET-156: creator handle (from the embed page's profile anchor). Null when
+     * unresolved — pre-ticket rows and shape shifts render without the @handle row.
+     */
+    authorHandle: string | null;
 }
 
 export function isInstagramUrl(url: string | null | undefined): boolean {
@@ -162,6 +173,36 @@ export function parseOgDescriptionCaption(html: string): string | null {
     return text || null;
 }
 
+/**
+ * og:image cover frame from a reel/embed page — the durable-cache source for the
+ * On Socials rail thumbnail (TICKET-156). Exported for unit tests.
+ */
+export function parseInstagramThumbnail(html: string): string | null {
+    const m = html.match(/property="og:image"\s+content="([^"]*)"/);
+    if (!m?.[1]) return null;
+    const decoded = decodeEntities(m[1]);
+    return decoded.startsWith('http') ? decoded : null;
+}
+
+/**
+ * Author handle from the embed/reel page — the first profile anchor
+ * (instagram.com/{handle}/) that isn't a reserved path segment. Powers the
+ * card's @handle row (TICKET-156). Exported for unit tests.
+ */
+export function parseInstagramAuthorHandle(html: string): string | null {
+    const RESERVED = new Set([
+        'reel', 'reels', 'p', 'tv', 'explore', 'stories', 'share', 'accounts', 'about',
+        'developer', 'legal', 'privacy', 'directory', 'web',
+    ]);
+    const re = /instagram\.com\/([A-Za-z0-9._]{1,30})\//g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+        const handle = m[1];
+        if (!RESERVED.has(handle.toLowerCase())) return handle;
+    }
+    return null;
+}
+
 async function fetchHtml(url: string): Promise<{ html: string; finalUrl: string } | null> {
     // Deadline per fetch: the interactive resolver runs this behind a spinner,
     // and iOS's 60s default would hold "reading the post…" hostage on a stall.
@@ -208,10 +249,15 @@ export async function fetchInstagramPerception(
         const embed = await fetchHtml(embedUrl);
         let caption: string | null = null;
         let videoUrl: string | null = null;
+        // TICKET-156: cover frame + author handle for the On Socials rail.
+        let thumbnailUrl: string | null = null;
+        let authorHandle: string | null = null;
         if (embed) {
             const parsed = parseInstagramEmbed(embed.html);
             caption = parsed.caption;
             videoUrl = parsed.videoUrl;
+            thumbnailUrl = parseInstagramThumbnail(embed.html);
+            authorHandle = parseInstagramAuthorHandle(embed.html);
         }
 
         // Caption fallback: the post page's og:description (served logged-out
@@ -220,13 +266,21 @@ export async function fetchInstagramPerception(
             if (!pageHtml) pageHtml = (await fetchHtml(`https://www.instagram.com/reel/${code}/`))?.html ?? null;
             if (pageHtml) caption = parseOgDescriptionCaption(pageHtml);
         }
+        // TICKET-156: mine the cover + handle from any page HTML we ALREADY have
+        // (embed miss, or the /share/ redirect fetch) — never fetch SOLELY for
+        // these, keeping the hot import path lean. An IG row that stays
+        // thumb-less renders typographic and can backfill opportunistically.
+        if (pageHtml) {
+            if (!thumbnailUrl) thumbnailUrl = parseInstagramThumbnail(pageHtml);
+            if (!authorHandle) authorHandle = parseInstagramAuthorHandle(pageHtml);
+        }
 
         const text = (caption ?? '').trim().slice(0, CAPTION_CAP);
         if (!text && !videoUrl) {
             console.log('[instagramPerception] no caption or video_url (walled or shape changed?)');
             return null;
         }
-        return { text, hasTranscript: false, playAddr: videoUrl, refererUrl: embedUrl };
+        return { text, hasTranscript: false, playAddr: videoUrl, refererUrl: embedUrl, thumbnailUrl, authorHandle };
     } catch {
         return null;
     }

@@ -74,11 +74,14 @@ import {
     VoicesStream,
     ProfessionalTakesBand,
     SavedFromTikTokPanel,
+    OnSocialsRail,
     MapHero,
     UtilityPills,
     ScoreBand,
     BottomActionBar,
 } from '@/components/restaurants';
+import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippings';
+import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { AddToListSheet } from '@/components/lists';
 import { SetTableSheet } from '@/components/suppers';
@@ -294,6 +297,16 @@ export default function RestaurantScreen() {
         router.push({ pathname: '/entry-detail', params: { entryId, viewAs: 'public' } });
     }, [router]);
 
+    // TICKET-154: the all-reviews page (Letterboxd film → Reviews).
+    const handleSeeAllReviews = useCallback(() => {
+        const targetId = pageData?.restaurant?.id;
+        if (!targetId) return;
+        router.push({
+            pathname: '/restaurant-reviews',
+            params: { id: targetId, name: pageData?.restaurant?.name ?? '' },
+        });
+    }, [router, pageData?.restaurant?.id, pageData?.restaurant?.name]);
+
     // ── Signal strip + histogram state ────────────────────────────────────
     const personalCount = pageData?.personal?.visit_count ?? 0;
     const tableCount = pageData?.table_chip?.visit_count ?? 0;
@@ -383,6 +396,12 @@ export default function RestaurantScreen() {
     // ── Save wiring (wishlist + lists) ─────────────────────────────────────
     const persistedRestaurantId =
         pageData?.restaurant?.id ?? (isGhost ? undefined : restaurantId ?? undefined);
+    // TICKET-156: ON SOCIALS rail — its OWN independent query (never blocks the
+    // page's hero / score / CTA). clippings gates BOTH the rail and the
+    // SavedFromTikTokPanel fallback (the panel survives only when the rail is empty
+    // AND the viewer has their own plain non-IG web source).
+    const { data: clippingsData } = useRestaurantClippings(persistedRestaurantId, user?.id);
+    const clippings = clippingsData?.rows ?? [];
     // Fall back to external_id for ghosts so a freshly-saved ghost's bookmark
     // (and the sheet's Wishlist checkmark) fills in-session via the optimistic cache.
     const bookmarked = useIsWishlisted(persistedRestaurantId ?? restaurant?.external_id, user?.id);
@@ -634,8 +653,15 @@ export default function RestaurantScreen() {
                     ) : null}
 
                     {/* Quiet save-provenance line — sits with the metadata, not as a
-                        hero card. Only when this restaurant was saved from TikTok. */}
-                    {restaurant && tiktokSource ? (
+                        hero card. TICKET-156: the ON SOCIALS rail replaces this
+                        whenever it has ≥1 card; the quiet line survives ONLY for the
+                        one case the rail structurally can't cover — the viewer's own
+                        plain (non-Instagram) web link. */}
+                    {restaurant
+                        && clippings.length === 0
+                        && tiktokSource
+                        && tiktokSource.source.type === 'web'
+                        && !isInstagramSource(tiktokSource.source) ? (
                         <SavedFromTikTokPanel source={tiktokSource.source} />
                     ) : null}
 
@@ -722,7 +748,7 @@ export default function RestaurantScreen() {
                     {restaurant ? (
                         <SwitchableDistribution
                             activeTier={activeTier}
-                            distributions={pageData?.distributions ?? { you: [0, 0, 0, 0, 0], your_table: null, napkin: [0, 0, 0, 0, 0] }}
+                            distributions={pageData?.distributions_half ?? { you: new Array(10).fill(0), your_table: null, napkin: new Array(10).fill(0) }}
                             onTierChange={setActiveTier}
                         />
                     ) : null}
@@ -783,7 +809,19 @@ export default function RestaurantScreen() {
                                 onVisitPress={handleVisitPress}
                                 onPublicReviewPress={handlePublicReviewPress}
                                 restaurantName={restaurant?.name ?? null}
+                                onSeeAllReviews={handleSeeAllReviews}
                             />
+                        </View>
+                    ) : null}
+
+                    {/* On socials — your circle's (+ strangers') clippings (TICKET-156).
+                        Sits after VoicesStream, before ProfessionalTakesBand:
+                        written voices → video clips → professional takes. Renders
+                        independent of hasVoices (a cold page can still show clips).
+                        Gated on non-empty so an empty rail leaves no padded gap (N4). */}
+                    {restaurant && clippings.length > 0 ? (
+                        <View style={styles.belowSection}>
+                            <OnSocialsRail clippings={clippings} />
                         </View>
                     ) : null}
 

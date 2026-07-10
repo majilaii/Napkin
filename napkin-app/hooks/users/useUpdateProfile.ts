@@ -47,8 +47,10 @@ async function updateProfile(payload: UpdateProfilePayload): Promise<UserProfile
     });
 }
 
-/** Merge a partial patch into a cached profile result, preserving everything else. */
-function patchProfile(
+/** Merge a partial patch into a cached profile result, preserving everything else.
+ * Shared with useUpdateReplyPermission — the write depth (data.profile) is the
+ * part that's easy to get wrong (TICKET-158 review finding). */
+export function patchProfile(
     prev: UserProfileResult | undefined,
     patch: Partial<UserProfileRow>,
 ): UserProfileResult | undefined {

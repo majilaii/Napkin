@@ -177,6 +177,12 @@ export const queryKeys = {
         /** TICKET-149: lazily-resolved direct booking-page URL (Reserve pill). */
         reserveLink: (restaurantId: string) =>
             ['restaurantReserveLink', restaurantId] as const,
+        /** TICKET-154: paginated public reviews (the all-reviews page). */
+        reviews: (restaurantId: string) =>
+            ['restaurantReviews', restaurantId] as const,
+        /** TICKET-156: On Socials rail — social clippings for a restaurant. */
+        clippings: (restaurantId: string) =>
+            ['restaurantClippings', restaurantId] as const,
     },
 
     // Misc per-entry caches (entry-detail screen ad-hoc queries)

@@ -162,6 +162,12 @@ export interface ImportManifest {
      * (caption chars, tiktok_asr, ocr_lines, …) — extraction is opaque without
      * a record of which channels actually contributed. */
     diag?: Record<string, unknown>;
+    /** TICKET-151: the resolver's TRUE item count for a google_maps LIST —
+     * candidates are capped at MAPS_LIST_CAP (20) server-side. Persisted so the
+     * drain toast + review header can say "first 20 of 117" after the review
+     * hold / re-drain. Deliberately NEVER set for other sources: their
+     * list_count is the ≤6 listicle heuristic (TICKET-063), not a real total. */
+    listCount?: number | null;
 }
 
 const DEFAULT_DESTINATIONS: ImportDestinations = {
@@ -229,6 +235,9 @@ function readAll(): ImportManifest[] {
                     diag: p.diag && typeof p.diag === 'object' && !Array.isArray(p.diag)
                         ? (p.diag as Record<string, unknown>)
                         : undefined,
+                    // TICKET-151: parse listCount back so the `{...m}` spreads in
+                    // setImportSpots/setImportMode preserve it across the review hold.
+                    listCount: typeof p.listCount === 'number' ? p.listCount : undefined,
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -366,6 +375,19 @@ export function setImportDiagnostics(jobId: string, diag: Record<string, unknown
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     writeManifest({ ...m, diag });
+}
+
+/**
+ * TICKET-151: persist the resolver's true list item count (checkpoint alongside
+ * spots) so the drain toast + review header can render "first N of M" after the
+ * review hold / a re-drain. Like setImportSpots, this writes the file WITHOUT
+ * mutating any in-memory manifest — the fresh-drain toast must read its local
+ * listCount variable, not m.listCount.
+ */
+export function setImportListCount(jobId: string, listCount: number): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return;
+    writeManifest({ ...m, listCount });
 }
 
 /**

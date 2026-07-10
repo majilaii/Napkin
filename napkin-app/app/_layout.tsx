@@ -410,6 +410,10 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
+            name="restaurant-reviews"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
             name="dining-map"
             options={{ headerShown: false }}
           />

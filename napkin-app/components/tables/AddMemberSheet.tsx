@@ -9,10 +9,15 @@
  * Implementation: Modal + Animated.spring (same as TableSwitcherSheet — no
  * extra deps). Drag-to-dismiss via PanResponder.
  *
- * Keyboard: the sheet rides above the iOS keyboard via KeyboardAvoidingView
- * (behavior="position", same idiom as CreateListSheet) and its max height
- * shrinks to the space left above the keyboard — the autofocused search field
- * used to sit fully behind the keyboard, which read as "add member is broken."
+ * Keyboard: the sheet is bottom-anchored and pads itself above the iOS keyboard
+ * via useKeyboardHeight, max height capped so the content above the keyboard
+ * never exceeds SHEET_MAX_HEIGHT nor pushes past the status area (the
+ * autofocused search field used to sit fully behind the keyboard, which read
+ * as "add member is broken"). Same idiom as GatherSheet — KeyboardAvoidingView
+ * behavior="position" is banned here: the share sheet / error alerts steal
+ * focus mid-keyboard-transition and the stale offset strands the sheet, and
+ * the KAV translate stacked on the drag/spring translate. Android keeps the
+ * system adjustResize behavior.
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -21,7 +26,6 @@ import {
     Text,
     Modal,
     Animated,
-    KeyboardAvoidingView,
     PanResponder,
     Platform,
     Pressable,
@@ -290,11 +294,15 @@ export function AddMemberSheet({
     const hasQuery = debouncedQ.trim().length > 0;
     const showEmpty = hasQuery && !isFetching && (searchResults?.length ?? 0) === 0;
 
-    // Fit the sheet in the space left above the keyboard (KAV shifts it up by
-    // exactly keyboardHeight, so anything taller would clip off the top).
+    // Android keeps the system adjustResize behavior; only iOS needs manual padding.
+    const kbPad = Platform.OS === 'ios' ? keyboardHeight : 0;
+
+    // The keyboard inset lives inside the sheet as bottom padding, so the box
+    // may grow by kbPad while the content above the keyboard stays capped at
+    // SHEET_MAX_HEIGHT — bounded so the sheet top always clears the status area.
     const sheetMaxHeight = Math.min(
-        SHEET_MAX_HEIGHT,
-        windowHeight - keyboardHeight - insets.top - Spacing.xl,
+        SHEET_MAX_HEIGHT + kbPad,
+        windowHeight - insets.top - Spacing.xl,
     );
 
     return (
@@ -314,18 +322,13 @@ export function AddMemberSheet({
                 />
             </Animated.View>
 
-            {/* Sheet — rides above the keyboard (same KAV idiom as CreateListSheet) */}
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'position' : undefined}
-                style={styles.avoidingView}
-                pointerEvents="box-none"
-            >
+            {/* Sheet — bottom-anchored, pads itself above the keyboard */}
             <Animated.View
                 style={[
                     styles.sheet,
                     {
                         backgroundColor: palette.surfaceContainerLow,
-                        paddingBottom: insets.bottom + Spacing.md,
+                        paddingBottom: kbPad > 0 ? kbPad + Spacing.sm : insets.bottom + Spacing.md,
                         transform: [{ translateY: sheetTranslate }],
                         maxHeight: sheetMaxHeight,
                     },
@@ -426,7 +429,6 @@ export function AddMemberSheet({
                     </Text>
                 </Pressable>
             </Animated.View>
-            </KeyboardAvoidingView>
         </Modal>
     );
 }
@@ -450,13 +452,11 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 13,
     },
-    avoidingView: {
+    sheet: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
-    },
-    sheet: {
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
         shadowColor: '#1c1c19',

@@ -23,6 +23,12 @@ export interface TopFourSlot {
         city: string | null;
         country: string | null;
         photo_url: string | null;
+        /**
+         * TICKET-157: gates the Places-hero tile tier (`=== 'places'` + flag).
+         * Optional/nullable ([ARCH-REVIEW N4]) — a payload cached before the edge
+         * redeploy lacks it, so `undefined` reads as non-'places' → typographic.
+         */
+        photo_source?: 'places' | 'user' | 'table' | 'none' | null;
         external_id: string | null;
     };
 }

@@ -1,20 +1,17 @@
 /**
  * ForYouFeed — the For You body of the Feed tab (TICKET-125).
  *
- * The app's one discovery home: a fixed, ordered stack of already-shipped
- * discovery surfaces (no new ranking engine, no stranger review content).
- * TICKET-130 "Gazette mix" order:
+ * The app's discovery home: a small, fixed stack of purposeful signals (no new
+ * ranking engine, no stranger review content). Order:
  *
- *   1. trending       — TrendingRail ranked ledger (import/save intent OR
- *                       Google-rated fallback)
- *   2. public lists   — poster rail of recent public lists
+ *   1. public lists   — image-led cards for authored collections
+ *   2. trending       — places with real Napkin import/save intent
  *   3. people         — co-diners you've eaten with (avatar rail, follow)
- *   4. discovery      — DiscoveryLedger "worth a look" (Google-rated, demoted tail)
  *
  * Composition is central: `visibleForYouBlocks(flags)` computes which blocks
  * render, so the "everything empty" case has one clean answer (empty array ⇒
- * ForYouEmpty). Trending and discovery are mutually exclusive via the existing
- * pickRailMode arbiter. Every block ALSO self-guards defensively.
+ * ForYouEmpty). The generic Google-rated fallback is intentionally absent: it
+ * has no relationship to the viewer's taste or the Napkin community.
  *
  * Renders NO `entry` cards — only list-, restaurant-, and person-level rows, all
  * routing OUT to /list/[id], /restaurant/[id], /u/[identifier]. So it introduces
@@ -32,15 +29,13 @@ import { track } from '@/lib/track';
 import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { useTrending } from '@/hooks/feed/useTrending';
 import { useCoDiners } from '@/hooks/feed/useCoDiners';
-import { useSavedRestaurantIds } from '@/hooks/feed/useSavedRestaurantIds';
 import { useBrowsePublicLists } from '@/hooks/lists/useBrowsePublicLists';
-import { pickRailMode } from './railMode';
-import { visibleFallbackCards } from './fallbackRailGate';
+import { visibleTrendingCards } from './trendingRailGate';
 import { visibleForYouBlocks, type ForYouBlock, type ForYouFlags } from './forYouBlocks';
 import { TrendingRail } from './TrendingRail';
-import { DiscoveryLedger } from './DiscoveryLedger';
 import { PublicListsBrowseBlock } from './PublicListsBrowseBlock';
 import { PeopleToFollowBlock } from './PeopleToFollowBlock';
+import { arrangePublicLists } from './listPresentation';
 
 interface Props {
     ListHeaderComponent: React.ReactElement;
@@ -60,26 +55,21 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
     const browse = useBrowsePublicLists();
     const trending = useTrending();
     const coDiners = useCoDiners(viewerId);
-    const savedIds = useSavedRestaurantIds(viewerId);
 
-    const railMode = useMemo(
-        () => pickRailMode(trending.data?.rows, trending.data?.fallback, savedIds).mode,
-        [trending.data?.rows, trending.data?.fallback, savedIds],
+    const trendingCards = useMemo(
+        () => visibleTrendingCards(trending.data?.rows),
+        [trending.data?.rows],
     );
-    const discoveryCards = useMemo(
-        () => visibleFallbackCards(trending.data?.fallback, savedIds),
-        [trending.data?.fallback, savedIds],
-    );
+    const browseLists = useMemo(() => browse.data ?? [], [browse.data]);
+    const listPresentation = useMemo(() => arrangePublicLists(browseLists), [browseLists]);
 
     const flags: ForYouFlags = useMemo(
         () => ({
-            hasPublicLists: (browse.data?.length ?? 0) > 0,
-            railVisible: railMode !== 'hidden',
+            hasPublicLists: listPresentation.showcase !== null || listPresentation.rail.length > 0,
+            railVisible: trendingCards.length > 0,
             hasCoDiners: (coDiners.data?.length ?? 0) > 0,
-            // Mutually exclusive with the rail (unchanged pickRailMode discipline).
-            hasDiscovery: railMode === 'hidden' && discoveryCards.length > 0,
         }),
-        [browse.data?.length, railMode, coDiners.data?.length, discoveryCards.length],
+        [listPresentation.showcase, listPresentation.rail.length, trendingCards.length, coDiners.data?.length],
     );
 
     const blocks = useMemo(() => visibleForYouBlocks(flags), [flags]);
@@ -87,8 +77,6 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
     // Empty fallback only once nothing is still resolving — else a cold mount
     // would flash ForYouEmpty before the fallback rail arrives.
     const anyLoading = browse.isLoading || trending.isLoading || coDiners.isLoading;
-
-    const browseLists = useMemo(() => browse.data ?? [], [browse.data]);
 
     const renderItem = useCallback(
         ({ item }: { item: ForYouBlock }) => {
@@ -99,8 +87,6 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
                     return <TrendingRail />;
                 case 'people':
                     return <PeopleToFollowBlock />;
-                case 'discovery':
-                    return <DiscoveryLedger />;
                 default:
                     return null;
             }
@@ -133,8 +119,7 @@ function BlockSeparator() {
 }
 
 /**
- * ForYouEmpty — the all-empty fallback (rare: the Google-rated rail almost
- * always has cards). One quiet italic line + an invite CTA — copy economy.
+ * ForYouEmpty — no generic filler. One quiet line + an invite CTA — copy economy.
  */
 function ForYouEmpty() {
     const scheme = useColorScheme() ?? 'light';
@@ -152,7 +137,7 @@ function ForYouEmpty() {
     return (
         <View style={styles.emptyWrap}>
             <Text style={[styles.emptyLine, { color: palette.textMuted }]}>
-                — nothing to explore yet
+                — nothing personal here just yet
             </Text>
             <Pressable
                 onPress={handleInvite}

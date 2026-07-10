@@ -714,6 +714,7 @@ serve(async (req) => {
                         city,
                         country,
                         photo_url,
+                        photo_source,
                         external_id
                     )
                 `)
@@ -998,6 +999,7 @@ serve(async (req) => {
                         city,
                         country,
                         photo_url,
+                        photo_source,
                         external_id
                     )
                 `)

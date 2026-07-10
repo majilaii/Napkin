@@ -30,6 +30,14 @@ export interface WishlistSourceWeb {
     type: 'web';
     url: string;
     title?: string;
+    /**
+     * TICKET-156: creator handle when the web link is an Instagram reel/post
+     * (IG rides `web` — no first-class variant). Optional; absent on plain web
+     * links and on IG rows saved before TICKET-156. The DB CHECK
+     * (wishlist_items_source_shape) asserts only `type … AND source ? 'url'` for
+     * `web`, so this key needs no CHECK migration — it passes unchanged.
+     */
+    author_handle?: string;
 }
 
 export interface WishlistSourceScreenshot {
@@ -194,16 +202,20 @@ export function validateWishlistSource(
     }
 
     if (type === 'web') {
-        const whitelist = new Set(['type', 'url', 'title']);
+        // TICKET-156: author_handle whitelisted for the IG-rides-web case.
+        const whitelist = new Set(['type', 'url', 'title', 'author_handle']);
         const extraKeys = Object.keys(raw).filter((k) => !whitelist.has(k));
         if (extraKeys.length > 0) {
             return { ok: false, reason: 'extra_keys', extra_keys: extraKeys };
         }
-        if ('title' in raw && raw['title'] !== undefined && typeof raw['title'] !== 'string') {
-            return { ok: false, reason: 'invalid_field_type:title' };
+        for (const field of ['title', 'author_handle'] as const) {
+            if (field in raw && raw[field] !== undefined && typeof raw[field] !== 'string') {
+                return { ok: false, reason: `invalid_field_type:${field}` };
+            }
         }
         const source: WishlistSourceWeb = { type: 'web', url: raw['url'] as string };
         if (typeof raw['title'] === 'string') source.title = raw['title'];
+        if (typeof raw['author_handle'] === 'string') source.author_handle = raw['author_handle'];
         return { ok: true, source };
     }
 

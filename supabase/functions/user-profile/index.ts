@@ -40,6 +40,7 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // ── Types ──────────────────────────────────────────────────────────────────
 
 import {
+    buildPrivateProfileStub,
     computeRelationship,
     fetchBlockState,
     strangerCanReadPalate,
@@ -119,6 +120,8 @@ type TopPick = {
     // TICKET-146: drives the marquee-plate mark (engraving registry). null → monogram.
     cuisine: string | null;
     photo_url: string | null;
+    // TICKET-157: gates the Places-hero plate tier client-side (`=== 'places'` + flag).
+    photo_source: string | null;
     // TICKET-144 pt2: the owner's chosen hero photo (their OWN entry photo at this
     // restaurant), served regardless of the source entry's visibility BECAUSE
     // choosing it is the explicit publish. ONLY the URL rides on the PUBLIC read —
@@ -560,7 +563,7 @@ async function buildPicksFromIds(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, cuisine, photo_url')
+        .select('id, name, city, cuisine, photo_url, photo_source')
         .in('id', orderedIds);
     if (restErr) throw restErr;
 
@@ -592,6 +595,7 @@ async function buildPicksFromIds(
                 city: rest.city ?? null,
                 cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
+                photo_source: rest.photo_source ?? null,
                 hero_photo_url: heroByRestaurant
                     ? (heroUrlById.get(heroByRestaurant.get(rid) ?? '') ?? null)
                     : null,
@@ -709,7 +713,7 @@ async function fetchTopFour(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, cuisine, photo_url')
+        .select('id, name, city, cuisine, photo_url, photo_source')
         .in('id', ranked.map((r) => r.restaurant_id));
     if (restErr) throw restErr;
 
@@ -724,6 +728,7 @@ async function fetchTopFour(
                 city: rest.city ?? null,
                 cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
+                photo_source: rest.photo_source ?? null,
                 // Heroes are a curated-only feature; auto-derived picks never carry one.
                 hero_photo_url: null,
                 hero_entry_photo_id: null,
@@ -1148,8 +1153,50 @@ serve(async (req) => {
             const sharedTableIds = await fetchSharedTableIds(supabase, callerId, targetId);
             const relationship = computeRelationship(callerId, targetProfile.account_privacy, sharedTableIds);
 
-            // 3. 'none' → return not_found, stop here
-            if (relationship === 'none') return notFound();
+            // 3. 'none' → TICKET-155: an EXISTING private target with no shared
+            //    Table is now REACHABLE — return an identity stub instead of a
+            //    404 so a viewer can confirm who they're following and follow
+            //    immediately (no request/approve). The target DOES exist here
+            //    (the !targetProfile guard above already 404'd genuine
+            //    nonexistence, so existence-ambiguity for real 404s is intact),
+            //    is not self, is not blocked either way (both handled above),
+            //    and is private with no overlap. Social counts (follower/
+            //    following) are metadata, not palate — same precedent as the
+            //    tables_in_common branch — so we run the two count(*) queries +
+            //    the two follow-direction reads here and withhold ALL palate.
+            if (relationship === 'none') {
+                const [followRowRes, followsViewerRowRes, followersRes, followingRes] =
+                    await Promise.all([
+                        supabase
+                            .from('follows')
+                            .select('follower_id')
+                            .eq('follower_id', callerId)
+                            .eq('following_id', targetId)
+                            .maybeSingle(),
+                        supabase
+                            .from('follows')
+                            .select('follower_id')
+                            .eq('follower_id', targetId)
+                            .eq('following_id', callerId)
+                            .maybeSingle(),
+                        supabase
+                            .from('follows')
+                            .select('follower_id', { count: 'exact', head: true })
+                            .eq('following_id', targetId),
+                        supabase
+                            .from('follows')
+                            .select('following_id', { count: 'exact', head: true })
+                            .eq('follower_id', targetId),
+                    ]);
+                return json({
+                    data: buildPrivateProfileStub(targetProfile, {
+                        isFollowingViewer: followRowRes.data !== null,
+                        followsViewer: followsViewerRowRes.data !== null,
+                        followersCount: followersRes.count ?? 0,
+                        followingCount: followingRes.count ?? 0,
+                    }),
+                });
+            }
 
             // 4. Resolve both follow directions in one round-trip:
             //    isFollowingViewer = caller → target (viewer follows this profile)
@@ -1556,6 +1603,7 @@ serve(async (req) => {
                         },
                         top_cuisines: [],
                         bottom_cuisines: [],
+                        rating_histogram: [],
                     },
                 });
             }
@@ -1572,6 +1620,7 @@ serve(async (req) => {
                     },
                     top_cuisines: row.top_cuisines ?? [],
                     bottom_cuisines: row.bottom_cuisines ?? [],
+                    rating_histogram: row.rating_histogram ?? [],
                 },
             });
         }

@@ -156,6 +156,42 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-154: paginated public reviews (all-reviews page). Empty rows is a
+    // legitimate state for the fixture — assert the Page envelope shape.
+    {
+        name: 'restaurant-history?action=reviews (TICKET-154 all-reviews page)',
+        method: 'POST',
+        fn: 'restaurant-history',
+        // restaurant_id mirrored in query (clients do the same) — the fn has a
+        // global query-param guard; body remains the canonical carrier.
+        query: `action=reviews&restaurant_id=${RESTAURANT_ID}`,
+        body: { restaurant_id: RESTAURANT_ID, limit: 5 },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown[]; has_more?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (typeof data.has_more !== 'boolean') return 'data.has_more is not a boolean';
+            return null;
+        },
+    },
+    // TICKET-156: On Socials rail read path (social clippings). Calls TICKET-155's
+    // block-aware saves predicate + joins the clip_thumbs cache. An empty rows
+    // array is the legitimate state for the smoke user (no visible social saves) —
+    // assert the { rows: [] } envelope shape only. restaurant_id mirrored in the
+    // query (the fn has a global query-param guard; body is the canonical carrier).
+    {
+        name: 'restaurant-history?action=social_clippings (TICKET-156 On Socials rail)',
+        method: 'POST',
+        fn: 'restaurant-history',
+        query: `action=social_clippings&restaurant_id=${RESTAURANT_ID}`,
+        body: { restaurant_id: RESTAURANT_ID },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown[] } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            return null;
+        },
+    },
     // TICKET-149: booking-page resolver behind the Reserve pill. Value is
     // fixture-dependent (usually null, cached on the row after first run) —
     // assert the envelope key only.
@@ -198,6 +234,32 @@ const CHECKS: Check[] = [
             if (!data) return 'missing data envelope';
             if (!data.profile) return 'missing data.profile';
             if (data.is_self !== true) return 'expected is_self=true for own profile';
+            return null;
+        },
+    },
+    // TICKET-150: taste drill-in v2 — exercises fn_user_taste (histogram +
+    // junk-filtered, disjoint cuisine lists) end-to-end. Owner-only action, so
+    // the identifier is the smoke user itself. Zero rated meals is a legitimate
+    // state — assert envelope keys + types only.
+    {
+        name: 'user-profile?action=taste (TICKET-150 fn_user_taste v2)',
+        method: 'POST',
+        fn: 'user-profile',
+        body: { action: 'taste', identifier: '__SMOKE_USER_ID__' },
+        shape: (json) => {
+            const data = (json as {
+                data?: {
+                    entry_count?: unknown;
+                    top_cuisines?: unknown;
+                    bottom_cuisines?: unknown;
+                    rating_histogram?: unknown;
+                };
+            }).data;
+            if (!data) return 'missing data envelope';
+            if (typeof data.entry_count !== 'number') return 'data.entry_count is not a number';
+            if (!Array.isArray(data.top_cuisines)) return 'data.top_cuisines is not an array';
+            if (!Array.isArray(data.bottom_cuisines)) return 'data.bottom_cuisines is not an array';
+            if (!Array.isArray(data.rating_histogram)) return 'data.rating_histogram is not an array';
             return null;
         },
     },
