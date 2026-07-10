@@ -667,6 +667,135 @@ serve(async (req) => {
                 }
             }
 
+            // ── delete-supper action (TICKET-161) ──────────────────────────
+            // The HOST deletes a supper card. Takes are NOT orphaned into privacy:
+            // for a v2 supper (table_id set) we RE-HOME every roster-authored take as
+            // an individual review still visible in the Table feed, by inserting an
+            // entry_tables (entry_id, table_id, posted_at = the take's created_at)
+            // share edge BEFORE deleting the anchor. Deleting the anchor cascades
+            // supper_members and fires entries.supper_id → NULL / gatherings.supper_id
+            // → NULL via the existing FKs, so the suppers_stream card vanishes and each
+            // take resurfaces as an ordinary entry card at its original created_at sort
+            // position (can_view_entry branch 2 grants tablemate visibility). The
+            // re-home is purely an added share edge — take `entries` rows are NEVER
+            // mutated (rating/note/photos/visited_at untouched). No migration: every FK
+            // the delete relies on is already correct.
+            //
+            // ORDERING (insert entry_tables first, delete anchor last) is the only
+            // ordering that satisfies the concurrency + retry ACs simultaneously. While
+            // the anchor still exists, the entries_stream suppression clause
+            // (NOT EXISTS suppers s WHERE s.id = e.supper_id AND s.table_id = p_table_id)
+            // hides re-homed takes even though their entry_tables row now exists — the
+            // suppers_stream card stays the sole representative, so there is NO window
+            // where a take is both suppressed-as-take and visible-as-entry. The instant
+            // the anchor is deleted the suppression predicate goes false and the take
+            // surfaces. A failed delete after successful inserts is retry-safe: the
+            // upsert ON CONFLICT (entry_id, table_id) DO NOTHING no-ops.
+            //
+            // SECURITY: the service-role client BYPASSES RLS. Host-only —
+            // suppers.host_user_id === caller — and every other caller (fellow supper
+            // member, outside table member, stranger, malformed id, already-deleted row)
+            // gets the SAME generic 404 (mirrors supper-detail; no supper-id
+            // enumeration). The re-home read is roster-scoped (user_id IN (roster)) so a
+            // stranger who set supper_id on their own entry (client-writable group key)
+            // cannot be re-homed into the Table (mirrors the branch-5 conjunct).
+            if (body.action === 'delete-supper') {
+                const dsSupperId = body.supper_id;
+                const DS_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                if (!dsSupperId || typeof dsSupperId !== 'string' || !DS_UUID_RE.test(dsSupperId)) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'supper_id is malformed' } }),
+                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Fetch the anchor. A missing row → generic 404 (no enumeration). A
+                // non-host → the SAME generic 404 (never distinguishes "not yours" from
+                // "doesn't exist"). A double-delete lands here too (row already gone) →
+                // 404, which the hook treats as benign already-gone.
+                const { data: dsSupper, error: dsSupperErr } = await supabase
+                    .from('suppers')
+                    .select('id, host_user_id, table_id')
+                    .eq('id', dsSupperId)
+                    .maybeSingle();
+                if (dsSupperErr) throw dsSupperErr;
+                if (!dsSupper || dsSupper.host_user_id !== user.id) {
+                    return new Response(
+                        JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Supper not found' } }),
+                        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Re-home only applies to a v2 supper (a Table to attach to). Legacy v1
+                // (table_id NULL) has nothing to re-home onto — its takes detach to
+                // private-solo via entries.supper_id ON DELETE SET NULL.
+                const dsTableId: string | null = dsSupper.table_id ?? null;
+                if (dsTableId) {
+                    // Roster = the trust anchor (service-role-write-only supper_members).
+                    const { data: dsRosterRows, error: dsRosterErr } = await supabase
+                        .from('supper_members')
+                        .select('user_id')
+                        .eq('supper_id', dsSupperId);
+                    if (dsRosterErr) throw dsRosterErr;
+                    const dsRoster = (dsRosterRows ?? []).map((r: { user_id: string }) => r.user_id);
+
+                    // Empty-roster guard (parity with supper-detail): only read takes /
+                    // build entry_tables when there's a roster to scope the read to. A
+                    // `.in('user_id', [])` would be a degenerate query.
+                    if (dsRoster.length > 0) {
+                        // Roster-scoped read — MANDATORY. Service-role bypasses RLS, so
+                        // without user_id IN (roster) a stranger who set supper_id on
+                        // their own entry would leak into the Table on re-home.
+                        const { data: dsTakes, error: dsTakesErr } = await supabase
+                            .from('entries')
+                            .select('id, created_at')
+                            .eq('supper_id', dsSupperId)
+                            .in('user_id', dsRoster);
+                        if (dsTakesErr) throw dsTakesErr;
+
+                        const dsTakeRows = (dsTakes ?? []) as { id: string; created_at: string }[];
+                        if (dsTakeRows.length > 0) {
+                            // posted_at = the take's created_at, EXPLICITLY (never the
+                            // column's now() default) — entries_stream sorts by
+                            // et.posted_at; the default would stamp delete-time and shove
+                            // every take to the top of the feed as "new". Matches the
+                            // 20260509 backfill + the mirror trigger, both of which use
+                            // created_at. (This direct insert does NOT touch
+                            // entries.table_id, so trg_entries_mirror_table_id_to_join
+                            // never fires and cannot interfere.)
+                            const dsEntryTableRows = dsTakeRows.map((t) => ({
+                                entry_id: t.id,
+                                table_id: dsTableId,
+                                posted_at: t.created_at,
+                            }));
+                            // upsert with ignoreDuplicates — supabase-js .insert() has NO
+                            // on-conflict support; a duplicate throws 23505 and silently
+                            // breaks the retry-safety AC. PK is (entry_id, table_id).
+                            const { error: dsUpsertErr } = await supabase
+                                .from('entry_tables')
+                                .upsert(dsEntryTableRows, { onConflict: 'entry_id,table_id', ignoreDuplicates: true });
+                            if (dsUpsertErr) throw dsUpsertErr;
+                        }
+                    }
+                }
+
+                // Delete the anchor LAST. Cascades supper_members; fires
+                // entries.supper_id → NULL and gatherings.supper_id → NULL via the FKs.
+                // The suppers_stream card vanishes; re-homed takes surface via their new
+                // entry_tables row (the suppression predicate is now false).
+                const { error: dsDeleteErr } = await supabase
+                    .from('suppers')
+                    .delete()
+                    .eq('id', dsSupperId);
+                if (dsDeleteErr) throw dsDeleteErr;
+
+                // { deleted: true } nested INSIDE data (callEdgeFn strips the envelope).
+                return new Response(
+                    JSON.stringify({ data: { deleted: true } }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+            }
+
             // ── merge_with action ──────────────────────────────────────────
             // Creates B's entry AND binds A's entry + B's entry to a new merged round
             // atomically via fn_create_entry_and_merge_round.
