@@ -31,6 +31,13 @@ export function useUpdatePrivacy(userId: string | null | undefined) {
         mutationFn: updatePrivacy,
         onSuccess: (updated) => {
             if (userId) {
+                // DELIBERATELY invalidate-only (no optimistic patch, unlike
+                // useUpdateReplyPermission): a privacy flip changes what many
+                // sibling caches may show (public reviews, lists, follow
+                // surfaces), it sits behind a confirm Alert so the beat is
+                // expected, and the first flip writes username+privacy
+                // atomically server-side — refetching the profile is the
+                // safe truth-source.
                 // Invalidate own profile; identifier can be uuid or username
                 qc.invalidateQueries({ queryKey: queryKeys.users.profile(userId) });
                 if (updated.username) {
