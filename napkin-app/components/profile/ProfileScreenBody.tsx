@@ -180,6 +180,32 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         );
     }
 
+    // ── Reachable private-account stub (TICKET-155) ──────────────────────────
+    // An existing private account the viewer doesn't share a Table with. Not a
+    // 404, not a request-to-follow form — the header (avatar + name + working
+    // follow button + NON-interactive counts) plus one quiet line where the
+    // palate would go. Following resolves immediately; no approve step anywhere.
+    if (profileData.private_stub) {
+        return (
+            <View style={[styles.container, { backgroundColor: palette.background }]}>
+                <ProfileHeader
+                    profile={profileData.profile}
+                    isSelf={false}
+                    relationship={relationship}
+                    stats={null}
+                    social={profileData.social}
+                    isFollowingViewer={profileData.is_following_viewer ?? false}
+                    followsViewer={profileData.follows_viewer ?? false}
+                    countsInteractive={false}
+                    onSafetyMenu={handleSafetyMenu}
+                />
+                <Text style={[Type.bodySmall, styles.privateState, { color: palette.textMuted }]}>
+                    their journal is private
+                </Text>
+            </View>
+        );
+    }
+
     const stats = profileData.stats;
     const totalLogs = stats?.total_logs ?? 0;
     const targetUserId = profileData.profile.user_id;
@@ -389,6 +415,13 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 12,
         lineHeight: 17,
+    },
+    // TICKET-155: the one quiet private-account line, sitting where palate
+    // sections would go (directly under the header). Aligns to the header's
+    // 22pt horizontal padding.
+    privateState: {
+        paddingHorizontal: 22,
+        marginTop: Spacing.sm,
     },
     unblockPill: {
         marginTop: Spacing.lg,

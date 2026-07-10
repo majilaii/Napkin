@@ -7,6 +7,7 @@
 
 import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import { buildPrivateProfileStub } from './gates.ts';
 
 Deno.test('user-profile edge function', async (t) => {
 
@@ -36,6 +37,65 @@ Deno.test('user-profile edge function', async (t) => {
     await t.step('profile action returns empty arrays for tables_in_common relationship - TODO (skipped)', () => {
         // When relationship === 'tables_in_common', top_four and regulars_preview
         // should both be empty arrays (no palate access).
+    });
+
+    // TICKET-155 (ARCH-REVIEW W2): the reachable private-account stub payload
+    // shape — REAL executable coverage of the branch that replaced notFound() at
+    // the profile action's relationship==='none' path. index.ts calls serve() at
+    // the top level (not import-safe), so the payload is built by the pure
+    // gates.ts helper the branch calls; this asserts its exact shape.
+    await t.step('profile action: private-account stub — exact shape, private_stub true, ALL palate absent', () => {
+        const targetProfile = {
+            user_id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            username: 'priv_user',
+            display_name: 'Priv User',
+            bio: 'a private bio',
+            avatar_url: 'https://cdn.test/avatar.jpg',
+            account_privacy: 'private' as const,
+            allow_public_replies: false,
+        };
+        const stub = buildPrivateProfileStub(targetProfile, {
+            isFollowingViewer: true,
+            followsViewer: false,
+            followersCount: 12,
+            followingCount: 34,
+        });
+
+        // Discriminator + identity.
+        assertEquals(stub.private_stub, true);
+        assertEquals(stub.is_self, false);
+        assertEquals(stub.viewer_target_relationship, 'none');
+        assertEquals(stub.profile, targetProfile); // identity rides through unchanged
+
+        // Social metadata present (follower/following counts + follow state).
+        assertEquals(stub.social, { followers_count: 12, following_count: 34 });
+        assertEquals(stub.is_following_viewer, true);
+        assertEquals(stub.follows_viewer, false);
+
+        // ALL palate explicitly withheld.
+        assertEquals(stub.stats, null);
+        assertEquals(stub.public_lists, null);
+        assertEquals(stub.recently_logged, null);
+        assertEquals(stub.tables_in_common, []);
+        assertEquals(stub.top_four, []);
+        assertEquals(stub.regulars_preview, []);
+
+        // No palate/calibration keys leak onto the payload (exact top-level key set).
+        assertEquals(Object.keys(stub).sort(), [
+            'follows_viewer',
+            'is_following_viewer',
+            'is_self',
+            'private_stub',
+            'profile',
+            'public_lists',
+            'recently_logged',
+            'regulars_preview',
+            'social',
+            'stats',
+            'tables_in_common',
+            'top_four',
+            'viewer_target_relationship',
+        ]);
     });
 
     // ── diary action ──────────────────────────────────────────────────────────

@@ -46,4 +46,23 @@ describe('profileStatSegments', () => {
         expect(segs.find((s) => s.key === 'following')?.tappable).toBe(true);
         expect(segs.find((s) => s.key === 'followers')?.tappable).toBe(true);
     });
+
+    // TICKET-155 (ARCH-REVIEW W3): the reachable private-account stub tier passes
+    // countsInteractive:false so follower/following are non-tappable (follow_list
+    // 404s that viewer — a tappable count would dead-end). meals stays non-tappable.
+    it('countsInteractive:false → follower/following are non-tappable', () => {
+        const segs = profileStatSegments(
+            { meals: 10, following: 2, followers: 4 },
+            { countsInteractive: false },
+        );
+        expect(segs.find((s) => s.key === 'meals')?.tappable).toBe(false);
+        expect(segs.find((s) => s.key === 'following')?.tappable).toBe(false);
+        expect(segs.find((s) => s.key === 'followers')?.tappable).toBe(false);
+    });
+
+    it('defaults to interactive when opts omitted (every other tier)', () => {
+        const segs = profileStatSegments({ meals: 10, following: 2, followers: 4 });
+        expect(segs.find((s) => s.key === 'following')?.tappable).toBe(true);
+        expect(segs.find((s) => s.key === 'followers')?.tappable).toBe(true);
+    });
 });
