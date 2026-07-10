@@ -204,7 +204,7 @@ export default function SettingsScreen() {
         >
             <View style={styles.topBar}>
                 <Pressable onPress={() => router.back()} hitSlop={12}>
-                    <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
+                    <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
                 </Pressable>
                 <View style={{ width: 40 }} />
             </View>

@@ -1,11 +1,14 @@
 /**
- * Privacy settings screen — /settings/privacy
+ * /settings/privacy — account visibility.
  *
- * Privacy-only (profile field editors live at /settings/{photo,name,username,bio}):
- *   - Current account visibility state
- *   - "Preview my profile" link (always routes to /u/[currentUserId])
- *   - Toggle action button (goes public / goes private)
- *   - Reply permission segmented control
+ * The state is the hero: a note card with the current mode in italic serif
+ * (public = terracotta, private = olive — the screen's two accents), one
+ * quiet line beneath, a preview link, and a single lowercase toggle pill.
+ * Replies live under a ghosted REPLIES label as two segment chips.
+ *
+ * Flip mechanics unchanged: first private→public flip (no handle) routes to
+ * /settings/privacy/make-public for the atomic username claim; every other
+ * flip confirms via a two-button alert.
  */
 import React from 'react';
 import {
@@ -19,8 +22,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import {
@@ -41,6 +45,9 @@ export default function PrivacyScreen() {
 
     const updatePrivacy = useUpdatePrivacy(user?.id);
     const updateReplyPermission = useUpdateReplyPermission(user?.id);
+
+    // App is light-locked; ink hairline for pills (never for sectioning).
+    const hairline = 'rgba(28,28,25,0.12)';
 
     if (isLoading || !profile) {
         return (
@@ -88,107 +95,115 @@ export default function PrivacyScreen() {
     };
 
     return (
-        <View style={[styles.container, { backgroundColor: palette.background, paddingTop: insets.top + Spacing.sm }]}>
-            {/* Top bar */}
+        <View style={[styles.container, { backgroundColor: palette.background, paddingTop: insets.top }]}>
+            {/* Top bar — pushed-page grammar: chevron · centered italic title */}
             <View style={styles.topBar}>
-                <Pressable onPress={() => router.back()} hitSlop={12}>
-                    <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
+                <Pressable
+                    onPress={() => router.back()}
+                    hitSlop={12}
+                    style={styles.side}
+                    accessibilityLabel="back"
+                >
+                    <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
                 </Pressable>
-                <View style={{ width: 40 }} />
+                <Text style={[styles.title, { color: palette.text }]}>visibility</Text>
+                <View style={styles.side} />
             </View>
 
             <ScrollView
                 contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
                 showsVerticalScrollIndicator={false}
             >
-                <Text style={[Type.displaySmall, { color: palette.text }]}>Privacy</Text>
-
-                {/* Current state banner */}
-                <View style={[styles.stateBanner, { backgroundColor: palette.surfaceContainerLow }]}>
-                    <Text style={[Type.body, { color: palette.text }]}>
-                        {isPublic
-                            ? 'Your profile is public — anyone with the link can browse your palate.'
-                            : 'Your profile is private — only your Tables see you.'}
+                {/* State card — the current mode as the hero */}
+                <View style={[styles.stateCard, { backgroundColor: palette.card }, Shadow.subtle]}>
+                    <Text style={[styles.stateKicker, { color: palette.textMuted }]}>
+                        YOUR PROFILE
                     </Text>
-                    {/* Preview link */}
+                    <Text
+                        style={[
+                            styles.stateWord,
+                            { color: isPublic ? palette.primary : palette.success },
+                        ]}
+                    >
+                        {isPublic ? 'public' : 'private'}
+                    </Text>
+                    <Text style={[styles.stateLine, { color: palette.textSecondary }]}>
+                        {isPublic
+                            ? 'anyone with the link can browse your palate.'
+                            : 'only your tables see you.'}
+                    </Text>
                     <Pressable
                         onPress={() => router.push(`/u/${user?.id}`)}
-                        style={{ marginTop: Spacing.sm }}
+                        hitSlop={8}
+                        style={styles.previewLink}
+                        accessibilityRole="button"
+                        accessibilityLabel="preview profile"
                     >
-                        <Text style={[Type.bodySmall, { color: palette.primary }]}>
-                            Preview my profile →
+                        <Text style={[styles.previewText, { color: palette.primary }]}>
+                            preview profile →
                         </Text>
                     </Pressable>
                 </View>
 
-                {/* Toggle action */}
+                {/* Toggle — single lowercase pill */}
                 <Pressable
                     onPress={isPublic ? handleMakePrivate : handleMakePublic}
                     disabled={updatePrivacy.isPending}
+                    accessibilityRole="button"
                     style={({ pressed }) => [
-                        styles.toggleButton,
-                        {
-                            backgroundColor: isPublic
-                                ? palette.surfaceContainerLow
-                                : palette.primary,
-                            opacity: pressed || updatePrivacy.isPending ? 0.8 : 1,
-                        },
+                        styles.togglePill,
+                        isPublic
+                            ? { borderWidth: 1, borderColor: hairline }
+                            : { backgroundColor: palette.primary },
+                        { opacity: pressed || updatePrivacy.isPending ? 0.7 : 1 },
                     ]}
                 >
                     {updatePrivacy.isPending ? (
-                        <ActivityIndicator color={isPublic ? palette.text : palette.textInverse} />
+                        <ActivityIndicator
+                            size="small"
+                            color={isPublic ? palette.textSecondary : palette.cream}
+                        />
                     ) : (
                         <Text
                             style={[
-                                Type.titleMedium,
-                                { color: isPublic ? palette.text : palette.textInverse },
+                                styles.togglePillText,
+                                { color: isPublic ? palette.textSecondary : palette.cream },
                             ]}
                         >
-                            {isPublic ? 'Make profile private' : 'Make profile public'}
+                            {isPublic ? 'go private' : 'go public'}
                         </Text>
                     )}
                 </Pressable>
 
-                {/* Reply permission segmented control */}
+                {/* Replies — who may reply to public reviews */}
                 <View style={styles.section}>
-                    <Text style={[Type.titleSmall, { color: palette.text }]}>
-                        Who can reply to my public reviews?
+                    <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                        REPLIES
                     </Text>
-                    {!isPublic && (
-                        <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.xs }]}>
-                            Turn on public profile to change this
-                        </Text>
-                    )}
-                    <View style={[styles.segmentedControl, { marginTop: Spacing.sm }]}>
-                        {(['false', 'true'] as const).map((val) => {
-                            const isActive =
-                                val === 'true'
-                                    ? profile.allow_public_replies === true
-                                    : profile.allow_public_replies !== true;
-                            const label = val === 'false' ? 'Nobody (emoji only)' : 'Anyone';
+                    <View style={[styles.chipRow, { opacity: isPublic ? 1 : 0.45 }]}>
+                        {([
+                            { allow: false, label: 'emoji only' },
+                            { allow: true, label: 'anyone' },
+                        ] as const).map(({ allow, label }) => {
+                            const isActive = (profile.allow_public_replies === true) === allow;
                             return (
                                 <Pressable
-                                    key={val}
+                                    key={label}
                                     disabled={!isPublic || updateReplyPermission.isPending}
-                                    onPress={() => {
-                                        if (isPublic) {
-                                            updateReplyPermission.mutate(val === 'true');
-                                        }
-                                    }}
+                                    onPress={() => updateReplyPermission.mutate(allow)}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ selected: isActive }}
                                     style={[
-                                        styles.segment,
-                                        {
-                                            backgroundColor: isActive
-                                                ? palette.primary
-                                                : palette.surfaceContainerLow,
-                                            opacity: !isPublic ? 0.5 : 1,
-                                        },
+                                        styles.chip,
+                                        isActive
+                                            ? { backgroundColor: palette.primary }
+                                            : { borderWidth: 1, borderColor: hairline },
                                     ]}
                                 >
                                     <Text
                                         style={[
-                                            Type.caption,
-                                            { color: isActive ? palette.textInverse : palette.textSecondary },
+                                            styles.chipText,
+                                            { color: isActive ? palette.cream : palette.textSecondary },
                                         ]}
                                     >
                                         {label}
@@ -197,6 +212,11 @@ export default function PrivacyScreen() {
                             );
                         })}
                     </View>
+                    {!isPublic ? (
+                        <Text style={[styles.sectionHint, { color: palette.textMuted }]}>
+                            public profile only
+                        </Text>
+                    ) : null}
                 </View>
             </ScrollView>
         </View>
@@ -213,40 +233,90 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     topBar: {
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.sm,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        paddingHorizontal: 18,
+        paddingTop: Spacing.sm,
+        paddingBottom: Spacing.sm,
+    },
+    side: {
+        width: 44,
+        alignItems: 'flex-start',
+    },
+    title: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 22,
     },
     scrollContent: {
+        paddingHorizontal: 20,
+        paddingTop: Spacing.xl,
+    },
+    stateCard: {
+        borderRadius: 16,
         paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.lg,
+        paddingVertical: Spacing.lg,
     },
-    stateBanner: {
-        marginTop: Spacing.lg,
-        padding: Spacing.md,
-        borderRadius: Radius.md,
+    stateKicker: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9.5,
+        letterSpacing: 1.5,
     },
-    toggleButton: {
+    stateWord: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 34,
+        lineHeight: 40,
+        marginTop: 6,
+    },
+    stateLine: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        lineHeight: 19,
+        marginTop: 2,
+    },
+    previewLink: {
         marginTop: Spacing.md,
-        paddingVertical: Spacing.md,
-        borderRadius: Radius.md,
-        alignItems: 'center',
+    },
+    previewText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+    },
+    togglePill: {
+        marginTop: Spacing.md,
+        alignSelf: 'flex-start',
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 999,
+    },
+    togglePillText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13.5,
     },
     section: {
-        marginTop: Spacing.xl,
+        marginTop: Spacing.xl + Spacing.sm,
     },
-    segmentedControl: {
+    sectionLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9.5,
+        letterSpacing: 1.5,
+    },
+    chipRow: {
         flexDirection: 'row',
-        borderRadius: Radius.md,
-        overflow: 'hidden',
-        gap: 1,
+        gap: 8,
+        marginTop: Spacing.sm,
     },
-    segment: {
-        flex: 1,
-        paddingVertical: Spacing.sm,
-        alignItems: 'center',
-        borderRadius: Radius.sm,
+    chip: {
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 999,
+    },
+    chipText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
+    },
+    sectionHint: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11.5,
+        marginTop: Spacing.sm,
     },
 });

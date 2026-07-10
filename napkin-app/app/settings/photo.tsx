@@ -98,7 +98,7 @@ export default function EditPhotoScreen() {
     };
 
     return (
-        <EditorScreen title="Photo">
+        <EditorScreen title="photo">
             <View style={styles.stage}>
                 {/* Portrait mounted on a warm vellum plate — the centerpiece.
                     Structure comes from the background shift + ambient shadow,
