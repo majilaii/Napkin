@@ -19,6 +19,9 @@ async function fetchReviewsPage(
     if (cursor) body.cursor = cursor;
     return callEdgeFn<Page<PublicReviewCard>>('restaurant-history', {
         action: 'reviews',
+        // Mirrored into the query as belt-and-braces: the function has a
+        // global query-param restaurant_id guard for its GET actions.
+        params: { restaurant_id: restaurantId },
         body,
     });
 }

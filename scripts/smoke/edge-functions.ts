@@ -162,7 +162,9 @@ const CHECKS: Check[] = [
         name: 'restaurant-history?action=reviews (TICKET-154 all-reviews page)',
         method: 'POST',
         fn: 'restaurant-history',
-        query: 'action=reviews',
+        // restaurant_id mirrored in query (clients do the same) — the fn has a
+        // global query-param guard; body remains the canonical carrier.
+        query: `action=reviews&restaurant_id=${RESTAURANT_ID}`,
         body: { restaurant_id: RESTAURANT_ID, limit: 5 },
         shape: (json) => {
             const data = (json as { data?: { rows?: unknown[]; has_more?: unknown } }).data;

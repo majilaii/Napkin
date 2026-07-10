@@ -363,6 +363,126 @@ serve(async (req) => {
             });
         }
 
+        // ── Paginated public reviews (TICKET-154) — the all-reviews page ──
+        // POST { restaurant_id, cursor?, limit? } → canonical Page<PublicReviewCard>.
+        // Same eligibility SSOT as the page's capped list (get_public_reviews),
+        // keyset-paginated in SQL (get_public_reviews_page), enriched with the
+        // same followee flags + Ring-2 calibrations.
+        //
+        // MUST stay above the global `if (!restaurantId)` query-param guard —
+        // this action reads restaurant_id from the POST body first (clients
+        // also mirror it into the query as belt-and-braces; the 2026-07-10
+        // deploy smoke caught exactly this ordering bug).
+        if (action === 'reviews') {
+            const body = await req.json().catch(() => ({}));
+            const rid = (body?.restaurant_id ?? restaurantId) as string | null;
+            if (!rid) return fail('restaurant_id is required');
+
+            // Accept UUID or external_id, like action=page.
+            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            let resolvedId = rid;
+            if (!uuidPattern.test(rid)) {
+                const { data: r, error: ridErr } = await supabase
+                    .from('restaurants')
+                    .select('id')
+                    .eq('external_id', rid)
+                    .maybeSingle();
+                if (ridErr) throw ridErr;
+                if (!r) return json({ data: { rows: [], next_cursor: null, has_more: false } });
+                resolvedId = r.id as string;
+            }
+
+            const pageSize = Math.min(Math.max(Number(body?.limit) || 30, 1), 50);
+            const cursor = decodeCursor(body?.cursor);
+
+            const { data: reviewRows, error: reviewsErr } = await supabase
+                .rpc('get_public_reviews_page', {
+                    p_restaurant_id: resolvedId,
+                    p_limit: pageSize + 1,
+                    p_cursor_date: cursor?.sort_date ?? null,
+                    p_cursor_id: cursor?.id ?? null,
+                });
+            if (reviewsErr) throw reviewsErr;
+            const raw = (reviewRows ?? []) as any[];
+
+            // Ring-1 exclusion set (viewer's tablemates) — calibration is Ring 2 only.
+            const sharedIds = new Set<string>();
+            {
+                const { data: memberships, error: memberErr } = await supabase
+                    .from('table_members')
+                    .select('table_id')
+                    .eq('member_id', user.id);
+                if (memberErr) throw memberErr;
+                const tableIds = (memberships ?? []).map((m: any) => m.table_id as string);
+                if (tableIds.length > 0) {
+                    const { data: shared, error: sharedErr } = await supabase
+                        .from('table_members')
+                        .select('member_id')
+                        .in('table_id', tableIds)
+                        .neq('member_id', user.id);
+                    if (sharedErr) throw sharedErr;
+                    for (const m of shared ?? []) sharedIds.add((m as any).member_id as string);
+                }
+            }
+
+            // Followee flags — non-fatal, same as the page block.
+            const followedSet = new Set<string>();
+            {
+                const reviewerIds = [...new Set<string>(
+                    raw.map((r) => r.user_id as string).filter((uid) => !!uid && uid !== user.id),
+                )];
+                if (reviewerIds.length > 0) {
+                    const { data: followRows, error: followErr } = await supabase
+                        .from('follows')
+                        .select('following_id')
+                        .eq('follower_id', user.id)
+                        .in('following_id', reviewerIds);
+                    if (followErr) console.error('restaurant-history follows error:', followErr);
+                    for (const fr of followRows ?? []) {
+                        followedSet.add((fr as { following_id: string }).following_id);
+                    }
+                }
+            }
+
+            // Ring-2 calibrations — non-fatal.
+            let calMap = new Map<string, Calibration | null>();
+            const calAuthorIds = [...new Set<string>(
+                raw
+                    .map((r) => r.user_id as string)
+                    .filter((uid) => uid !== user.id && !sharedIds.has(uid)),
+            )];
+            if (calAuthorIds.length > 0) {
+                try {
+                    calMap = await computeCalibrations(supabase, user.id, calAuthorIds);
+                } catch (calErr) {
+                    console.error('restaurant-history calibration error:', calErr);
+                }
+            }
+
+            const cards: PublicReviewCard[] = raw.map((row: any) => ({
+                entry_id: row.entry_id,
+                user_id: row.user_id,
+                display_name: row.display_name ?? 'User',
+                username: row.username ?? null,
+                avatar_url: row.avatar_url ?? null,
+                rating: row.rating,
+                note_excerpt: row.content ?? '',
+                photo_url: row.photo_url ?? null,
+                created_at: row.created_at,
+                public_reaction_count: row.public_reaction_count ?? 0,
+                public_reply_count: row.public_reply_count ?? 0,
+                calibration: (row.user_id === user.id || sharedIds.has(row.user_id))
+                    ? null
+                    : (calMap.get(row.user_id) ?? null),
+                is_followee: followedSet.has(row.user_id),
+            }));
+
+            const page = buildPage(cards, pageSize, (row) =>
+                ({ sort_date: row.created_at, id: row.entry_id }));
+            return json({ data: page });
+        }
+
+
         if (!restaurantId) return fail('restaurant_id is required', 400);
 
         // ── Table-scoped history ──────────────────────────────────────────
@@ -543,120 +663,6 @@ serve(async (req) => {
                     last_visit: visits[0] ?? null,
                 },
             });
-        }
-
-        // ── Paginated public reviews (TICKET-154) — the all-reviews page ──
-        // POST { restaurant_id, cursor?, limit? } → canonical Page<PublicReviewCard>.
-        // Same eligibility SSOT as the page's capped list (get_public_reviews),
-        // keyset-paginated in SQL (get_public_reviews_page), enriched with the
-        // same followee flags + Ring-2 calibrations.
-        if (action === 'reviews') {
-            const body = await req.json().catch(() => ({}));
-            const rid = (body?.restaurant_id ?? restaurantId) as string | null;
-            if (!rid) return fail('restaurant_id is required');
-
-            // Accept UUID or external_id, like action=page.
-            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-            let resolvedId = rid;
-            if (!uuidPattern.test(rid)) {
-                const { data: r, error: ridErr } = await supabase
-                    .from('restaurants')
-                    .select('id')
-                    .eq('external_id', rid)
-                    .maybeSingle();
-                if (ridErr) throw ridErr;
-                if (!r) return json({ data: { rows: [], next_cursor: null, has_more: false } });
-                resolvedId = r.id as string;
-            }
-
-            const pageSize = Math.min(Math.max(Number(body?.limit) || 30, 1), 50);
-            const cursor = decodeCursor(body?.cursor);
-
-            const { data: reviewRows, error: reviewsErr } = await supabase
-                .rpc('get_public_reviews_page', {
-                    p_restaurant_id: resolvedId,
-                    p_limit: pageSize + 1,
-                    p_cursor_date: cursor?.sort_date ?? null,
-                    p_cursor_id: cursor?.id ?? null,
-                });
-            if (reviewsErr) throw reviewsErr;
-            const raw = (reviewRows ?? []) as any[];
-
-            // Ring-1 exclusion set (viewer's tablemates) — calibration is Ring 2 only.
-            const sharedIds = new Set<string>();
-            {
-                const { data: memberships, error: memberErr } = await supabase
-                    .from('table_members')
-                    .select('table_id')
-                    .eq('member_id', user.id);
-                if (memberErr) throw memberErr;
-                const tableIds = (memberships ?? []).map((m: any) => m.table_id as string);
-                if (tableIds.length > 0) {
-                    const { data: shared, error: sharedErr } = await supabase
-                        .from('table_members')
-                        .select('member_id')
-                        .in('table_id', tableIds)
-                        .neq('member_id', user.id);
-                    if (sharedErr) throw sharedErr;
-                    for (const m of shared ?? []) sharedIds.add((m as any).member_id as string);
-                }
-            }
-
-            // Followee flags — non-fatal, same as the page block.
-            const followedSet = new Set<string>();
-            {
-                const reviewerIds = [...new Set<string>(
-                    raw.map((r) => r.user_id as string).filter((uid) => !!uid && uid !== user.id),
-                )];
-                if (reviewerIds.length > 0) {
-                    const { data: followRows, error: followErr } = await supabase
-                        .from('follows')
-                        .select('following_id')
-                        .eq('follower_id', user.id)
-                        .in('following_id', reviewerIds);
-                    if (followErr) console.error('restaurant-history follows error:', followErr);
-                    for (const fr of followRows ?? []) {
-                        followedSet.add((fr as { following_id: string }).following_id);
-                    }
-                }
-            }
-
-            // Ring-2 calibrations — non-fatal.
-            let calMap = new Map<string, Calibration | null>();
-            const calAuthorIds = [...new Set<string>(
-                raw
-                    .map((r) => r.user_id as string)
-                    .filter((uid) => uid !== user.id && !sharedIds.has(uid)),
-            )];
-            if (calAuthorIds.length > 0) {
-                try {
-                    calMap = await computeCalibrations(supabase, user.id, calAuthorIds);
-                } catch (calErr) {
-                    console.error('restaurant-history calibration error:', calErr);
-                }
-            }
-
-            const cards: PublicReviewCard[] = raw.map((row: any) => ({
-                entry_id: row.entry_id,
-                user_id: row.user_id,
-                display_name: row.display_name ?? 'User',
-                username: row.username ?? null,
-                avatar_url: row.avatar_url ?? null,
-                rating: row.rating,
-                note_excerpt: row.content ?? '',
-                photo_url: row.photo_url ?? null,
-                created_at: row.created_at,
-                public_reaction_count: row.public_reaction_count ?? 0,
-                public_reply_count: row.public_reply_count ?? 0,
-                calibration: (row.user_id === user.id || sharedIds.has(row.user_id))
-                    ? null
-                    : (calMap.get(row.user_id) ?? null),
-                is_followee: followedSet.has(row.user_id),
-            }));
-
-            const page = buildPage(cards, pageSize, (row) =>
-                ({ sort_date: row.created_at, id: row.entry_id }));
-            return json({ data: page });
         }
 
         // ── Reserve link (TICKET-149) ─────────────────────────────────────
