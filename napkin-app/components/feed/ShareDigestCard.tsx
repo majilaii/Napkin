@@ -74,7 +74,6 @@ function DigestSpotRow({
     const { restaurant, note } = child;
     const commentCount = child.commentCount ?? 0;
     const reactionCount = child.reactionCount ?? 0;
-    const topEmojis = child.topEmojis ?? [];
 
     const cityLine = [restaurant?.city, restaurant?.cuisine].filter(Boolean).join(' · ');
     const isPending = child.extractionStatus === 'pending' || !restaurant?.id;
@@ -132,12 +131,13 @@ function DigestSpotRow({
                 hitSlop={8}
                 style={({ pressed }) => [styles.rowReply, { opacity: pressed ? 0.6 : 1 }]}
                 accessibilityRole="button"
-                accessibilityLabel="open thread to react or reply"
+                accessibilityLabel="open thread to like or reply"
             >
                 {reactionCount > 0 ? (
-                    <Text style={[Type.caption, { color: palette.textMuted }]}>
-                        {topEmojis.slice(0, 2).join(' ')} {reactionCount}
-                    </Text>
+                    <>
+                        <Ionicons name="heart" size={12} color={palette.primary} />
+                        <Text style={[Type.caption, { color: palette.textMuted }]}>{reactionCount}</Text>
+                    </>
                 ) : null}
                 <Ionicons name="chatbubble-outline" size={14} color={palette.textMuted} />
                 {commentCount > 0 ? (

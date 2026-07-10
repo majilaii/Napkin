@@ -11,7 +11,7 @@
  *
  * Receives a SoloShareActivity-shaped object. The author attribution
  * header uses `profiles.display_name` + verb ("tried" / "pinned") +
- * `restaurants.name`. Reactions strip uses reaction_count + top_emojis.
+ * `restaurants.name`. Likes strip uses reaction_count (heart-only).
  */
 import React from 'react';
 import {

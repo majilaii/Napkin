@@ -49,7 +49,6 @@ export interface SharedSaveCardProps {
     extractionStatus?: string | null;
     reactionCount: number;
     commentCount?: number;
-    topEmojis: string[];
     myReactions?: string[];
     createdAt: string;
     /** Viewer id — enables the author-only ⋯ retract menu. */
@@ -70,7 +69,6 @@ export function SharedSaveCard({
     extractionStatus,
     reactionCount,
     commentCount = 0,
-    topEmojis,
     myReactions = [],
     createdAt,
     currentUserId,
@@ -216,19 +214,19 @@ export function SharedSaveCard({
                 </Text>
             ) : null}
 
-            {/* Footer — reactions + replies summary; taps open the thread where you
-                can react with any emoji and reply ("let's go"). */}
+            {/* Footer — likes + replies summary; taps open the thread where you
+                can heart it and reply ("let's go"). */}
             <Pressable
                 onPress={handleOpenThread}
                 style={({ pressed }) => [styles.footer, { opacity: pressed ? 0.7 : 1 }]}
                 accessibilityRole="button"
-                accessibilityLabel="open thread to react or reply"
+                accessibilityLabel="open thread to like or reply"
             >
-                {topEmojis.length > 0 ? (
-                    <Text style={styles.footerEmojis}>{topEmojis.slice(0, 3).join(' ')}</Text>
-                ) : null}
                 {reactionCount > 0 ? (
-                    <Text style={[Type.caption, { color: palette.textMuted }]}>{reactionCount}</Text>
+                    <View style={styles.footerLikes}>
+                        <Ionicons name="heart" size={13} color={palette.primary} />
+                        <Text style={[Type.caption, { color: palette.textMuted }]}>{reactionCount}</Text>
+                    </View>
                 ) : null}
                 <View style={styles.footerReplies}>
                     <Ionicons name="chatbubble-outline" size={14} color={palette.textMuted} />
@@ -286,8 +284,10 @@ const styles = StyleSheet.create({
         marginTop: 8,
         minHeight: 20,
     },
-    footerEmojis: {
-        fontSize: 14,
+    footerLikes: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
     },
     footerReplies: {
         flexDirection: 'row',

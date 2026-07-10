@@ -506,13 +506,31 @@ serve(async (req) => {
                     // (the trigger handles it, but we pass it if known)
                     if (insertTableId) insertPayload.table_id = insertTableId;
 
-                    const { data: reaction, error: insertError } = await supabase
+                    let reaction: Record<string, unknown> | null = null;
+                    const { data: inserted, error: insertError } = await supabase
                         .from('post_reactions')
                         .insert(insertPayload)
                         .select()
                         .single();
 
-                    if (insertError) throw insertError;
+                    if (insertError) {
+                        // SELECT-then-INSERT race: a concurrent double-tap landed the
+                        // row first and the one-per-user-per-scope constraint rejected
+                        // ours. That's "already liked", not a 500 — return the winner.
+                        if ((insertError as { code?: string }).code !== '23505') throw insertError;
+                        const { data: winner, error: winnerErr } = await supabase
+                            .from('post_reactions')
+                            .select()
+                            .eq('target_type', target_type)
+                            .eq('target_id', target_id)
+                            .eq('user_id', user.id)
+                            .eq('scope', scope)
+                            .maybeSingle();
+                        if (winnerErr) throw winnerErr;
+                        reaction = winner;
+                    } else {
+                        reaction = inserted;
+                    }
 
                     // Hydrate the reactor's profile so the client can render
                     // avatar/name without a follow-up fetch.
@@ -526,7 +544,7 @@ serve(async (req) => {
                     return json({
                         added: true,
                         removed: false,
-                        reaction: { ...reaction, profiles: reactorProfile ?? null },
+                        reaction: reaction ? { ...reaction, profiles: reactorProfile ?? null } : null,
                         counts,
                     });
                 }
