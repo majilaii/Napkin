@@ -28,6 +28,15 @@ export const FRIEND_TEST = {
      *  Restored 2026-07-02 (founder request): search = Restaurants ↔ People,
      *  Beli-style — the "add friends" path is search → profile → follow. */
     hidePeopleSearch: false,
+    /** TICKET-157: Places-hero trial on Top 4 plates ONLY (profile marquee +
+     *  Table grid). When true, a persisted restaurant's mirrored `photo_url`
+     *  (`photo_source === 'places'`) fills the plate with a warm wash; chosen-memory
+     *  photos always win and are never washed. Default TRUE (founder's on-device
+     *  verdict needs it live). Flip FALSE to restore current-prod rendering on both
+     *  surfaces (chosen-memory-or-typographic on profile; ghost/typographic on the
+     *  table grid) — one-line revert, no data change. Read at each render call site,
+     *  never inside the resolver (keeps `resolveTilePhoto` pure). */
+    topFourPlacesHero: true,
     /** TICKET-082: Suppers — "the empty table" (v2). Kill-switch for every supper
      *  surface: the feed SupperCard + in-app nudge (tables.tsx, gated in BOTH the
      *  timelineItems filter and the leaf render so no orphan date headers), the

@@ -87,6 +87,13 @@ export type TopPick = {
     cuisine: string | null;
     photo_url: string | null;
     /**
+     * TICKET-157: `restaurants.photo_source`. Gates the Places-hero plate tier
+     * (`=== 'places'` + flag). Optional/nullable — older cached payloads predate
+     * the select, so a stale cache reads `undefined` and correctly falls to
+     * typographic rather than leaking an un-washed photo ([ARCH-REVIEW B1/N4]).
+     */
+    photo_source?: 'places' | 'user' | 'table' | 'none' | null;
+    /**
      * TICKET-144 pt2: the owner's chosen hero photo (their OWN entry photo at
      * this restaurant), servable on the public profile because choosing it is
      * the explicit publish. Absent on older cached payloads and on auto-derived
