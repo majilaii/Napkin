@@ -25,7 +25,7 @@ Before implementing ANY screen, component, or visual change:
 - Never pure black. Use `#1c1c19`.
 - No 1px solid borders for sectioning. Structure = background shifts + spacing + ghosted warm rules.
 - Ambient shadows only (`0 8px 30px rgba(28,28,25,0.06)`). No hard drop shadows.
-- Verbs are lowercase past-tense: `noted` / `tried` / `pinned` / `voted` / `gathered`. Never "posted/shared."
+- Verbs are lowercase past-tense: `noted` / `tried` / `pinned` / `voted` / `gathered` / `clipped`. Never "posted/shared."
 - Middle dot `·` separates metadata. Em dash `—` prefixes pull-quotes.
 - No emoji in chrome. Only as user-generated reactions.
 - Ionicons outline @ 24px. Fills avoided.

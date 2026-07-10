@@ -45,6 +45,9 @@ import { reportError } from '../_shared/report.ts';
 import { emitImportDone } from '../_shared/notify.ts';
 import { validateUrl } from '../_shared/urlValidation.ts';
 import type { WishlistSourceTikTok } from '../_shared/wishlistSource.ts';
+// TICKET-156: the single content-key authority — SAME normalizer the rail read
+// (restaurant-history) and the backfill import, so capture/read/backfill agree.
+import { contentKey } from '../_shared/videoUrlKey.ts';
 import { captionToNote } from '../_shared/captionToNote.ts';
 import {
     extractFromVision,
@@ -1461,6 +1464,101 @@ async function handleSaveSpots(
     });
 }
 
+// ── cache_clip_thumb action (TICKET-156 — On Socials rail thumbnail cache) ────
+
+/**
+ * Cache a small JPEG cover frame for a clipped video, keyed by the CANONICAL
+ * video URL (shared across every saver of that video — dedupe for free). The
+ * client fetches the fresh, still-unexpired provider thumbnail on-device and
+ * POSTs its bytes here; the server recomputes the content key, validates the
+ * bytes, uploads service-role to the public-read `clip-thumbs` bucket, and
+ * upserts the `clip_thumbs` row. Public-read / service-role-write only — there
+ * is no authenticated write path (the whole RLS attack surface is deleted).
+ *
+ * [ARCH-REVIEW W1]: JPEG magic-byte check (FF D8 FF) + a hard ≤512KB decoded cap
+ * BEFORE upload, so a poisoned/garbage payload can never render as a broken
+ * image forever (a non-null thumb_url skips the typographic fallback). First-
+ * write-wins: a key that's already 'cached' OR 'gone' short-circuits before any
+ * decode/upload ('gone' is the backfill's permanent skip-marker — respected).
+ */
+async function handleCacheClipThumb(
+    supabase: any,
+    body: Record<string, unknown>,
+): Promise<Response> {
+    const videoUrl = typeof body['video_url'] === 'string' ? body['video_url'] : null;
+    const imageBase64 = typeof body['image_base64'] === 'string' ? body['image_base64'] : null;
+    const sourceType = typeof body['source_type'] === 'string' ? body['source_type'] : null;
+
+    if (!videoUrl || !imageBase64) {
+        return errorResponse('INVALID_BODY', 'video_url and image_base64 are required', 400);
+    }
+    // Only the two providers that render a photo card cache a thumb (video-type
+    // never renders a photo, so it never captures — client-enforced too).
+    if (sourceType !== 'tiktok' && sourceType !== 'instagram') {
+        return errorResponse('INVALID_SOURCE_TYPE', 'source_type must be tiktok or instagram', 400);
+    }
+
+    const key = await contentKey(videoUrl);
+
+    // First-write-wins: a 'cached' OR 'gone' key short-circuits before decode/upload.
+    const { data: existing } = await supabase
+        .from('clip_thumbs')
+        .select('content_key, status')
+        .eq('content_key', key)
+        .maybeSingle();
+    if (existing) {
+        return jsonResponse({ data: { ok: true, deduped: true } });
+    }
+
+    // Bounded inbound guard BEFORE decoding a huge string (512KB decoded ≈ 683KB
+    // base64; a little headroom for padding/whitespace).
+    if (imageBase64.length > 720 * 1024) {
+        return errorResponse('IMAGE_TOO_LARGE', 'thumbnail exceeds size cap', 413);
+    }
+
+    let bytes: Uint8Array;
+    try {
+        const bin = atob(imageBase64);
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } catch {
+        return errorResponse('INVALID_IMAGE', 'image_base64 is not valid base64', 400);
+    }
+
+    // W1: hard decoded cap + JPEG magic-byte validation BEFORE upload.
+    if (bytes.length === 0 || bytes.length > 512 * 1024) {
+        return errorResponse('IMAGE_TOO_LARGE', 'thumbnail must be 1B–512KB', 413);
+    }
+    if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+        return errorResponse('NOT_A_JPEG', 'thumbnail is not a JPEG', 400);
+    }
+
+    const storagePath = `${key}.jpg`;
+    const { error: uploadErr } = await supabase.storage
+        .from('clip-thumbs')
+        .upload(storagePath, bytes, { contentType: 'image/jpeg', upsert: true });
+    if (uploadErr) {
+        console.error('cache_clip_thumb upload error:', uploadErr.message ?? uploadErr);
+        return errorResponse('UPLOAD_FAILED', 'could not cache thumbnail', 500);
+    }
+
+    const { error: rowErr } = await supabase
+        .from('clip_thumbs')
+        .upsert({
+            content_key: key,
+            storage_path: storagePath,
+            status: 'cached',
+            source_type: sourceType,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'content_key' });
+    if (rowErr) {
+        console.error('cache_clip_thumb row upsert error:', rowErr.message ?? rowErr);
+        return errorResponse('UPSERT_FAILED', 'could not record thumbnail', 500);
+    }
+
+    return jsonResponse({ data: { ok: true } });
+}
+
 // ── Main pipeline (TICKET-063 multi-candidate URL path) ───────────────────────
 
 async function handleUrlResolve(
@@ -2250,6 +2348,14 @@ serve(async (req) => {
     // ── save_spots action (ARCH-REVIEW-2 #1) ──────────────────────────────────
     if (body?.action === 'save_spots') {
         return handleSaveSpots(supabase, user, body as Record<string, unknown>);
+    }
+
+    // ── cache_clip_thumb action (TICKET-156) ──────────────────────────────────
+    // Authenticated; the just-imported provider cover frame is cached here for
+    // the On Socials rail. Fire-and-forget from the client — failure never blocks
+    // the underlying save.
+    if (body?.action === 'cache_clip_thumb') {
+        return handleCacheClipThumb(supabase, body as Record<string, unknown>);
     }
 
     // ── Video text path (TICKET-082): on-device OCR/transcript supplied ────────

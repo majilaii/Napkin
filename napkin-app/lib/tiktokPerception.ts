@@ -36,6 +36,13 @@ export interface TikTokPerception {
     hasTranscript: boolean;
     /** Signed mp4 URL for the tier-2 video fallback. Use now, never store. */
     playAddr: string | null;
+    /**
+     * TICKET-156: cover-frame image URL (from the universal-data blob's
+     * video.cover / originCover / dynamicCover) for the On Socials rail thumbnail
+     * cache. Fresh at fetch time; the capture path downloads its bytes immediately
+     * and caches them durably (this URL itself expires — never persist it).
+     */
+    thumbnailUrl: string | null;
 }
 
 export function isTikTokUrl(url: string | null | undefined): boolean {
@@ -99,6 +106,13 @@ export async function fetchTikTokPerception(url: string): Promise<TikTokPercepti
                 ? video.playAddr
                 : null;
 
+        // TICKET-156: the cover frame for the On Socials rail thumbnail cache —
+        // first http candidate among cover / originCover / dynamicCover.
+        const thumbnailUrl =
+            [video.cover, video.originCover, video.dynamicCover].find(
+                (c) => typeof c === 'string' && c.startsWith('http'),
+            ) ?? null;
+
         // Prefer English captions; fall back to whatever exists.
         const subs: any[] = Array.isArray(video.subtitleInfos) ? video.subtitleInfos : [];
         const chosen =
@@ -116,7 +130,7 @@ export async function fetchTikTokPerception(url: string): Promise<TikTokPercepti
 
         const text = [desc, transcript].filter(Boolean).join('\n').trim().slice(0, TRANSCRIPT_CAP);
         if (!text && !playAddr) return null;
-        return { text, hasTranscript: transcript.length > 0, playAddr };
+        return { text, hasTranscript: transcript.length > 0, playAddr, thumbnailUrl };
     } catch {
         return null;
     }

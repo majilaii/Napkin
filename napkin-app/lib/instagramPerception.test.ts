@@ -10,6 +10,8 @@ import {
     extractInstagramShortcode,
     parseInstagramEmbed,
     parseOgDescriptionCaption,
+    parseInstagramThumbnail,
+    parseInstagramAuthorHandle,
 } from './instagramPerception';
 
 // ── isInstagramUrl ────────────────────────────────────────────────────────────
@@ -124,5 +126,42 @@ describe('parseOgDescriptionCaption', () => {
 
     it('returns null when the meta tag is absent', () => {
         expect(parseOgDescriptionCaption('<html></html>')).toBe(null);
+    });
+});
+
+// ── parseInstagramAuthorHandle (TICKET-156) ───────────────────────────────────
+
+describe('parseInstagramAuthorHandle', () => {
+    it('extracts the author handle from the caption username anchor', () => {
+        // Real .Caption markup: the first instagram.com/{handle}/ anchor is the author.
+        expect(parseInstagramAuthorHandle(EMBED_CAPTION_FRAGMENT)).toBe('topjaw');
+    });
+
+    it('skips reserved path segments (reel/p/explore) and returns the real handle', () => {
+        const html =
+            '<a href="https://www.instagram.com/reel/DGaQ0R0sbQ0/">view</a>' +
+            '<a href="https://www.instagram.com/chef_ann/?utm_source=ig_embed">chef_ann</a>';
+        expect(parseInstagramAuthorHandle(html)).toBe('chef_ann');
+    });
+
+    it('returns null when no profile anchor is present', () => {
+        expect(parseInstagramAuthorHandle('<div>Log in to continue</div>')).toBe(null);
+    });
+});
+
+// ── parseInstagramThumbnail (TICKET-156) ──────────────────────────────────────
+
+describe('parseInstagramThumbnail', () => {
+    it('extracts the og:image cover URL (entities decoded)', () => {
+        const html =
+            '<meta property="og:image" content="https://scontent.cdninstagram.com/v/t51/cover.jpg?stp=x&amp;_nc_cat=1" />';
+        expect(parseInstagramThumbnail(html)).toBe(
+            'https://scontent.cdninstagram.com/v/t51/cover.jpg?stp=x&_nc_cat=1',
+        );
+    });
+
+    it('returns null when og:image is absent or non-http', () => {
+        expect(parseInstagramThumbnail('<html></html>')).toBe(null);
+        expect(parseInstagramThumbnail('<meta property="og:image" content="about:blank" />')).toBe(null);
     });
 });
