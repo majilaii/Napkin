@@ -140,6 +140,10 @@ export default function ImportDigestScreen() {
                     external_id: null,
                     status: 'saved',
                     needsLook: false,
+                    // A replace re-files into the destination list (reRouteList /
+                    // the fresh-save add below) — clear the P1 unrouted marker so
+                    // the header tally reflects the self-heal.
+                    listRouted: true,
                 };
 
                 if (target.wishlist_id != null) {

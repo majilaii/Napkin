@@ -16,13 +16,24 @@ import {
     isDrained,
     deriveCounts,
     applyChunkOutcomes,
+    applyListRouting,
+    pendingListRoutes,
+    markListRouted,
+    markUnroutedNeedsLook,
+    ghostSpot,
+    buildResolvedSpots,
+    buildGhostSpots,
+    toChunkOutcomes,
     shouldEmitCompletion,
     classifyDrainError,
     partitionDigest,
+    isExceptionItem,
     isPinnedItem,
     type LargeImportJob,
     type LargeImportJobItem,
     type ChunkItemOutcome,
+    type ResolveSpotResult,
+    type LargeSaveResult,
 } from '../largeImportJob';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -49,7 +60,39 @@ function mkJob(overrides: Partial<LargeImportJob> = {}): LargeImportJob {
         destListId: null,
         serverJobId: null,
         completionEmitted: false,
+        ghostDegraded: false,
+        resolvedChunk: null,
         ...overrides,
+    };
+}
+
+function mkResolveResult(i: number, over: Partial<ResolveSpotResult> = {}): ResolveSpotResult {
+    return {
+        client_nonce: `nonce-${i}`,
+        candidate_id: `cand-${i}`,
+        restaurant_id: null,
+        external_id: `ChIJ-${i}`,
+        restaurant_name: `Resolved ${i}`,
+        restaurant_city: 'Sydney',
+        place: { external_id: `ChIJ-${i}`, name: `Resolved ${i}` },
+        ghost: false,
+        ...over,
+    };
+}
+
+function mkSaveResult(
+    entries: { i: number; status: 'saved' | 'already_pinned' | 'ghost' | 'failed'; wishlist_id?: string | null; restaurant_id?: string | null }[],
+): LargeSaveResult {
+    return {
+        results: entries.map((e) => ({
+            candidate_id: `cand-${e.i}`,
+            client_nonce: `nonce-${e.i}`,
+            status: e.status,
+            wishlist_id: e.wishlist_id ?? null,
+            restaurant_id: e.restaurant_id ?? null,
+        })),
+        summary: { saved: 0, already_pinned: 0, failed: 0 },
+        job_id: null,
     };
 }
 
@@ -80,6 +123,8 @@ describe('buildLargeJob', () => {
         expect(job.pinAll).toBe(true);
         expect(job.cursor).toBe(0);
         expect(job.completionEmitted).toBe(false);
+        expect(job.ghostDegraded).toBe(false);
+        expect(job.resolvedChunk).toBeNull();
         expect(job.destListTitle).toBe('Sydney'); // default = title
         expect(job.listCount).toBe(117); // honest denominator, NOT items.length
         expect(job.items).toHaveLength(2);
@@ -324,6 +369,233 @@ describe('normalizeLargeJob', () => {
     it('pinAll survives an explicit false (list-only)', () => {
         const parsed = normalizeLargeJob({ items: mkItems(1), pinAll: false });
         expect(parsed?.pinAll).toBe(false);
+    });
+    it('parses ghostDegraded (default false) and item listRouted (default absent)', () => {
+        const on = normalizeLargeJob({ items: mkItems(1), ghostDegraded: true });
+        expect(on?.ghostDegraded).toBe(true);
+        const off = normalizeLargeJob({ items: mkItems(1) });
+        expect(off?.ghostDegraded).toBe(false);
+        const routed = normalizeLargeJob({
+            items: [{ name: 'x', client_nonce: 'n0', listRouted: true }],
+        });
+        expect(routed?.items[0].listRouted).toBe(true);
+        const notRouted = normalizeLargeJob({
+            items: [{ name: 'x', client_nonce: 'n0', listRouted: 'yes' }],
+        });
+        expect(notRouted?.items[0].listRouted).toBeUndefined();
+    });
+    it('round-trips a resolve checkpoint; drops a malformed one (chunk re-resolves)', () => {
+        const ckpt = { cursor: 2, results: [mkResolveResult(2)], ghostMode: false };
+        const parsed = normalizeLargeJob({ items: mkItems(3), cursor: 2, resolvedChunk: ckpt });
+        expect(parsed?.resolvedChunk).toEqual(ckpt);
+        // Malformed shapes → null (never crash; the drain just re-resolves).
+        expect(normalizeLargeJob({ items: mkItems(1), resolvedChunk: 'junk' })?.resolvedChunk).toBeNull();
+        expect(
+            normalizeLargeJob({ items: mkItems(1), resolvedChunk: { cursor: 'x', results: [] } })
+                ?.resolvedChunk,
+        ).toBeNull();
+        expect(
+            normalizeLargeJob({ items: mkItems(1), resolvedChunk: { cursor: 0, results: 'x' } })
+                ?.resolvedChunk,
+        ).toBeNull();
+        // Result entries without the client_nonce join key are dropped.
+        const dirty = normalizeLargeJob({
+            items: mkItems(1),
+            resolvedChunk: { cursor: 0, results: [mkResolveResult(0), { ghost: true }, null], ghostMode: true },
+        });
+        expect(dirty?.resolvedChunk?.results).toHaveLength(1);
+        expect(dirty?.resolvedChunk?.ghostMode).toBe(true);
+    });
+});
+
+// ── chunk zip (chunk-authoritative no-drop — the AC-1 core) ──────────────────
+describe('buildResolvedSpots / ghostSpot / buildGhostSpots', () => {
+    it('missing resolve result → ghost spot input (external_id null), never a drop', () => {
+        const chunk = mkItems(2);
+        const spots = buildResolvedSpots([mkResolveResult(0)], chunk);
+        expect(spots).toHaveLength(2); // one per chunk item — always
+        expect(spots[0]).toMatchObject({
+            client_nonce: 'nonce-0',
+            external_id: 'ChIJ-0',
+            restaurant_name: 'Resolved 0',
+        });
+        // Item 1 had no result → ghost-saved from the enumerated fields.
+        expect(spots[1]).toMatchObject({
+            client_nonce: 'nonce-1',
+            external_id: null,
+            restaurant_id: null,
+            restaurant_name: 'Spot 1',
+        });
+    });
+    it('zips by client_nonce, never by array index', () => {
+        const chunk = mkItems(2);
+        // Results arrive reversed — nonce join must still land each correctly.
+        const spots = buildResolvedSpots([mkResolveResult(1), mkResolveResult(0)], chunk);
+        expect(spots[0].external_id).toBe('ChIJ-0');
+        expect(spots[1].external_id).toBe('ChIJ-1');
+    });
+    it('ghostSpot pins table fields null and carries the address in place', () => {
+        const g = ghostSpot(mkItems(1)[0]);
+        expect(g).toMatchObject({
+            candidate_id: 'nonce-0',
+            client_nonce: 'nonce-0',
+            table_id: null,
+            table_client_nonce: null,
+            external_id: null,
+        });
+        expect((g.place as { location?: { address?: string } }).location?.address).toBe('0 Main St');
+    });
+    it('buildGhostSpots ghosts the whole chunk', () => {
+        const spots = buildGhostSpots(mkItems(3));
+        expect(spots).toHaveLength(3);
+        expect(spots.every((s) => s.external_id === null && s.restaurant_id === null)).toBe(true);
+    });
+});
+
+describe('toChunkOutcomes (chunk-authoritative zip)', () => {
+    it('missing resolve result → ghost:true', () => {
+        const chunk = mkItems(2);
+        const save = mkSaveResult([
+            { i: 0, status: 'saved', restaurant_id: 'r0', wishlist_id: 'w0' },
+            { i: 1, status: 'ghost', restaurant_id: 'g1' },
+        ]);
+        const outcomes = toChunkOutcomes(chunk, [mkResolveResult(0)], save, false);
+        expect(outcomes).toHaveLength(2); // one per chunk item — always
+        expect(outcomes[0]).toMatchObject({ ghost: false, saveStatus: 'saved', restaurant_id: 'r0' });
+        expect(outcomes[1].ghost).toBe(true); // absent from resolve ⇒ ghost
+    });
+    it('missing save result → saveStatus failed (surfaces as needsLook), never a drop', () => {
+        const chunk = mkItems(2);
+        const save = mkSaveResult([{ i: 0, status: 'saved', restaurant_id: 'r0' }]);
+        const outcomes = toChunkOutcomes(chunk, [mkResolveResult(0), mkResolveResult(1)], save, false);
+        expect(outcomes[1].saveStatus).toBe('failed');
+        const items = applyChunkOutcomes(chunk, outcomes);
+        expect(items[1]).toMatchObject({ status: 'failed', needsLook: true });
+    });
+    it('forceGhost (budget/kill-switch) marks every outcome ghost', () => {
+        const chunk = mkItems(2);
+        const save = mkSaveResult([
+            { i: 0, status: 'ghost', restaurant_id: 'g0' },
+            { i: 1, status: 'ghost', restaurant_id: 'g1' },
+        ]);
+        const outcomes = toChunkOutcomes(chunk, [], save, true);
+        expect(outcomes.every((o) => o.ghost && o.saveStatus === 'ghost')).toBe(true);
+    });
+    it('id fallback: save result wins, resolve second (restaurant_id)', () => {
+        const chunk = mkItems(1);
+        const rr = mkResolveResult(0, { restaurant_id: 'resolve-id' });
+        const outFromSave = toChunkOutcomes(
+            chunk,
+            [rr],
+            mkSaveResult([{ i: 0, status: 'saved', restaurant_id: 'save-id' }]),
+            false,
+        );
+        expect(outFromSave[0].restaurant_id).toBe('save-id');
+        const outFromResolve = toChunkOutcomes(chunk, [rr], mkSaveResult([]), false);
+        expect(outFromResolve[0].restaurant_id).toBe('resolve-id');
+    });
+});
+
+// ── list routing state (P1 — the destination list never silently drops) ──────
+describe('list routing (P1)', () => {
+    it('applyListRouting stamps only routable outcomes (restaurant_id known)', () => {
+        const outcomes: ChunkItemOutcome[] = [
+            { client_nonce: 'nonce-0', ghost: false, saveStatus: 'saved', restaurant_id: 'r0' },
+            { client_nonce: 'nonce-1', ghost: false, saveStatus: 'failed', restaurant_id: null },
+        ];
+        const ok = applyListRouting(outcomes, true);
+        expect(ok[0].listRouted).toBe(true);
+        expect(ok[1].listRouted).toBeUndefined(); // unroutable — no flag
+        const fail = applyListRouting(outcomes, false);
+        expect(fail[0].listRouted).toBe(false);
+    });
+
+    it('route FAILURE → unrouted marker → reconcile helpers → needsLook → counted, not silently imported', () => {
+        // A chunk saves fine but its add_entries fails (network blip).
+        const items = mkItems(2);
+        const outcomes = applyListRouting(
+            [
+                { client_nonce: 'nonce-0', ghost: false, saveStatus: 'saved', restaurant_id: 'r0', wishlist_id: 'w0' },
+                { client_nonce: 'nonce-1', ghost: false, saveStatus: 'saved', restaurant_id: 'r1', wishlist_id: 'w1' },
+            ],
+            false, // ← the add_entries failed
+        );
+        const applied = applyChunkOutcomes(items, outcomes);
+        expect(applied.every((i) => i.listRouted === false)).toBe(true);
+
+        // The completion reconcile retries exactly these…
+        expect(pendingListRoutes(applied).map((i) => i.client_nonce)).toEqual(['nonce-0', 'nonce-1']);
+
+        // …the retry lands r0 but r1 fails again…
+        const reconciled = markUnroutedNeedsLook(markListRouted(applied, new Set(['r0'])));
+        expect(reconciled[0]).toMatchObject({ listRouted: true, needsLook: false, status: 'saved' });
+        expect(reconciled[1]).toMatchObject({ needsLook: true, status: 'saved' });
+
+        // …and the survivor is COUNTED and SURFACED, never silently dropped.
+        expect(isExceptionItem(reconciled[1])).toBe(true);
+        const counts = deriveCounts(reconciled);
+        expect(counts.imported).toBe(1);
+        expect(counts.needsLook).toBe(1);
+        const { exceptions, imported } = partitionDigest(reconciled);
+        expect(exceptions.map((i) => i.client_nonce)).toEqual(['nonce-1']);
+        expect(imported.map((i) => i.client_nonce)).toEqual(['nonce-0']);
+    });
+
+    it('route success marks listRouted true and stays clean', () => {
+        const items = mkItems(1);
+        const applied = applyChunkOutcomes(
+            items,
+            applyListRouting(
+                [{ client_nonce: 'nonce-0', ghost: false, saveStatus: 'saved', restaurant_id: 'r0' }],
+                true,
+            ),
+        );
+        expect(applied[0].listRouted).toBe(true);
+        expect(pendingListRoutes(applied)).toHaveLength(0);
+        expect(markUnroutedNeedsLook(applied)[0].needsLook).toBe(false);
+    });
+
+    it('listRouted is monotonic — a resume with a failed re-add never unroutes', () => {
+        const items = mkItems(1);
+        const first = applyChunkOutcomes(
+            items,
+            applyListRouting(
+                [{ client_nonce: 'nonce-0', ghost: false, saveStatus: 'saved', restaurant_id: 'r0' }],
+                true,
+            ),
+        );
+        expect(first[0].listRouted).toBe(true);
+        // Resume re-applies the chunk; this time the (idempotent, so harmless)
+        // re-add blips — the durable truth from the first success must survive.
+        const second = applyChunkOutcomes(
+            first,
+            applyListRouting(
+                [{ client_nonce: 'nonce-0', ghost: false, saveStatus: 'already_pinned', restaurant_id: 'r0' }],
+                false,
+            ),
+        );
+        expect(second[0].listRouted).toBe(true);
+    });
+
+    it('markUnroutedNeedsLook skips unroutable items (no restaurant_id)', () => {
+        const items: LargeImportJobItem[] = [
+            { name: 'x', address: null, client_nonce: '0', status: 'failed', restaurant_id: null },
+        ];
+        expect(markUnroutedNeedsLook(items)[0].needsLook).toBeUndefined();
+    });
+});
+
+describe('deriveCounts × unrouted (P1c — header/toast include them)', () => {
+    it('a saved-but-unrouted (needsLook) item counts under needsLook, not imported', () => {
+        const items: LargeImportJobItem[] = [
+            { name: 'a', address: null, client_nonce: '0', status: 'saved', listRouted: true },
+            { name: 'b', address: null, client_nonce: '1', status: 'saved', needsLook: true, listRouted: false },
+            { name: 'c', address: null, client_nonce: '2', status: 'ghost', needsLook: true },
+        ];
+        const c = deriveCounts(items);
+        expect(c.imported).toBe(1);
+        expect(c.needsLook).toBe(2); // unrouted + ghost — matches the digest sections
+        expect(c.ghosted).toBe(1);
     });
 });
 

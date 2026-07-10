@@ -43,7 +43,6 @@ import { markImportCompleted } from '@/lib/importActivation';
 import {
     listPendingImports,
     removeImport,
-    getImport,
     setImportSpots,
     setImportListCount,
     setImportDiagnostics,
@@ -57,7 +56,6 @@ import {
     type ImportManifest,
     type PersistedImportSpot,
     type LargeImportJob,
-    type LargeImportJobItem,
 } from '@/lib/importQueue';
 import {
     buildLargeJob,
@@ -66,10 +64,21 @@ import {
     isDrained,
     deriveCounts,
     applyChunkOutcomes,
+    applyListRouting,
+    pendingListRoutes,
+    markListRouted,
+    markUnroutedNeedsLook,
+    buildResolvedSpots,
+    buildGhostSpots,
+    toChunkOutcomes,
     classifyDrainError,
     LARGE_JOB_MAX_CHUNK_ATTEMPTS,
     type ChunkItemOutcome,
     type LargeListEnumeration,
+    type ResolveSpotResult,
+    type ResolveSpotsData,
+    type LargeSaveResult,
+    type LargeImportSpotInput,
 } from '@/lib/largeImportJob';
 import { truncationNote } from '@/lib/importTruncation';
 import {
@@ -164,110 +173,6 @@ function safeDeleteMov(path: string | undefined): void {
     }
 }
 
-// ── TICKET-152: large Maps-list import — wire shapes + zip helpers ──────────────
-// resolve_spots echoes ONE result per input item, keyed by client_nonce, never
-// dropping (a within-chunk true-dupe returns the same external_id twice and
-// collapses at SAVE time). So we map results→items ONLY by client_nonce.
-interface ResolveSpotResult {
-    client_nonce: string;
-    candidate_id: string;
-    restaurant_id: string | null;
-    external_id: string | null;
-    restaurant_name: string | null;
-    restaurant_city: string | null;
-    place: unknown;
-    confidence?: string;
-    ghost: boolean;
-}
-interface ResolveSpotsData {
-    results: ResolveSpotResult[];
-    ghost_mode: boolean;
-}
-interface LargeSaveSpotResult {
-    candidate_id: string;
-    client_nonce: string;
-    status: 'saved' | 'already_pinned' | 'ghost' | 'failed';
-    wishlist_id?: string | null;
-    restaurant_id?: string | null;
-}
-interface LargeSaveResult {
-    results: LargeSaveSpotResult[];
-    summary?: { saved: number; already_pinned: number; ghost?: number; failed: number };
-    job_id?: string | null;
-}
-
-/** A ghost save_spots input built from an enumerated item (external_id null →
- *  the server mints a deterministic ghost row keyed on (user, client_nonce)). */
-function ghostSpot(it: LargeImportJobItem): PersistedImportSpot {
-    return {
-        candidate_id: it.client_nonce,
-        client_nonce: it.client_nonce,
-        restaurant_id: null,
-        external_id: null,
-        restaurant_name: it.name,
-        restaurant_city: it.restaurant_city ?? null,
-        table_id: null,
-        table_client_nonce: null,
-        place: { external_id: null, name: it.name, location: { address: it.address ?? undefined } },
-    };
-}
-
-/** Build save_spots input from resolve_spots results — iterate the CHUNK
- *  (authoritative), look up by nonce, and ghost-save any defensively-missing
- *  result rather than dropping it. */
-function buildResolvedSpots(
-    results: ResolveSpotResult[],
-    chunk: LargeImportJobItem[],
-): PersistedImportSpot[] {
-    const byNonce = new Map(results.map((r) => [r.client_nonce, r]));
-    return chunk.map((it) => {
-        const r = byNonce.get(it.client_nonce);
-        if (!r) return ghostSpot(it);
-        return {
-            candidate_id: r.candidate_id ?? it.client_nonce,
-            client_nonce: it.client_nonce,
-            restaurant_id: r.restaurant_id ?? null,
-            external_id: r.external_id ?? null,
-            restaurant_name: r.restaurant_name ?? it.name,
-            restaurant_city: r.restaurant_city ?? null,
-            table_id: null,
-            table_client_nonce: null,
-            place: r.place ?? null,
-        };
-    });
-}
-
-function buildGhostSpots(chunk: LargeImportJobItem[]): PersistedImportSpot[] {
-    return chunk.map(ghostSpot);
-}
-
-/** Zip resolve (ghost flag + names) + save (status + ids) into the pure reducer's
- *  outcome, keyed by client_nonce. `forceGhost` for the budget/kill-switch path
- *  (no resolve ran). A missing save result ⇒ 'failed' (needsLook), never a drop. */
-function toChunkOutcomes(
-    chunk: LargeImportJobItem[],
-    resolveResults: ResolveSpotResult[],
-    saveResult: LargeSaveResult | null,
-    forceGhost: boolean,
-): ChunkItemOutcome[] {
-    const resolveByNonce = new Map(resolveResults.map((r) => [r.client_nonce, r]));
-    const saveByNonce = new Map((saveResult?.results ?? []).map((r) => [r.client_nonce, r]));
-    return chunk.map((it) => {
-        const rr = resolveByNonce.get(it.client_nonce);
-        const sr = saveByNonce.get(it.client_nonce);
-        return {
-            client_nonce: it.client_nonce,
-            ghost: forceGhost || (rr?.ghost ?? true),
-            saveStatus: sr?.status ?? 'failed',
-            restaurant_id: sr?.restaurant_id ?? rr?.restaurant_id ?? null,
-            wishlist_id: sr?.wishlist_id ?? null,
-            restaurant_name: rr?.restaurant_name ?? it.name,
-            restaurant_city: rr?.restaurant_city ?? it.restaurant_city ?? null,
-            external_id: rr?.external_id ?? null,
-        };
-    });
-}
-
 export function useProcessImportQueue() {
     const { session } = useAuth();
     const userId = session?.user?.id;
@@ -289,7 +194,7 @@ export function useProcessImportQueue() {
 
             const source = { type: 'google_maps', url: m.url ?? '' };
 
-            const saveChunkSpots = (jb: LargeImportJob, spots: PersistedImportSpot[]) =>
+            const saveChunkSpots = (jb: LargeImportJob, spots: LargeImportSpotInput[]) =>
                 callEdgeFn<LargeSaveResult>('resolve-url', {
                     action: 'save_spots',
                     body: {
@@ -304,6 +209,17 @@ export function useProcessImportQueue() {
                         notify_done: false,
                     },
                 });
+
+            // Deterministic (non-transient) failure at the current cursor: bump
+            // chunkAttempts; poison at MAX so /import-progress shows try-again.
+            const bumpChunkAttempts = (jb: LargeImportJob) => {
+                const attempts = jb.chunkAttempts + 1;
+                setLargeJob(
+                    m.jobId,
+                    { ...jb, chunkAttempts: attempts },
+                    attempts >= LARGE_JOB_MAX_CHUNK_ATTEMPTS ? { status: 'failed' } : undefined,
+                );
+            };
 
             // Destination list: created ONCE, on the first chunk with ≥1 routable
             // spot (avoids an empty list if the user backgrounds before any save).
@@ -342,12 +258,10 @@ export function useProcessImportQueue() {
             // crash between save and this write → a resume re-saves as already_pinned).
             const commitChunk = async (
                 jb: LargeImportJob,
-                chunk: LargeImportJobItem[],
                 outcomes: ChunkItemOutcome[],
                 saveResult: LargeSaveResult | null,
                 newCursor: number,
             ): Promise<LargeImportJob> => {
-                const newItems = applyChunkOutcomes(jb.items, outcomes);
                 const serverJobId = jb.serverJobId ?? saveResult?.job_id ?? null;
                 const chunkRestaurantIds = outcomes
                     .map((o) => o.restaurant_id)
@@ -357,6 +271,11 @@ export function useProcessImportQueue() {
                 if (!destListId && jb.destListTitle && chunkRestaurantIds.length > 0) {
                     destListId = await ensureDestList(jb.destListTitle);
                 }
+                // Route to the destination list. A failure here is tolerated (never
+                // fails the import) but RECORDED per item via the listRouted flag —
+                // the completion reconcile retries, then flags survivors needsLook
+                // (P1: list membership must never silently drop).
+                let routed = false;
                 if (destListId && chunkRestaurantIds.length > 0) {
                     try {
                         // ≤20 ids per chunk « the 200-cap, so no sub-chunking needed.
@@ -364,10 +283,16 @@ export function useProcessImportQueue() {
                             action: 'add_entries',
                             body: { list_id: destListId, restaurant_ids: chunkRestaurantIds },
                         });
+                        routed = true;
                     } catch {
-                        /* a bad/removed list must not fail the import */
+                        /* tolerated — the completion reconcile retries (P1) */
                     }
                 }
+                // Only a job WITH a destination list tracks routing state.
+                const routedOutcomes = jb.destListTitle
+                    ? applyListRouting(outcomes, routed)
+                    : outcomes;
+                const newItems = applyChunkOutcomes(jb.items, routedOutcomes);
 
                 const newJob: LargeImportJob = {
                     ...jb,
@@ -376,6 +301,7 @@ export function useProcessImportQueue() {
                     chunkAttempts: 0, // a successful chunk resets the poison counter
                     serverJobId,
                     destListId,
+                    resolvedChunk: null, // the checkpoint is spent once the cursor advances (P2)
                 };
                 setLargeJob(m.jobId, newJob);
                 return newJob;
@@ -386,9 +312,57 @@ export function useProcessImportQueue() {
                     if (jb.phase !== 'done') setLargeJob(m.jobId, { ...jb, phase: 'done' });
                     return;
                 }
+
+                // ── P1 reconcile: the destination list must never silently drop. ──
+                // Chunk-time add_entries is best-effort; before completing, RETRY
+                // membership for every item that never routed (add_entries is
+                // idempotent → replay-safe). This runs BEFORE the completionEmitted
+                // write — the guard stays LAST — so a crash mid-reconcile resumes
+                // right back here. Items STILL unrouted after the retry are marked
+                // needsLook: they surface in the digest (find match re-files them;
+                // remove drops them) and the header/toast counts include them,
+                // instead of existing in no user-visible surface at all.
+                let jobNow = jb;
+                if (jobNow.destListTitle) {
+                    const unrouted = pendingListRoutes(jobNow.items);
+                    if (unrouted.length > 0) {
+                        let destListId = jobNow.destListId;
+                        if (!destListId) destListId = await ensureDestList(jobNow.destListTitle);
+                        const routedIds = new Set<string>();
+                        if (destListId) {
+                            const ids = [
+                                ...new Set(
+                                    unrouted
+                                        .map((i) => i.restaurant_id)
+                                        .filter((x): x is string => !!x),
+                                ),
+                            ];
+                            // lists.add_entries caps at 200 ids/call — chunk the retry
+                            // (a 500-item job can retry up to 500 ids here).
+                            for (let i = 0; i < ids.length; i += 200) {
+                                const batch = ids.slice(i, i + 200);
+                                try {
+                                    await callEdgeFn('lists', {
+                                        action: 'add_entries',
+                                        body: { list_id: destListId, restaurant_ids: batch },
+                                    });
+                                    for (const id of batch) routedIds.add(id);
+                                } catch {
+                                    /* still unrouted → needsLook below */
+                                }
+                            }
+                        }
+                        const items = markUnroutedNeedsLook(
+                            markListRouted(jobNow.items, routedIds),
+                        );
+                        jobNow = { ...jobNow, items, destListId: destListId ?? jobNow.destListId };
+                        setLargeJob(m.jobId, jobNow);
+                    }
+                }
+
                 // L1: persist completionEmitted + phase:done FIRST so a crash before
                 // the bell can never DOUBLE-fire it (import_done has no dedup key).
-                const doneJob: LargeImportJob = { ...jb, completionEmitted: true, phase: 'done' };
+                const doneJob: LargeImportJob = { ...jobNow, completionEmitted: true, phase: 'done' };
                 setLargeJob(m.jobId, doneJob);
 
                 const counts = deriveCounts(doneJob.items);
@@ -448,37 +422,6 @@ export function useProcessImportQueue() {
                 pokeImportQueue();
             };
 
-            // Budget exhausted for the session (import_spots 429): ghost-save every
-            // remaining item (no Places) and COMPLETE — never-fail is absolute.
-            // Loop within this pass (ghost saves are cheap); crash-safe because a
-            // resume re-hits the 429 and resumes from the persisted cursor.
-            const ghostDegradeRemaining = async () => {
-                let jb = getImport(m.jobId)?.largeJob;
-                while (jb && jb.phase === 'running' && !isDrained(jb)) {
-                    const { end } = chunkBounds(jb.cursor, jb.items.length, jb.chunkSize);
-                    const chunk = jb.items.slice(jb.cursor, end);
-                    let saveResult: LargeSaveResult | null = null;
-                    let outcomes: ChunkItemOutcome[];
-                    try {
-                        saveResult = await saveChunkSpots(jb, buildGhostSpots(chunk));
-                        outcomes = toChunkOutcomes(chunk, [], saveResult, true);
-                    } catch (err) {
-                        if (classifyDrainError(errStatus(err), isSessionError(err)) === 'transient') {
-                            return; // pause; a resume re-hits 429 and re-degrades
-                        }
-                        // A deterministic failure on a plain ghost save → mark this
-                        // chunk failed (needsLook) and keep going so the job COMPLETES.
-                        outcomes = chunk.map((c) => ({
-                            client_nonce: c.client_nonce,
-                            ghost: true,
-                            saveStatus: 'failed' as const,
-                        }));
-                    }
-                    jb = await commitChunk(jb, chunk, outcomes, saveResult, end);
-                }
-                if (jb) await finalizeLargeJob(jb);
-            };
-
             // ── Already drained → finalize (idempotent via completionEmitted). ──
             if (isDrained(job)) {
                 await finalizeLargeJob(job);
@@ -489,52 +432,88 @@ export function useProcessImportQueue() {
             const { end } = chunkBounds(job.cursor, job.items.length, job.chunkSize);
             const chunk = job.items.slice(job.cursor, end);
 
-            let outcomes: ChunkItemOutcome[];
-            let saveResult: LargeSaveResult | null = null;
-            try {
-                const resolveData = await callEdgeFn<ResolveSpotsData>('resolve-url', {
-                    action: 'resolve_spots',
-                    body: {
-                        import_nonce: m.importNonce,
-                        items: chunk.map((c) => ({
-                            name: c.name,
-                            address: c.address,
-                            client_nonce: c.client_nonce,
-                        })),
-                    },
-                });
-                if (resolveData?.ghost_mode) {
-                    // Kill-switch (RESOLVE_SPOTS_GHOST_ONLY) → ghost-save this chunk.
-                    saveResult = await saveChunkSpots(job, buildGhostSpots(chunk));
-                    outcomes = toChunkOutcomes(chunk, [], saveResult, true);
+            // Resolve — skipped entirely once the job is budget-degraded, and
+            // reused from the persisted checkpoint when a crash landed between
+            // resolve and the cursor write (P2: never pay Places twice per chunk).
+            let jobNow = job;
+            let results: ResolveSpotResult[] = [];
+            let forceGhost = jobNow.ghostDegraded;
+            if (!forceGhost) {
+                const ckpt = jobNow.resolvedChunk;
+                if (ckpt && ckpt.cursor === jobNow.cursor) {
+                    results = ckpt.results;
+                    forceGhost = ckpt.ghostMode;
                 } else {
-                    const results = resolveData?.results ?? [];
-                    saveResult = await saveChunkSpots(job, buildResolvedSpots(results, chunk));
-                    outcomes = toChunkOutcomes(chunk, results, saveResult, false);
+                    try {
+                        const resolveData = await callEdgeFn<ResolveSpotsData>('resolve-url', {
+                            action: 'resolve_spots',
+                            body: {
+                                import_nonce: m.importNonce,
+                                items: chunk.map((c) => ({
+                                    name: c.name,
+                                    address: c.address,
+                                    client_nonce: c.client_nonce,
+                                })),
+                            },
+                        });
+                        // ghost_mode = kill-switch (RESOLVE_SPOTS_GHOST_ONLY) →
+                        // ghost-save this chunk; the switch is re-read per chunk.
+                        forceGhost = resolveData?.ghost_mode === true;
+                        results = forceGhost ? [] : (resolveData?.results ?? []);
+                        // P2 checkpoint: persist the paid-for resolution BEFORE the
+                        // save, so a crash anywhere in the save/route window resumes
+                        // straight to save — no double Places spend. commitChunk
+                        // clears it when the cursor advances.
+                        jobNow = {
+                            ...jobNow,
+                            resolvedChunk: { cursor: jobNow.cursor, results, ghostMode: forceGhost },
+                        };
+                        setLargeJob(m.jobId, jobNow);
+                    } catch (err) {
+                        const cls = classifyDrainError(errStatus(err), isSessionError(err));
+                        // M3: 503 (inner Places throttle) / 5xx / network / session →
+                        // transient — pause + resume, NEVER a ghost-degrade.
+                        if (cls === 'transient') return;
+                        if (cls === 'deterministic') {
+                            // A real 4xx (malformed) → attempts/poison. Per-spot save
+                            // failures never reach here (they mark items, drain continues).
+                            bumpChunkAttempts(jobNow);
+                            return;
+                        }
+                        // 429 = import_spots budget ONLY — terminal for the session.
+                        // PERSIST the degrade decision (resume-safe, and no wasted
+                        // 429 round-trip per later chunk), then pump the REST as
+                        // ghost chunks ONE per pass exactly like the happy path —
+                        // progress stays live, the drain lock is never held across
+                        // the whole remainder, and the job still COMPLETES (never-fail).
+                        jobNow = { ...jobNow, ghostDegraded: true };
+                        setLargeJob(m.jobId, jobNow);
+                        forceGhost = true;
+                    }
                 }
+            }
+
+            // Save (idempotent on frozen nonces).
+            let saveResult: LargeSaveResult;
+            try {
+                saveResult = await saveChunkSpots(
+                    jobNow,
+                    forceGhost ? buildGhostSpots(chunk) : buildResolvedSpots(results, chunk),
+                );
             } catch (err) {
-                const cls = classifyDrainError(errStatus(err), isSessionError(err));
-                // M3: 429 is import_spots-budget ONLY (terminal for the session) →
-                // ghost-degrade the rest. 503 (inner Places throttle) / network fall
-                // through as transient — pause + resume, NEVER a ghost-degrade.
-                if (cls === 'budget') {
-                    await ghostDegradeRemaining();
+                // save_spots has no rate bucket — a 429 HERE is not a budget signal,
+                // so everything non-deterministic (429/503/5xx/network/session) is a
+                // plain resumable transient. The resolve checkpoint above means the
+                // retry re-saves WITHOUT re-resolving (P2). Deterministic → poison.
+                if (classifyDrainError(errStatus(err), isSessionError(err)) !== 'deterministic') {
                     return;
                 }
-                if (cls === 'transient') return; // pause; resume next foreground/poke
-                // Deterministic (a real 4xx / malformed) → bump chunkAttempts; poison
-                // at MAX so /import-progress shows try-again. Per-spot save failures
-                // do NOT reach here (they mark that item failed, drain continues).
-                const attempts = job.chunkAttempts + 1;
-                setLargeJob(
-                    m.jobId,
-                    { ...job, chunkAttempts: attempts },
-                    attempts >= LARGE_JOB_MAX_CHUNK_ATTEMPTS ? { status: 'failed' } : undefined,
-                );
+                bumpChunkAttempts(jobNow);
                 return;
             }
 
-            const newJob = await commitChunk(job, chunk, outcomes, saveResult, end);
+            const outcomes = toChunkOutcomes(chunk, results, saveResult, forceGhost);
+            const newJob = await commitChunk(jobNow, outcomes, saveResult, end);
             if (isDrained(newJob)) {
                 await finalizeLargeJob(newJob);
                 return;
