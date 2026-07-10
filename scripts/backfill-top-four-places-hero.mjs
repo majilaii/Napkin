@@ -151,15 +151,17 @@ function sleep(ms) {
 }
 
 /** Page a PostgREST table fully (limit/offset by 1000) with an arbitrary query string. */
-async function fetchAll(pathAndQuery) {
+async function fetchAll(pathAndQuery, orderCol) {
     const pageSize = 1000;
     let offset = 0;
     const all = [];
     for (;;) {
         const sep = pathAndQuery.includes('?') ? '&' : '?';
-        // order=id: PostgREST adds no implicit sort, and offset pagination over an
+        // Explicit order: PostgREST adds no implicit sort, and offset pagination over an
         // unordered scan can skip/duplicate rows between pages (review WARN, 2026-07-10).
-        const url = `${SB_URL}/rest/v1/${pathAndQuery}${sep}order=id&limit=${pageSize}&offset=${offset}`;
+        // The column is per-table — not every table has `id` (user_profile_top_4 does not).
+        const order = orderCol ? `order=${orderCol}&` : '';
+        const url = `${SB_URL}/rest/v1/${pathAndQuery}${sep}${order}limit=${pageSize}&offset=${offset}`;
         const res = await fetch(url, { headers: REST_HEADERS });
         if (!res.ok) {
             const b = await res.text();
@@ -214,7 +216,7 @@ async function buildCandidateSet() {
     const candidates = new Set(); // [ARCH-REVIEW N2]
 
     // Source 1: curated profile picks (also gives us the manual-user set).
-    const profileRows = await fetchAll('user_profile_top_4?select=user_id,restaurant_id');
+    const profileRows = await fetchAll('user_profile_top_4?select=user_id,restaurant_id', 'user_id,restaurant_id');
     const manualUserIds = new Set();
     for (const r of profileRows) {
         if (r.restaurant_id) candidates.add(r.restaurant_id);
@@ -222,7 +224,7 @@ async function buildCandidateSet() {
     }
 
     // Source 2: Table grids.
-    const tableRows = await fetchAll('table_top_4?select=restaurant_id');
+    const tableRows = await fetchAll('table_top_4?select=restaurant_id', 'table_id,restaurant_id');
     for (const r of tableRows) {
         if (r.restaurant_id) candidates.add(r.restaurant_id);
     }
@@ -231,6 +233,7 @@ async function buildCandidateSet() {
     const entryRows = await fetchAll(
         'entries?select=user_id,restaurant_id,rating,visited_at,created_at,visibility' +
         '&restaurant_id=not.is.null&rating=not.is.null&rating=gte.4.0',
+        'id',
     );
     const byUser = new Map();
     for (const e of entryRows) {
