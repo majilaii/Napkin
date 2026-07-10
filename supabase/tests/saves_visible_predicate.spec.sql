@@ -9,6 +9,8 @@
 --   4. block, either direction→ INVISIBLE (viewer→saver AND saver→viewer)
 --   5. self                   → VISIBLE   (relationship = 'self'), source RAW,
 --                               even though the viewer's OWN account is private
+--   6. followed public saver  → VISIBLE   (relationship = 'following') — label-only
+--                               tier for TICKET-156 ranking (155 review NIT-1)
 -- Plus: source IS NULL → NULL (ARCH-REVIEW N2), and a total-count invariant.
 --
 -- ── ARCH-REVIEW W1 (MANDATORY): seed auth.users FIRST ────────────────────────
@@ -49,7 +51,8 @@ VALUES
   ('00000000-0000-0000-0000-000000000000', '55552222-2222-2222-2222-222222222222', 'authenticated', 'authenticated', 'prv@saves-test.invalid',    now(), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Priv Stranger"}'),
   ('00000000-0000-0000-0000-000000000000', '55553333-3333-3333-3333-333333333333', 'authenticated', 'authenticated', 'tm@saves-test.invalid',     now(), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Priv Tablemate"}'),
   ('00000000-0000-0000-0000-000000000000', '55554444-4444-4444-4444-444444444444', 'authenticated', 'authenticated', 'bbv@saves-test.invalid',    now(), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Blocked By Viewer"}'),
-  ('00000000-0000-0000-0000-000000000000', '55555555-5555-5555-5555-555555555555', 'authenticated', 'authenticated', 'bv@saves-test.invalid',     now(), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Blocked The Viewer"}')
+  ('00000000-0000-0000-0000-000000000000', '55555555-5555-5555-5555-555555555555', 'authenticated', 'authenticated', 'bv@saves-test.invalid',     now(), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Blocked The Viewer"}'),
+  ('00000000-0000-0000-0000-000000000000', '55556666-6666-6666-6666-666666666666', 'authenticated', 'authenticated', 'fol@saves-test.invalid',    now(), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Followed Pub"}')
 ON CONFLICT (id) DO NOTHING;
 
 -- 2. Profiles: set account_privacy + username (display_name already seeded by trigger).
@@ -60,7 +63,8 @@ VALUES
   ('55552222-2222-2222-2222-222222222222', 'Priv Stranger',   'private', 'priv_stranger'),
   ('55553333-3333-3333-3333-333333333333', 'Priv Tablemate',  'private', 'priv_tablemate'),
   ('55554444-4444-4444-4444-444444444444', 'Blocked By View', 'public',  'blocked_bv'),
-  ('55555555-5555-5555-5555-555555555555', 'Blocked Viewer',  'public',  'blocked_v')
+  ('55555555-5555-5555-5555-555555555555', 'Blocked Viewer',  'public',  'blocked_v'),
+  ('55556666-6666-6666-6666-666666666666', 'Followed Pub',    'public',  'followed_pub')
 ON CONFLICT (user_id) DO UPDATE SET
   display_name    = EXCLUDED.display_name,
   account_privacy = EXCLUDED.account_privacy,
@@ -97,13 +101,20 @@ INSERT INTO public.wishlist_items (user_id, restaurant_id, source) VALUES
   ('55553333-3333-3333-3333-333333333333', '5555aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
      '{"type":"tiktok","url":"https://tiktok.com/@chef/video/123","author_handle":"@chef","author_name":"Chef Name","thumbnail_url":"https://cdn.tiktok.test/thumb.jpg","embed_product_id":"SECRET_PRODUCT_ID","caption":"raw secret caption text"}'::jsonb),
   ('55554444-4444-4444-4444-444444444444', '5555aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', NULL),
-  ('55555555-5555-5555-5555-555555555555', '5555aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', NULL)
+  ('55555555-5555-5555-5555-555555555555', '5555aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', NULL),
+  ('55556666-6666-6666-6666-666666666666', '5555aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', NULL)
 ON CONFLICT (user_id, restaurant_id) DO NOTHING;
 
 -- 6. Blocks — one in EACH direction vs the viewer V.
 INSERT INTO public.blocked_users (blocker_id, blocked_id) VALUES
   ('55550000-0000-0000-0000-000000000000', '55554444-4444-4444-4444-444444444444'),  -- V blocked S_bbv
   ('55555555-5555-5555-5555-555555555555', '55550000-0000-0000-0000-000000000000')   -- S_bv blocked V
+ON CONFLICT DO NOTHING;
+
+-- 7. Follow edge — V follows S_fol (public) → relationship must label 'following'
+--    (label-only tier: visibility comes from S_fol being public; 155 review NIT-1).
+INSERT INTO public.follows (follower_id, following_id) VALUES
+  ('55550000-0000-0000-0000-000000000000', '55556666-6666-6666-6666-666666666666')
 ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -118,6 +129,7 @@ DECLARE
   s_tm      uuid := '55553333-3333-3333-3333-333333333333';
   s_bbv     uuid := '55554444-4444-4444-4444-444444444444';
   s_bv      uuid := '55555555-5555-5555-5555-555555555555';
+  s_fol     uuid := '55556666-6666-6666-6666-666666666666';
   v_count   int;
   v_rel     text;
   v_src     jsonb;
@@ -176,12 +188,19 @@ BEGIN
   ASSERT v_src->>'caption' = 'my private raw caption',
     format('FAIL [self source raw]: self must see RAW source (caption kept), got %L', v_src->>'caption');
 
-  -- Invariant: exactly 3 rows visible to V — self + public stranger + private tablemate.
-  SELECT count(*) INTO v_count FROM public.fn_restaurant_saves_visible(v_viewer, v_rest);
-  ASSERT v_count = 3,
-    format('FAIL [count]: expected exactly 3 visible saves (self + public stranger + private tablemate), got %s', v_count);
+  -- Row 6: followed public saver VISIBLE as 'following' (label-only tier — 155 review NIT-1;
+  -- a mutation swapping follower_id/following_id in the RPC's CASE must fail here).
+  SELECT relationship INTO v_rel
+  FROM public.fn_restaurant_saves_visible(v_viewer, v_rest) WHERE saver_id = s_fol;
+  ASSERT v_rel = 'following',
+    format('FAIL [followed-public]: expected relationship=following, got %L', v_rel);
 
-  RAISE NOTICE 'PASS saves_visible_predicate: all 5 visibility rows + N2 + sanitization + count invariant';
+  -- Invariant: exactly 4 rows visible to V — self + public stranger + private tablemate + followed public.
+  SELECT count(*) INTO v_count FROM public.fn_restaurant_saves_visible(v_viewer, v_rest);
+  ASSERT v_count = 4,
+    format('FAIL [count]: expected exactly 4 visible saves (self + public stranger + private tablemate + followed public), got %s', v_count);
+
+  RAISE NOTICE 'PASS saves_visible_predicate: all 6 visibility rows + N2 + sanitization + count invariant';
 END;
 $$;
 
