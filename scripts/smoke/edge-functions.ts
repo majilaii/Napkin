@@ -156,6 +156,22 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-154: paginated public reviews (all-reviews page). Empty rows is a
+    // legitimate state for the fixture — assert the Page envelope shape.
+    {
+        name: 'restaurant-history?action=reviews (TICKET-154 all-reviews page)',
+        method: 'POST',
+        fn: 'restaurant-history',
+        query: 'action=reviews',
+        body: { restaurant_id: RESTAURANT_ID, limit: 5 },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown[]; has_more?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (typeof data.has_more !== 'boolean') return 'data.has_more is not a boolean';
+            return null;
+        },
+    },
     // TICKET-149: booking-page resolver behind the Reserve pill. Value is
     // fixture-dependent (usually null, cached on the row after first run) —
     // assert the envelope key only.
