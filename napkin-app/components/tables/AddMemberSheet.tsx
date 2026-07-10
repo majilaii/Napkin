@@ -47,6 +47,8 @@ import { SearchInput } from '@/components/search/SearchInput';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useUserSearch, type UserSearchResult } from '@/hooks/users/useUserSearch';
 import { useAddMember, AddMemberError } from '@/hooks/tables/useAddMember';
+import { usePendingInvitations } from '@/hooks/tables/usePendingInvitations';
+import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
 
 type Palette = typeof Colors.light;
 
@@ -56,6 +58,8 @@ interface AddMemberSheetProps {
     tableId: string;
     palette: Palette;
     userId: string | null | undefined;
+    /** Table name — woven into the invite-link share message. */
+    tableName?: string;
 }
 
 const DRAG_DISMISS_THRESHOLD = 80;
@@ -75,15 +79,31 @@ interface MutualResultRowProps {
     onSelect: (row: UserSearchResult) => void;
     onOpenProfile: (userId: string) => void;
     isAdding: boolean;
+    /** TICKET-133: this user already has a pending invite → quiet "invited" chip. */
+    isInvited: boolean;
 }
 
-function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: MutualResultRowProps) {
+/** Why a row is non-mutual — uses the directional fields when the server sent them. */
+function nonMutualReason(row: UserSearchResult): string {
+    if (row.is_following === undefined || row.follows_caller === undefined) {
+        return 'needs to follow you back';
+    }
+    if (!row.is_following && row.follows_caller) return 'follow them back to add';
+    if (!row.is_following && !row.follows_caller) return "you don't follow each other yet";
+    return 'needs to follow you back';
+}
+
+function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding, isInvited }: MutualResultRowProps) {
     const isMutual = row.is_mutual === true;
+    const reason = isMutual ? null : nonMutualReason(row);
+    // An already-invited mutual is non-interactive as an add target — tapping
+    // opens their profile rather than re-sending (the invite is already live).
+    const selectable = isMutual && !isInvited;
 
     return (
         <Pressable
             onPress={() => {
-                if (isMutual) {
+                if (selectable) {
                     onSelect(row);
                 } else {
                     onOpenProfile(row.user_id);
@@ -95,9 +115,11 @@ function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: Mu
             ]}
             accessibilityRole="button"
             accessibilityLabel={
-                isMutual
-                    ? `Add ${row.display_name}`
-                    : `${row.display_name} — needs to follow you back`
+                isInvited
+                    ? `${row.display_name} — invited`
+                    : isMutual
+                        ? `Add ${row.display_name}`
+                        : `${row.display_name} — ${reason}`
             }
         >
             {/* Avatar */}
@@ -120,15 +142,17 @@ function MutualResultRow({ row, palette, onSelect, onOpenProfile, isAdding }: Mu
                 >
                     {row.display_name}
                 </Text>
-                {!isMutual && (
+                {reason != null && (
                     <Text style={[styles.rowSub, { color: palette.textMuted }]}>
-                        Needs to follow you back
+                        {reason}
                     </Text>
                 )}
             </View>
 
             {/* Right action */}
-            {isMutual ? (
+            {isInvited ? (
+                <Text style={[styles.invitedChip, { color: palette.textMuted }]}>invited</Text>
+            ) : isMutual ? (
                 isAdding ? (
                     <ActivityIndicator size="small" color={palette.primary} />
                 ) : (
@@ -149,6 +173,7 @@ export function AddMemberSheet({
     tableId,
     palette,
     userId,
+    tableName,
 }: AddMemberSheetProps) {
     const insets = useSafeAreaInsets();
     const router = useRouter();
@@ -167,6 +192,10 @@ export function AddMemberSheet({
     });
 
     const addMember = useAddMember(userId);
+    const createInvite = useCreateInvite();
+    // Pending invites for this table — backs the quiet "invited" chip so an owner
+    // who already invited someone doesn't re-tap "Add". Fetched only while open.
+    const { data: pendingInvites } = usePendingInvitations(tableId, visible);
 
     // Reset state when sheet opens
     useEffect(() => {
@@ -238,18 +267,20 @@ export function AddMemberSheet({
         if (addingUserId) return; // prevent double-tap
         setAddingUserId(row.user_id);
         try {
+            // Sends a pending invitation (TICKET-133) — the invitee accepts before
+            // they're seated. Closes on success; the "invited" chip reflects it on reopen.
             await addMember.mutateAsync({ tableId, targetUserId: row.user_id });
             onClose();
         } catch (err) {
-            let msg = 'Could not add member. Please try again.';
+            let msg = 'Could not send the invite. Please try again.';
             if (err instanceof AddMemberError) {
                 if (err.error_code === 'NOT_MUTUAL_FOLLOW') {
                     msg = `${row.display_name} no longer follows you back. Ask them to follow you first.`;
                 } else if (err.error_code === 'NOT_OWNER') {
-                    msg = 'Only the table owner can add members.';
+                    msg = 'Only the table owner can invite members.';
                 }
             }
-            Alert.alert('Could not add', msg);
+            Alert.alert('Could not invite', msg);
         } finally {
             setAddingUserId(null);
         }
@@ -360,6 +391,7 @@ export function AddMemberSheet({
                                 onSelect={handleSelect}
                                 onOpenProfile={handleOpenProfile}
                                 isAdding={addingUserId === item.user_id}
+                                isInvited={pendingInvites?.has(item.user_id) ?? false}
                             />
                         )}
                         keyboardShouldPersistTaps="handled"
@@ -367,15 +399,26 @@ export function AddMemberSheet({
                     />
                 )}
 
-                {/* Not on Napkin yet? The share sheet covers them (2026-07-03). */}
+                {/* Not on Napkin yet? Mint a real invite link and share it. */}
                 <Pressable
-                    onPress={() => {
+                    onPress={async () => {
                         track('invite_sent', { surface: 'add_member_sheet' });
-                        void Share.share({
-                            message: TESTFLIGHT_INVITE_URL
-                                ? `come join our table on Napkin — ${TESTFLIGHT_INVITE_URL}`
-                                : 'come join our table on Napkin',
-                        });
+                        const label = tableName ? `"${tableName}"` : 'our table';
+                        try {
+                            const { join_url } = await createInvite.mutateAsync(tableId);
+                            await Share.share({
+                                message: TESTFLIGHT_INVITE_URL
+                                    ? `join ${label} on Napkin — ${join_url}\n\n${TESTFLIGHT_INVITE_URL}`
+                                    : `join ${label} on Napkin — ${join_url}`,
+                            });
+                        } catch {
+                            // Mint failed — share a bare install nudge rather than nothing.
+                            void Share.share({
+                                message: TESTFLIGHT_INVITE_URL
+                                    ? `come join ${label} on Napkin — ${TESTFLIGHT_INVITE_URL}`
+                                    : `come join ${label} on Napkin`,
+                            });
+                        }
                     }}
                     style={({ pressed }) => [styles.shareRow, { opacity: pressed ? 0.7 : 1 }]}
                     accessibilityRole="button"
@@ -499,6 +542,11 @@ const styles = StyleSheet.create({
     addCta: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 13,
+        letterSpacing: 0.3,
+    },
+    invitedChip: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
         letterSpacing: 0.3,
     },
 });

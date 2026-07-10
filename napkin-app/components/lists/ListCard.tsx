@@ -17,6 +17,8 @@ type Palette = typeof Colors.light;
 interface Props {
     list: MyList;
     onPress: () => void;
+    /** TICKET-111: long-press → owner sheet (Edit · Delete). */
+    onLongPress?: () => void;
 }
 
 function formatRelativeDate(iso: string): string {
@@ -30,7 +32,7 @@ function formatRelativeDate(iso: string): string {
     return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
-export function ListCard({ list, onPress }: Props) {
+export function ListCard({ list, onPress, onLongPress }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
 
@@ -44,6 +46,8 @@ export function ListCard({ list, onPress }: Props) {
     return (
         <Pressable
             onPress={onPress}
+            onLongPress={onLongPress}
+            delayLongPress={350}
             style={({ pressed }) => [
                 styles.card,
                 { backgroundColor: palette.card, opacity: pressed ? 0.85 : 1 },
@@ -52,6 +56,11 @@ export function ListCard({ list, onPress }: Props) {
         >
             <View style={styles.content}>
                 <View style={styles.titleRow}>
+                    {list.emoji ? (
+                        <Text style={styles.emoji} numberOfLines={1}>
+                            {list.emoji}{' '}
+                        </Text>
+                    ) : null}
                     <Text
                         style={[styles.title, { color: palette.text, flex: 1 }]}
                         numberOfLines={1}
@@ -97,6 +106,10 @@ const styles = StyleSheet.create({
     title: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 18,
+        lineHeight: 22,
+    },
+    emoji: {
+        fontSize: 16,
         lineHeight: 22,
     },
     meta: {

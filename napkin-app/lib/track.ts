@@ -8,8 +8,11 @@
  * — see scripts/metrics.sql).
  *
  * Rules (ticket): no PII in props, no third-party SDK.
+ * (TICKET-121 sanctioned exception: Sentry, wired separately in lib/sentry.ts —
+ * track.ts itself still imports no SDK.)
  */
 import { AppState } from 'react-native';
+import Constants from 'expo-constants';
 
 import { supabase } from '@/lib/supabase';
 
@@ -21,6 +24,23 @@ interface PendingEvent {
     name: string;
     props: Record<string, unknown>;
 }
+
+// TICKET-121: stamp every event with the app version so "which build broke"
+// is answerable from the events table. Merged at flush time — props stays the
+// same jsonb column, no schema change.
+function readVersionProps(): Record<string, unknown> {
+    try {
+        const out: Record<string, unknown> = {};
+        const version = Constants.expoConfig?.version;
+        const build = Constants.expoConfig?.ios?.buildNumber;
+        if (version) out.app_version = version;
+        if (build) out.app_build = build;
+        return out;
+    } catch {
+        return {};
+    }
+}
+const versionProps = readVersionProps();
 
 const queue: PendingEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -39,7 +59,7 @@ async function flush(): Promise<void> {
             batch.map((e) => ({
                 user_id: userId,
                 name: e.name,
-                props: e.props,
+                props: { ...e.props, ...versionProps },
             })),
         );
     } catch {

@@ -10,6 +10,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import { isGatheringDrift } from './useDeleteGathering';
 
 export interface CancelGatheringInput {
     gathering_id: string;
@@ -33,6 +34,21 @@ export function useCancelGathering() {
         onSuccess: (_result, input) => {
             // invalidate: cancelled rows drop server-side; narrow to this table.
             qc.invalidateQueries({ queryKey: queryKeys.tables.activityForTable(input.table_id) });
+            // The upcoming strip also drops the cancelled row (and its day-of reminder
+            // reconciles away on the refetch) — nudge it, narrow to this table.
+            qc.invalidateQueries({ queryKey: queryKeys.gatherings.upcoming(input.table_id) });
+            // Drop the detail cache so /gathering/[id] can't re-render the cancelled
+            // row as live (a re-entry re-fetches → get 404 → not-available). The
+            // canceller-from-detail has already router.back()'d; this clears the rest.
+            qc.removeQueries({ queryKey: queryKeys.gatherings.detail(input.gathering_id) });
+        },
+        onError: (error, input) => {
+            // GATHERING_CLOSED = the card's 'proposed' was stale (dispatch or
+            // expiry won). No patch to roll back — resync so the card re-renders
+            // in its true state (where the clear affordance takes over).
+            if (isGatheringDrift(error)) {
+                qc.invalidateQueries({ queryKey: queryKeys.tables.activityForTable(input.table_id) });
+            }
         },
     });
 }

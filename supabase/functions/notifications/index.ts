@@ -22,6 +22,8 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
+import { emitImportDone } from '../_shared/notify.ts';
 import { encodeCursor, decodeCursor, type CursorTuple } from '../_shared/pagination.ts';
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -44,6 +46,8 @@ type HydratedNotification =
     | FriendLoggedNotification
     | TopFourSwapNotification
     | TableInviteNotification
+    | TableInviteAcceptedNotification
+    | ImportDoneNotification
     | PassthroughNotification;
 
 interface BaseHydrated {
@@ -77,6 +81,25 @@ interface TableInviteNotification extends BaseHydrated {
     actor: { id: string; name: string; avatarUrl: string | null };
     tableName: string;
     tableId: string;
+    // TICKET-133: joined LIVE at hydration (status mutates after the row is
+    // written). memberCount is denormalized from subject_meta.
+    invitationId: string;
+    invitationStatus: 'pending' | 'accepted' | 'declined' | 'expired';
+    memberCount: number;
+}
+
+interface TableInviteAcceptedNotification extends BaseHydrated {
+    type: 'table_invite_accepted';
+    actor: { id: string; name: string; avatarUrl: string | null };
+    tableName: string;
+    tableId: string;
+}
+
+interface ImportDoneNotification extends BaseHydrated {
+    type: 'import_done';
+    count: number;
+    outcome: 'saved' | 'review' | 'failed';
+    jobId?: string;
 }
 
 interface PassthroughNotification extends BaseHydrated {
@@ -260,6 +283,31 @@ async function hydrate(
     const restaurantById = byId(restaurantsRes.data ?? [], 'id');
     const entryById = byId(entriesRes.data ?? [], 'id');
 
+    // TICKET-133: batch-fetch invitation status for all table_invite rows on the
+    // page. Status mutates after the notification is written (accept/decline), so
+    // it must be joined LIVE — the invite card renders pending/accepted/declined
+    // from this map. Default to 'expired' when the invitation row is gone.
+    const invitationIds = unique(
+        rows
+            .filter((r) => r.kind === 'table_invite')
+            .map((r) => (r.subject_meta as { invitation_id?: string } | null)?.invitation_id)
+            .filter(Boolean) as string[],
+    );
+    const invitationStatusById = new Map<string, string>();
+    if (invitationIds.length > 0) {
+        const { data: invRows, error: invErr } = await supabase
+            .from('table_invitations')
+            .select('id, status')
+            .in('id', invitationIds);
+        if (invErr) {
+            console.error('inbox hydration: table_invitations failed', invErr);
+            throw new Error(`DB_ERROR: table_invitations hydration failed — ${invErr.message}`);
+        }
+        for (const iv of (invRows ?? []) as { id: string; status: string }[]) {
+            invitationStatusById.set(iv.id, iv.status);
+        }
+    }
+
     // friend_logged needs visibility re-check via the SECURITY DEFINER RPC
     // can_recipient_view_entry(recipient_id, entry_id) added in this migration.
     // DO NOT re-implement the predicate in TS — it would drift.
@@ -326,6 +374,16 @@ async function hydrate(
             case 'table_invite': {
                 const table = r.subject_table_id ? tableById.get(r.subject_table_id) : null;
                 if (!actor || !table) continue;
+                const meta = (r.subject_meta ?? {}) as { invitation_id?: string; member_count?: number };
+                const invitationId = meta.invitation_id ?? '';
+                // LIVE status: default 'expired' when the row is gone (declined
+                // rows persist as 'declined'; a missing row means deleted table).
+                const rawStatus = invitationId ? invitationStatusById.get(invitationId) : undefined;
+                const invitationStatus =
+                    rawStatus === 'pending' || rawStatus === 'accepted' ||
+                    rawStatus === 'declined' || rawStatus === 'expired'
+                        ? rawStatus
+                        : 'expired';
                 out.push({
                     id: r.id,
                     type: 'table_invite',
@@ -335,6 +393,52 @@ async function hydrate(
                     actor: { id: actor.user_id, name: actor.display_name, avatarUrl: actor.avatar_url ?? null },
                     tableName: table.name,
                     tableId: table.id,
+                    invitationId,
+                    invitationStatus,
+                    memberCount: typeof meta.member_count === 'number' ? meta.member_count : 0,
+                });
+                break;
+            }
+
+            case 'table_invite_accepted': {
+                // TICKET-133: goes to the inviter. actor = joiner, subject = table.
+                const table = r.subject_table_id ? tableById.get(r.subject_table_id) : null;
+                if (!actor || !table) continue;
+                out.push({
+                    id: r.id,
+                    type: 'table_invite_accepted',
+                    read: !!r.read_at,
+                    createdAt: r.created_at,
+                    timeLabel: formatTimeLabel(r.created_at),
+                    actor: { id: actor.user_id, name: actor.display_name, avatarUrl: actor.avatar_url ?? null },
+                    tableName: table.name,
+                    tableId: table.id,
+                });
+                break;
+            }
+
+            case 'import_done': {
+                // TICKET-123: self-directed (actor-less) import lifecycle row.
+                // No joins — count/outcome/job_id ride in subject_meta straight
+                // from the producer (server save_spots or the emit_self action).
+                const meta = (r.subject_meta ?? {}) as {
+                    job_id?: string | null;
+                    count?: number;
+                    outcome?: string;
+                };
+                const outcome =
+                    meta.outcome === 'saved' || meta.outcome === 'review' || meta.outcome === 'failed'
+                        ? meta.outcome
+                        : 'saved';
+                out.push({
+                    id: r.id,
+                    type: 'import_done',
+                    read: !!r.read_at,
+                    createdAt: r.created_at,
+                    timeLabel: formatTimeLabel(r.created_at),
+                    count: typeof meta.count === 'number' ? meta.count : 0,
+                    outcome,
+                    jobId: meta.job_id ?? undefined,
                 });
                 break;
             }
@@ -595,6 +699,60 @@ serve(async (req) => {
             );
         }
 
+        // ── emit_self (TICKET-123) ─────────────────────────────────────────────
+        // The client import drain has no service-role INSERT of its own, so it
+        // calls this to write its OWN `import_done` row at the review-hold and
+        // poison checkpoints (the auto-save path rides resolve-url?save_spots
+        // instead). Security is by construction: the only reachable write is an
+        // import_done row in the caller's OWN inbox with a null actor —
+        //   • recipient is FORCED to the authenticated token user (never the body),
+        //   • kind is hard-pinned to 'import_done' (no social kind is forgeable),
+        //   • outcome is whitelisted, count/job_id are coerced before the insert.
+        // No field of the request can redirect the write to another user or forge
+        // a social kind. The notifications_lock_columns trigger still bars any
+        // post-hoc mutation beyond read_at.
+        if (action === 'emit_self') {
+            const kind: string = body.kind ?? '';
+            if (kind !== 'import_done') {
+                return new Response(
+                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: "kind must be 'import_done'" } }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
+
+            const meta = (body.subject_meta ?? {}) as {
+                job_id?: unknown;
+                count?: unknown;
+                outcome?: unknown;
+            };
+            const outcome = meta.outcome;
+            // 'saved' is server-emitted only (rides resolve-url save_spots) — the
+            // client path may not forge a "pinned" row into its own inbox.
+            if (outcome !== 'review' && outcome !== 'failed') {
+                return new Response(
+                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'outcome must be review|failed' } }),
+                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+                );
+            }
+            const rawCount = Number(meta.count);
+            const count = Number.isFinite(rawCount) && rawCount > 0 ? Math.floor(rawCount) : 0;
+            const jobId = typeof meta.job_id === 'string' ? meta.job_id : null;
+
+            // Recipient FORCED to the token user; DRY via the shared emitter (the
+            // same insert shape the server auto path uses). Best-effort — a failed
+            // insert never throws, so a flaky row never fails the caller's import.
+            await emitImportDone(supabase, {
+                recipientUserId: user.id,
+                jobId,
+                count,
+                outcome,
+            });
+            return new Response(
+                JSON.stringify({ data: { ok: true } }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+            );
+        }
+
         return new Response(
             JSON.stringify({ error: { code: 'INVALID_ACTION', message: `Unknown action: ${action}` } }),
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
@@ -602,6 +760,7 @@ serve(async (req) => {
 
     } catch (err) {
         console.error('[notifications] unhandled error:', err);
+        reportError(err, { fn: 'notifications' });
         const msg = err instanceof Error ? err.message : String(err);
         // Hydration failures bubble up as `Error('DB_ERROR: ...')`. Surface them
         // as code: 'DB_ERROR' so clients/log pipeline can distinguish DB issues

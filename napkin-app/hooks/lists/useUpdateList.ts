@@ -12,6 +12,8 @@ export interface UpdateListInput {
     description?: string | null;
     ranked?: boolean;
     privacy?: 'public' | 'private';
+    /** TICKET-108: emoji — explicit null clears back to the default teardrop. */
+    emoji?: string | null;
 }
 
 async function updateList(input: UpdateListInput): Promise<CreatedList> {
@@ -28,6 +30,9 @@ export function useUpdateList(userId: string | null | undefined) {
             queryClient.invalidateQueries({ queryKey: queryKeys.lists.detail(list.id) });
             if (userId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.lists.mine(userId) });
+                // The wishlist map derives emoji pins from map_pins — an emoji or
+                // membership edit must refresh it (TICKET-108).
+                queryClient.invalidateQueries({ queryKey: queryKeys.lists.mapPins(userId) });
             }
         },
     });

@@ -14,6 +14,12 @@ import { useAuth } from '@/providers/AuthProvider';
 export interface ProfileTopFourPickInput {
     position: 1 | 2 | 3 | 4;
     restaurant_id: string;
+    /**
+     * TICKET-144 pt2: per-slot chosen-memory hero photo (the owner's OWN entry
+     * photo at this restaurant). null/omitted → typographic plate. The edge RPC
+     * validates ownership; choosing it publishes it on the profile.
+     */
+    hero_entry_photo_id?: string | null;
 }
 
 export function useSetProfileTopFour() {

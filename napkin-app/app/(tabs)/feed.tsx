@@ -1,113 +1,88 @@
 /**
- * Feed tab — TICKET-098: friends-only reviews feed + trending wishlist rail.
+ * Feed tab — For You / Following modes (TICKET-125).
  *
- * Replaces the legacy TICKET-032 cross-Table feed wholesale (useFeed /
- * ScopePills / FastLogRow / logger-count trending all deleted).
+ * The tab is a mode orchestrator. It owns the single useFriendsFeed subscription
+ * (both the Following body's data AND the "which mode by default" signal) and a
+ * `mode` state, then swaps between two bodies that share one FeedHeader masthead:
  *
- *   [masthead: italic serif "Feed"]
- *   [trending rail — Phase B; hidden entirely below 3 qualifying restaurants]
- *   [friends reviews — reverse-chron FriendFeedCard list, keyset paginated]
+ *   For You   → the explore surface: public lists, trending, people, discovery
+ *   Following → pure chronological reviews from people you follow, nothing else
  *
- * Zero-follow / empty state: the rail (if it qualifies) + exactly one lowercase
- * line. No location prompt on this tab (wishlist owns the grant).
+ * Default (locked decision 1): Following when the follow graph has content
+ * (≥1 followed user with ≥1 visible entry — i.e. the first friends-feed page has
+ * rows), For You when empty. Resolved ONCE per mount via `mode: FeedMode | null`
+ * + a resolvedRef guard, so a manual toggle after resolution is never overridden.
+ * While `mode === null` we render the masthead + a spinner with NO tabs — the
+ * anti-flicker mechanism (tabs never paint in a provisional active state).
+ *
+ * Two separate FlatLists (not one union list): Following is keyset-paginated
+ * date-sectioned rows; For You is a fixed ~4-block scroll. A mode switch remounts
+ * the body (acceptable — no shared scroll position wanted).
  */
-import React, { useCallback, useMemo } from 'react';
-import {
-    View,
-    Text,
-    FlatList,
-    ActivityIndicator,
-    RefreshControl,
-    StyleSheet,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useFriendsFeed, flattenFriendsFeed } from '@/hooks/feed';
-import { FriendFeedCard, TrendingRail, FeedEmptyState } from '@/components/feed';
-import type { FriendFeedRow } from '@/hooks/feed';
+import { FeedHeader, FollowingFeed, ForYouFeed } from '@/components/feed';
+import type { FeedMode } from '@/components/feed';
 
 export default function FeedScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const insets = useSafeAreaInsets();
     const { user } = useAuth();
 
-    const {
-        data,
-        isLoading,
-        refetch,
-        isRefetching,
-        fetchNextPage,
-        hasNextPage,
-        isFetchingNextPage,
-    } = useFriendsFeed(user?.id);
-
+    // Single subscription — feeds the Following body AND the default-mode signal.
+    const feedQuery = useFriendsFeed(user?.id);
+    const { data, isPending } = feedQuery;
     const rows = useMemo(() => flattenFriendsFeed(data), [data]);
 
-    const onEndReached = useCallback(() => {
-        if (hasNextPage && !isFetchingNextPage) fetchNextPage();
-    }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+    // Default resolves once off the first friends-feed page. `null` until then.
+    const [mode, setMode] = useState<FeedMode | null>(null);
+    const resolvedRef = useRef(false);
 
-    const renderItem = useCallback(
-        ({ item }: { item: FriendFeedRow }) => <FriendFeedCard row={item} />,
-        [],
-    );
+    useEffect(() => {
+        if (resolvedRef.current) return;
+        // Gate on isPending (not isLoading): isPending stays true both while the
+        // query is DISABLED (user id not hydrated yet — a disabled useInfiniteQuery
+        // reports isLoading=false, which would resolve prematurely) AND while page 1
+        // is still fetching. It flips false only once page 1 settles (success OR
+        // error). The row count is then the "graph has content" signal — feed-friends
+        // already filters to public-eligible entries authored by the follow set, so
+        // rows > 0 ⇔ ≥1 followed user with ≥1 visible entry.
+        if (isPending) return;
+        resolvedRef.current = true;
+        // Error ≠ empty graph: a settled page-1 error resolves to Following (its
+        // body owns the retryable error state) instead of stranding the user on
+        // For You for the session.
+        setMode(feedQuery.isError || rows.length > 0 ? 'following' : 'for-you');
+    }, [isPending, rows.length, feedQuery.isError]);
 
-    const ListHeader = useMemo(
-        () => (
-            <View>
-                <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
-                    <Text style={[styles.title, { color: palette.text }]}>Feed</Text>
-                </View>
-                {/* Finite trending rail — renders nothing below 3 qualifiers. */}
-                <TrendingRail />
+    // While resolving: masthead only (no tabs) + spinner. No flicker.
+    if (mode === null) {
+        return (
+            <View style={[styles.root, { backgroundColor: palette.background }]}>
+                <FeedHeader mode={null} onModeChange={setMode} />
+                <ActivityIndicator style={{ marginTop: Spacing.xl }} color={palette.primary} />
             </View>
-        ),
-        [insets.top, palette],
-    );
+        );
+    }
+
+    const header = <FeedHeader mode={mode} onModeChange={setMode} />;
 
     return (
         <View style={[styles.root, { backgroundColor: palette.background }]}>
-            <FlatList
-                data={rows}
-                keyExtractor={(r) => r.id}
-                renderItem={renderItem}
-                ListHeaderComponent={ListHeader}
-                ListEmptyComponent={
-                    isLoading ? (
-                        <ActivityIndicator
-                            style={{ marginTop: Spacing.xl }}
-                            color={palette.primary}
-                        />
-                    ) : (
-                        // TICKET-101: a designed two-tier empty state (co-diner
-                        // follow cards, or ghost + invite) — never a bare line.
-                        <FeedEmptyState />
-                    )
-                }
-                ListFooterComponent={
-                    isFetchingNextPage ? (
-                        <ActivityIndicator
-                            style={{ marginVertical: Spacing.lg }}
-                            color={palette.primary}
-                        />
-                    ) : null
-                }
-                onEndReached={onEndReached}
-                onEndReachedThreshold={0.4}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={isRefetching}
-                        onRefresh={refetch}
-                        tintColor={palette.primary}
-                    />
-                }
-            />
+            {mode === 'following' ? (
+                <FollowingFeed
+                    feedQuery={feedQuery}
+                    ListHeaderComponent={header}
+                    onSwitchToForYou={() => setMode('for-you')}
+                />
+            ) : (
+                <ForYouFeed ListHeaderComponent={header} onSwitchToFollowing={() => setMode('following')} />
+            )}
         </View>
     );
 }
@@ -115,15 +90,5 @@ export default function FeedScreen() {
 const styles = StyleSheet.create({
     root: {
         flex: 1,
-    },
-    header: {
-        paddingHorizontal: Spacing.lg,
-        paddingBottom: Spacing.sm,
-    },
-    title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 26,
-        lineHeight: 30,
-        paddingTop: Spacing.sm,
     },
 });

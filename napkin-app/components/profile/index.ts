@@ -6,6 +6,7 @@ export { ProfileIndex } from './ProfileIndex';
 export { SectionHeader } from './SectionHeader';
 export { Rating } from './Rating';
 export { TopFour } from './TopFour';
+export { MarqueePlate } from './MarqueePlate';
 export { RegularsRail } from './RegularsRail';
 export { RegularRow } from './RegularRow';
 export { DiaryRow } from './DiaryRow';

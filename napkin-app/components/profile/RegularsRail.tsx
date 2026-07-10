@@ -81,8 +81,8 @@ function RegularCard({ regular, palette, router }: { regular: RegularSummary; pa
             accessibilityRole="button"
             accessibilityLabel={`View ${regular.name}`}
         >
-            {/* Photo area */}
-            <View style={[styles.cardPhoto, { backgroundColor: palette.surfaceContainerHigh }]}>
+            {/* Photo area — user's own entry photo, else a quiet monogram (no restaurant photos). */}
+            <View style={[styles.cardPhoto, { backgroundColor: regular.photo_url ? palette.surfaceContainerHigh : palette.surfaceJournalLow }]}>
                 {regular.photo_url ? (
                     <Image
                         source={{ uri: regular.photo_url }}
@@ -90,7 +90,19 @@ function RegularCard({ regular, palette, router }: { regular: RegularSummary; pa
                         contentFit="cover"
                         transition={150}
                     />
-                ) : null}
+                ) : (
+                    <View style={styles.monogram}>
+                        <Text
+                            style={{
+                                fontFamily: 'Newsreader_400Regular_Italic',
+                                fontSize: 28,
+                                color: palette.textMuted,
+                            }}
+                        >
+                            {regular.name?.trim()?.charAt(0)?.toUpperCase() ?? ''}
+                        </Text>
+                    </View>
+                )}
                 {/* Visit count pill — top right */}
                 <View style={[styles.visitPill, { backgroundColor: palette.primary }]}>
                     <Text style={styles.visitPillText}>
@@ -141,6 +153,11 @@ const styles = StyleSheet.create({
     cardPhoto: {
         height: 72,
         position: 'relative',
+    },
+    monogram: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     visitPill: {
         position: 'absolute',

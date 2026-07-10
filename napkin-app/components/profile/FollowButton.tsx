@@ -6,7 +6,7 @@
  * - Long-press or tap-when-Following triggers unfollow (no confirmation dialog)
  * - Optimistic: button flips instantly, reverts on error
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, Text, StyleSheet } from 'react-native';
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -28,6 +28,15 @@ export function FollowButton({ targetUserId, initialIsFollowing }: Props) {
     const unfollowMutation = useUnfollow();
 
     const isPending = followMutation.isPending || unfollowMutation.isPending;
+
+    // Re-sync local state when the parent's follow flag changes (e.g. profile
+    // refetch after onSuccess, or navigating between profiles that reuse this
+    // component). Guarded on isPending so an in-flight optimistic flip is never
+    // clobbered by a stale prop mid-mutation.
+    useEffect(() => {
+        if (isPending) return;
+        setIsFollowing(initialIsFollowing);
+    }, [initialIsFollowing, isPending]);
 
     const handlePress = () => {
         if (isPending) return;

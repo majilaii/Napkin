@@ -715,12 +715,16 @@ function EntryDetailScreen() {
     };
 
     const pickFromLibrary = async () => {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Photo Library Access Required', 'Please enable photo library access in Settings.');
+        // SDK 54: the system library picker (PHPicker / Android Photo Picker) is
+        // out-of-process and needs NO permission — awaiting a pre-gate was pure
+        // latency. Launch straight away; a throw is the only failure to catch.
+        let result;
+        try {
+            result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+        } catch {
+            Alert.alert('Photo Library Unavailable', 'Please try again.');
             return;
         }
-        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
         if (!result.canceled && result.assets[0]) {
             addNewPhotoSlot(result.assets[0].uri);
         }
@@ -1167,17 +1171,46 @@ function EntryDetailScreen() {
                         {/* ── place + rating ─────────────────────────────────── */}
                         <View style={styles.placeRow}>
                             <Pressable
-                                style={{ flex: 1, paddingRight: Spacing.md }}
+                                style={({ pressed }) => [
+                                    styles.placeLink,
+                                    { opacity: pressed ? 0.65 : 1 },
+                                ]}
                                 disabled={!entry.restaurant_id}
                                 onPress={goToRestaurant}
+                                accessibilityRole={entry.restaurant_id ? 'link' : undefined}
+                                accessibilityLabel={
+                                    entry.restaurant_id
+                                        ? `Open ${restaurantName} restaurant page`
+                                        : restaurantName
+                                }
+                                accessibilityHint={
+                                    entry.restaurant_id ? 'Shows the restaurant’s details.' : undefined
+                                }
                             >
                                 <Text style={[styles.placeName, { color: palette.text }]} numberOfLines={3}>
                                     {restaurantName}
                                 </Text>
-                                {addressLine ? (
-                                    <Text style={[styles.placeMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                                        {addressLine.toUpperCase()}
-                                    </Text>
+                                {addressLine || entry.restaurant_id ? (
+                                    <View style={styles.placeMetaRow}>
+                                        {addressLine ? (
+                                            <Text
+                                                style={[styles.placeMeta, { color: palette.textMuted }]}
+                                                numberOfLines={1}
+                                            >
+                                                {addressLine.toUpperCase()}
+                                            </Text>
+                                        ) : (
+                                            <View style={styles.placeMetaSpacer} />
+                                        )}
+                                        {entry.restaurant_id ? (
+                                            <Ionicons
+                                                name="chevron-forward"
+                                                size={15}
+                                                color={palette.textMuted}
+                                                accessible={false}
+                                            />
+                                        ) : null}
+                                    </View>
                                 ) : null}
                             </Pressable>
 
@@ -2435,18 +2468,22 @@ const styles = StyleSheet.create({
 
     // place + rating
     placeRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+    placeLink: { flex: 1, minHeight: 44, paddingRight: Spacing.md },
     placeName: {
         fontFamily: 'Newsreader_500Medium_Italic',
         fontSize: 36,
         lineHeight: 39,
         letterSpacing: -0.7,
     },
+    placeMetaRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: 9 },
     placeMeta: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 10,
         letterSpacing: 1.2,
-        marginTop: 9,
+        flex: 1,
+        flexShrink: 1,
     },
+    placeMetaSpacer: { flex: 1 },
     ratingNumeralWrap: { flexDirection: 'row', alignItems: 'baseline', gap: 3, paddingTop: 4 },
     ratingNumeral: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 34, lineHeight: 36 },
     ratingDenom: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 16, color: '#cdb8a8' },

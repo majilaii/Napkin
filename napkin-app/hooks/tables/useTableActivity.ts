@@ -182,6 +182,7 @@ export interface SharedSaveCardShapeForDigest {
     note?: string | null;
     extractionStatus?: string | null;
     reactionCount: number;
+    commentCount?: number;
     topEmojis: string[];
     myReactions?: string[];
     createdAt: string;
@@ -259,7 +260,18 @@ export interface GatheringSeat {
     display_name: string | null;
     avatar_url: string | null;
     is_host: boolean;
-    response: 'in' | 'out' | null;
+    /** TICKET-127: 'counter' = proposed another date (renders as a counter chip,
+     *  not in the in/out/waiting ledger). */
+    response: 'in' | 'out' | 'counter' | null;
+}
+
+/** TICKET-127 — a member who countered with another date. Rendered as its own
+ *  chip ("you · sat 12" / "Clara · sat 12"), separate from the in/out ledger. */
+export interface GatheringCounter {
+    user_id: string;
+    display_name: string | null;
+    /** YYYY-MM-DD — the date this member proposed instead. */
+    counter_on: string;
 }
 
 /** TICKET-095 gathering feed card — a proposed future date at a restaurant.
@@ -282,7 +294,35 @@ export interface GatheringCardActivity {
     supper_id: string | null;
     seats: GatheringSeat[];
     in_count: number;
-    viewer_response: 'in' | 'out' | null;
+    viewer_response: 'in' | 'out' | 'counter' | null;
+    /** TICKET-127: members who proposed another date (excludes ex-members). */
+    counters: GatheringCounter[];
+    /** TICKET-127: the host's pinned-from source URL for this spot (null = none). */
+    source_url: string | null;
+    /** TICKET-127: source type ('tiktok' | 'google_maps' | 'web' | ...); null when no URL. */
+    source_type: string | null;
+    /** TICKET-127: the previous gather_on if the host re-dated (null = never moved). */
+    rescheduled_from: string | null;
+    created_at: string;
+}
+
+/** TICKET-115 "Table lists" — a quiet ledger line (NOT a card): a member added
+ *  spot(s) to one of the Table's shared lists. N adds by the same member to the
+ *  same list within an hour coalesce to one line server-side. */
+export interface ListAddActivityItem {
+    type: 'list_add';
+    id: string;
+    sort_date: string;
+    table_id: string;
+    list_id: string | null;
+    list_title: string | null;
+    list_emoji: string | null;
+    added_by: string | null;
+    added_by_profile: { user_id: string; display_name: string | null; avatar_url: string | null } | null;
+    /** How many spots were added in this coalesced line (1 = single). */
+    add_count: number;
+    /** Names of the added restaurants (for the "added {restaurant}" grammar). */
+    sample_restaurant_names: string[];
     created_at: string;
 }
 
@@ -295,7 +335,8 @@ export type ActivityItem =
     | ShareDigestActivityItem
     | RestaurantFloatActivityItem
     | SupperCardActivity
-    | GatheringCardActivity;
+    | GatheringCardActivity
+    | ListAddActivityItem;
 
 /** TICKET-095: every feed-card kind THIS client build can render. Sent as
  *  known_kinds so the server can add new kinds without breaking old clients
@@ -310,6 +351,8 @@ export const KNOWN_ACTIVITY_KINDS = [
     'restaurant_float',
     'supper',
     'gathering',
+    // TICKET-115: table-list add ledger line. Client-opt-in (never LEGACY_KINDS).
+    'list_add',
 ] as const;
 
 export interface TableActivityFilters {

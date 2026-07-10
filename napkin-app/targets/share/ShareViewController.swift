@@ -32,7 +32,20 @@ class ShareViewController: UIViewController {
     private var selectedListIds = Set<String>()
     private var selectedTableIds = Set<String>()
     private var newListTitles: [String] = []
-    private var autoSaveOn = true // toggle off → mode "review" (confirm in-app)
+    // TICKET-113 Part B: seed from the app-written shared preference so the
+    // founder's "always review" choice sticks across shares. The RN app mirrors
+    // the import default mode into the app group's UserDefaults under the BARE key
+    // "import.defaultMode" (byte-identical in MediaExtractModule.swift + importQueue.ts).
+    // Fallback true → unchanged first-run behavior when nothing was ever written.
+    // toggle off → mode "review" (confirm in-app).
+    private lazy var autoSaveOn: Bool = {
+        let defaults = UserDefaults(suiteName: appGroup)
+        // Stored as the RN ImportMode string: "review" → toggle OFF, "auto"/absent → ON.
+        if let mode = defaults?.string(forKey: "import.defaultMode") {
+            return mode != "review"
+        }
+        return true
+    }()
 
     // Header (hero) labels — updated as the share resolves
     private let titleLabel = UILabel()
@@ -504,13 +517,15 @@ class ShareViewController: UIViewController {
     // MARK: - Capture
 
     private func captureSharedItem() {
-        guard
-            let item = (extensionContext?.inputItems as? [NSExtensionItem])?.first,
-            let attachments = item.attachments
-        else { markFailed(); return }
+        // Scan ALL input items, not just the first — Google apps in particular
+        // split attachments across items.
+        let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
+        let attachments = items.flatMap { $0.attachments ?? [] }
+        guard !attachments.isEmpty else { markFailed(); return }
 
         let movieType = UTType.movie.identifier
         let urlType = UTType.url.identifier
+        let textType = UTType.plainText.identifier
 
         if let provider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(movieType) }) {
             provider.loadFileRepresentation(forTypeIdentifier: movieType) { [weak self] (fileURL, _) in
@@ -534,7 +549,47 @@ class ShareViewController: UIViewController {
             }
             return
         }
+        // Text share: Google Maps (lists, places) and some other apps put the
+        // link INSIDE a plain string ("Title\nhttps://maps.app.goo.gl/…").
+        if let provider = attachments.first(where: { $0.hasItemConformingToTypeIdentifier(textType) }) {
+            provider.loadItem(forTypeIdentifier: textType, options: nil) { [weak self] (data, _) in
+                guard let self = self else { return }
+                let text = (data as? String) ?? (data as? NSAttributedString)?.string
+                let url = text.flatMap(Self.firstHTTPURL(in:))
+                DispatchQueue.main.async {
+                    if let url = url { self.capturedURL = url.absoluteString; self.markReady(kind: "url") }
+                    else { self.markFailed() }
+                }
+            }
+            return
+        }
+        // Last resort: hosts that only populate attributedContentText.
+        if let text = items.compactMap({ $0.attributedContentText?.string }).first(where: { !$0.isEmpty }),
+           let url = Self.firstHTTPURL(in: text) {
+            capturedURL = url.absoluteString
+            markReady(kind: "url")
+            return
+        }
         markFailed()
+    }
+
+    /// First http(s) link in a shared text blob (NSDataDetector).
+    /// The detector also matches bare domain-shaped tokens ("eater.com") and
+    /// synthesizes http:// for them — a list TITLE containing a domain would
+    /// win over the actual share link. Prefer matches the sender literally
+    /// typed with a scheme; synthesized ones are only a last resort.
+    private static func firstHTTPURL(in text: String) -> URL? {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        var synthesized: URL? = nil
+        for match in detector.matches(in: text, options: [], range: range) {
+            guard let url = match.url, url.scheme == "http" || url.scheme == "https" else { continue }
+            if let r = Range(match.range, in: text), text[r].lowercased().hasPrefix("http") {
+                return url
+            }
+            if synthesized == nil { synthesized = url }
+        }
+        return synthesized
     }
 
     private func markReady(kind: String) {
@@ -542,9 +597,17 @@ class ShareViewController: UIViewController {
         captureReady = true
         spinner.stopAnimating()
         spinner.isHidden = true
+        // A maps link is a list/place share — the "save the video" nudge only
+        // makes sense for TikTok-style links. (Includes legacy goo.gl/maps.)
+        let isMapsLink = capturedURL?.range(
+            of: #"maps\.app\.goo\.gl|goo\.gl/maps|maps\.google\.|google\.[a-z.]+/maps"#,
+            options: .regularExpression
+        ) != nil
         subtitleLabel.text = kind == "video"
             ? "pick where it lands — we'll pull the spots in the app"
-            : "got the link — save the video for the full list"
+            : (isMapsLink
+                ? "got the list — we'll pull the spots in the app"
+                : "got the link — save the video for the full list")
         doneButton.isEnabled = true
     }
 
@@ -610,7 +673,16 @@ class ShareViewController: UIViewController {
             do { try data.write(to: tmp); try FileManager.default.moveItem(at: tmp, to: final) }
             catch { try? FileManager.default.removeItem(at: tmp) }
         }
-        complete()
+        // TICKET-123: a brief confirmation beat before we dismiss back to the host
+        // app — otherwise the sheet vanishes with zero acknowledgement that Napkin
+        // captured the share. Copy + a ~0.8s delay only; the drain (in the app)
+        // does the real work later. The early "nothing captured" guards above stay
+        // immediate — they call complete() and return before reaching here.
+        subtitleLabel.text = "got it — spots will be ready in Napkin"
+        doneButton.isEnabled = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.complete()
+        }
     }
 
     private func complete() {

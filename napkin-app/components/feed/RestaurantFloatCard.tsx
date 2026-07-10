@@ -39,7 +39,6 @@ export interface RestaurantFloatCardProps {
         name: string | null;
         city: string | null;
         cuisine: string | null;
-        photo_url?: string | null;
     };
     distinctCount: number;
     members: FloatMember[];

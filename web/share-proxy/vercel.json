@@ -1,5 +1,6 @@
 {
   "rewrites": [
-    { "source": "/s/:token", "destination": "/api/render?t=:token" }
+    { "source": "/s/:token", "destination": "/api/render?t=:token" },
+    { "source": "/j/:code", "destination": "/api/render-invite?c=:code" }
   ]
 }

@@ -2,6 +2,7 @@ import ExpoModulesCore
 import AVFoundation
 import Vision
 import Speech
+import UIKit
 
 // On-device extraction of text from a video:
 //   • frames sampled across the whole clip → Vision OCR (the on-screen overlay
@@ -97,6 +98,22 @@ public class MediaExtractModule: Module {
       return true
     }
 
+    // ── App-Group shared scalar prefs (TICKET-113 Part B) ──────────────────────
+    // The share EXTENSION can't read AsyncStorage; the app mirrors small prefs
+    // (e.g. the import default mode, key "import.defaultMode") into the app group's
+    // UserDefaults here so the extension can seed its UI at launch. Same suite the
+    // queue uses — no new entitlement.
+    Function("setSharedDefault") { (key: String, value: String) -> Bool in
+      guard let defaults = UserDefaults(suiteName: Self.appGroup) else { return false }
+      defaults.set(value, forKey: key)
+      return true
+    }
+
+    Function("getSharedDefault") { (key: String) -> String? in
+      guard let defaults = UserDefaults(suiteName: Self.appGroup) else { return nil }
+      return defaults.string(forKey: key)
+    }
+
     // The main app publishes a snapshot of the user's collections (lists + tables)
     // so the share EXTENSION can render the destination picker (it can't read the
     // app's cache). Written atomically; the extension reads it directly.
@@ -113,6 +130,30 @@ public class MediaExtractModule: Module {
       } catch {
         return false
       }
+    }
+
+    // ── Background-runtime grant (TICKET-120) ─────────────────────────────────
+    // iOS suspends JS a few seconds after backgrounding. The import drain asks for
+    // ~30s more here so a job that finished while suspended can post its completion
+    // notification. Returns the task's raw id (the JS wrapper is guarded — an absent
+    // module degrades to no-op). The expiration handler MUST end the task itself or
+    // iOS kills the app.
+    Function("beginBackgroundTask") { () -> Int in
+      var taskId: UIBackgroundTaskIdentifier = .invalid
+      taskId = UIApplication.shared.beginBackgroundTask(withName: "napkin.import-drain") {
+        // iOS is reclaiming the time — end the task so the app isn't killed.
+        UIApplication.shared.endBackgroundTask(taskId)
+        taskId = .invalid
+      }
+      return taskId.rawValue
+    }
+
+    // Release a grant. No-op-safe on an invalid/already-ended id.
+    Function("endBackgroundTask") { (taskId: Int) -> Bool in
+      let identifier = UIBackgroundTaskIdentifier(rawValue: taskId)
+      guard identifier != .invalid else { return false }
+      UIApplication.shared.endBackgroundTask(identifier)
+      return true
     }
   }
 

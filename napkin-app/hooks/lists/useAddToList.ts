@@ -25,6 +25,8 @@ export interface ListEntryResult {
     restaurant_id: string;
     note: string | null;
     position: number;
+    /** TICKET-115: attribution stamped by the server on table-list adds. */
+    added_by?: string | null;
     created_at: string;
 }
 
@@ -79,6 +81,9 @@ export function useAddToList(userId: string | null | undefined) {
             // them and a settle-time invalidation creates a race that flip-flops
             // on rapid add→remove→add sequences.
             queryClient.invalidateQueries({ queryKey: queryKeys.lists.detail(list_id) });
+            // mapPins isn't patched by onMutate, so a settle invalidation here is
+            // safe (no flip-flop race) and refreshes the wishlist map (TICKET-108).
+            if (userId) queryClient.invalidateQueries({ queryKey: queryKeys.lists.mapPins(userId) });
         },
     });
 }

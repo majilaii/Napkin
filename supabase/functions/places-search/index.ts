@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { parsePayload, clamp, mapRegularOpeningHours, type SearchPayload } from './utils.ts';
 
@@ -409,6 +410,7 @@ serve(async req => {
         });
     } catch (error) {
         console.error('Edge function error', error);
+        reportError(error, { fn: 'places-search' });
         return new Response(
             JSON.stringify({ error: 'Unexpected error', details: String(error) }),
             {

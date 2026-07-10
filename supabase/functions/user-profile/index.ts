@@ -28,6 +28,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { buildPage, decodeCursor, type Page } from '../_shared/pagination.ts';
 import { projectRound } from '../_shared/round_projection.ts';
@@ -115,7 +116,18 @@ type TopPick = {
     restaurant_id: string;
     name: string;
     city: string | null;
+    // TICKET-146: drives the marquee-plate mark (engraving registry). null → monogram.
+    cuisine: string | null;
     photo_url: string | null;
+    // TICKET-144 pt2: the owner's chosen hero photo (their OWN entry photo at this
+    // restaurant), served regardless of the source entry's visibility BECAUSE
+    // choosing it is the explicit publish. ONLY the URL rides on the PUBLIC read —
+    // no entry_id, no note, no rating, no visibility echo. null → typographic plate.
+    hero_photo_url: string | null;
+    // OWNER-ONLY (includePrivate): the photo-row id, so the editor can re-save
+    // untouched slots without clobbering their heroes (the RPC is delete+reinsert).
+    // Public reads get null — the entry_photo id never leaks to strangers.
+    hero_entry_photo_id?: string | null;
     // null when the viewer has no non-private rating for a curated pick.
     max_rating: number | null;
     visit_count: number;
@@ -500,6 +512,8 @@ async function buildPicksFromIds(
     userId: string,
     orderedIds: string[],
     includePrivate: boolean,
+    // TICKET-144 pt2: restaurant_id → chosen hero_entry_photo_id (curated only).
+    heroByRestaurant?: Map<string, string>,
 ): Promise<TopPick[]> {
     if (orderedIds.length === 0) return [];
 
@@ -546,9 +560,25 @@ async function buildPicksFromIds(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, photo_url')
+        .select('id, name, city, cuisine, photo_url')
         .in('id', orderedIds);
     if (restErr) throw restErr;
+
+    // TICKET-144 pt2: hydrate chosen-memory hero URLs. Service-role read of
+    // entry_photos by id — RLS-bypassing BY DESIGN: choosing the photo is the
+    // publish, so the hero is servable on a public profile even when the source
+    // entry is private. We fetch ONLY the URL; `includePrivate` is deliberately
+    // NOT applied here — that IS the consent bypass. Nothing else from the entry
+    // (id, note, rating, visibility) rides along.
+    const heroUrlById = new Map<string, string>();
+    const heroIds = heroByRestaurant ? [...heroByRestaurant.values()].filter(Boolean) : [];
+    if (heroIds.length) {
+        const { data: heroRows } = await supabase
+            .from('entry_photos')
+            .select('id, photo_url')
+            .in('id', heroIds);
+        for (const r of (heroRows ?? []) as any[]) if (r.photo_url) heroUrlById.set(r.id, r.photo_url);
+    }
 
     const byId = new Map<string, any>((rests ?? []).map((r: any) => [r.id, r]));
     return orderedIds
@@ -560,7 +590,13 @@ async function buildPicksFromIds(
                 restaurant_id: rid,
                 name: rest.name,
                 city: rest.city ?? null,
+                cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
+                hero_photo_url: heroByRestaurant
+                    ? (heroUrlById.get(heroByRestaurant.get(rid) ?? '') ?? null)
+                    : null,
+                // Owner-only: the id (for lossless re-save). Public → null.
+                hero_entry_photo_id: includePrivate ? (heroByRestaurant?.get(rid) ?? null) : null,
                 max_rating: a ? a.max_rating : null,
                 visit_count: a ? a.visit_count : 0,
                 last_visited_at: a ? a.last_visited_at : null,
@@ -582,12 +618,23 @@ async function fetchTopFour(
     // list) — shown to anyone who can see the profile, rating included.
     const { data: manual, error: manualErr } = await supabase
         .from('user_profile_top_4')
-        .select('position, restaurant_id')
+        .select('position, restaurant_id, hero_entry_photo_id')
         .eq('user_id', userId)
         .order('position', { ascending: true });
     if (manualErr) throw manualErr;
     if (manual && manual.length > 0) {
-        return await buildPicksFromIds(supabase, userId, manual.map((m: any) => m.restaurant_id), includePrivate);
+        // TICKET-144 pt2: only manual/curated picks carry hero photos.
+        const heroByRestaurant = new Map<string, string>();
+        for (const m of manual as any[]) {
+            if (m.hero_entry_photo_id) heroByRestaurant.set(m.restaurant_id, m.hero_entry_photo_id);
+        }
+        return await buildPicksFromIds(
+            supabase,
+            userId,
+            manual.map((m: any) => m.restaurant_id),
+            includePrivate,
+            heroByRestaurant,
+        );
     }
 
     let query = supabase
@@ -662,7 +709,7 @@ async function fetchTopFour(
 
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, photo_url')
+        .select('id, name, city, cuisine, photo_url')
         .in('id', ranked.map((r) => r.restaurant_id));
     if (restErr) throw restErr;
 
@@ -675,7 +722,11 @@ async function fetchTopFour(
                 restaurant_id: r.restaurant_id,
                 name: rest.name,
                 city: rest.city ?? null,
+                cuisine: rest.cuisine ?? null,
                 photo_url: rest.photo_url ?? null,
+                // Heroes are a curated-only feature; auto-derived picks never carry one.
+                hero_photo_url: null,
+                hero_entry_photo_id: null,
                 max_rating: r.max_rating,
                 visit_count: r.visit_count,
                 last_visited_at: r.last_visited_at,
@@ -753,11 +804,44 @@ async function fetchRegulars(
 
     if (eligible.length === 0) return [];
 
+    const regularRestaurantIds = eligible.map((r) => r.restaurant_id);
+
+    // Restaurant name/city only — NEVER restaurants.photo_url (Google Places
+    // photo). Founder doctrine (TICKET-105, 2026-07-05): Napkin shows no
+    // restaurant photos right now. A regular's thumb may only be a photo the
+    // profile owner uploaded on one of their OWN entries at that restaurant.
     const { data: rests, error: restErr } = await supabase
         .from('restaurants')
-        .select('id, name, city, photo_url')
-        .in('id', eligible.map((r) => r.restaurant_id));
+        .select('id, name, city')
+        .in('id', regularRestaurantIds);
     if (restErr) throw restErr;
+
+    // Batch-fetch the profile owner's own entry photos at these restaurants —
+    // ONE query, newest first, then keep the first (most recent) photo per
+    // restaurant. Same visibility gate as the entries aggregation above: for a
+    // non-self viewer, private entries are excluded (`includePrivate === false`
+    // ⇒ visibility != 'private'), which mirrors the public diary/reviews gate.
+    // Self may surface photos from any of their own entries.
+    const photoByRestaurant = new Map<string, string>();
+    let photoQuery = supabase
+        .from('entry_photos')
+        .select('photo_url, created_at, entries!inner(user_id, restaurant_id, visibility)')
+        .eq('entries.user_id', userId)
+        .in('entries.restaurant_id', regularRestaurantIds)
+        .not('photo_url', 'is', null)
+        .order('created_at', { ascending: false });
+    if (!includePrivate) photoQuery = photoQuery.neq('entries.visibility', 'private');
+
+    const { data: photoRows, error: photoErr } = await photoQuery;
+    if (photoErr) throw photoErr;
+
+    // Rows are newest-first; the first one seen per restaurant is the most recent.
+    for (const p of (photoRows ?? []) as any[]) {
+        const rid = p.entries?.restaurant_id as string | undefined;
+        const url = p.photo_url as string | null;
+        if (!rid || !url) continue;
+        if (!photoByRestaurant.has(rid)) photoByRestaurant.set(rid, url);
+    }
 
     const byId = new Map<string, any>((rests ?? []).map((r: any) => [r.id, r]));
     return eligible
@@ -768,7 +852,7 @@ async function fetchRegulars(
                 restaurant_id: r.restaurant_id,
                 name: rest.name,
                 city: rest.city ?? null,
-                photo_url: rest.photo_url ?? null,
+                photo_url: photoByRestaurant.get(r.restaurant_id) ?? null,
                 visit_count: r.visit_count,
                 avg_rating: r.rating_count > 0 ? r.rating_sum / r.rating_count : null,
                 last_visited_at: r.last_visited_at,
@@ -1030,6 +1114,7 @@ serve(async (req) => {
                         regulars_preview: regularsPreview,
                         is_self: true,
                         is_following_viewer: false, // self never follows self
+                        follows_viewer: false, // self never follows self
                         viewer_target_relationship: 'self' as ViewerRelationship,
                     },
                 });
@@ -1052,6 +1137,7 @@ serve(async (req) => {
                         regulars_preview: [],
                         is_self: false,
                         is_following_viewer: false,
+                        follows_viewer: false,
                         viewer_target_relationship: 'none' as ViewerRelationship,
                         blocked_by_viewer: true,
                     },
@@ -1065,22 +1151,53 @@ serve(async (req) => {
             // 3. 'none' → return not_found, stop here
             if (relationship === 'none') return notFound();
 
-            // 4. Check if the caller is already following the target
-            const { data: followRow } = await supabase
-                .from('follows')
-                .select('follower_id')
-                .eq('follower_id', callerId)
-                .eq('following_id', targetId)
-                .maybeSingle();
-            const isFollowingViewer = followRow !== null;
+            // 4. Resolve both follow directions in one round-trip:
+            //    isFollowingViewer = caller → target (viewer follows this profile)
+            //    followsViewer     = target → caller (this profile follows viewer back)
+            const [followRowRes, followsViewerRowRes] = await Promise.all([
+                supabase
+                    .from('follows')
+                    .select('follower_id')
+                    .eq('follower_id', callerId)
+                    .eq('following_id', targetId)
+                    .maybeSingle(),
+                supabase
+                    .from('follows')
+                    .select('follower_id')
+                    .eq('follower_id', targetId)
+                    .eq('following_id', callerId)
+                    .maybeSingle(),
+            ]);
+            const isFollowingViewer = followRowRes.data !== null;
+            const followsViewer = followsViewerRowRes.data !== null;
 
-            // 5. 'tables_in_common' only — no palate access
+            // 5. 'tables_in_common' only — no palate access. Follower/following
+            //    counts ARE social metadata, not palate, so a private tablemate's
+            //    real counts surface here. Run ONLY the two count(*) queries — never
+            //    the full stats fetch — so no logs/avg/review data leaks.
             if (relationship === 'tables_in_common') {
-                const tablePreviews = await fetchTablePreviews(supabase, targetId, sharedTableIds, 'other');
+                const [tablePreviews, followersRes, followingRes] = await Promise.all([
+                    fetchTablePreviews(supabase, targetId, sharedTableIds, 'other'),
+                    supabase
+                        .from('follows')
+                        .select('follower_id', { count: 'exact', head: true })
+                        .eq('following_id', targetId),
+                    supabase
+                        .from('follows')
+                        .select('following_id', { count: 'exact', head: true })
+                        .eq('follower_id', targetId),
+                ]);
                 return json({
                     data: {
                         profile: targetProfile,
+                        // stats stays null (palate withheld); social counts ride
+                        // a sibling field so the client can distinguish
+                        // "counts present, palate withheld" from "palate present".
                         stats: null,
+                        social: {
+                            followers_count: followersRes.count ?? 0,
+                            following_count: followingRes.count ?? 0,
+                        },
                         public_lists: null,
                         recently_logged: null,
                         tables_in_common: tablePreviews,
@@ -1088,6 +1205,7 @@ serve(async (req) => {
                         regulars_preview: [],
                         is_self: false,
                         is_following_viewer: isFollowingViewer,
+                        follows_viewer: followsViewer,
                         viewer_target_relationship: relationship,
                     },
                 });
@@ -1141,6 +1259,7 @@ serve(async (req) => {
                     regulars_preview: regularsPreview,
                     is_self: false,
                     is_following_viewer: isFollowingViewer,
+                    follows_viewer: followsViewer,
                     viewer_target_relationship: relationship,
                     calibration,
                     viewer_rated_entry_count: viewerRatedEntryCount,
@@ -1269,6 +1388,83 @@ serve(async (req) => {
             return json({ data: { spots } });
         }
 
+        // ── network_map_pins (read) — TICKET-124: the follow-graph fan-out ──
+        // Caller-scoped (p_viewer = the JWT sub). Restaurants logged by the
+        // people the caller FOLLOWS, one pin per restaurant, diary/spots
+        // (looser) predicate — block exclusion + public-account gate live inside
+        // the SECURITY DEFINER RPC, so there is no identifier / strangerCanRead
+        // gate here (it never reads a target's palate — only the caller's own
+        // follow set). Author names are batch-hydrated from `profiles` by id:
+        // NEVER a PostgREST embed off entries (entries has no FK to profiles —
+        // reference_entries_no_profiles_fk), same shape as co_diners above.
+        if (action === 'network_map_pins') {
+            const { data: rpcRows, error: rpcErr } = await supabase.rpc(
+                'fn_network_map_pins',
+                { p_viewer: user.id },
+            );
+            if (rpcErr) throw rpcErr;
+
+            const rows = (rpcRows ?? []) as {
+                restaurant_id: string;
+                name: string;
+                city: string | null;
+                cuisine: string | null;
+                lat: number;
+                lng: number;
+                author_id: string;
+                entry_id: string;
+                rating: number | null;
+                note_snippet: string | null;
+                has_review: boolean;
+                others_count: number;
+            }[];
+            if (rows.length === 0) return json({ data: { pins: [] } });
+
+            const authorIds = [...new Set(rows.map((r) => r.author_id))];
+            const { data: profiles, error: profErr } = await supabase
+                .from('profiles')
+                .select('user_id, display_name, avatar_url')
+                .in('user_id', authorIds);
+            if (profErr) throw profErr;
+
+            const byId = new Map(
+                ((profiles ?? []) as {
+                    user_id: string;
+                    display_name: string | null;
+                    avatar_url: string | null;
+                }[]).map((p) => [p.user_id, p]),
+            );
+
+            // Preserve the RPC's most-recent-activity order. A vanished author
+            // profile (deleted mid-flight) degrades to the 'Someone' fallback
+            // rather than dropping the pin.
+            const pins = rows.map((r) => {
+                const p = byId.get(r.author_id);
+                return {
+                    restaurant_id: r.restaurant_id,
+                    name: r.name ?? null,
+                    city: r.city ?? null,
+                    cuisine: r.cuisine ?? null,
+                    lat: r.lat,
+                    lng: r.lng,
+                    author: {
+                        id: r.author_id,
+                        name: p?.display_name || 'Someone',
+                        avatar: p?.avatar_url ?? null,
+                    },
+                    entry_id: r.entry_id,
+                    rating: r.rating ?? null,
+                    note: r.note_snippet ?? null,
+                    // Routes the peek tap: true → the followee's review (entry-detail
+                    // viewAs=public); false → the restaurant page. Never dead-ends.
+                    has_review: r.has_review ?? false,
+                    others_count: Number(r.others_count ?? 0),
+                };
+            });
+
+            return json({ data: { pins } });
+        }
+
         // ── reviews (read) — TICKET-092: diary rows with written notes ─────
         if (action === 'reviews') {
             const { identifier, cursor, limit } = body as {
@@ -1316,6 +1512,70 @@ serve(async (req) => {
                 true,
             );
             return json({ data: page });
+        }
+
+        // ── taste (read) — TICKET-112: category + cuisine taste drill-in ──────
+        // Owner-only in v1. Public taste is a later ticket once TICKET-093
+        // aggregate semantics extend to summarised numbers; until then a
+        // non-owner gets the uniform not_found (no existence leak).
+        if (action === 'taste') {
+            const { identifier } = body as { identifier?: string };
+            if (!identifier || typeof identifier !== 'string') {
+                return fail('identifier is required', 400);
+            }
+
+            const targetProfile = await resolveProfile(supabase, identifier);
+            if (!targetProfile) return notFound();
+
+            const callerId = user.id;
+            const targetId = targetProfile.user_id;
+            const isSelf = callerId === targetId;
+            // v1: owner-only. Anything else is not_found (matches the palate gate's
+            // no-existence-leak posture, but stricter — no stranger read at all yet).
+            if (!isSelf) return notFound();
+
+            const { data: rows, error: tasteErr } = await supabase.rpc('fn_user_taste', {
+                p_user_id: targetId,
+            });
+            if (tasteErr) throw tasteErr;
+
+            // The fn returns exactly one row (aggregate over the user's entries —
+            // empty set still yields one row with entry_count 0).
+            const row = Array.isArray(rows) ? rows[0] : rows;
+            if (!row) {
+                // Defensive — should never happen, but never 500 the drill-in.
+                return json({
+                    data: {
+                        entry_count: 0,
+                        overall_avg: null,
+                        categories: {
+                            flavor: { avg: null, n: 0 },
+                            service: { avg: null, n: 0 },
+                            value: { avg: null, n: 0 },
+                            vibe: { avg: null, n: 0 },
+                        },
+                        top_cuisines: [],
+                        bottom_cuisines: [],
+                        rating_histogram: [],
+                    },
+                });
+            }
+
+            return json({
+                data: {
+                    entry_count: row.entry_count ?? 0,
+                    overall_avg: row.overall_avg ?? null,
+                    categories: {
+                        flavor: { avg: row.flavor_avg ?? null, n: row.flavor_n ?? 0 },
+                        service: { avg: row.service_avg ?? null, n: row.service_n ?? 0 },
+                        value: { avg: row.value_avg ?? null, n: row.value_n ?? 0 },
+                        vibe: { avg: row.vibe_avg ?? null, n: row.vibe_n ?? 0 },
+                    },
+                    top_cuisines: row.top_cuisines ?? [],
+                    bottom_cuisines: row.bottom_cuisines ?? [],
+                    rating_histogram: row.rating_histogram ?? [],
+                },
+            });
         }
 
         // ── check_username ────────────────────────────────────────────────
@@ -1368,6 +1628,65 @@ serve(async (req) => {
                 .update(updates)
                 .eq('user_id', user.id)
                 .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+                .single();
+            if (error) throw error;
+
+            return json({ data: updated });
+        }
+
+        // ── complete_onboarding ───────────────────────────────────────────
+        // TICKET-107: the atomic finish of the onboarding stack — writes name +
+        // home_city and STAMPS onboarded_at in one update so the gate can never
+        // be left half-set (name saved but onboarded_at NULL). home_city is the
+        // FREE-TEXT profiles column (NOT set_user_home_city / claimed cities);
+        // it's optional (skip on S2), capped, trimmed-to-null.
+        //
+        // TICKET-126: also carries the uploaded avatar_url (optional/nullable),
+        // and UNCONDITIONALLY stamps terms_accepted_at (13+ / Terms acceptance —
+        // every new user passes through this) and account_privacy='public'
+        // (doctrine 2026-04-20: public-by-default with opt-out in settings). This
+        // is written directly (not via update_privacy) so it deliberately
+        // bypasses the "username required to go public" guard — onboarding
+        // captures no username; opt-out and handle-claim live in settings.
+        if (action === 'complete_onboarding') {
+            const updates: Record<string, unknown> = {
+                onboarded_at: new Date().toISOString(),
+                terms_accepted_at: new Date().toISOString(),
+                account_privacy: 'public',
+            };
+
+            if (typeof body.display_name === 'string') {
+                const name = body.display_name.trim();
+                if (!name || name.length > 80) return fail('display_name must be 1–80 chars', 400);
+                updates.display_name = name;
+            }
+            // home_city is optional (skip) — trim to null, cap at 120 chars.
+            if (body.home_city !== undefined) {
+                const city = body.home_city == null ? '' : String(body.home_city).trim();
+                updates.home_city = city ? city.slice(0, 120) : null;
+            }
+            // avatar_url is optional (skip) — trim to null. Defense-in-depth:
+            // onboarding only ever produces our own storage URL, so pin it to the
+            // caller's OWN avatars folder (blocks a crafted client persisting an
+            // external tracking URL or another user's path through this action).
+            if (body.avatar_url !== undefined) {
+                const avatar = body.avatar_url == null ? '' : String(body.avatar_url).trim();
+                if (avatar) {
+                    const ownPrefix = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/avatars/${user.id}/`;
+                    if (avatar.length > 500 || !avatar.startsWith(ownPrefix)) {
+                        return fail('avatar_url must be an uploaded avatar', 400);
+                    }
+                    updates.avatar_url = avatar;
+                } else {
+                    updates.avatar_url = null;
+                }
+            }
+
+            const { data: updated, error } = await supabase
+                .from('profiles')
+                .update(updates)
+                .eq('user_id', user.id)
+                .select('user_id, username, display_name, bio, avatar_url, home_city, onboarded_at, terms_accepted_at, account_privacy, allow_public_replies')
                 .single();
             if (error) throw error;
 
@@ -1483,8 +1802,9 @@ serve(async (req) => {
         // Used by CompanionPickerSheet (TICKET-027) and PeopleSearchPane (TICKET-028).
         // Request: { action: 'search', q: string, limit?: number, mutual_only?: boolean }
         // Response (default): { data: { user_id, display_name, avatar_url, is_following }[] }
-        // Response (mutual_only=true): all rows include is_mutual: boolean.
-        //   mutuals sort first; non-mutuals still returned but flagged is_mutual=false.
+        // Response (mutual_only=true): all rows include is_mutual + is_following
+        //   (caller→row) + follows_caller (row→caller), so callers can explain the
+        //   non-mutual reason. mutuals sort first; non-mutuals still returned.
         // Order: followed/mutual users first, then by profiles.created_at DESC, then display_name ASC
         if (action === 'search') {
             const { q, limit: rawLimit, mutual_only: mutualOnly } = body as {
@@ -1558,11 +1878,15 @@ serve(async (req) => {
                 });
 
                 return json({
+                    // Both direction sets are already in hand — surface them per
+                    // row so send-surfaces can explain WHY someone is non-mutual
+                    // (you don't follow them / they don't follow you back).
                     data: sorted.map((r) => ({
                         user_id: r.user_id,
                         display_name: r.display_name,
                         avatar_url: r.avatar_url ?? null,
                         is_following: followingSet.has(r.user_id),
+                        follows_caller: followsCallerSet.has(r.user_id),
                         is_mutual: isMutual(r.user_id),
                     })),
                 });
@@ -1870,6 +2194,7 @@ serve(async (req) => {
                 ? JSON.stringify(err)
                 : String(err);
         console.error('user-profile error:', details);
+        reportError(err, { fn: 'user-profile' });
         return json({ error: 'Internal Server Error', details }, 500);
     }
 });

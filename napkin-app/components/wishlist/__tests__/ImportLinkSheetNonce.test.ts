@@ -137,9 +137,11 @@ describe('import_nonce threading through auth (fix-pass-1 item 9)', () => {
     });
 
     it('all succeeded → should dismiss', () => {
-        const results = [
-            { client_nonce: 'n1', status: 'saved' as const },
-            { client_nonce: 'n2', status: 'already_pinned' as const },
+        // `: string` widens the union so tsc doesn't flag === 'failed' as
+        // impossible (TS2367) — the real handler sees the full status union.
+        const results: { client_nonce: string; status: string }[] = [
+            { client_nonce: 'n1', status: 'saved' },
+            { client_nonce: 'n2', status: 'already_pinned' },
         ];
         const hasFailures = results.some((r) => r.status === 'failed');
         expect(hasFailures).toBe(false); // sheet dismisses

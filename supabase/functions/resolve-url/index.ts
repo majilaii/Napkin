@@ -41,6 +41,8 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
+import { emitImportDone } from '../_shared/notify.ts';
 import { validateUrl } from '../_shared/urlValidation.ts';
 import type { WishlistSourceTikTok } from '../_shared/wishlistSource.ts';
 import { captionToNote } from '../_shared/captionToNote.ts';
@@ -62,6 +64,17 @@ import {
     type StagedCandidate,
 } from '../_shared/candidateDedupe.ts';
 import { detectListMarker } from '../_shared/listicle.ts';
+// Maps shared-list import: a maps.app.goo.gl list share resolves to a JS-only
+// page; the spots come from the page's own entitylist/getlist preload fetch.
+// expandMapsShare + parsers live in mapsList.ts (importable without serve(),
+// same doctrine as _helpers.ts).
+import {
+    expandMapsShare,
+    MAPS_LIST_CAP,
+    mapsItemsToStaged,
+    parsePlaceFromMapsUrl,
+    type ParsedMapsList,
+} from './mapsList.ts';
 import { resizeImageToLimit } from '../_shared/imageResize.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
 // TICKET-077: the handoff pin path re-reads the share LIVE (single source of truth,
@@ -209,7 +222,7 @@ function isInstagramUrl(url: URL): boolean {
  */
 function detectSourceType(url: URL): SourceType {
     const host = url.hostname.toLowerCase();
-    if (host === 'www.google.com' && url.pathname.startsWith('/maps')) {
+    if ((host === 'www.google.com' || host === 'google.com') && url.pathname.startsWith('/maps')) {
         return 'google_maps';
     }
     return detectSourceTypeFromHost(host);
@@ -409,53 +422,8 @@ async function fetchAndResizeThumbnail(
 }
 
 // ── Web unfurl ────────────────────────────────────────────────────────────────
-
-/** Parse a place query from an EXPANDED Google Maps URL (/place/<name>/ or ?q=). */
-function parsePlaceFromMapsUrl(u: string): string | null {
-    try {
-        const parsed = new URL(u);
-        const parts = parsed.pathname.split('/');
-        const i = parts.findIndex((p) => p === 'place' || p === 'Place');
-        if (i >= 0 && parts[i + 1]) {
-            return decodeURIComponent(parts[i + 1]).replace(/\+/g, ' ').trim() || null;
-        }
-        return parsed.searchParams.get('q') ?? parsed.searchParams.get('query');
-    } catch {
-        return null;
-    }
-}
-
-/** "Carbone · Greenwich Village - Google Maps" → "Carbone · Greenwich Village" */
-function cleanMapsTitle(t: string): string {
-    return t.replace(/\s*[-–—|]\s*Google\s*Maps\s*$/i, '').trim();
-}
-
-/**
- * Google Maps SHARE links are short redirects (maps.app.goo.gl/…, goo.gl/maps/…)
- * with no /place/ segment. Follow the redirect to the canonical URL and parse
- * the place from it; fall back to the page's og:title / <title>. Fully fail-soft.
- */
-async function expandMapsQuery(url: string, signal: AbortSignal): Promise<string | null> {
-    try {
-        const res = await fetch(url, {
-            signal,
-            redirect: 'follow',
-            headers: { 'User-Agent': 'Napkin/1.0 (link-resolver; +https://napkin.app)' },
-        });
-        const fromUrl = parsePlaceFromMapsUrl(res.url || url);
-        if (fromUrl) { res.body?.cancel().catch(() => {}); return fromUrl; }
-        const text = await res.text().catch(() => null);
-        if (text) {
-            const og = text.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']{1,200})["']/i);
-            if (og?.[1]) return cleanMapsTitle(og[1]) || null;
-            const t = text.match(/<title[^>]*>([^<]{1,200})<\/title>/i);
-            if (t?.[1]) return cleanMapsTitle(t[1]) || null;
-        }
-        return null;
-    } catch {
-        return null;
-    }
-}
+// parsePlaceFromMapsUrl / cleanMapsTitle / expandMapsShare live in mapsList.ts
+// (importable without serve() — the live share-expansion path is E2E-testable).
 
 async function unfurlWebTitle(url: string, signal: AbortSignal): Promise<string | null> {
     try {
@@ -1469,6 +1437,21 @@ async function handleSaveSpots(
         /* link is optional — never fail the save over it */
     }
 
+    // TICKET-123: the auto-save path rides this server round-trip to write the
+    // durable `import_done` inbox row (outcome 'saved'). Only when the client
+    // opts in (notify_done) AND real pins landed — an all-already_pinned re-drain
+    // emits nothing (matches TICKET-120's `saved > 0` banner gate). Uses the
+    // server batchJobId so the inbox tap deep-links to /imports/[jobId].
+    // Best-effort — never fails the save over a notification.
+    if (body['notify_done'] === true && savedCount > 0) {
+        await emitImportDone(supabase, {
+            recipientUserId: user.id,
+            jobId: batchJobId,
+            count: savedCount,
+            outcome: 'saved',
+        });
+    }
+
     return jsonResponse({
         data: {
             results,
@@ -1502,6 +1485,8 @@ async function handleUrlResolve(
     let partialSource: Omit<WishlistSourceTikTok, 'type' | 'url'> | null = null;
     let thumbnailUrl: string | null = null;
     let oEmbedCaption: string | null = null;
+    // Set when the maps URL resolves to a shared LIST (multi-spot import).
+    let mapsList: ParsedMapsList | null = null;
 
     // ── Step 1: source-specific query extraction ──────────────────────────────
     if (sourceType === 'tiktok') {
@@ -1539,9 +1524,14 @@ async function handleUrlResolve(
         // Already-expanded links: parse directly.
         query = parsePlaceFromMapsUrl(rawUrl);
         // Share links (maps.app.goo.gl/…) are short redirects with no place
-        // segment — follow the redirect to recover the place name.
+        // segment — follow the redirect to a single place OR a shared list.
         if (!query) {
-            query = await expandMapsQuery(rawUrl, deadline.stageSignal(2500));
+            const expanded = await expandMapsShare(rawUrl, (ms) => deadline.stageSignal(ms));
+            if (expanded.list && expanded.list.items.length > 0) {
+                mapsList = expanded.list;
+            } else {
+                query = expanded.placeQuery;
+            }
         }
     } else if (isWebExtractionSource(sourceType)) {
         // TICKET-079: 'web' + reddit/substack all unfurl the page <title> here.
@@ -1560,11 +1550,14 @@ async function handleUrlResolve(
     let visionCandidates: ExtractedCandidate[] = [];
     let fromCache = false;
 
-    const cached = await readExtractionCache(supabase, contentHash);
+    // Maps lists bypass the extraction cache entirely: lists are mutable (the
+    // sharer adds spots), and the items are deterministic — nothing to cache.
+    const cached = mapsList ? null : await readExtractionCache(supabase, contentHash);
     if (cached && cached.length > 0) {
         textCandidates = cached;
         fromCache = true;
     }
+
 
     // ── Step 3: text-tier extraction ──────────────────────────────────────────
     if (!fromCache && oEmbedCaption && !deadline.aborted) {
@@ -1609,11 +1602,18 @@ async function handleUrlResolve(
         // If resized is null (ARCH-REVIEW-2 #11): vision skipped entirely
     }
 
-    // ── Step 5: merge + dedupe + rank + cap-6 ─────────────────────────────────
-    const staged = dedupeAndRank(textCandidates, visionCandidates);
+    // ── Step 5: merge + dedupe + rank + cap ───────────────────────────────────
+    // 6 for model-extracted URL shares; a deterministic maps LIST gets the
+    // save_spots-aligned ceiling and stages DIRECTLY — the fuzzy fold merges
+    // same-name branches ("Dishoom" vs "Dishoom Shoreditch"), which are
+    // distinct list items here. True dupes still collapse post-Places.
+    const stagedCap = mapsList ? MAPS_LIST_CAP : 6;
+    const staged = mapsList
+        ? mapsItemsToStaged(mapsList.items, MAPS_LIST_CAP)
+        : dedupeAndRank(textCandidates, visionCandidates, stagedCap);
 
     // ── Step 6: cache write (content-derived only, before Places) ────────────
-    if (!fromCache && staged.length > 0) {
+    if (!fromCache && staged.length > 0 && !mapsList) {
         const cacheArr = staged.map((s) => s.extracted);
         writeExtractionCache(supabase, contentHash, rawUrl, cacheArr, modelId, oEmbedCaption)
             .catch(() => null);
@@ -1798,7 +1798,7 @@ async function handleUrlResolve(
 
     // ── Step 10: build candidates[] ──────────────────────────────────────────
     const candidates: ResolvedCandidate[] = await Promise.all(
-        dedupedStaged.slice(0, 6).map(async ({ staged: s, place }, idx) => {
+        dedupedStaged.slice(0, stagedCap).map(async ({ staged: s, place }, idx) => {
             const restaurantId = place ? (placeIdToRestaurantId.get(place.id) ?? null) : null;
             const alreadyWishlisted = restaurantId ? wishlistedSet.has(restaurantId) : false;
             // 086c: 'exact' was being demoted to 'low' here for no reason.
@@ -1872,7 +1872,8 @@ async function handleUrlResolve(
             note_prefill: notePrefill,
             candidates,
             partial_source: partialSource,
-            list_count: listMarker.count,
+            // Maps list: the TRUE item count, so the client can say "20 of 34".
+            list_count: mapsList ? mapsList.items.length : listMarker.count,
         } satisfies ResolveUrlResponse,
     });
 }
@@ -2195,6 +2196,8 @@ serve(async (req) => {
         spots?: unknown[];
         source?: unknown;
         note?: string;
+        /** TICKET-123: opt-in — write the durable import_done inbox row on this save. */
+        notify_done?: boolean;
     };
     try {
         body = await req.json();
@@ -2361,6 +2364,7 @@ serve(async (req) => {
             return errorResponse('TIMEOUT', 'Resolver timed out', 503);
         }
         console.error('resolve-url error:', e);
+        reportError(e, { fn: 'resolve-url' });
         return errorResponse('INTERNAL', 'Internal server error', 500);
     }
 });

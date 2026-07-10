@@ -21,7 +21,9 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import { useActiveImports, type ActiveImport } from '@/hooks/wishlist/useActiveImports';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
-import { importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
+import { useHasImported } from '@/hooks/wishlist/useHasImported';
+import { ImportActivationHub } from '@/components/import-education';
+import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue } from '@/lib/importQueue';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 
@@ -42,6 +44,8 @@ export default function ImportProgressScreen() {
     // Completed batches — every import stays reachable here for fix/prune.
     const { data: recent } = useRecentImports(user?.id, 10);
     const recentBatches = recent ?? [];
+    // Full activation hub until a first import lands, then the compact standing row.
+    const hasImported = useHasImported(user?.id);
 
     const toast = useToast();
 
@@ -114,13 +118,21 @@ export default function ImportProgressScreen() {
                 contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: insets.bottom + 40, paddingTop: Spacing.sm }}
                 showsVerticalScrollIndicator={false}
             >
+                {/* Standing activation hub — the durable way to learn/repeat saving.
+                    Full teaches the gesture (subsumes the old empty-state copy);
+                    compact is a quiet standing row once the user has imported. */}
+                <View style={styles.hubWrap}>
+                    <ImportActivationHub
+                        variant={hasImported ? 'compact' : 'full'}
+                        showHubLink={false}
+                        palette={palette}
+                    />
+                </View>
+
                 {active.length === 0 && recentBatches.length === 0 ? (
                     <View style={styles.emptyWrap}>
                         <Text style={[styles.emptyText, { color: palette.textMuted }]}>
                             — nothing importing right now.
-                        </Text>
-                        <Text style={[styles.emptyHint, { color: palette.textMuted }]}>
-                            {"share a video or link to napkin and it'll show up here."}
                         </Text>
                     </View>
                 ) : (
@@ -223,7 +235,7 @@ export default function ImportProgressScreen() {
                                 accessibilityLabel={`open import of ${b.item_count} spots`}
                             >
                                 <Ionicons
-                                    name={b.source?.type === 'tiktok' ? 'logo-tiktok' : 'download-outline'}
+                                    name={importSourceIcon(b.source)}
                                     size={16}
                                     color={palette.textSecondary}
                                 />
@@ -262,9 +274,9 @@ const styles = StyleSheet.create({
     },
     headerBack: { width: 32, alignItems: 'flex-start' },
     headerTitle: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 22 },
-    emptyWrap: { paddingTop: 80, alignItems: 'center', gap: 8 },
+    hubWrap: { paddingTop: Spacing.sm, paddingBottom: Spacing.md },
+    emptyWrap: { paddingTop: 56, alignItems: 'center', gap: 8 },
     emptyText: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 18 },
-    emptyHint: { fontFamily: 'Manrope_500Medium', fontSize: 13, textAlign: 'center', paddingHorizontal: 30 },
     failRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
     failAction: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
     failDot: { fontFamily: 'Manrope_400Regular', fontSize: 12 },

@@ -34,6 +34,8 @@ import { FRIEND_TEST } from '@/constants/flags';
 import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { track } from '@/lib/track';
 import { useTables } from '@/hooks/tables/useTables';
+import { useUnreadCount } from '@/hooks/notifications';
+import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
 import { useLastSeenAt, useMarkSeen } from '@/hooks/tables/useLastSeenAt';
 import {
     useTableActivity,
@@ -47,6 +49,7 @@ import {
     type RestaurantFloatActivityItem,
     type SupperCardActivity,
     type GatheringCardActivity,
+    type ListAddActivityItem,
 } from '@/hooks/tables/useTableActivity';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
@@ -66,6 +69,7 @@ import {
     EditTop4Sheet,
     StartRoundPill,
     AddMemberSheet,
+    TableListsBlock,
 } from '@/components/tables';
 import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
@@ -79,7 +83,12 @@ import { TableEntryCard } from '@/components/journal';
 // TICKET-082 v2: the empty-table supper card + in-app nudge
 import { SupperCard, SupperNudgeBanner } from '@/components/suppers';
 // TICKET-095: the gather-the-table proposal card
-import { GatheringCard } from '@/components/gatherings';
+// TICKET-128: the "what's booked" upcoming strip under the masthead
+import { GatheringCard, UpcomingStrip } from '@/components/gatherings';
+// TICKET-115: quiet ledger line for table-list adds
+import { ListAddLedgerLine } from '@/components/feed/ListAddLedgerLine';
+// TICKET-121: murmur + retry when a primary query fails with no cached data
+import { ErrorState } from '@/components/ErrorState';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -139,11 +148,17 @@ export default function TablesScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
+    const hasUnread = useUnreadCount(user?.id) > 0;
 
     // Real data
-    const { data: tables, isLoading: tablesLoading } = useTables(user?.id);
+    const {
+        data: tables,
+        isLoading: tablesLoading,
+        isError: tablesError,
+        refetch: tablesRefetch,
+    } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
-    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'atlas'>('activity');
+    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'lists' | 'atlas'>('activity');
 
     // Deep-link: notifications screen passes `selected` (tableId) when tapping a
     // table_invite row. Auto-select the matching table on mount/focus.
@@ -161,6 +176,7 @@ export default function TablesScreen() {
     // Unseen dot system (TICKET-010)
     const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
     const markSeen = useMarkSeen();
+    const createInvite = useCreateInvite();
 
     // Fire mark_seen when the tab gains focus or activeTable changes.
     // The 30s debounce in useMarkSeen collapses rapid tab-switches.
@@ -178,6 +194,7 @@ export default function TablesScreen() {
     const {
         data: activityData,
         isLoading: feedLoading,
+        isError: feedError,
         isRefetching,
         refetch,
     } = useTableActivity(activeTable?.id);
@@ -216,6 +233,15 @@ export default function TablesScreen() {
     // Atlas data — only fetched when the active table is a social table
     // is_personal is a runtime DB field not reflected in the Table type
     const isSocialTable = activeTable && !(activeTable as any).is_personal;
+
+    // Lists/Atlas segments only exist on social tables — clamp back to
+    // Activity when the active table can't show the current segment, so the
+    // tab row never renders with no segment underlined.
+    useEffect(() => {
+        if (!isSocialTable && (activeTab === 'lists' || activeTab === 'atlas')) {
+            setActiveTab('activity');
+        }
+    }, [isSocialTable, activeTab]);
     const {
         data: atlasData,
         isLoading: atlasLoading,
@@ -309,6 +335,13 @@ export default function TablesScreen() {
     }
 
     if (!activeTable) {
+        if (tablesError && !tables) {
+            return (
+                <View style={[styles.center, { backgroundColor: palette.background }]}>
+                    <ErrorState onRetry={tablesRefetch} />
+                </View>
+            );
+        }
         // Launch-readiness (2026-07-03): this was a dead end — copy with no
         // affordance, and every create-table entry point unreachable at zero
         // tables. One quiet CTA; solo stays a complete product (emergence arc).
@@ -403,6 +436,10 @@ export default function TablesScreen() {
                         ? () => setShowAddMember(true)
                         : undefined
                 }
+                onBellPress={() => router.push('/notifications')}
+                bellUnread={hasUnread}
+                // TICKET-139: the table's territory map (member-gated server-side).
+                onMapPress={() => router.push({ pathname: '/table-map', params: { tableId: activeTable.id } })}
             />
 
             {/* Welcome banner — shown once when a user is added to a table (TICKET-029) */}
@@ -425,16 +462,18 @@ export default function TablesScreen() {
                 />
             )}
 
-            {/* Activity | Wishlist | Atlas — editorial section-label style.
+            {/* Activity | Wishlist | Lists | Atlas — editorial section-label style.
                 Atlas hidden during friend-test. */}
             <View style={styles.tabRow}>
-                {(['activity', 'wishlist', ...(!FRIEND_TEST.hideAtlas && isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'atlas')[]).map((tab) => {
+                {(['activity', 'wishlist', ...(isSocialTable ? ['lists'] : []), ...(!FRIEND_TEST.hideAtlas && isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'lists' | 'atlas')[]).map((tab) => {
                     const isActive = activeTab === tab;
                     const tabLabel =
                         tab === 'activity'
                             ? 'Activity'
                             : tab === 'wishlist'
                             ? 'Wishlist'
+                            : tab === 'lists'
+                            ? 'Lists'
                             : 'Atlas';
                     return (
                         <Pressable
@@ -480,6 +519,22 @@ export default function TablesScreen() {
                     {activeTable && (
                         <WishlistGrid mode="table" tableId={activeTable.id} />
                     )}
+                </View>
+            ) : activeTab === 'lists' && activeTable && isSocialTable ? (
+                /* Lists tab — TICKET-115 shared Table lists. Social tables only;
+                   switching to a personal table falls through to activity. */
+                <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
+                    {headerAndControl}
+                    <ScrollView
+                        showsVerticalScrollIndicator={false}
+                        contentContainerStyle={{ paddingTop: Spacing.sm, paddingBottom: 100 }}
+                    >
+                        <TableListsBlock
+                            tableId={activeTable.id}
+                            tableName={activeTable.name}
+                            hideLabel
+                        />
+                    </ScrollView>
                 </View>
             ) : !FRIEND_TEST.hideAtlas && activeTab === 'atlas' ? (
                 /* Atlas tab — AtlasCityIndex owns its own ScrollView */
@@ -528,6 +583,14 @@ export default function TablesScreen() {
                 >
                     {headerAndControl}
 
+                    {/* TICKET-128: upcoming strip — what's booked/brewing for this
+                        table, under the masthead. Renders null when there's nothing
+                        upcoming. Social tables only (personal tables have no gatherings);
+                        curtained alongside suppers during the friend test. */}
+                    {!FRIEND_TEST.hideSuppers && isSocialTable && activeTable && (
+                        <UpcomingStrip tableId={activeTable.id} tableName={activeTable.name} />
+                    )}
+
                     {/* Empty-chair invitation — users with a single table, dismissable.
                         Curtained during friend-test as part of the emergence-arc nudge;
                         its CTA opens the /create-table flow. */}
@@ -545,6 +608,8 @@ export default function TablesScreen() {
                             color={palette.primary}
                             style={{ marginTop: Spacing.xxl }}
                         />
+                    ) : feedError && items.length === 0 ? (
+                        <ErrorState onRetry={refetch} />
                     ) : isFoundedEmpty ? (
                         /* Brand-new table — founding moment */
                         <FoundedHero
@@ -552,21 +617,33 @@ export default function TablesScreen() {
                             foundedAt={activeTable.created_at}
                             palette={palette}
                             memberCount={members?.length ?? 0}
-                            onInvite={() => {
+                            onInvite={async () => {
                                 // One invite flow (2026-07-03): the AddMemberSheet
-                                // seats mutuals directly and carries the share-link
-                                // row for friends not on Napkin yet. Founder = owner
-                                // on a brand-new table; share-sheet fallback otherwise.
+                                // sends PENDING invitations to mutuals (TICKET-133 —
+                                // they seat themselves on accept) and carries the
+                                // share-link row for friends not on Napkin yet.
+                                // Founder = owner on a brand-new table; non-owner
+                                // members mint + share the real join link (any
+                                // member can mint).
                                 if (activeTable.owner_id === user?.id) {
                                     setShowAddMember(true);
                                     return;
                                 }
                                 track('invite_sent', { surface: 'founded_hero' });
-                                void Share.share({
-                                    message: TESTFLIGHT_INVITE_URL
-                                        ? `come join "${tableName}" on Napkin — ${TESTFLIGHT_INVITE_URL}`
-                                        : `come join "${tableName}" on Napkin`,
-                                });
+                                try {
+                                    const { join_url } = await createInvite.mutateAsync(activeTable.id);
+                                    await Share.share({
+                                        message: TESTFLIGHT_INVITE_URL
+                                            ? `join "${tableName}" on Napkin — ${join_url}\n\n${TESTFLIGHT_INVITE_URL}`
+                                            : `join "${tableName}" on Napkin — ${join_url}`,
+                                    });
+                                } catch {
+                                    void Share.share({
+                                        message: TESTFLIGHT_INVITE_URL
+                                            ? `come join "${tableName}" on Napkin — ${TESTFLIGHT_INVITE_URL}`
+                                            : `come join "${tableName}" on Napkin`,
+                                    });
+                                }
                             }}
                             onEditTopFour={FRIEND_TEST.hideTopFours ? undefined : () => handleOpenEditTopFour()}
                         />
@@ -843,11 +920,6 @@ export default function TablesScreen() {
                                                               >
                                                                   <SubsetCard
                                                                       id={tn.id}
-                                                                      photoUrl={
-                                                                          tn.restaurants
-                                                                              ?.photo_url ??
-                                                                          null
-                                                                      }
                                                                       restaurantName={
                                                                           tn.restaurants
                                                                               ?.name ??
@@ -914,6 +986,7 @@ export default function TablesScreen() {
                                                               topEmojis={s.top_emojis ?? []}
                                                               myReactions={s.my_reactions ?? []}
                                                               createdAt={s.created_at ?? s.sort_date}
+                                                              currentUserId={user?.id}
                                                           />
                                                       );
                                                   }
@@ -929,6 +1002,7 @@ export default function TablesScreen() {
                                                               childIds={d.child_ids ?? []}
                                                               childShares={d.childShares}
                                                               createdAt={d.sort_date}
+                                                              currentUserId={user?.id}
                                                           />
                                                       );
                                                   }
@@ -987,6 +1061,18 @@ export default function TablesScreen() {
                                                               key={`gathering-${g.id}`}
                                                               gathering={g}
                                                               viewerId={user?.id}
+                                                          />
+                                                      );
+                                                  }
+                                                  // TICKET-115: table-list add — a quiet ledger line, not a card.
+                                                  if (item.type === 'list_add') {
+                                                      const la = item as ListAddActivityItem;
+                                                      return (
+                                                          <ListAddLedgerLine
+                                                              key={`listadd-${la.id}`}
+                                                              item={la}
+                                                              palette={palette}
+                                                              currentUserId={user?.id}
                                                           />
                                                       );
                                                   }
@@ -1078,6 +1164,7 @@ export default function TablesScreen() {
                     tableId={activeTable.id}
                     palette={palette}
                     userId={user?.id}
+                    tableName={tableName}
                 />
             ) : null}
         </View>

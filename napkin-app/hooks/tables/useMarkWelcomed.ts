@@ -15,7 +15,8 @@ export interface MarkWelcomedInput {
 
 async function markWelcomed(input: MarkWelcomedInput): Promise<void> {
     await callEdgeFn<void>('table-management', {
-        action: 'mark_welcomed',
+        method: 'POST',
+        params: { action: 'mark_welcomed' },
         body: { table_id: input.tableId },
     });
 }

@@ -16,9 +16,11 @@ export {
     type FriendPinnedNotification,
     type TopFourSwapNotification,
     type TableInviteNotification,
+    type TableInviteAcceptedNotification,
     type ClaimCityNotification,
     type ReservationReminderNotification,
 } from './useNotifications';
 
 export { useMarkNotificationRead } from './useMarkNotificationRead';
 export { useMarkAllNotificationsRead } from './useMarkAllNotificationsRead';
+export { useRespondInvitation } from './useRespondInvitation';

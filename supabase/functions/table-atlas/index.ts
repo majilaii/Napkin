@@ -13,6 +13,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { projectRound } from '../_shared/round_projection.ts';
 import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 
@@ -103,6 +104,22 @@ type CityPageResponse = {
     rows: RestaurantTile[];
     next_cursor: string | null;
     has_more: boolean;
+};
+
+// TICKET-139: the table's been-together map pins — group meals (suppers + legacy
+// rounds) with coordinates, one row per restaurant (most-recent group meal wins).
+type MapPinParticipant = { user_id: string; display_name: string; avatar_url: string | null };
+type MapPinRow = {
+    restaurant_id: string;
+    name: string;
+    city: string | null;
+    cuisine: string | null;
+    lat: number; // coords-only rows (filtered NOT NULL)
+    lng: number;
+    supper_id: string | null; // winner's supper id; null when the winner is a legacy round
+    gathered_on: string; // ISO — suppers.created_at | round.revealed_at ?? created_at
+    participants: MapPinParticipant[]; // ≤5, batch-hydrated by id (never an embed off entries)
+    suppers_count: number; // total group meals at this restaurant (for "×N")
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -682,6 +699,146 @@ async function handleCityPage(
     return json({ data: response });
 }
 
+// ── Action: map_pins (TICKET-139) ───────────────────────────────────────────────
+// The table's been-together layer: suppers (primary) ∪ legacy rounds
+// (table_nights merged|revealed — the atlas's existing group definition),
+// collapsed to one row per restaurant (most-recent group meal wins; suppers_count
+// counts all). Member-gated by the main handler's checkMembership 403 BEFORE this
+// runs. Every query is scoped to `tableId`; participants are batch-hydrated by id
+// via fetchProfiles — NEVER a PostgREST embed off entries (entries has no FK to
+// profiles). Cap 200, ordered by recency.
+
+async function handleMapPins(supabase: any, tableId: string): Promise<Response> {
+    // ── suppers for this table, coords required ──
+    const { data: suppers, error: sErr } = await supabase
+        .from('suppers')
+        .select(`
+            id,
+            restaurant_id,
+            created_at,
+            restaurants!inner (
+                id, name, city, cuisine, lat, lng
+            )
+        `)
+        .eq('table_id', tableId)
+        .not('restaurants.lat', 'is', null)
+        .not('restaurants.lng', 'is', null);
+    if (sErr) throw sErr;
+
+    // rosters: supper_members for the fetched suppers (service-role read)
+    const supperIds = ((suppers ?? []) as any[]).map((s) => s.id as string);
+    const membersBySupper = new Map<string, string[]>();
+    if (supperIds.length > 0) {
+        const { data: mrows, error: mErr } = await supabase
+            .from('supper_members')
+            .select('supper_id, user_id')
+            .in('supper_id', supperIds);
+        if (mErr) throw mErr;
+        for (const m of (mrows ?? []) as any[]) {
+            const list = membersBySupper.get(m.supper_id) ?? [];
+            list.push(m.user_id);
+            membersBySupper.set(m.supper_id, list);
+        }
+    }
+
+    // ── legacy rounds for this table (atlas's existing group definition) ──
+    const { data: nights, error: nErr } = await supabase
+        .from('table_nights')
+        .select(`
+            id,
+            kind,
+            restaurant_id,
+            revealed_at,
+            created_at,
+            restaurants!inner (
+                id, name, city, cuisine, lat, lng
+            )
+        `)
+        .eq('table_id', tableId)
+        .or('kind.eq.merged,status.eq.revealed')
+        .not('restaurants.lat', 'is', null)
+        .not('restaurants.lng', 'is', null);
+    if (nErr) throw nErr;
+
+    // ── collapse to one row per restaurant; most-recent group meal wins; count all ──
+    type Agg = {
+        restaurant_id: string;
+        name: string;
+        city: string | null;
+        cuisine: string | null;
+        lat: number;
+        lng: number;
+        supper_id: string | null;
+        gathered_on: string;
+        count: number;
+        participantIds: string[];
+    };
+    const byRestaurant = new Map<string, Agg>();
+    function bump(r: any, date: string, supperId: string | null, pids: string[]) {
+        const cur = byRestaurant.get(r.id);
+        if (!cur) {
+            byRestaurant.set(r.id, {
+                restaurant_id: r.id,
+                name: r.name,
+                city: r.city ?? null,
+                cuisine: r.cuisine ?? null,
+                lat: r.lat,
+                lng: r.lng,
+                supper_id: supperId,
+                gathered_on: date,
+                count: 1,
+                participantIds: pids.slice(0, 5),
+            });
+            return;
+        }
+        cur.count++;
+        if (date > cur.gathered_on) {
+            cur.gathered_on = date;
+            cur.supper_id = supperId;
+            cur.participantIds = pids.slice(0, 5);
+        }
+    }
+
+    for (const s of (suppers ?? []) as any[]) {
+        const r = s.restaurants;
+        if (!r) continue;
+        bump(r, s.created_at, s.id, membersBySupper.get(s.id) ?? []);
+    }
+    for (const n of (nights ?? []) as any[]) {
+        const r = n.restaurants;
+        if (!r) continue;
+        const roundKind: 'live' | 'merged' = n.kind === 'merged' ? 'merged' : 'live';
+        const { participants } = await projectRound(n.id, roundKind, supabase);
+        bump(r, n.revealed_at ?? n.created_at, null, participants.map((p) => p.user_id));
+    }
+
+    // ── hydrate ≤5 participant profiles by id (batch, never an embed off entries) ──
+    const allIds = [...byRestaurant.values()].flatMap((a) => a.participantIds);
+    const profiles = await fetchProfiles(supabase, allIds);
+
+    const rows: MapPinRow[] = [...byRestaurant.values()]
+        .sort((a, b) => (a.gathered_on > b.gathered_on ? -1 : 1)) // recency
+        .slice(0, 200) // cap 200
+        .map((a) => ({
+            restaurant_id: a.restaurant_id,
+            name: a.name,
+            city: a.city,
+            cuisine: a.cuisine,
+            lat: a.lat,
+            lng: a.lng,
+            supper_id: a.supper_id,
+            gathered_on: a.gathered_on,
+            suppers_count: a.count,
+            participants: a.participantIds.map((id) => ({
+                user_id: id,
+                display_name: profiles.get(id)?.display_name ?? 'Member',
+                avatar_url: profiles.get(id)?.avatar_url ?? null,
+            })),
+        }));
+
+    return json({ data: { rows } });
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -732,9 +889,14 @@ serve(async (req) => {
             return await handleCityPage(supabase, user.id, table_id, city, cursor ?? null, pageSize);
         }
 
+        if (action === 'map_pins') {
+            return await handleMapPins(supabase, table_id);
+        }
+
         return fail(`Unknown action: ${action}`, 400);
     } catch (err) {
         console.error('table-atlas error:', err);
+        reportError(err, { fn: 'table-atlas' });
         return json({ error: String(err) }, 500);
     }
 });

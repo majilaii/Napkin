@@ -69,6 +69,7 @@ import {
 import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
+import { markImportCompleted } from '@/lib/importActivation';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
 
@@ -481,6 +482,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                     // Track saved candidates so retry skips them.
                     const newFailed = new Set<string>();
                     let membershipLost = false;
+                    let anySaved = false;
                     for (const r of result.results ?? []) {
                         // Find the candidate whose nonce matches.
                         const matchedSpot = spots.find((s) => s.client_nonce === r.client_nonce);
@@ -489,11 +491,16 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                             ?? matchedSpot.candidate.restaurant.external_id ?? '';
                         if (r.status === 'saved' || r.status === 'already_pinned') {
                             savedCandidateIdsRef.current.add(key);
+                            anySaved = true;
                         } else if (r.status === 'failed') {
                             newFailed.add(key);
                             if ((r as any).code === 'NOT_A_MEMBER') membershipLost = true;
                         }
                     }
+
+                    // TICKET-122: a successful in-app save also flips the activation
+                    // signal so the empty-state hub collapses full→compact.
+                    if (anySaved) markImportCompleted();
 
                     // Stale table (membership changed mid-flow): drop the share so
                     // retry self-heals to wishlist-only instead of looping the same
@@ -759,6 +766,13 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             return { type: 'google_maps', url };
         }
         if (data.source_type === 'video') {
+            // 'video' also comes back for URL-initiated resolves that rode the
+            // extracted_text tier (IG caption, TikTok ASR) — the server never
+            // saw the URL. Dropping it here loses the tap-out link forever and
+            // diverges from the queue path's provenance. Only a true file
+            // import (no url) is a bare 'video' source.
+            if (url && /tiktok\.com/i.test(url)) return { type: 'tiktok', url };
+            if (url) return { type: 'web', url };
             return { type: 'video' };
         }
         return { type: 'web', url };
@@ -778,7 +792,14 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             case 'substack': return 'from substack';
             case 'screenshot':
             case 'vision': return 'from a screenshot';
-            case 'video': return 'from a video';
+            case 'video': {
+                // extracted_text tier hides the origin from the server — infer
+                // the label from the pasted URL so a reel doesn't read "video".
+                const u = inputValue.trim();
+                if (/instagram\.com|instagr\.am/i.test(u)) return 'from instagram';
+                if (/tiktok\.com/i.test(u)) return 'from tiktok';
+                return 'from a video';
+            }
             default: return 'from the web';
         }
     }

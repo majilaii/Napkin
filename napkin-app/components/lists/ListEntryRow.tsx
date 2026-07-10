@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { SwipeToDeleteRow } from '@/components/common';
 import type { ListEntry } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
@@ -82,7 +83,12 @@ export function ListEntryRow({
         onRemove();
     };
 
-    return (
+    // TICKET-111: swipe-to-delete on list entries (owner, and never mid-reorder —
+    // a drag in flight sets isDragDisabled). Swipe reveals a trash panel whose tap
+    // runs the same remove-then-undo path as the ✕ button, so it stays confirmable.
+    const swipeEnabled = isOwner && !isDragDisabled;
+
+    const rowBody = (
         <View style={[styles.row, { backgroundColor: palette.card }, Shadow.subtle]}>
             {/* Rank number */}
             {isRanked && rank !== undefined && (
@@ -195,6 +201,12 @@ export function ListEntryRow({
                 </View>
             )}
         </View>
+    );
+
+    return (
+        <SwipeToDeleteRow enabled={swipeEnabled} onDelete={handleRemove}>
+            {rowBody}
+        </SwipeToDeleteRow>
     );
 }
 

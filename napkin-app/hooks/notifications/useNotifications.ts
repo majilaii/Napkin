@@ -19,8 +19,10 @@ export type NotificationType =
     | 'friend_pinned'
     | 'top_four_swap'
     | 'table_invite'
+    | 'table_invite_accepted'
     | 'claim_city'
-    | 'reservation_reminder';
+    | 'reservation_reminder'
+    | 'import_done';
 
 interface BaseNotification {
     id: string;
@@ -71,6 +73,23 @@ export interface TableInviteNotification extends BaseNotification {
     actor: { id: string; name: string; avatarUrl?: string | null };
     tableName: string;
     tableId?: string;
+    /** TICKET-133: id of the pending/resolved invitation this row responds to. */
+    invitationId: string;
+    /** Live status joined at hydration — drives the card state (Accept/Decline vs resolved). */
+    invitationStatus: 'pending' | 'accepted' | 'declined' | 'expired';
+    /** Denormalized member count for the card's meta line. */
+    memberCount: number;
+}
+
+/**
+ * TICKET-133: inviter-side row — "«joiner» joined *«table»*". Plain info row,
+ * no actions. Emitted when an invitee accepts.
+ */
+export interface TableInviteAcceptedNotification extends BaseNotification {
+    type: 'table_invite_accepted';
+    actor: { id: string; name: string; avatarUrl?: string | null };
+    tableName: string;
+    tableId?: string;
 }
 
 export interface ClaimCityNotification extends BaseNotification {
@@ -88,13 +107,27 @@ export interface ReservationReminderNotification extends BaseNotification {
     dayLabel: string;
 }
 
+/**
+ * TICKET-123: self-directed import lifecycle row. No actor — "your import
+ * finished". `outcome` drives the copy; `jobId` (present for 'saved') deep-links
+ * the tap to /imports/[jobId], review/failed route to /import-progress.
+ */
+export interface ImportDoneNotification extends BaseNotification {
+    type: 'import_done';
+    count: number;
+    outcome: 'saved' | 'review' | 'failed';
+    jobId?: string;
+}
+
 export type Notification =
     | FriendLoggedNotification
     | FriendPinnedNotification
     | TopFourSwapNotification
     | TableInviteNotification
+    | TableInviteAcceptedNotification
     | ClaimCityNotification
-    | ReservationReminderNotification;
+    | ReservationReminderNotification
+    | ImportDoneNotification;
 
 /** Extra top-level field on the inbox page envelope (first page only; subsequent pages have null). */
 export type InboxExtras = { unread_count: number | null };

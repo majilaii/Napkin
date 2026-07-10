@@ -7,15 +7,20 @@
  * Name (underline field + helper) → Invite the table (you·founder chip, search
  * row, invite-by-link) → a confident terracotta "Create table" CTA.
  *
- * Backend (unchanged): useCreateTable creates the table (creator auto-added as
- * admin), then each invited mutual-follow is added via useAddMember. On success
- * we land on the new table's founded masthead via /(tabs)/tables?selected=<id>.
+ * Backend: useCreateTable creates the table (creator auto-added as admin), then
+ * each picked mutual gets a PENDING invitation via useAddMember (TICKET-133
+ * consent gate — nobody is seated until they accept from their Activity inbox).
+ * On success we land on the founded masthead via /(tabs)/tables?selected=<id>;
+ * its roster reads from table_members, so it honestly shows the creator alone
+ * until invites are accepted.
  *
  * Layout is keyboard-STABLE: one top-anchored ScrollView with iOS keyboard
  * insets (no KeyboardAvoidingView reflow) and constant border widths — focus
  * changes colour only, never width, so tapping a field never shifts layout.
  *
- * "Invite by link" is faint Phase-2 — no link backend yet, so Copy is inert.
+ * "Invite by link" is live: it creates the table (inviting any picked mutuals),
+ * mints a real invite code, opens the native share sheet, then lands on the
+ * founded masthead — the same destination as Create table.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -29,6 +34,7 @@ import {
     Animated,
     ActivityIndicator,
     Alert,
+    Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -37,8 +43,11 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { useToast } from '@/providers/ToastProvider';
 import { useCreateTable } from '@/hooks/tables/useCreateTable';
 import { useAddMember } from '@/hooks/tables/useAddMember';
+import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
+import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { useUserSearch, type UserSearchResult } from '@/hooks/users/useUserSearch';
 import { Avatar } from '@/components/feed/Avatar';
 
@@ -70,6 +79,9 @@ export default function CreateTableScreen() {
 
     const createTable = useCreateTable(user?.id);
     const addMember = useAddMember(user?.id);
+    const createInvite = useCreateInvite();
+    const toast = useToast();
+    const nameInputRef = useRef<TextInput>(null);
 
     // Debounce the search query (250ms).
     useEffect(() => {
@@ -105,37 +117,76 @@ export default function CreateTableScreen() {
         setPicked((prev) => prev.filter((p) => p.user_id !== userId));
     }, []);
 
+    // Create the table + best-effort INVITE each picked mutual (pending until
+    // they accept — TICKET-133 consent gate). Shared by the Create-table CTA and
+    // the Invite-by-link row. A single invite failure (e.g. follow changed since
+    // search) must not block the table.
+    const runCreate = useCallback(async () => {
+        const table = await createTable.mutateAsync({ name: nameTrimmed });
+        if (picked.length > 0) {
+            const outcomes = await Promise.allSettled(
+                picked.map((p) =>
+                    addMember.mutateAsync({ tableId: table.id, targetUserId: p.user_id }),
+                ),
+            );
+            const failed = outcomes.filter((o) => o.status === 'rejected').length;
+            const invited = picked.length - failed;
+            if (failed > 0) {
+                Alert.alert(
+                    'Table created',
+                    failed === 1
+                        ? "One person couldn't be invited — you can try again from the table."
+                        : `${failed} people couldn't be invited — you can try again from the table.`,
+                );
+            } else if (invited > 0) {
+                // One short line on the masthead: invites went out, nobody is
+                // seated yet (the roster shows the creator alone until accepts).
+                toast.show(`${invited} invited`);
+            }
+        }
+        return table;
+    }, [createTable, nameTrimmed, picked, addMember, toast]);
+
     const handleCreate = useCallback(async () => {
         if (!canCreate) return;
         setCreating(true);
         try {
-            const table = await createTable.mutateAsync({ name: nameTrimmed });
-
-            // Best-effort: add each invited mutual-follow. A single failure
-            // (e.g. follow changed since search) must not block the table.
-            if (picked.length > 0) {
-                const outcomes = await Promise.allSettled(
-                    picked.map((p) =>
-                        addMember.mutateAsync({ tableId: table.id, targetUserId: p.user_id }),
-                    ),
-                );
-                const failed = outcomes.filter((o) => o.status === 'rejected').length;
-                if (failed > 0) {
-                    Alert.alert(
-                        'Table created',
-                        failed === 1
-                            ? "One person couldn't be added — you can invite them again from the table."
-                            : `${failed} people couldn't be added — you can invite them again from the table.`,
-                    );
-                }
-            }
-
+            const table = await runCreate();
             router.replace({ pathname: '/(tabs)/tables', params: { selected: table.id } });
         } catch {
             setCreating(false);
             Alert.alert('Could not create table', 'Please try again in a moment.');
         }
-    }, [canCreate, createTable, nameTrimmed, picked, addMember, router]);
+    }, [canCreate, runCreate, router]);
+
+    // Invite-by-link: create the table, mint a real invite code, open the share
+    // sheet, then land on the founded masthead (same destination as Create).
+    const handleInviteByLink = useCallback(async () => {
+        if (creating) return;
+        if (!nameTrimmed) {
+            nameInputRef.current?.focus();
+            return;
+        }
+        setCreating(true);
+        try {
+            const table = await runCreate();
+            // A failed mint/share must not strand the user — the table exists.
+            try {
+                const { join_url } = await createInvite.mutateAsync(table.id);
+                await Share.share({
+                    message: TESTFLIGHT_INVITE_URL
+                        ? `join "${nameTrimmed}" on Napkin — ${join_url}\n\n${TESTFLIGHT_INVITE_URL}`
+                        : `join "${nameTrimmed}" on Napkin — ${join_url}`,
+                });
+            } catch {
+                // no-op — table already created; fall through to routing.
+            }
+            router.replace({ pathname: '/(tabs)/tables', params: { selected: table.id } });
+        } catch {
+            setCreating(false);
+            Alert.alert('Could not create table', 'Please try again in a moment.');
+        }
+    }, [creating, nameTrimmed, runCreate, createInvite, router]);
 
     // ── Render ───────────────────────────────────────────────────────────────
     return (
@@ -167,6 +218,7 @@ export default function CreateTableScreen() {
                         ]}
                     >
                         <TextInput
+                            ref={nameInputRef}
                             value={name}
                             onChangeText={setName}
                             onFocus={() => setNameFocused(true)}
@@ -256,9 +308,9 @@ export default function CreateTableScreen() {
                         ) : (
                             <View style={styles.centerBlock}>
                                 <Ionicons name="person-outline" size={32} color={palette.textMuted} style={{ opacity: 0.5 }} />
-                                <Text style={[styles.emptyTitle, { color: palette.text }]}>no one to add yet</Text>
+                                <Text style={[styles.emptyTitle, { color: palette.text }]}>no one to invite yet</Text>
                                 <Text style={[styles.emptyBody, { color: palette.textMuted }]}>
-                                    create now — add them once they follow you back.
+                                    create now — invite them once they follow you back.
                                 </Text>
                             </View>
                         )
@@ -269,12 +321,13 @@ export default function CreateTableScreen() {
                                 <Text style={[styles.linkTitle, { color: palette.text }]}>Invite by link</Text>
                             </View>
                             <Pressable
-                                onPress={() => Alert.alert('Coming soon', 'Invite links for friends not yet on Napkin are on the way.')}
+                                onPress={handleInviteByLink}
+                                disabled={creating}
                                 hitSlop={8}
                                 accessibilityRole="button"
-                                accessibilityLabel="Copy invite link"
+                                accessibilityLabel="Share invite link"
                             >
-                                <Text style={[styles.copy, { color: palette.primary }]}>Copy</Text>
+                                <Text style={[styles.copy, { color: palette.primary, opacity: creating ? 0.4 : 1 }]}>Share</Text>
                             </Pressable>
                         </View>
                     )}
@@ -340,17 +393,17 @@ function ResultRow({
             {!isMutual ? null : added ? (
                 <Pressable onPress={onToggle} style={styles.addedBtn} accessibilityRole="button" accessibilityLabel={`Remove ${row.display_name}`}>
                     <Ionicons name="checkmark" size={13} color={palette.secondary} />
-                    <Text style={[styles.addedText, { color: palette.textMuted }]}>added</Text>
+                    <Text style={[styles.addedText, { color: palette.textMuted }]}>invited</Text>
                 </Pressable>
             ) : (
                 <Pressable
                     onPress={onToggle}
                     style={[styles.addBtn, { backgroundColor: palette.secondaryContainer }]}
                     accessibilityRole="button"
-                    accessibilityLabel={`Add ${row.display_name}`}
+                    accessibilityLabel={`Invite ${row.display_name}`}
                 >
                     <Ionicons name="add" size={14} color={palette.secondary} />
-                    <Text style={[styles.addText, { color: palette.secondary }]}>add</Text>
+                    <Text style={[styles.addText, { color: palette.secondary }]}>invite</Text>
                 </Pressable>
             )}
         </View>

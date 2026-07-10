@@ -30,6 +30,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { useTables } from '@/hooks/tables/useTables';
 import { useLeaveTable } from '@/hooks/tables/useLeaveTable';
+import { useDeleteTable } from '@/hooks/tables/useDeleteTable';
 import { TableMemberRow, AddMemberSheet } from '@/components/tables';
 
 export default function TableSettingsScreen() {
@@ -43,6 +44,7 @@ export default function TableSettingsScreen() {
     const { data: tables } = useTables(user?.id);
     const { data: members, isLoading: membersLoading } = useTableMembers(tableId);
     const leaveTable = useLeaveTable(user?.id);
+    const deleteTable = useDeleteTable(user?.id);
 
     const [showAddMember, setShowAddMember] = useState(false);
 
@@ -70,6 +72,34 @@ export default function TableSettingsScreen() {
                             router.replace('/(tabs)/tables');
                         } catch (err: any) {
                             Alert.alert('Could not leave', err?.message ?? 'Please try again.');
+                        }
+                    },
+                },
+            ]
+        );
+    };
+
+    const memberCount = members?.length ?? 0;
+
+    const handleDelete = () => {
+        const body =
+            memberCount <= 1
+                ? 'Your logged meals stay in your journal.'
+                : `This removes it for all ${memberCount} members. Everyone's logged meals stay in their journals.`;
+        Alert.alert(
+            `Delete ${tableName}?`,
+            body,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await deleteTable.mutateAsync({ tableId: tableId! });
+                            router.replace('/(tabs)/tables');
+                        } catch (err: any) {
+                            Alert.alert('Could not delete', err?.message ?? 'Please try again.');
                         }
                     },
                 },
@@ -196,6 +226,27 @@ export default function TableSettingsScreen() {
                         </Text>
                     </Pressable>
                 )}
+
+                {/* Delete Table — owner only */}
+                {isOwner && (
+                    <>
+                        <View style={[styles.divider, { backgroundColor: palette.dividerSoft }]} />
+                        <Pressable
+                            onPress={handleDelete}
+                            style={({ pressed }) => [
+                                styles.leaveRow,
+                                { opacity: pressed ? 0.7 : 1 },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Delete ${tableName}`}
+                        >
+                            <Ionicons name="trash-outline" size={20} color={palette.error} />
+                            <Text style={[styles.leaveLabel, { color: palette.error }]}>
+                                Delete table
+                            </Text>
+                        </Pressable>
+                    </>
+                )}
             </ScrollView>
 
             {/* Add Member Sheet */}
@@ -206,6 +257,7 @@ export default function TableSettingsScreen() {
                     tableId={tableId}
                     palette={palette}
                     userId={user?.id}
+                    tableName={tableName}
                 />
             )}
         </View>

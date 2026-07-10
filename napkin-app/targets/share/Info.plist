@@ -28,6 +28,12 @@
 				<integer>1</integer>
 				<key>NSExtensionActivationSupportsMovieWithMaxCount</key>
 				<integer>1</integer>
+				<!-- Google Maps (and several other apps) share links as PLAIN TEXT,
+				     not a URL item — without text support Napkin never appears in
+				     their share sheets. The Swift side extracts the first http(s)
+				     link from the text via NSDataDetector. -->
+				<key>NSExtensionActivationSupportsText</key>
+				<true/>
 			</dict>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>

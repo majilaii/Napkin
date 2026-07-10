@@ -271,26 +271,36 @@ export function AddToListSheet({
                                                 style={[Type.titleSmall, { color: palette.text }]}
                                                 numberOfLines={1}
                                             >
-                                                {item.title}
+                                                {item.emoji ? `${item.emoji} ` : ''}{item.title}
                                             </Text>
                                             <Text
                                                 style={[
                                                     Type.bodySmall,
                                                     { color: palette.textMuted, marginTop: 2 },
                                                 ]}
+                                                numberOfLines={1}
                                             >
                                                 {item.entry_count}{' '}
                                                 {item.entry_count === 1 ? 'place' : 'places'}
                                                 {item.ranked ? ' · Ranked' : ''}
+                                                {/* TICKET-115: badge shared Table lists. */}
+                                                {item.table_id && item.table_name ? ` · ${item.table_name}` : ''}
                                             </Text>
                                         </View>
-                                        {item.privacy === 'private' && (
+                                        {/* Table lists get a people icon; personal private lists a lock. */}
+                                        {item.table_id ? (
+                                            <Ionicons
+                                                name="people-outline"
+                                                size={13}
+                                                color={palette.textMuted}
+                                            />
+                                        ) : item.privacy === 'private' ? (
                                             <Ionicons
                                                 name="lock-closed"
                                                 size={12}
                                                 color={palette.textMuted}
                                             />
-                                        )}
+                                        ) : null}
                                     </Pressable>
                                 );
                             }}

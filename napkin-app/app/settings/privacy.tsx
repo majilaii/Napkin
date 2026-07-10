@@ -1,19 +1,17 @@
 /**
  * Privacy settings screen — /settings/privacy
  *
- * Shows:
+ * Privacy-only (profile field editors live at /settings/{photo,name,username,bio}):
  *   - Current account visibility state
  *   - "Preview my profile" link (always routes to /u/[currentUserId])
  *   - Toggle action button (goes public / goes private)
  *   - Reply permission segmented control
- *   - Inline editors: display name, username, avatar URL, bio
  */
-import React, { useState } from 'react';
+import React from 'react';
 import {
     View,
     Text,
     Pressable,
-    TextInput,
     Alert,
     ScrollView,
     StyleSheet,
@@ -28,7 +26,6 @@ import { useAuth } from '@/providers/AuthProvider';
 import {
     useUserProfile,
     useUpdatePrivacy,
-    useUpdateProfile,
     useUpdateReplyPermission,
 } from '@/hooks/users';
 
@@ -43,22 +40,7 @@ export default function PrivacyScreen() {
     const profile = result?.data?.profile;
 
     const updatePrivacy = useUpdatePrivacy(user?.id);
-    const updateProfile = useUpdateProfile(user?.id);
     const updateReplyPermission = useUpdateReplyPermission(user?.id);
-
-    // Local editor state (saved on blur)
-    const [displayName, setDisplayName] = useState('');
-    const [bio, setBio] = useState('');
-    const [avatarUrl, setAvatarUrl] = useState('');
-
-    // Sync local state when profile loads
-    React.useEffect(() => {
-        if (profile) {
-            setDisplayName(profile.display_name ?? '');
-            setBio(profile.bio ?? '');
-            setAvatarUrl(profile.avatar_url ?? '');
-        }
-    }, [profile?.user_id]);
 
     if (isLoading || !profile) {
         return (
@@ -103,27 +85,6 @@ export default function PrivacyScreen() {
                 },
             ],
         );
-    };
-
-    const handleDisplayNameBlur = () => {
-        const trimmed = displayName.trim();
-        if (trimmed && trimmed !== profile.display_name) {
-            updateProfile.mutate({ display_name: trimmed });
-        }
-    };
-
-    const handleBioBlur = () => {
-        const trimmed = bio.trim() || null;
-        if (trimmed !== profile.bio) {
-            updateProfile.mutate({ bio: trimmed });
-        }
-    };
-
-    const handleAvatarUrlBlur = () => {
-        const trimmed = avatarUrl.trim() || null;
-        if (trimmed !== profile.avatar_url) {
-            updateProfile.mutate({ avatar_url: trimmed });
-        }
     };
 
     return (
@@ -237,69 +198,6 @@ export default function PrivacyScreen() {
                         })}
                     </View>
                 </View>
-
-                {/* Profile editors */}
-                <View style={styles.section}>
-                    <Text style={[Type.label, { color: palette.textSecondary, marginBottom: Spacing.sm }]}>
-                        Profile info
-                    </Text>
-
-                    {/* Display name */}
-                    <Text style={[Type.caption, { color: palette.textMuted }]}>Display name</Text>
-                    <TextInput
-                        value={displayName}
-                        onChangeText={setDisplayName}
-                        onBlur={handleDisplayNameBlur}
-                        style={[styles.input, { color: palette.text, borderColor: palette.outlineVariant }]}
-                        maxLength={80}
-                        returnKeyType="done"
-                    />
-
-                    {/* Username */}
-                    <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.md }]}>
-                        Username {profile.username ? `(@${profile.username})` : '(not set)'}
-                    </Text>
-                    {profile.username && (
-                        <Pressable
-                            onPress={() => router.push('/settings/privacy/make-public')}
-                            style={{ marginTop: 2 }}
-                        >
-                            <Text style={[Type.caption, { color: palette.primary }]}>
-                                Change username →
-                            </Text>
-                        </Pressable>
-                    )}
-
-                    {/* Avatar URL */}
-                    <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.md }]}>
-                        Avatar URL
-                    </Text>
-                    <TextInput
-                        value={avatarUrl}
-                        onChangeText={setAvatarUrl}
-                        onBlur={handleAvatarUrlBlur}
-                        style={[styles.input, { color: palette.text, borderColor: palette.outlineVariant }]}
-                        autoCapitalize="none"
-                        keyboardType="url"
-                        placeholder="https://..."
-                        placeholderTextColor={palette.textMuted}
-                        returnKeyType="done"
-                    />
-
-                    {/* Bio */}
-                    <Text style={[Type.caption, { color: palette.textMuted, marginTop: Spacing.md }]}>
-                        Bio ({bio.length}/160)
-                    </Text>
-                    <TextInput
-                        value={bio}
-                        onChangeText={(t) => setBio(t.slice(0, 160))}
-                        onBlur={handleBioBlur}
-                        style={[styles.input, styles.bioInput, { color: palette.text, borderColor: palette.outlineVariant }]}
-                        multiline
-                        maxLength={160}
-                        returnKeyType="default"
-                    />
-                </View>
             </ScrollView>
         </View>
     );
@@ -350,17 +248,5 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.sm,
         alignItems: 'center',
         borderRadius: Radius.sm,
-    },
-    input: {
-        marginTop: Spacing.xs,
-        borderWidth: 1,
-        borderRadius: Radius.sm,
-        paddingHorizontal: Spacing.sm,
-        paddingVertical: Spacing.sm,
-        fontSize: 15,
-    },
-    bioInput: {
-        minHeight: 80,
-        textAlignVertical: 'top',
     },
 });

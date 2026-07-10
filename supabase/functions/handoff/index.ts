@@ -34,6 +34,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { mintShareToken } from '../_shared/handoffToken.ts';
 import {
     loadLiveSpots,
@@ -265,6 +266,7 @@ serve(async (req) => {
 
     } catch (err) {
         console.error('[handoff] error:', err);
+        reportError(err, { fn: 'handoff' });
         return jsonResponse({ error: 'Internal Server Error', details: String(err) }, 500);
     }
 });

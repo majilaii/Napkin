@@ -14,6 +14,7 @@
  *   GET  ?action=table_history&restaurant_id=X&table_id=Y[&exclude_night_id=Z]
  *   GET  ?action=user_history&restaurant_id=X[&exclude_entry_id=Z]
  *   GET  ?action=page&restaurant_id=X[&table_id=Y]
+ *   GET  ?action=reserve_link&restaurant_id=X   (TICKET-149 booking-page resolver)
  *
  * Both filter to data the requesting user is entitled to see. Table history
  * verifies the caller is a member of the table; user history is trivially
@@ -22,6 +23,8 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
+import { resolveReserveUrl } from '../_shared/reserveLink.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { projectRound } from '../_shared/round_projection.ts';
 
@@ -122,6 +125,10 @@ type RestaurantPageData = {
         // backfill on this freshness (NOT on metadata-presence), so a place that
         // legitimately has no phone/hours stops re-hitting Google after one sync.
         places_synced_at: string | null;
+        // TICKET-149: direct booking-page URL resolved from the venue's website
+        // (action=reserve_link writes it; found URLs sticky, nulls recheck at 30d).
+        reserve_url: string | null;
+        reserve_url_checked_at: string | null;
     } | null;
     personal: { average: number | null; visit_count: number };
     table_chip: { table_id: string; table_name: string; average: number; visit_count: number } | null;
@@ -503,6 +510,51 @@ serve(async (req) => {
             });
         }
 
+        // ── Reserve link (TICKET-149) ─────────────────────────────────────
+        // Resolve the venue's direct booking-page URL (OpenTable/Resy/
+        // SevenRooms/…) by scanning its own website — Google Places exposes
+        // no reservation field. Result is cached on the row: a found URL is
+        // sticky, a null is re-checked after 30 days. The client fires this
+        // only when the page payload shows the row unchecked or stale.
+        if (action === 'reserve_link') {
+            if (!restaurantId) return fail('restaurant_id is required');
+
+            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            // Same visibility predicate as action=page (TICKET-060 B4):
+            // service-role bypasses RLS, so filter explicitly.
+            let query = supabase
+                .from('restaurants')
+                .select('id, website, reserve_url, reserve_url_checked_at')
+                .or(`verification.eq.verified,created_by.eq.${user.id}`);
+            query = uuidPattern.test(restaurantId)
+                ? query.eq('id', restaurantId)
+                : query.eq('external_id', restaurantId);
+            const { data: row, error: rowErr } = await query.maybeSingle();
+            if (rowErr) throw rowErr;
+            if (!row) return json({ data: { reserve_url: null } });
+            if (row.reserve_url) return json({ data: { reserve_url: row.reserve_url } });
+
+            const RECHECK_MS = 30 * 24 * 60 * 60 * 1000;
+            const checkedMs = row.reserve_url_checked_at
+                ? Date.parse(row.reserve_url_checked_at)
+                : NaN;
+            if (!Number.isNaN(checkedMs) && Date.now() - checkedMs < RECHECK_MS) {
+                return json({ data: { reserve_url: null } });
+            }
+
+            const resolved = await resolveReserveUrl(row.website ?? null);
+            const { error: updateErr } = await supabase
+                .from('restaurants')
+                .update({
+                    reserve_url: resolved,
+                    reserve_url_checked_at: new Date().toISOString(),
+                })
+                .eq('id', row.id);
+            if (updateErr) throw updateErr;
+
+            return json({ data: { reserve_url: resolved } });
+        }
+
         // ── Full restaurant page data (aggregated) — v3 ───────────────────────────
         if (action === 'page') {
             const tableIdParam = url.searchParams.get('table_id');
@@ -519,7 +571,7 @@ serve(async (req) => {
             if (isUuid) {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at, place_types')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at, place_types, reserve_url, reserve_url_checked_at')
                     .eq('id', restaurantId)
                     .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();
@@ -528,7 +580,7 @@ serve(async (req) => {
             } else {
                 const { data, error } = await supabase
                     .from('restaurants')
-                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at, place_types')
+                    .select('id, name, address, city, country, cuisine, price_level, photo_url, google_rating, google_rating_count, external_id, lat, lng, photo_source, places_photo_attribution_html, phone, website, google_maps_uri, hours, places_synced_at, place_types, reserve_url, reserve_url_checked_at')
                     .eq('external_id', restaurantId)
                     .or(`verification.eq.verified,created_by.eq.${user.id}`)
                     .maybeSingle();
@@ -1104,6 +1156,7 @@ serve(async (req) => {
     } catch (err) {
         const msg = err instanceof Error ? err.message : JSON.stringify(err);
         console.error('restaurant-history error:', msg, err);
+        reportError(err, { fn: 'restaurant-history' });
         return json(
             { error: 'Internal Server Error', details: msg },
             500,

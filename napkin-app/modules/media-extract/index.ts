@@ -23,6 +23,14 @@ type NativeMediaExtract = {
     appGroupFileInfo(path: string): { exists: boolean; size: number };
     deleteAppGroupFile(path: string): boolean;
     writeAppGroupSnapshot(json: string): boolean;
+    // App-Group shared scalar prefs (TICKET-113 Part B) — synchronous KV on the
+    // shared suite, readable by the share extension at launch.
+    setSharedDefault(key: string, value: string): boolean;
+    getSharedDefault(key: string): string | null;
+    // Background-runtime grant (TICKET-120) — buys ~30s after backgrounding so a
+    // drain that finished while suspended can post its notification.
+    beginBackgroundTask(): number;
+    endBackgroundTask(taskId: number): boolean;
 };
 
 let cached: NativeMediaExtract | null = null;
@@ -97,4 +105,35 @@ export function deleteAppGroupFile(path: string): boolean {
 /** Publish the user's collections (lists + tables) for the share extension's picker. */
 export function writeAppGroupSnapshot(json: string): boolean {
     return getNative().writeAppGroupSnapshot(json);
+}
+
+// ── App-Group shared scalar prefs (TICKET-113 Part B) ───────────────────────
+// Mirror small string prefs (e.g. the import default mode) into the app group so
+// the share extension — a separate process that can't read AsyncStorage — can seed
+// its UI. THROW if the native module is absent; callers guard (see importQueue.ts).
+
+/** Write a scalar pref to the shared App-Group UserDefaults. */
+export function setSharedDefault(key: string, value: string): boolean {
+    return getNative().setSharedDefault(key, value);
+}
+
+/** Read a scalar pref from the shared App-Group UserDefaults (null if unset). */
+export function getSharedDefault(key: string): string | null {
+    return getNative().getSharedDefault(key);
+}
+
+// ── Background-runtime grant (TICKET-120) ───────────────────────────────────
+// iOS suspends JS a few seconds after backgrounding. beginBackgroundTask asks
+// UIApplication for ~30s more so an in-flight import drain can post its
+// completion notification before suspension. THROW if the native module is absent;
+// callers guard (see useProcessImportQueue's drain — acquire at start, end in finally).
+
+/** Request background runtime; returns an opaque task id to release later (-1 = invalid). */
+export function beginBackgroundTask(): number {
+    return getNative().beginBackgroundTask();
+}
+
+/** Release a background-task grant. No-op-safe on an invalid/expired id. */
+export function endBackgroundTask(taskId: number): boolean {
+    return getNative().endBackgroundTask(taskId);
 }

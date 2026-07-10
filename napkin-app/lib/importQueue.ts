@@ -19,14 +19,84 @@
  * Native calls throw when the module isn't linked; every accessor is wrapped so
  * the queue degrades to "empty / no-op" rather than crashing.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { safeRandomUUID } from './uuid';
 import {
     listImportManifests,
     writeImportManifest,
     removeImportManifest,
+    setSharedDefault,
 } from '@/modules/media-extract';
 
 const MAX_ATTEMPTS = 3;
+
+// ── Default import mode preference (TICKET-113) ────────────────────────────────
+// The founder always opts to review imports; that choice should stick so the NEXT
+// share defaults the same way — without a settings screen. We persist the mode the
+// user last explicitly chose and seed every new RN-created job (doEnqueue) from it.
+//
+// Cross-process note: the iOS share EXTENSION writes its own manifest directly (it
+// can't read AsyncStorage), carrying the mode from its in-extension "auto-save"
+// toggle. Those manifests keep their authored mode; the drain records that explicit
+// choice back into this preference so future jobs inherit it.
+export type ImportMode = 'auto' | 'review';
+const DEFAULT_MODE_KEY = 'napkin.import.defaultMode';
+// TICKET-113 Part B: the KEY for the App-Group shared default read by the iOS
+// share extension. It is the BARE string 'import.defaultMode' — deliberately
+// DISTINCT from the AsyncStorage key above (different stores). This literal MUST
+// stay byte-identical with ShareViewController.swift and MediaExtractModule.swift.
+const SHARED_DEFAULT_MODE_KEY = 'import.defaultMode';
+
+// In-memory mirror so job creation can read the preference synchronously. Primed
+// from AsyncStorage on module load; falls back to 'auto' (today's behavior) until
+// primed and whenever nothing was ever stored.
+let cachedDefaultMode: ImportMode = 'auto';
+
+// Prime the cache once at module load (best-effort; a miss leaves 'auto'). The
+// `primed` latch keeps a slow-resolving read from clobbering an explicit
+// setDefaultImportMode() that raced ahead of it.
+let defaultModePrimed = false;
+AsyncStorage.getItem(DEFAULT_MODE_KEY)
+    .then((raw) => {
+        if (!defaultModePrimed && (raw === 'review' || raw === 'auto')) {
+            cachedDefaultMode = raw;
+        }
+        defaultModePrimed = true;
+    })
+    .catch(() => {
+        /* storage unavailable — keep the 'auto' fallback */
+    });
+
+/** The mode new imports should default to. Synchronous (in-memory mirror). */
+export function getDefaultImportMode(): ImportMode {
+    return cachedDefaultMode;
+}
+
+/**
+ * Remember the user's explicit mode choice so future imports default to it.
+ * No-op write when the preference is unchanged. Fire-and-forget persist.
+ */
+export function setDefaultImportMode(mode: ImportMode): void {
+    if (mode !== 'auto' && mode !== 'review') return;
+    defaultModePrimed = true; // an explicit choice outranks a late-resolving prime
+    // TICKET-113 Part B: mirror into the App-Group shared default so the iOS share
+    // extension (separate process, can't read AsyncStorage) seeds its auto-save
+    // toggle from it on next launch. This runs BEFORE the unchanged guard: a user
+    // upgrading from Part A already has this mode cached RN-side while the
+    // extension's UserDefaults is still empty — the unconditional write-through
+    // back-fills it. Guarded — a missing native module (Android / unlinked)
+    // degrades gracefully; the RN-side pref still holds.
+    try {
+        setSharedDefault(SHARED_DEFAULT_MODE_KEY, mode);
+    } catch {
+        /* native module absent — RN-side pref still holds */
+    }
+    if (cachedDefaultMode === mode) return; // unchanged — nothing to persist
+    cachedDefaultMode = mode;
+    AsyncStorage.setItem(DEFAULT_MODE_KEY, mode).catch(() => {
+        /* best-effort — the in-memory mirror still holds for this session */
+    });
+}
 
 export type ImportManifestStatus = 'pending' | 'failed';
 
@@ -211,7 +281,8 @@ async function doEnqueue(videoPath: string): Promise<ImportManifest> {
         createdAt: Date.now(),
         attempts: 0,
         status: 'pending',
-        mode: 'auto',
+        // TICKET-113: seed from the remembered preference (fallback 'auto').
+        mode: getDefaultImportMode(),
         destinations: { ...DEFAULT_DESTINATIONS },
     };
     writeManifest(manifest);

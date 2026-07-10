@@ -19,6 +19,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 import { projectRound } from '../_shared/round_projection.ts';
 
@@ -182,6 +183,8 @@ serve(async (req) => {
         const supperRpcRows = visibleRpc.filter((r) => r.kind === 'supper');
         // TICKET-095: gathering proposal cards.
         const gatheringRpcRows = visibleRpc.filter((r) => r.kind === 'gathering');
+        // TICKET-115: list_add ledger lines (a member added spot(s) to a table list).
+        const listAddRpcRows = visibleRpc.filter((r) => r.kind === 'list_add');
 
         const entryIds = entryRpcRows.map((r) => r.id);
         const nightIds = nightRpcRows.map((r) => r.id);
@@ -890,14 +893,35 @@ serve(async (req) => {
                 gatheringRpcRows.map((r) => [r.id, r.payload as any]),
             );
 
-            // RSVPs for these gatherings.
+            // RSVPs for these gatherings (TICKET-127: counter_on rides along so we
+            // can build the counters payload + carry a 'counter' seat response).
             const { data: rsvpRows } = await supabase
                 .from('gathering_rsvps')
-                .select('gathering_id, user_id, response')
+                .select('gathering_id, user_id, response, counter_on')
                 .in('gathering_id', gatheringIds);
             const rsvpByGatheringUser = new Map<string, string>();
-            for (const r of (rsvpRows ?? []) as { gathering_id: string; user_id: string; response: string }[]) {
+            // gathering_id → [{ user_id, counter_on }] for members who countered.
+            const countersByGathering = new Map<string, { user_id: string; counter_on: string }[]>();
+            for (const r of (rsvpRows ?? []) as {
+                gathering_id: string; user_id: string; response: string; counter_on: string | null;
+            }[]) {
                 rsvpByGatheringUser.set(`${r.gathering_id}:${r.user_id}`, r.response);
+                if (r.response === 'counter' && r.counter_on) {
+                    const list = countersByGathering.get(r.gathering_id) ?? [];
+                    list.push({ user_id: r.user_id, counter_on: r.counter_on });
+                    countersByGathering.set(r.gathering_id, list);
+                }
+            }
+
+            // TICKET-127: rescheduled_from (host re-date breadcrumb) is NOT in the
+            // RPC anchor payload — batch-fetch it by id. Additive; no RPC touch.
+            const { data: gatheringMetaRows } = await supabase
+                .from('gatherings')
+                .select('id, rescheduled_from')
+                .in('id', gatheringIds);
+            const rescheduledFromByGathering = new Map<string, string | null>();
+            for (const m of (gatheringMetaRows ?? []) as { id: string; rescheduled_from: string | null }[]) {
+                rescheduledFromByGathering.set(m.id, m.rescheduled_from ?? null);
             }
 
             // Current table roster — every gathering in this feed belongs to the
@@ -939,6 +963,29 @@ serve(async (req) => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const gatheringRestMap = new Map((gatheringRestaurants ?? []).map((r: any) => [r.id, r]));
 
+            // TICKET-127 "why this place?": the HOST's own wishlist_items row for
+            // this restaurant may carry an import `source` ({ type, url }). When it
+            // has a URL the card shows one tap-out line ("pinned from tiktok"). Fetch
+            // by (host, restaurant) pairs; map on the composite so a matching source
+            // for a DIFFERENT gathering's host never leaks onto this card.
+            const { data: sourceRows } = hostIds.length > 0 && gatheringRestIds.length > 0
+                ? await supabase
+                    .from('wishlist_items')
+                    .select('user_id, restaurant_id, source')
+                    .in('user_id', hostIds)
+                    .in('restaurant_id', gatheringRestIds)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                : { data: [] as any[] };
+            // `${host}:${restaurant}` → { type, url }
+            const sourceByHostRest = new Map<string, { type?: string; url?: string }>();
+            for (const s of (sourceRows ?? []) as {
+                user_id: string; restaurant_id: string; source: { type?: string; url?: string } | null;
+            }[]) {
+                if (s.source && typeof s.source === 'object') {
+                    sourceByHostRest.set(`${s.user_id}:${s.restaurant_id}`, s.source);
+                }
+            }
+
             for (const r of gatheringRpcRows) {
                 const gid = r.id;
                 const anchor = anchorByGathering.get(gid);
@@ -957,14 +1004,31 @@ serve(async (req) => {
                             display_name: prof?.display_name ?? null,
                             avatar_url: prof?.avatar_url ?? null,
                             is_host: uid === hostUserId,
-                            response: (rsvpByGatheringUser.get(`${gid}:${uid}`) ?? null) as 'in' | 'out' | null,
+                            response: (rsvpByGatheringUser.get(`${gid}:${uid}`) ?? null) as 'in' | 'out' | 'counter' | null,
                         };
                     })
                     .sort((a, b) => seatRank(a) - seatRank(b));
 
                 const inCount = seats.filter((s) => s.response === 'in').length;
                 const viewerResponse =
-                    (rsvpByGatheringUser.get(`${gid}:${user.id}`) ?? null) as 'in' | 'out' | null;
+                    (rsvpByGatheringUser.get(`${gid}:${user.id}`) ?? null) as 'in' | 'out' | 'counter' | null;
+
+                // TICKET-127: counters — members who proposed another date. Drop
+                // ex-members (mirrors the seat roster gate); name via the profile map.
+                const counters = (countersByGathering.get(gid) ?? [])
+                    .filter((c) => rosterIds.includes(c.user_id))
+                    .map((c) => ({
+                        user_id: c.user_id,
+                        display_name: gatheringProfMap.get(c.user_id)?.display_name ?? null,
+                        counter_on: c.counter_on,
+                    }));
+
+                // TICKET-127: source line — only when the host's pin carries a URL.
+                const src = anchor?.restaurant_id
+                    ? sourceByHostRest.get(`${hostUserId}:${anchor.restaurant_id}`)
+                    : undefined;
+                const sourceUrl = src?.url && typeof src.url === 'string' ? src.url : null;
+                const sourceType = sourceUrl ? (src?.type ?? null) : null;
 
                 gatheringItems.push({
                     id: gid,
@@ -983,7 +1047,71 @@ serve(async (req) => {
                     seats,
                     in_count: inCount,
                     viewer_response: viewerResponse,
+                    counters,
+                    source_url: sourceUrl,
+                    source_type: sourceType,
+                    rescheduled_from: rescheduledFromByGathering.get(gid) ?? null,
                     created_at: anchor?.created_at ?? r.sort_date,
+                });
+            }
+        }
+
+        // ── TICKET-115: hydrate the list_add ledger line ────────────────────────
+        // Payload rides in the RPC (list_id/list_title/list_emoji/added_by/add_count/
+        // sample_restaurant_ids). Batch-fetch the adder profile + sample restaurant
+        // names — NEVER PostgREST-embed profiles off list_entries (the FK trap:
+        // list_entries.added_by → auth.users, not profiles).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let listAddItems: any[] = [];
+        if (listAddRpcRows.length > 0) {
+            const adderIds = [...new Set(
+                listAddRpcRows.map((r) => (r.payload as any)?.added_by).filter(Boolean),
+            )] as string[];
+            const sampleRestIds = [...new Set(
+                listAddRpcRows.flatMap((r) => ((r.payload as any)?.sample_restaurant_ids as string[]) ?? []),
+            )] as string[];
+
+            const { data: adderProfiles } = adderIds.length > 0
+                ? await supabase.from('profiles').select('user_id, display_name, avatar_url').in('user_id', adderIds)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                : { data: [] as any[] };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const adderProfMap = new Map((adderProfiles ?? []).map((p: any) => [p.user_id, p]));
+
+            const { data: sampleRests } = sampleRestIds.length > 0
+                ? await supabase.from('restaurants').select('id, name').in('id', sampleRestIds)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                : { data: [] as any[] };
+            const restNameMap = new Map(
+                ((sampleRests ?? []) as { id: string; name: string }[]).map((r) => [r.id, r.name]),
+            );
+
+            for (const r of listAddRpcRows) {
+                const p = r.payload as any;
+                const addedBy = p?.added_by ?? null;
+                const sampleIds = (p?.sample_restaurant_ids as string[]) ?? [];
+                const sampleNames = sampleIds
+                    .map((rid) => restNameMap.get(rid))
+                    .filter(Boolean) as string[];
+                listAddItems.push({
+                    id: r.id,
+                    type: 'list_add' as const,
+                    sort_date: r.sort_date,
+                    table_id: tableId,
+                    list_id: p?.list_id ?? null,
+                    list_title: p?.list_title ?? null,
+                    list_emoji: p?.list_emoji ?? null,
+                    added_by: addedBy,
+                    added_by_profile: addedBy
+                        ? {
+                            user_id: addedBy,
+                            display_name: adderProfMap.get(addedBy)?.display_name ?? null,
+                            avatar_url: adderProfMap.get(addedBy)?.avatar_url ?? null,
+                          }
+                        : null,
+                    add_count: p?.add_count ?? sampleNames.length,
+                    sample_restaurant_names: sampleNames,
+                    created_at: r.sort_date,
                 });
             }
         }
@@ -1055,6 +1183,8 @@ serve(async (req) => {
         const supperById = new Map(supperItems.map((s: any) => [s.id, s]));
         // TICKET-095: map for the gathering card.
         const gatheringById = new Map(gatheringItems.map((g: any) => [g.id, g]));
+        // TICKET-115: map for the list_add ledger line.
+        const listAddById = new Map(listAddItems.map((l: any) => [l.id, l]));
 
         const orderedItems = visibleRpc
             .map((rpcRow) => {
@@ -1085,6 +1215,9 @@ serve(async (req) => {
                 } else if (rpcRow.kind === 'gathering') {
                     item = gatheringById.get(rpcRow.id);
                     // Gathering cards carry RSVPs, not reactions (out of scope v1).
+                } else if (rpcRow.kind === 'list_add') {
+                    item = listAddById.get(rpcRow.id);
+                    // Ledger lines have no reactions — a quiet line, not a card.
                 }
                 if (!item) return null;
                 return {
@@ -1110,6 +1243,7 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('table-activity error:', error);
+        reportError(error, { fn: 'table-activity' });
         const details = error instanceof Error ? error.message : JSON.stringify(error);
         return new Response(
             JSON.stringify({ error: 'Internal Server Error', details }),

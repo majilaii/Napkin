@@ -8,11 +8,29 @@
  *     entry/set-table). One active proposal per (table, restaurant): the partial
  *     unique index raises 23505 → 409 ALREADY_PROPOSED.
  *
- *   rsvp — a table member answers 'in' | 'out' on a proposed gathering. Upsert
- *     on (gathering_id, user_id) so changing your answer is one call.
+ *   rsvp — a table member answers 'in' | 'out' | 'counter' on a proposed
+ *     gathering. Upsert on (gathering_id, user_id) so changing your answer is one
+ *     call. A 'counter' ("can't that day — try this one") carries counter_on
+ *     (>= today); 'in'/'out' clear it (TICKET-127).
+ *
+ *   reschedule — the host moves gather_on to a new date (proposed only,
+ *     TICKET-127). RSVPs whose counter_on = the new date flip to 'in'; every
+ *     prior 'in' is DELETED (they said yes to a different day → unanswered) and
+ *     the host is re-asserted 'in' (they chose the new date); 'out' and counters
+ *     for other dates persist. rescheduled_from records the old date so the card
+ *     can show "date moved · was <old>". Atomic via fn_reschedule_gathering.
+ *
+ *   list_upcoming — a table member reads the Table's future plans: proposed +
+ *     dispatched gatherings with gather_on >= today, ascending (TICKET-127/128).
  *
  *   cancel — the host calls it off (proposed only). Soft state flip to
  *     'cancelled'; fn_table_activity_page excludes cancelled rows.
+ *
+ *   delete — the host clears a dead gathering off the table for good: hard
+ *     DELETE (rsvps cascade). Allowed for proposed / expired / cancelled and
+ *     for a dispatched row whose supper link died (supper_id null). The ONE
+ *     block: dispatched with a live supper — that history belongs to the
+ *     supper; cancel the supper first.
  *
  * All writes are service-role (gatherings/gathering_rsvps have NO client write
  * policy) — membership is validated here against table_members.member_id
@@ -24,6 +42,13 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
+import {
+    buildGatheringCard,
+    type ProfileInput,
+    type RsvpInput,
+    type SourceInput,
+} from './buildCard.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -120,16 +145,29 @@ serve(async (req) => {
         if (action === 'create') {
             return await handleCreate(supabase, user, body);
         }
+        if (action === 'get') {
+            return await handleGet(supabase, user, body);
+        }
         if (action === 'rsvp') {
             return await handleRsvp(supabase, user, body);
         }
+        if (action === 'reschedule') {
+            return await handleReschedule(supabase, user, body);
+        }
+        if (action === 'list_upcoming') {
+            return await handleListUpcoming(supabase, user, body);
+        }
         if (action === 'cancel') {
             return await handleCancel(supabase, user, body);
+        }
+        if (action === 'delete') {
+            return await handleDelete(supabase, user, body);
         }
 
         return err('UNKNOWN_ACTION', `Unknown action: ${action}`, 400);
     } catch (error) {
         console.error('gatherings error:', error);
+        reportError(error, { fn: 'gatherings' });
         const details = error instanceof Error ? error.message : JSON.stringify(error);
         return err('INTERNAL', 'Internal Server Error', 500, details);
     }
@@ -221,6 +259,106 @@ async function handleCreate(
     return json(gathering);
 }
 
+// ── Action: get ────────────────────────────────────────────────────────────────
+// Single-gathering read (TICKET-136) — backs /gathering/[id] deep-link + reconcile.
+// Returns the EXACT GatheringCardActivity shape the feed card consumes, assembled
+// as a faithful single-row parallel of table-activity's batched hydration (see
+// buildCard.ts for the 7-point parity contract). Member-gated (member_id doctrine).
+//   • missing row OR status === 'cancelled' → 404 NOT_FOUND (cancelled never
+//     reaches the client — mirrors the feed exclusion, keeps the status union
+//     proposed|dispatched|expired so the shape stays byte-identical).
+//   • non-member → 403 FORBIDDEN.
+async function handleGet(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: any,
+    user: { id: string },
+    body: Record<string, unknown>,
+): Promise<Response> {
+    const gatheringId = body.gathering_id;
+    if (typeof gatheringId !== 'string' || !UUID_RE.test(gatheringId)) {
+        return err('INVALID_INPUT', 'gathering_id is required');
+    }
+
+    // Anchor row — read directly (NO RPC), same columns the card needs.
+    const { data: row, error: rowErr } = await supabase
+        .from('gatherings')
+        .select('id, table_id, restaurant_id, host_user_id, note, gather_on, status, supper_id, rescheduled_from, created_at')
+        .eq('id', gatheringId)
+        .maybeSingle();
+    if (rowErr) throw rowErr;
+    // Cancelled rows never reach the client (matches the feed exclusion).
+    if (!row || row.status === 'cancelled') {
+        return err('NOT_FOUND', 'Gathering not found', 404);
+    }
+
+    if (!(await isTableMember(supabase, row.table_id, user.id))) {
+        return err('FORBIDDEN', 'Not a member of this table', 403);
+    }
+
+    // RSVPs for this one gathering (counter_on rides along for the counters row +
+    // the 'counter' seat response).
+    const { data: rsvpRows } = await supabase
+        .from('gathering_rsvps')
+        .select('user_id, response, counter_on')
+        .eq('gathering_id', gatheringId);
+    const rsvps = ((rsvpRows ?? []) as RsvpInput[]).map((r) => ({
+        user_id: r.user_id,
+        response: r.response,
+        counter_on: r.counter_on ?? null,
+    }));
+
+    // Current roster — member_id doctrine (NEVER tm.user_id).
+    const { data: rosterRows } = await supabase
+        .from('table_members')
+        .select('member_id')
+        .eq('table_id', row.table_id);
+    const rosterIds = ((rosterRows ?? []) as { member_id: string }[]).map((m) => m.member_id);
+
+    // Profiles: roster + host (a host may have LEFT the table — still named).
+    const profileIds = [
+        ...new Set([...rosterIds, ...(row.host_user_id ? [row.host_user_id] : [])]),
+    ];
+    const { data: profileRows } = profileIds.length > 0
+        ? await supabase
+            .from('profiles')
+            .select('user_id, display_name, avatar_url')
+            .in('user_id', profileIds)
+        : { data: [] as ProfileInput[] };
+    const profMap = new Map(
+        ((profileRows ?? []) as ProfileInput[]).map((p) => [p.user_id, p]),
+    );
+
+    // Restaurant.
+    let restaurant = null;
+    if (row.restaurant_id) {
+        const { data: restRow } = await supabase
+            .from('restaurants')
+            .select('id, name, city, photo_url')
+            .eq('id', row.restaurant_id)
+            .maybeSingle();
+        restaurant = restRow ?? null;
+    }
+
+    // Source ("why this place?"): the HOST's own wishlist source for this spot.
+    // Looked up on the (host, restaurant) composite key — never a bare restaurant
+    // match, so a different gathering's host source can't leak.
+    let source: SourceInput | undefined;
+    if (row.host_user_id && row.restaurant_id) {
+        const { data: srcRow } = await supabase
+            .from('wishlist_items')
+            .select('source')
+            .eq('user_id', row.host_user_id)
+            .eq('restaurant_id', row.restaurant_id)
+            .maybeSingle();
+        if (srcRow?.source && typeof srcRow.source === 'object') {
+            source = srcRow.source as SourceInput;
+        }
+    }
+
+    const card = buildGatheringCard(row, rsvps, rosterIds, profMap, restaurant, source, user.id);
+    return json(card);
+}
+
 // ── Action: rsvp ──────────────────────────────────────────────────────────────
 
 async function handleRsvp(
@@ -231,12 +369,33 @@ async function handleRsvp(
 ): Promise<Response> {
     const gatheringId = body.gathering_id;
     const response = body.response;
+    const rawCounterOn = body.counter_on;
 
     if (typeof gatheringId !== 'string' || !UUID_RE.test(gatheringId)) {
         return err('INVALID_INPUT', 'gathering_id is required');
     }
-    if (response !== 'in' && response !== 'out') {
-        return err('INVALID_INPUT', "response must be 'in' or 'out'");
+    if (response !== 'in' && response !== 'out' && response !== 'counter') {
+        return err('INVALID_INPUT', "response must be 'in', 'out' or 'counter'");
+    }
+
+    // A counter must name a future-or-today date; in/out never carry one. The
+    // paired CHECK enforces this at the DB too, but validate here for a clean 400.
+    let counterOn: string | null = null;
+    if (response === 'counter') {
+        if (typeof rawCounterOn !== 'string' || !DATE_RE.test(rawCounterOn) ||
+            Number.isNaN(Date.parse(`${rawCounterOn}T00:00:00Z`))) {
+            return err('INVALID_INPUT', 'counter_on must be a valid YYYY-MM-DD date');
+        }
+        // >= today (HKT), within 90 days — same window as create/reschedule.
+        // Lexical compare is safe on zero-padded YYYY-MM-DD.
+        const today = todayHKT();
+        if (rawCounterOn < today) {
+            return err('INVALID_INPUT', 'counter_on cannot be in the past');
+        }
+        if (rawCounterOn > addDays(today, MAX_DAYS_AHEAD)) {
+            return err('INVALID_INPUT', `counter_on must be within ${MAX_DAYS_AHEAD} days`);
+        }
+        counterOn = rawCounterOn;
     }
 
     const { data: gathering, error: gatheringErr } = await supabase
@@ -263,13 +422,179 @@ async function handleRsvp(
                 gathering_id: gatheringId,
                 user_id: user.id,
                 response,
+                counter_on: counterOn, // null for in/out — clears a prior counter
                 updated_at: new Date().toISOString(),
             },
             { onConflict: 'gathering_id,user_id' },
         );
     if (upsertErr) throw upsertErr;
 
-    return json({ gathering_id: gatheringId, response });
+    return json({ gathering_id: gatheringId, response, counter_on: counterOn });
+}
+
+// ── Action: reschedule ──────────────────────────────────────────────────────
+// Host moves gather_on to a new date (proposed only). Amended AC8:
+//   • RSVPs with counter_on = new_date  → flip to 'in' (counter_on cleared).
+//   • every prior 'in'                  → DELETED (reset to unanswered).
+//   • the host                          → re-asserted 'in' (chose the new date).
+//   • 'out' + counters for other dates  → persist untouched.
+//   • rescheduled_from = the old gather_on (the "date moved · was <old>" breadcrumb).
+// The read + host/status/date-window checks below give clean 400/403/409 codes;
+// the whole re-date then runs as ONE atomic SECDEF call (fn_reschedule_gathering)
+// whose guarded claim on status='proposed' is the authoritative race guard — if
+// dispatch/cancel won the race it returns NULL and no RSVP is touched (mirrors
+// cancel/delete doctrine). One-active-per-spot index is unaffected — same row mutates.
+async function handleReschedule(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: any,
+    user: { id: string },
+    body: Record<string, unknown>,
+): Promise<Response> {
+    const gatheringId = body.gathering_id;
+    const newDate = body.new_date;
+
+    if (typeof gatheringId !== 'string' || !UUID_RE.test(gatheringId)) {
+        return err('INVALID_INPUT', 'gathering_id is required');
+    }
+    if (typeof newDate !== 'string' || !DATE_RE.test(newDate) ||
+        Number.isNaN(Date.parse(`${newDate}T00:00:00Z`))) {
+        return err('INVALID_INPUT', 'new_date must be a valid YYYY-MM-DD date');
+    }
+    const today = todayHKT();
+    if (newDate < today) {
+        return err('INVALID_INPUT', 'new_date cannot be in the past');
+    }
+    if (newDate > addDays(today, MAX_DAYS_AHEAD)) {
+        return err('INVALID_INPUT', `new_date must be within ${MAX_DAYS_AHEAD} days`);
+    }
+
+    const { data: gathering, error: gatheringErr } = await supabase
+        .from('gatherings')
+        .select('id, host_user_id, status, gather_on')
+        .eq('id', gatheringId)
+        .maybeSingle();
+    if (gatheringErr) throw gatheringErr;
+    if (!gathering) {
+        return err('NOT_FOUND', 'Gathering not found', 404);
+    }
+    if (gathering.host_user_id !== user.id) {
+        return err('NOT_HOST', 'Only the host can move the date', 403);
+    }
+    if (gathering.status !== 'proposed') {
+        return err('GATHERING_CLOSED', 'Only a proposed gathering can be moved', 409);
+    }
+
+    const oldDate = gathering.gather_on as string;
+    if (newDate === oldDate) {
+        return err('INVALID_INPUT', 'new_date is the current date');
+    }
+
+    // The whole re-date is ONE atomic SECDEF call (claim + prior-'in' delete +
+    // counter flip + host re-'in'). The read+checks above give clean 400/403/409
+    // codes; the rpc's claim clause (host_user_id + status='proposed' + date-moved)
+    // is the authoritative race guard, so a lost race never half-mutates the RSVPs.
+    // A NULL return = the claim matched nothing (dispatch/cancel/expiry won) → 409.
+    const { data: moved, error: rpcErr } = await supabase.rpc('fn_reschedule_gathering', {
+        p_gathering_id: gatheringId,
+        p_host: user.id,
+        p_new_date: newDate,
+    });
+    if (rpcErr) throw rpcErr;
+    if (!moved) {
+        return err('GATHERING_CLOSED', 'Only a proposed gathering can be moved', 409);
+    }
+
+    return json(moved);
+}
+
+// ── Action: list_upcoming ───────────────────────────────────────────────────
+// The Table-screen "what's booked" strip: proposed + dispatched gatherings whose
+// day hasn't passed, ascending by date. Member-gated (member_id doctrine).
+async function handleListUpcoming(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: any,
+    user: { id: string },
+    body: Record<string, unknown>,
+): Promise<Response> {
+    const tableId = body.table_id;
+    if (typeof tableId !== 'string' || !UUID_RE.test(tableId)) {
+        return err('INVALID_INPUT', 'table_id is required');
+    }
+
+    if (!(await isTableMember(supabase, tableId, user.id))) {
+        return err('FORBIDDEN', 'Not a member of this table', 403);
+    }
+
+    const today = todayHKT();
+    const { data: rows, error: rowsErr } = await supabase
+        .from('gatherings')
+        .select('id, restaurant_id, gather_on, status, supper_id')
+        .eq('table_id', tableId)
+        .in('status', ['proposed', 'dispatched'])
+        .gte('gather_on', today)
+        .order('gather_on', { ascending: true });
+    if (rowsErr) throw rowsErr;
+
+    const gatherings = (rows ?? []) as {
+        id: string; restaurant_id: string; gather_on: string;
+        status: string; supper_id: string | null;
+    }[];
+
+    if (gatherings.length === 0) {
+        return json({ rows: [] });
+    }
+
+    const gatheringIds = gatherings.map((g) => g.id);
+    const restIds = [...new Set(gatherings.map((g) => g.restaurant_id).filter(Boolean))];
+
+    // Restaurants (id + name only — the strip is a one-liner).
+    const { data: restaurants } = restIds.length > 0
+        ? await supabase.from('restaurants').select('id, name').in('id', restIds)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        : { data: [] as any[] };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const restMap = new Map((restaurants ?? []).map((r: any) => [r.id, r]));
+
+    // Current roster — in_count intersects 'in' RSVPs with live members so an
+    // ex-member's stale 'in' never inflates the count (member_id doctrine).
+    const { data: rosterRows } = await supabase
+        .from('table_members')
+        .select('member_id')
+        .eq('table_id', tableId);
+    const roster = new Set(((rosterRows ?? []) as { member_id: string }[]).map((m) => m.member_id));
+
+    // RSVPs for these gatherings: in_count + the caller's own response.
+    const { data: rsvpRows } = await supabase
+        .from('gathering_rsvps')
+        .select('gathering_id, user_id, response')
+        .in('gathering_id', gatheringIds);
+    const inCountByGathering = new Map<string, number>();
+    const viewerRespByGathering = new Map<string, string>();
+    for (const r of (rsvpRows ?? []) as { gathering_id: string; user_id: string; response: string }[]) {
+        if (r.response === 'in' && roster.has(r.user_id)) {
+            inCountByGathering.set(r.gathering_id, (inCountByGathering.get(r.gathering_id) ?? 0) + 1);
+        }
+        if (r.user_id === user.id) {
+            viewerRespByGathering.set(r.gathering_id, r.response);
+        }
+    }
+
+    const out = gatherings.map((g) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rest = (restMap.get(g.restaurant_id) ?? null) as any;
+        return {
+            id: g.id,
+            gather_on: g.gather_on,
+            status: g.status,
+            restaurant: rest ? { id: rest.id, name: rest.name ?? null } : null,
+            in_count: inCountByGathering.get(g.id) ?? 0,
+            supper_id: g.supper_id ?? null,
+            viewer_response: (viewerRespByGathering.get(g.id) ?? null) as
+                'in' | 'out' | 'counter' | null,
+        };
+    });
+
+    return json({ rows: out });
 }
 
 // ── Action: cancel ────────────────────────────────────────────────────────────
@@ -315,4 +640,52 @@ async function handleCancel(
     }
 
     return json({ cancelled: true });
+}
+
+// ── Action: delete ────────────────────────────────────────────────────────────
+
+async function handleDelete(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: any,
+    user: { id: string },
+    body: Record<string, unknown>,
+): Promise<Response> {
+    const gatheringId = body.gathering_id;
+    if (typeof gatheringId !== 'string' || !UUID_RE.test(gatheringId)) {
+        return err('INVALID_INPUT', 'gathering_id is required');
+    }
+
+    const { data: gathering, error: gatheringErr } = await supabase
+        .from('gatherings')
+        .select('id, host_user_id, status, supper_id')
+        .eq('id', gatheringId)
+        .maybeSingle();
+    if (gatheringErr) throw gatheringErr;
+    if (!gathering) {
+        return err('NOT_FOUND', 'Gathering not found', 404);
+    }
+    if (gathering.host_user_id !== user.id) {
+        return err('NOT_HOST', 'Only the host can clear this', 403);
+    }
+    if (gathering.status === 'dispatched' && gathering.supper_id) {
+        return err('GATHERING_LOCKED', 'This gathering became a supper — cancel the supper instead', 409);
+    }
+
+    // Guarded hard delete (rsvps cascade). The .or() re-asserts the live-supper
+    // block so a dispatch that wins the race between the read above and this
+    // call can't have its supper history erased (dispatch holds FOR UPDATE row
+    // locks, so this delete waits and then re-evaluates against the new state).
+    const { data: deletedRows, error: deleteErr } = await supabase
+        .from('gatherings')
+        .delete()
+        .eq('id', gatheringId)
+        .eq('host_user_id', user.id)
+        .or('status.neq.dispatched,supper_id.is.null')
+        .select('id');
+    if (deleteErr) throw deleteErr;
+    if (!deletedRows || deletedRows.length === 0) {
+        return err('GATHERING_LOCKED', 'This gathering became a supper — cancel the supper instead', 409);
+    }
+
+    return json({ deleted: true });
 }

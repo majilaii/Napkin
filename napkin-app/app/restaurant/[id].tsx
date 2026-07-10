@@ -65,6 +65,8 @@ import {
     useLookupByPlaceId,
     useLazyBackfillRestaurant,
 } from '@/hooks/search/useLookupByPlaceId';
+import { useReserveLink } from '@/hooks/restaurants/useReserveLink';
+import { findBookingUrl } from '@/lib/reserveLink';
 import {
     type SignalTier,
     type SignalCellData,
@@ -257,6 +259,27 @@ export default function RestaurantScreen() {
         restaurantId: persistedRow?.id ?? null,
         tableId: tableId ?? null,
     });
+
+    // ── Reserve link (TICKET-149) ─────────────────────────────────────────
+    // Places exposes no booking field, so the server resolves the venue's
+    // real booking page from its own website and caches it on the row. Fire
+    // the resolver only when the row was never checked (or a null check went
+    // stale — same 30-day TTL as the metadata backfill). Ghosts and
+    // not-yet-resolved rows fall back to a client-side tier-0 check: the
+    // stored website itself being a booking page. No URL → no Reserve pill.
+    const reserveCheckedMs = persistedRow?.reserve_url_checked_at
+        ? Date.parse(persistedRow.reserve_url_checked_at)
+        : NaN;
+    const reserveCheckIsStale =
+        Number.isNaN(reserveCheckedMs) || (Date.now() - reserveCheckedMs) > SYNC_TTL_MS;
+    const reserveLink = useReserveLink(
+        persistedRow?.id ?? null,
+        !!persistedRow && !persistedRow.reserve_url && reserveCheckIsStale,
+    );
+    const reserveUrl =
+        persistedRow?.reserve_url
+        ?? reserveLink.data?.reserve_url
+        ?? findBookingUrl(restaurant?.website);
 
     // ── Visit navigation ──────────────────────────────────────────────────
     const handleVisitPress = useCallback((visit: PageVisit) => {
@@ -589,6 +612,7 @@ export default function RestaurantScreen() {
                             name={restaurant.name}
                             city={restaurant.city}
                             hours={restaurant.hours}
+                            reserveUrl={reserveUrl}
                             palette={palette}
                         />
                     ) : null}

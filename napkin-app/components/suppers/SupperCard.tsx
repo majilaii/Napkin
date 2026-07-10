@@ -161,13 +161,13 @@ export function SupperCard({ supper, viewerId, onOpen, onAddTake }: SupperCardPr
         ? "everyone's in"
         : `${filled_count} of ${seat_count} gathered`;
 
-    // Hero priority: the night's pooled photos (richest, what the table actually
-    // ate) → the restaurant's own photo → nothing (a small "supper" kicker fills
-    // in). The pooled photos used to render as a small strip in the body; they're
-    // promoted to the hero so the card never opens with dead space.
+    // Hero: ONLY the night's pooled take-photos (owner-generated, what the table
+    // actually ate). NO restaurant/Google photo — doctrine locked 2026-07-05: a
+    // restaurant image must be the owner's own entry photo or nothing. With no
+    // pooled photos the card leads text-first with the "supper" kicker + the empty
+    // table motif (roster of seats), which is the intended "Empty Table" look.
     const showCollage = photos.length > 0;
-    const showRestaurantPhoto = !showCollage && !!restaurant?.photo_url;
-    const showBanner = showCollage || showRestaurantPhoto;
+    const showBanner = showCollage;
 
     return (
         <Pressable
@@ -177,16 +177,13 @@ export function SupperCard({ supper, viewerId, onOpen, onAddTake }: SupperCardPr
             accessibilityLabel={`supper at ${restaurantName}, ${progressText}`}
         >
             <View style={[styles.card, { backgroundColor: palette.surfaceJournalLow }, Shadow.note]}>
-                {/* Hero — the night's pooled photos as a collage, else the restaurant's
-                    own photo. When there's neither, we skip the banner entirely and lead
-                    the body with a small "supper" kicker rather than show an empty box. */}
+                {/* Hero — the night's pooled take-photos as a collage (owner photos
+                    only). When there are none we skip the banner entirely and lead the
+                    body with a small "supper" kicker + the empty-table roster, rather
+                    than borrow a restaurant/Google image. */}
                 {showBanner ? (
                     <View style={styles.bannerWrap}>
-                        {showCollage ? (
-                            <PhotoCollage photos={photos} />
-                        ) : (
-                            <Image source={{ uri: restaurant!.photo_url! }} style={styles.banner} resizeMode="cover" />
-                        )}
+                        <PhotoCollage photos={photos} />
                         <View style={[styles.pill, { backgroundColor: palette.placesOverlayTint + 'd9' }]}>
                             <Text style={[styles.pillText, { color: palette.text }]}>supper</Text>
                         </View>

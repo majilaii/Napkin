@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import { addBreadcrumb, captureError } from '@/lib/sentry';
+import { trackError } from '@/lib/track';
 
 export interface UnwrappedError {
     code: string;
@@ -66,6 +68,35 @@ export function isAuthFailure(err: unknown): boolean {
 }
 
 /**
+ * TICKET-121: report a terminal edge failure (the error is about to reach the
+ * caller) into the events table + Sentry. SessionExpiredError is routine
+ * (sign-out flow), never reported. Marks the error `__napkinReported` so the
+ * QueryCache/MutationCache global handlers don't double-report it.
+ */
+function reportEdgeFailure(err: unknown, fn: string, action?: string): void {
+    if (err instanceof SessionExpiredError) return;
+    try {
+        const context = `edge:${fn}:${action ?? ''}`;
+        const cause = (err as { cause?: UnwrappedError })?.cause;
+        trackError(err, context);
+        captureError(err, {
+            context,
+            tags: {
+                fn,
+                action: action ?? '',
+                code: cause?.code ?? '',
+                status: cause?.status != null ? String(cause.status) : '',
+            },
+        });
+        if (err && typeof err === 'object') {
+            (err as { __napkinReported?: boolean }).__napkinReported = true;
+        }
+    } catch {
+        /* reporting must never mask the original error */
+    }
+}
+
+/**
  * TICKET-075: attempt a single session refresh. Returns true when a new session
  * is obtained, false otherwise (caller surfaces SessionExpiredError on false).
  */
@@ -111,7 +142,10 @@ export async function callEdgeFn<T = unknown>(
     try {
         return await callEdgeFnOnce<T>(name, opts);
     } catch (err) {
-        if (!isAuthFailure(err)) throw err;
+        if (!isAuthFailure(err)) {
+            reportEdgeFailure(err, name, opts.action);
+            throw err;
+        }
         const refreshed = await tryRefreshSession();
         if (!refreshed) throw new SessionExpiredError();
         // Retry once with the fresh session. A second auth failure is terminal.
@@ -119,6 +153,7 @@ export async function callEdgeFn<T = unknown>(
             return await callEdgeFnOnce<T>(name, opts);
         } catch (retryErr) {
             if (isAuthFailure(retryErr)) throw new SessionExpiredError();
+            reportEdgeFailure(retryErr, name, opts.action);
             throw retryErr;
         }
     }
@@ -129,6 +164,8 @@ async function callEdgeFnOnce<T = unknown>(
     opts: CallEdgeFnOptions = {},
 ): Promise<T> {
     const { action, method = 'POST', params, body, signal } = opts;
+
+    addBreadcrumb({ category: 'edge', message: `${name}:${action ?? ''}` });
 
     if (method === 'GET') {
         const { data: { session } } = await supabase.auth.getSession();
@@ -200,23 +237,33 @@ async function callEdgeFnOnce<T = unknown>(
     }
 
     // POST via supabase-js invoke (auto-attaches auth).
-    // If `params` is provided, append them as a query string on the function
-    // name — supabase-js preserves query strings in the function name. This
-    // is required by edge functions that route on `?action=` instead of body
-    // (e.g. table-management mark_seen / add_member / leave_table).
+    // `action` and any `params` are appended to the function name as a query
+    // string — supabase-js preserves query strings in the function name. This
+    // mirrors the GET and postWithFetch paths so a top-level `action` reaches
+    // the query string on EVERY transport: functions that route POST on
+    // `?action=` (e.g. table-management, index.ts:51) work whether the caller
+    // passes `action` at the top level or via `params: { action }`. `action`
+    // is ALSO kept in the body (invokeBody) so body-reading functions are
+    // unaffected — this is purely additive. Closes the misroute footgun behind
+    // the TICKET-121 "Name is required" fire (top_four_get/set, mark_welcomed).
     const invokeBody = action
         ? { action, ...((body as object | undefined) ?? {}) }
         : body;
     let invokeName = name;
+    const qs = new URLSearchParams();
+    if (action) qs.set('action', action);
+    // If a caller ever passed BOTH a top-level `action` and `params.action`
+    // (none does today), `params.action` wins the query here — consistent with
+    // the GET path and postWithFetch. The two are equivalent only when not both
+    // are supplied.
     if (params) {
-        const qs = new URLSearchParams();
         for (const [k, v] of Object.entries(params)) {
             if (v === undefined || v === null) continue;
             qs.set(k, String(v));
         }
-        const queryStr = qs.toString();
-        if (queryStr) invokeName = `${name}?${queryStr}`;
     }
+    const queryStr = qs.toString();
+    if (queryStr) invokeName = `${name}?${queryStr}`;
     const { data, error } = await supabase.functions.invoke(invokeName, {
         body: invokeBody as Record<string, unknown> | undefined,
     });

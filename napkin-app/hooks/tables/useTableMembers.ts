@@ -17,7 +17,7 @@ export interface TableMember {
     };
 }
 
-async function fetchTableMembers(tableId: string): Promise<TableMember[]> {
+export async function fetchTableMembers(tableId: string): Promise<TableMember[]> {
     const { data, error } = await supabase
         .from('table_members')
         .select(`

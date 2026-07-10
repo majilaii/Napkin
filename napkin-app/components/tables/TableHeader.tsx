@@ -1,16 +1,19 @@
 /**
  * TableHeader — masthead for the Tables tab.
  *
- * Canvas-faithful (TTableHeader in tables-screens.jsx):
- *   Left column:
- *     "TABLE" kicker (10pt, 0.8 letter-spacing, uppercase, muted)
- *     Italic serif name (Newsreader italic, 24pt / 500 weight) + ▾ caret inline
- *     Sub label directly under the name (11pt muted, e.g. "4 members · 23 rounds")
- *   Right column:
- *     Avatar stack — 22px circles, overlapping -6px, 2px border in surface color
- *     Shows up to 3 avatars + "+N" overflow chip
+ * TICKET-141 layout (locked):
+ *   Top row:
+ *     Left  — "TABLE" kicker + italic serif name + ▾ caret (the switcher).
+ *     Right — ONLY the NotifBell + settings gear (22px, matched pair). No other
+ *             icons up top; the masthead stays editorial (Heirloom: structure
+ *             from spacing, not icon rows).
+ *   Members row (under the name, one line):
+ *     overlapping avatar stack (max 4) · "N members" · ghost `invite` chip ·
+ *     ghost `map` chip. Actions sit with the content they act on. Manrope 13,
+ *     frosted ghost pills (the map's chip grammar).
  *
- * Purely presentational — no hook calls inside.
+ * Purely presentational — no hook calls inside. All handlers are supplied by
+ * the Tables screen (re-plumbing, not new features).
  */
 
 import React from 'react';
@@ -18,37 +21,48 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '@/constants/theme';
 import { Avatar } from '@/components/feed/Avatar';
+import { NotifBell } from '@/components/notifications';
 
 type Palette = typeof Colors.light;
 
 export interface TableHeaderProps {
     tableName: string;
     memberCount: number;
+    /** @deprecated Rounds are retired — the header no longer surfaces a round
+     * count. Still accepted so existing callers typecheck; unused. */
     roundCount?: number;
-    /** Member names to show as avatar stack (first 3 render, rest counted) */
+    /** Member names to show as avatar stack (first 4 render, rest counted) */
     memberNames: string[];
     onSwitcherPress: () => void;
     palette: Palette;
-    /** When provided, a subtle settings gear icon appears right of the avatar stack (TICKET-029). */
+    /** Settings gear (top-right). Non-personal tables only. */
     onSettingsPress?: () => void;
-    /** When provided (owner only), a designated + for seating people — the
-     * invite path no longer hides behind the gear (founder, 2026-07-03). */
+    /** Owner-only `invite` chip in the members row — the invite path no longer
+     * hides behind the gear (founder, 2026-07-03). */
     onInvitePress?: () => void;
+    /** TICKET-133: bell on the Tables header — same dot/source as Profile. */
+    onBellPress?: () => void;
+    bellUnread?: boolean;
+    /** TICKET-139/141: the table's territory map — a `map` chip in the members
+     * row (any member may open it; the map is member-gated server-side). */
+    onMapPress?: () => void;
 }
 
-const MAX_STACK_AVATARS = 3;
+const MAX_STACK_AVATARS = 4;
 const AVATAR_SIZE = 22;
 const AVATAR_OVERLAP = 6;
 
 export function TableHeader({
     tableName,
     memberCount,
-    roundCount,
     memberNames,
     onSwitcherPress,
     palette,
     onSettingsPress,
     onInvitePress,
+    onBellPress,
+    bellUnread,
+    onMapPress,
 }: TableHeaderProps) {
     const visibleAvatars = memberNames.slice(0, MAX_STACK_AVATARS);
     const overflow = Math.max(memberNames.length - MAX_STACK_AVATARS, 0);
@@ -56,52 +70,59 @@ export function TableHeader({
     const stackWidth =
         stackCells > 0 ? AVATAR_SIZE + (stackCells - 1) * (AVATAR_SIZE - AVATAR_OVERLAP) : 0;
 
-    const subParts: string[] = [];
-    if (memberCount > 0) {
-        subParts.push(`${memberCount} ${memberCount === 1 ? 'member' : 'members'}`);
-    }
-    if (roundCount != null && roundCount > 0) {
-        subParts.push(`${roundCount} ${roundCount === 1 ? 'round' : 'rounds'}`);
-    }
-    const subLabel = subParts.join(' \u00B7 '); // middle dot
-
-    const kicker = 'TABLE';
+    const countLabel =
+        memberCount > 0 ? `${memberCount} ${memberCount === 1 ? 'member' : 'members'}` : '';
 
     return (
         <View style={styles.container}>
-            {/* Left column: kicker + name + sub
-                TICKET-070: chevron always visible \u2014 the switcher sheet is the
-                home of "gather a new table" (the only table-creation path).
-                Single-table users see it to reach that CTA. */}
-            <Pressable
-                onPress={onSwitcherPress}
-                style={styles.nameBlock}
-                accessibilityRole="button"
-                accessibilityLabel={`Switch table, currently ${tableName}`}
-            >
-                <Text style={[styles.kicker, { color: palette.textMuted }]}>
-                    {kicker}
-                </Text>
-                <View style={styles.nameRow}>
-                    <Text
-                        style={[styles.tableName, { color: palette.text }]}
-                        numberOfLines={1}
-                    >
-                        {tableName}
-                    </Text>
-                    <Text style={[styles.chevron, { color: palette.textMuted }]}>
-                        {'\u25BE'}
-                    </Text>
-                </View>
-                {subLabel ? (
-                    <Text style={[styles.subLabel, { color: palette.textMuted }]}>
-                        {subLabel}
-                    </Text>
-                ) : null}
-            </Pressable>
+            {/* Top row: name/switcher (left) · bell + gear (right). */}
+            <View style={styles.topRow}>
+                {/* TICKET-070: caret always visible — the switcher sheet is the
+                    home of "gather a new table" (the only table-creation path). */}
+                <Pressable
+                    onPress={onSwitcherPress}
+                    style={styles.nameBlock}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Switch table, currently ${tableName}`}
+                >
+                    <Text style={[styles.kicker, { color: palette.textMuted }]}>TABLE</Text>
+                    <View style={styles.nameRow}>
+                        <Text
+                            style={[styles.tableName, { color: palette.text }]}
+                            numberOfLines={1}
+                        >
+                            {tableName}
+                        </Text>
+                        <Text style={[styles.chevron, { color: palette.textMuted }]}>
+                            {'▾'}
+                        </Text>
+                    </View>
+                </Pressable>
 
-            {/* Right column: stacked avatars + optional settings gear */}
-            <View style={styles.rightColumn}>
+                <View style={styles.topActions}>
+                    {onBellPress && (
+                        <NotifBell
+                            unread={bellUnread}
+                            onPress={onBellPress}
+                            ringColor={palette.background}
+                        />
+                    )}
+                    {onSettingsPress && (
+                        <Pressable
+                            onPress={onSettingsPress}
+                            hitSlop={10}
+                            accessibilityRole="button"
+                            accessibilityLabel="Table settings"
+                            style={({ pressed }) => [styles.gearButton, { opacity: pressed ? 0.6 : 1 }]}
+                        >
+                            <Ionicons name="settings-outline" size={22} color={palette.textMuted} />
+                        </Pressable>
+                    )}
+                </View>
+            </View>
+
+            {/* Members row: avatars · count · invite chip · map chip. */}
+            <View style={styles.membersRow}>
                 {stackCells > 0 && (
                     <View style={[styles.avatarStack, { width: stackWidth }]}>
                         {visibleAvatars.map((name, i) => (
@@ -116,12 +137,7 @@ export function TableHeader({
                                     },
                                 ]}
                             >
-                                <Avatar
-                                    name={name}
-                                    url={null}
-                                    size={AVATAR_SIZE}
-                                    palette={palette}
-                                />
+                                <Avatar name={name} url={null} size={AVATAR_SIZE} palette={palette} />
                             </View>
                         ))}
                         {overflow > 0 && (
@@ -130,54 +146,55 @@ export function TableHeader({
                                     styles.avatarWrapper,
                                     styles.overflowChip,
                                     {
-                                        left:
-                                            visibleAvatars.length *
-                                            (AVATAR_SIZE - AVATAR_OVERLAP),
+                                        left: visibleAvatars.length * (AVATAR_SIZE - AVATAR_OVERLAP),
                                         borderColor: palette.background,
                                         backgroundColor: palette.surfaceContainerHigh,
                                     },
                                 ]}
                             >
-                                <Text
-                                    style={[
-                                        styles.overflowText,
-                                        { color: palette.textSecondary },
-                                    ]}
-                                >
+                                <Text style={[styles.overflowText, { color: palette.textSecondary }]}>
                                     +{overflow}
                                 </Text>
                             </View>
                         )}
                     </View>
                 )}
+
+                {countLabel ? (
+                    <Text style={[styles.countLabel, { color: palette.textMuted }]}>{countLabel}</Text>
+                ) : null}
+
                 {onInvitePress && (
                     <Pressable
                         onPress={onInvitePress}
-                        hitSlop={10}
+                        hitSlop={8}
                         accessibilityRole="button"
                         accessibilityLabel="Invite to this table"
-                        style={[styles.inviteButton, { borderColor: 'rgba(160,63,40,0.35)' }]}
+                        style={({ pressed }) => [
+                            styles.ghostChip,
+                            { backgroundColor: palette.surfaceContainerHigh, opacity: pressed ? 0.6 : 1 },
+                        ]}
                     >
-                        <Ionicons
-                            name="person-add-outline"
-                            size={15}
-                            color={palette.primary}
-                        />
+                        <Ionicons name="person-add-outline" size={14} color={palette.textSecondary} />
+                        <Text style={[styles.ghostChipLabel, { color: palette.textSecondary }]}>
+                            invite
+                        </Text>
                     </Pressable>
                 )}
-                {onSettingsPress && (
+
+                {onMapPress && (
                     <Pressable
-                        onPress={onSettingsPress}
-                        hitSlop={10}
+                        onPress={onMapPress}
+                        hitSlop={8}
                         accessibilityRole="button"
-                        accessibilityLabel="Table settings"
-                        style={styles.settingsButton}
+                        accessibilityLabel="table map"
+                        style={({ pressed }) => [
+                            styles.ghostChip,
+                            { backgroundColor: palette.surfaceContainerHigh, opacity: pressed ? 0.6 : 1 },
+                        ]}
                     >
-                        <Ionicons
-                            name="settings-outline"
-                            size={18}
-                            color={palette.textMuted}
-                        />
+                        <Ionicons name="map-outline" size={14} color={palette.textSecondary} />
+                        <Text style={[styles.ghostChipLabel, { color: palette.textSecondary }]}>map</Text>
                     </Pressable>
                 )}
             </View>
@@ -187,12 +204,15 @@ export function TableHeader({
 
 const styles = StyleSheet.create({
     container: {
-        flexDirection: 'row',
-        alignItems: 'flex-end',
-        justifyContent: 'space-between',
         paddingHorizontal: 22,
         paddingTop: Spacing.sm,
         paddingBottom: 14,
+        gap: 12,
+    },
+    topRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
         gap: 12,
     },
     nameBlock: {
@@ -221,32 +241,25 @@ const styles = StyleSheet.create({
     chevron: {
         fontSize: 14,
     },
-    subLabel: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 11,
-        marginTop: 3,
-        letterSpacing: 0.2,
-    },
-    rightColumn: {
+    topActions: {
         flexDirection: 'row',
-        alignItems: 'flex-end',
-        gap: 8,
-        marginBottom: 3,
+        alignItems: 'center',
+        gap: 4,
+    },
+    gearButton: {
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    membersRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
     },
     avatarStack: {
         position: 'relative',
         height: AVATAR_SIZE,
-    },
-    settingsButton: {
-        padding: 2,
-    },
-    inviteButton: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        borderWidth: 1.5,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     avatarWrapper: {
         position: 'absolute',
@@ -264,5 +277,23 @@ const styles = StyleSheet.create({
     overflowText: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 9,
+    },
+    countLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        letterSpacing: 0.2,
+    },
+    ghostChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    ghostChipLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+        letterSpacing: 0.2,
     },
 });

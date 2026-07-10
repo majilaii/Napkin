@@ -14,6 +14,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
 import { callEdgeFn } from '@/lib/edgeInvoke';
+import { queryKeys } from '@/lib/queryKeys';
+import { useAuth } from '@/providers/AuthProvider';
 import { useUpdateEntry } from './useUpdateEntry';
 
 // Local query key for the entry-photos list (mirrors entry-detail's useEntryPhotos)
@@ -76,6 +78,7 @@ interface RemovePhotoInput {
 export function useRemoveEntryPhoto(entryId: string) {
     const qc = useQueryClient();
     const updateEntry = useUpdateEntry(entryId);
+    const { user } = useAuth();
 
     return useMutation({
         mutationFn: async ({ photoId, photoUrl }: RemovePhotoInput) => {
@@ -96,6 +99,16 @@ export function useRemoveEntryPhoto(entryId: string) {
         onSuccess: async (_result, { isHero }) => {
             // Invalidate entry-photos cache so carousel reflects removal
             await qc.invalidateQueries({ queryKey: entryPhotosKey(entryId) });
+
+            // TICKET-144 review fix (P2): the deleted photo may have been a Top-4
+            // chosen-memory hero — the FK already SET NULLed it server-side, so
+            // refetch the own profile to drop the dangling hero_entry_photo_id
+            // from the Top-4 editor's seed (a stale id re-sent on the next save
+            // would otherwise fail it). Self profile cache is keyed by user id
+            // (same narrow invalidation as useSetProfileTopFour / useDeleteEntry).
+            if (user?.id) {
+                qc.invalidateQueries({ queryKey: queryKeys.users.profile(user.id) });
+            }
 
             if (isHero) {
                 // Fetch the new first photo (if any) to update hero denorm

@@ -23,7 +23,7 @@ import {
 } from '@expo-google-fonts/manrope';
 import * as SplashScreen from 'expo-splash-screen';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, View, Pressable, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,10 +32,21 @@ import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
 import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
 import { usePublishCollectionsSnapshot } from '@/hooks/wishlist/usePublishCollectionsSnapshot';
+import { NotifPermissionSheet } from '@/components/notifications';
+import {
+  configureNotifications,
+  addNotificationResponseListener,
+  getInitialNotificationUrl,
+  onNotifPromptRequest,
+} from '@/lib/localNotify';
 import { Colors } from '@/constants/theme';
 import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { track, trackError, flushNow } from '@/lib/track';
+import { initSentry, captureError, wrapRootComponent } from '@/lib/sentry';
+
+// TICKET-121: before any render. No-op until EXPO_PUBLIC_SENTRY_DSN exists.
+initSentry();
 
 SplashScreen.preventAutoHideAsync();
 
@@ -50,6 +61,7 @@ if (!(globalThis as { __napkinFatalHook?: boolean }).__napkinFatalHook) {
     try {
       if (isFatal) {
         trackError(error, 'fatal');
+        captureError(error, { context: 'fatal' });
         flushNow(); // best-effort — the debounce would never fire before the crash
       }
     } catch {
@@ -60,19 +72,35 @@ if (!(globalThis as { __napkinFatalHook?: boolean }).__napkinFatalHook) {
 }
 
 /**
- * BottomNavBar — TICKET-070 Phase A IA update; TICKET-098 adds Feed.
+ * BottomNavBar — TICKET-070 Phase A IA update; TICKET-098 adds Feed;
+ * TICKET-130 reshapes the CONTAINER to a detached floating pill
+ * (founder-requested 2026-07-07 — supersedes the edge-to-edge opaque bar of
+ * 2026-07-02 for the container only).
  *
  * 5 tabs: Feed · Table · Search · Wishlist · Profile
- * Icons: 21px outline, labels 8px/600 uppercase ls1.2
- * Journal exits the nav (route stays alive for deep links).
- * Feed inserted leftmost (TICKET-098 [ARCH-REVIEW-7] — the reorder is in-spec);
- * sibling styling/sizing/active-color untouched. Journal remains the landing
- * surface — post-auth redirect stays `/wishlist`.
+ * Icons: 21px outline + labels — SAME icons, SAME labels, SAME routes/handlers
+ * as before the pill (items are untouched; only the container changed).
+ * Journal exits the nav (route stays alive for deep links). Post-auth redirect
+ * stays `/wishlist`.
+ *
+ * ARCHITECT-REVIEW: TICKET-130 §7 specs a terracotta `+` button (46×46,
+ * marginTop −20) for the pill, but the nav has had NO `+` since TICKET-069
+ * (skinny five: FAB dead — LogSheet on the restaurant page is the sole write
+ * path). Adding one would invent a new route/handler, contradicting the same
+ * ticket's "SAME routes/badges/handlers" constraint, so the pill ships with
+ * the 5 existing tabs only. If the founder wants the `+` back, a follow-up
+ * must spec what it opens.
  *
  * Wishlist routing: points to the existing Stack route `app/wishlist.tsx`
  * (`/wishlist`). inTabs includes `segments[0] === 'wishlist'` so the bar
  * remains visible there.
  */
+// TICKET-130 pill background — mock literals (surfaceNote/card at 0.94).
+const PILL_BG = {
+  light: 'rgba(255,253,248,0.94)',
+  dark: 'rgba(42,39,36,0.94)',
+} as const;
+
 function BottomNavBar() {
   const segments = useSegments();
   const router = useRouter();
@@ -84,16 +112,18 @@ function BottomNavBar() {
   const inTabs = segments[0] === '(tabs)' || segments[0] === 'wishlist';
   if (!inTabs) return null;
 
-  // Active tab detection
-  const seg1 = segments[1] as string | undefined;
+  // Active tab detection. Widen first: without generated .expo/types,
+  // useSegments() is the tuple [string] and segments[1] is a TS2493.
+  const seg1 = (segments as string[])[1] as string | undefined;
   // When on the wishlist Stack route, segments[0] = 'wishlist', segments[1] = undefined
   const activeTab =
     segments[0] === 'wishlist'
       ? 'wishlist'
       : seg1 ?? 'tables';
 
+  // Active terracotta, inactive textSecondary (TICKET-130 pill spec).
   const tabColor = (name: string) =>
-    activeTab === name ? palette.tabIconSelected : palette.tabIconDefault;
+    activeTab === name ? palette.tabIconSelected : palette.textSecondary;
 
   const labelStyle = (name: string) => [
     navStyles.label,
@@ -105,10 +135,11 @@ function BottomNavBar() {
       style={[
         navStyles.bar,
         {
-          // Opaque — content scrolling under a see-through bar read as a bug
-          // (founder, 2026-07-02). Warm note-white, matches the card surface.
-          backgroundColor: '#fffdf8',
-          paddingBottom: insets.bottom > 0 ? insets.bottom : 12,
+          // TICKET-130 floating pill — near-opaque warm note-white / dark card
+          // (mock literals; surfaceNote/card at 0.94 — not new tokens). Keyed
+          // by scheme (not compared) — useColorScheme is hard-forced 'light'.
+          backgroundColor: PILL_BG[scheme],
+          bottom: Math.max(insets.bottom - 12, 10),
         },
       ]}
     >
@@ -145,15 +176,15 @@ function BottomNavBar() {
         <Text style={labelStyle('search')}>Search</Text>
       </Pressable>
 
-      {/* Wishlist — points to existing Stack route */}
+      {/* Map (TICKET-134 — formerly Wishlist) — points to existing /wishlist route */}
       <Pressable
         onPress={() => router.replace('/wishlist')}
         style={navStyles.tab}
-        accessibilityLabel="Wishlist"
+        accessibilityLabel="Map"
         accessibilityRole="tab"
       >
-        <Ionicons name="location-outline" size={21} color={tabColor('wishlist')} />
-        <Text style={labelStyle('wishlist')}>Wishlist</Text>
+        <Ionicons name="map-outline" size={21} color={tabColor('wishlist')} />
+        <Text style={labelStyle('wishlist')}>Map</Text>
       </Pressable>
 
       {/* Profile */}
@@ -171,40 +202,53 @@ function BottomNavBar() {
 }
 
 const navStyles = StyleSheet.create({
+  // TICKET-130 — detached floating pill (bottom is set inline from insets).
   bar: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    left: 12,
+    right: 12,
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingTop: 10,
-    borderTopWidth: 0,
-    // canvas: box-shadow: 0 -8px 30px rgba(0,0,0,0.04)
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.04,
+    borderRadius: 26,
+    paddingVertical: 8,
+    // Ambient pill shadow — mock: 0 8px 30px rgba(28,28,25,0.12)
+    shadowColor: '#1c1c19',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
     shadowRadius: 30,
-    elevation: 4,
+    elevation: 6,
   },
   tab: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 6,
+    paddingVertical: 4,
     flex: 1,
     gap: 4,
   },
   label: {
     fontFamily: 'Manrope_600SemiBold',
-    fontSize: 8,
+    fontSize: 8.5,
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
 });
 
+// Nav theme pinned to warm paper. @react-navigation's DefaultTheme paints
+// card + background pure white; every screen paints Colors.light.background, so
+// the white card peeked through during every push/pop → flicker. Derive from
+// DefaultTheme (light-only, matching the app's unconditional DefaultTheme pin).
+const NavTheme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    background: Colors.light.background,
+    card: Colors.light.background,
+  },
+};
+
 function RootLayoutNav() {
-  const { session, isLoading } = useAuth();
+  const { session, isLoading, onboardedAt } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -217,6 +261,24 @@ function RootLayoutNav() {
   // picker can render them (separate process — can't read the app's cache).
   usePublishCollectionsSnapshot();
 
+  // TICKET-120: local import-completion notifications. Configure the foreground
+  // handler + Android channel once, and route a tap — both the live listener and
+  // the cold-start last-response — to the imports hub. All calls degrade to no-ops
+  // when expo-notifications is absent (Expo Go / web / unlinked).
+  const [notifSheetVisible, setNotifSheetVisible] = useState(false);
+  useEffect(() => {
+    configureNotifications();
+    const unsub = addNotificationResponseListener((url) => router.push(url as any));
+    getInitialNotificationUrl().then((url) => {
+      if (url) router.push(url as any);
+    });
+    return unsub;
+  }, [router]);
+
+  // The drain raises this when an import is in flight, permission isn't granted, and
+  // the cadence gate allows — render the soft pre-permission sheet.
+  useEffect(() => onNotifPromptRequest(() => setNotifSheetVisible(true)), []);
+
   useEffect(() => {
     if (isLoading) return;
 
@@ -225,16 +287,34 @@ function RootLayoutNav() {
     // it starts signed-out (would bounce to /auth) and setSession() flips to
     // signed-in mid-form (would bounce to /wishlist before the new password).
     const inRecovery = segments[0] === 'reset-password';
+    // TICKET-107: a pending share/handoff resume (auth.tsx redirects to these)
+    // must finish BEFORE onboarding — "import resume wins."
+    const inOnboarding = segments[0] === 'onboarding';
+    const inResume = segments[0] === 'import' || segments[0] === 'handoff' || segments[0] === 'join-table';
 
     if (!session && !inAuthGroup && !inRecovery) {
       router.replace('/auth');
     } else if (session && inAuthGroup) {
-      // Launch-readiness (2026-07-03): land on Wishlist, not Tables — a new
-      // account has zero tables, and the capture surface is the product's
-      // first-value moment (journal-first positioning).
-      router.replace('/wishlist');
+      // TICKET-107: onboardedAt is TRI-STATE (undefined = still loading). Wait
+      // for it to resolve before redirecting so a fresh signup routes straight
+      // to /onboarding instead of flashing /wishlist then bouncing. AuthProvider
+      // always resolves it to null-or-string (read errors fall back to
+      // "onboarded"), so this never strands a user on /auth.
+      if (onboardedAt !== undefined) {
+        // Launch-readiness (2026-07-03): onboarded users land on Wishlist, not
+        // Tables — the capture surface is the product's first-value moment.
+        router.replace(onboardedAt === null ? '/onboarding' : '/wishlist');
+      }
+    } else if (
+      session &&
+      onboardedAt === null &&
+      !inRecovery &&
+      !inOnboarding &&
+      !inResume
+    ) {
+      router.replace('/onboarding');
     }
-  }, [session, isLoading, segments, router]);
+  }, [session, isLoading, onboardedAt, segments, router]);
 
   // TICKET-088: app_open on launch + every foreground (D1/D7/D30 cohorts).
   const userId = session?.user?.id;
@@ -248,14 +328,27 @@ function RootLayoutNav() {
   }, [userId]);
 
   return (
-    <ThemeProvider value={DefaultTheme}>
+    <ThemeProvider value={NavTheme}>
       <View style={{ flex: 1 }}>
         {/* Root catch: a render error anywhere used to white-screen the whole
             app with zero trace (only entry-detail was wrapped). */}
-        <ErrorBoundary screen="root" onError={(e) => trackError(e, 'root-boundary')}>
-        <Stack>
+        <ErrorBoundary
+          screen="root"
+          onError={(e) => {
+            trackError(e, 'root-boundary');
+            captureError(e, { context: 'root-boundary' });
+          }}
+        >
+        <Stack
+          screenOptions={{
+            // Card content never flashes white mid-transition — see NavTheme.
+            contentStyle: { backgroundColor: Colors.light.background },
+          }}
+        >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="auth" options={{ headerShown: false }} />
+          {/* TICKET-107: first-sign-in onboarding stack (name · city · teach) */}
+          <Stack.Screen name="onboarding" options={{ headerShown: false }} />
           <Stack.Screen
             name="create-entry"
             options={{ presentation: 'modal', headerShown: false }}
@@ -281,7 +374,15 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
+            name="gathering/[id]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
             name="lists"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="taste"
             options={{ headerShown: false }}
           />
           <Stack.Screen
@@ -378,16 +479,26 @@ function RootLayoutNav() {
             name="handoff"
             options={{ headerShown: false, presentation: 'card' }}
           />
+          {/* Table invite receive screen */}
+          <Stack.Screen
+            name="join-table"
+            options={{ headerShown: false, presentation: 'card' }}
+          />
         </Stack>
         </ErrorBoundary>
         <BottomNavBar />
+        {/* TICKET-120: soft pre-permission sheet, event-triggered by the drain. */}
+        <NotifPermissionSheet
+          visible={notifSheetVisible}
+          onClose={() => setNotifSheetVisible(false)}
+        />
       </View>
       <StatusBar style="auto" />
     </ThemeProvider>
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   const [fontsLoaded] = useFonts({
     Newsreader_400Regular,
     Newsreader_400Regular_Italic,
@@ -429,3 +540,6 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+// TICKET-121: Sentry.wrap when the DSN is live; plain export otherwise.
+export default wrapRootComponent(RootLayout);

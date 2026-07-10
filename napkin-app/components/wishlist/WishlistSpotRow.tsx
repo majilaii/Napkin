@@ -15,10 +15,12 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors } from '@/constants/theme';
 import { priceTierLabel } from '@/lib/priceLevel';
+import { SwipeToDeleteRow } from '@/components/common';
 import type { PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import type { WishlistSourceHandoff } from '@/lib/types/wishlistSource';
+import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 
-/** Tappable origin of a save: the TikTok you saved it from (or maps/web link). */
+/** Tappable origin of a save: the TikTok/Instagram you saved it from (or web link). */
 function sourceLink(
     source: PersonalWishlistItem['source'],
 ): { url: string; icon: keyof typeof Ionicons.glyphMap; label: string } | null {
@@ -27,6 +29,11 @@ function sourceLink(
         return { url: source.url, icon: 'logo-tiktok', label: 'open the TikTok this came from' };
     }
     if (source.type === 'web' && source.url) {
+        // Instagram rides type 'web' (no first-class variant in the source
+        // CHECK) — the host tells it apart.
+        if (isInstagramSource(source)) {
+            return { url: source.url, icon: 'logo-instagram', label: 'open the Instagram post this came from' };
+        }
         return { url: source.url, icon: 'link-outline', label: 'open the page this came from' };
     }
     return null;
@@ -40,9 +47,24 @@ interface Props {
     distanceLabel?: string | null;
     palette: typeof Colors.light;
     onPress: () => void;
+    /**
+     * TICKET-111: owner delete affordances. When `onRemove` is provided the row
+     * gains long-press (→ owner sheet) and a right-swipe reveal (→ trash).
+     * Both call `onRemove`; the caller runs the confirm step.
+     */
+    onLongPress?: () => void;
+    onRemove?: () => void;
 }
 
-export function WishlistSpotRow({ index, item, distanceLabel, palette, onPress }: Props) {
+export function WishlistSpotRow({
+    index,
+    item,
+    distanceLabel,
+    palette,
+    onPress,
+    onLongPress,
+    onRemove,
+}: Props) {
     const r = item.restaurant;
     if (!r) return null;
 
@@ -55,12 +77,17 @@ export function WishlistSpotRow({ index, item, distanceLabel, palette, onPress }
     const rating = r.google_rating != null ? r.google_rating.toFixed(1) : null;
     const link = sourceLink(item.source);
 
-    return (
+    const row = (
         <Pressable
             onPress={onPress}
+            onLongPress={onLongPress}
+            delayLongPress={350}
+            // Hold off the pressed state so a swipe or scroll that starts on the
+            // row doesn't flicker the opacity dim before the gesture claims it.
+            unstable_pressDelay={100}
             style={({ pressed }) => [
                 styles.row,
-                { borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.7 : 1 },
+                { backgroundColor: palette.background, borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.7 : 1 },
             ]}
             accessibilityLabel={`Open ${r.name}`}
         >
@@ -106,22 +133,29 @@ export function WishlistSpotRow({ index, item, distanceLabel, palette, onPress }
             ) : null}
         </Pressable>
     );
+
+    if (!onRemove) return row;
+    return (
+        <SwipeToDeleteRow enabled onDelete={onRemove}>
+            {row}
+        </SwipeToDeleteRow>
+    );
 }
 
 const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 14,
-        paddingVertical: 17,
+        gap: 10,
+        paddingVertical: 8,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     num: {
-        width: 24,
+        width: 20,
         textAlign: 'center',
         paddingTop: 2,
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 19,
+        fontSize: 15,
     },
     textBlock: {
         flex: 1,
@@ -129,22 +163,22 @@ const styles = StyleSheet.create({
     },
     name: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
+        fontSize: 18,
         letterSpacing: -0.3,
     },
     meta: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 13,
-        marginTop: 4,
+        fontSize: 12,
+        marginTop: 2,
     },
     rightCol: {
         alignItems: 'flex-end',
         flexShrink: 0,
     },
     sourceBtn: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
         alignSelf: 'center',
@@ -152,12 +186,12 @@ const styles = StyleSheet.create({
     },
     rating: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
-        lineHeight: 24,
+        fontSize: 18,
+        lineHeight: 20,
     },
     distance: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 11,
-        marginTop: 5,
+        marginTop: 3,
     },
 });

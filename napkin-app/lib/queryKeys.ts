@@ -83,6 +83,12 @@ export const queryKeys = {
         detail: (listId: string) => ['lists', 'detail', listId] as const,
         containing: (userId: string, restaurantId: string) =>
             ['lists', 'containing', userId, restaurantId] as const,
+        /** TICKET-108: all my-list entries w/ coords + emoji for the wishlist map. */
+        mapPins: (userId: string) => ['lists', 'mapPins', userId] as const,
+        /** TICKET-106: public-list search results (keyset-paginated). */
+        searchPublic: (q: string) => ['lists', 'searchPublic', q] as const,
+        /** TICKET-125: For You browse block — recent public lists, global (not per-viewer). */
+        browsePublic: () => ['lists', 'browsePublic'] as const,
     },
 
     // Users (public / merged profile surface — TICKET-020, TICKET-025)
@@ -94,7 +100,14 @@ export const queryKeys = {
         regulars: (userId: string) => ['users', 'regulars', userId] as const,
         // TICKET-092 profile revamp
         spots: (userId: string) => ['users', 'spots', userId] as const,
+        // TICKET-144 pt2: the caller's OWN entry photos at a restaurant (Top-4 hero picker).
+        restaurantPhotos: (userId: string, restaurantId: string) =>
+            ['users', 'restaurantPhotos', userId, restaurantId] as const,
+        // TICKET-124: network map pins — restaurants logged by the follow set.
+        networkMapPins: (userId: string) => ['users', 'networkMapPins', userId] as const,
         reviews: (userId: string) => ['users', 'reviews', userId] as const,
+        // TICKET-112 taste drill-in (category + cuisine breakdown, owner-only v1)
+        taste: (userId: string) => ['users', 'taste', userId] as const,
         searchAll: () => ['users', 'search'] as const,
         search: (q: string, opts?: { mutualOnly?: boolean }) =>
             opts?.mutualOnly
@@ -134,6 +147,9 @@ export const queryKeys = {
         all: () => ['atlas'] as const,
         index: (tableId: string) => ['atlas', tableId] as const,
         city: (tableId: string, city: string) => ['atlas', tableId, city] as const,
+        /** TICKET-139: the table's been-together map pins (suppers + legacy rounds).
+         * Nested under the table's atlas prefix so a table-scoped invalidate reaches it. */
+        mapPins: (tableId: string) => ['atlas', tableId, 'mapPins'] as const,
     },
 
     // Restaurants (accumulated Table + user memory per venue)
@@ -158,6 +174,9 @@ export const queryKeys = {
             tableId
                 ? ['restaurantPage', restaurantId, tableId] as const
                 : ['restaurantPage', restaurantId] as const,
+        /** TICKET-149: lazily-resolved direct booking-page URL (Reserve pill). */
+        reserveLink: (restaurantId: string) =>
+            ['restaurantReserveLink', restaurantId] as const,
     },
 
     // Misc per-entry caches (entry-detail screen ad-hoc queries)
@@ -235,6 +254,16 @@ export const queryKeys = {
     // Handoff — wishlist share link resolve (TICKET-072)
     handoff: {
         resolve: (token: string) => ['handoff', 'resolve', token] as const,
+    },
+
+    // Gatherings — future "gather the table" plans (TICKET-095 / TICKET-128).
+    // `upcoming` feeds the Table-screen upcoming strip: proposed + dispatched
+    // rows with gather_on >= today, ascending. Short staleTime — dates matter.
+    // `detail` (TICKET-136) is the single-gathering read backing /gathering/[id];
+    // it seeds from the feed cache and reconciles via the `get` edge action.
+    gatherings: {
+        upcoming: (tableId: string) => ['gatherings', 'upcoming', tableId] as const,
+        detail: (id: string) => ['gatherings', 'detail', id] as const,
     },
 
     // Suppers — shared-table meal posts (TICKET-082). A Supper is an `entries`

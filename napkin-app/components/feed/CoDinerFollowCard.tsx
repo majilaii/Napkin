@@ -24,6 +24,13 @@ interface CoDinerFollowCardProps {
     followed: boolean;
     onFollow: () => void;
     onOpenProfile: () => void;
+    /**
+     * Metadata line under the name. Omit → the default "N meals together"
+     * (the feed empty-state / For You use). `null` → name only, no meta line
+     * (TICKET-126 onboarding: a just-met inviter is a bare table co-member, so
+     * "1 meal together" would be a false claim — the caller passes null there).
+     */
+    subtitle?: string | null;
 }
 
 export function CoDinerFollowCard({
@@ -31,12 +38,15 @@ export function CoDinerFollowCard({
     followed,
     onFollow,
     onOpenProfile,
+    subtitle,
 }: CoDinerFollowCardProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
     const meals = candidate.meals_together;
-    const metaLine = `${meals} ${meals === 1 ? 'meal' : 'meals'} together`;
+    const defaultMeta = `${meals} ${meals === 1 ? 'meal' : 'meals'} together`;
+    // undefined → default line; null → no line; string → that line.
+    const metaLine = subtitle === undefined ? defaultMeta : subtitle;
 
     return (
         <View style={styles.row}>
@@ -56,9 +66,11 @@ export function CoDinerFollowCard({
                 <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
                     {candidate.display_name}
                 </Text>
-                <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
-                    {metaLine}
-                </Text>
+                {metaLine ? (
+                    <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
+                        {metaLine}
+                    </Text>
+                ) : null}
             </Pressable>
 
             <Pressable

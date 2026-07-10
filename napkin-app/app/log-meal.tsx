@@ -400,21 +400,25 @@ export default function LogMealScreen() {
 
     const handleAddPhoto = useCallback(async () => {
         if (!user?.id) return;
-        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-            Alert.alert('Permission needed', 'Allow photo access to add photos.');
-            return;
-        }
         const remaining = MAX_PHOTOS - photos.length;
         if (remaining <= 0) return;
 
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsMultipleSelection: true,
-            selectionLimit: remaining,
-            orderedSelection: true,
-            quality: 1,
-        });
+        // SDK 54: the system library picker (PHPicker / Android Photo Picker) is
+        // out-of-process and needs NO permission — awaiting a pre-gate was pure
+        // latency. Launch straight away; a throw is the only failure to catch.
+        let result;
+        try {
+            result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsMultipleSelection: true,
+                selectionLimit: remaining,
+                orderedSelection: true,
+                quality: 1,
+            });
+        } catch {
+            Alert.alert('Photo Library Unavailable', 'Please try again.');
+            return;
+        }
         if (result.canceled || !result.assets?.length) return;
         for (const asset of result.assets) {
             addPhotoSlot(asset.uri);

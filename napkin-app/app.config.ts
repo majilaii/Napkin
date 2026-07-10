@@ -1,6 +1,25 @@
 import type { ExpoConfig, ConfigContext } from 'expo/config';
+import { withEntitlementsPlist, type ConfigPlugin } from 'expo/config-plugins';
 
-export default ({ config }: ConfigContext): ExpoConfig => ({
+// TICKET-120: notifications are device-LOCAL only — no APNs, ever (remote push is
+// explicitly deferred). expo-notifications' plugin unconditionally adds the
+// aps-environment (remote push) entitlement, which our provisioning profiles don't
+// carry — the first TICKET-120 TestFlight build died on exactly that mismatch.
+// Local notifications need NO entitlement, so strip it at prebuild.
+//
+// Ordering note: entitlements mods execute in REVERSE registration order (each
+// wrapper runs its action, then delegates to the previously registered chain — see
+// @expo/config-plugins withMod). Wrapping the exported config registers this mod
+// BEFORE the plugins array compiles, so it runs LAST and wins over
+// expo-notifications. Delete this when remote push actually ships.
+const withLocalOnlyNotifications: ConfigPlugin = (config) =>
+    withEntitlementsPlist(config, (c) => {
+        delete c.modResults['aps-environment'];
+        return c;
+    });
+
+export default ({ config }: ConfigContext): ExpoConfig =>
+    withLocalOnlyNotifications({
     ...config,
     // ARCH-REVIEW-1: Keep name as 'dining-journal-app' (Expo project identity /
     // EAS dashboard / slug-derived identifiers). CFBundleDisplayName is set
@@ -19,8 +38,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
     ios: {
-        supportsTablet: true,
+        // App Store v1 ships iPhone-only: the layout has never been tested on
+        // iPad, and iPhone-only avoids the 13" iPad screenshot set + an extra
+        // review surface. iPads still run it in compatibility mode.
+        supportsTablet: false,
         bundleIdentifier: 'com.majilaii.dining-journal-app',
+        // TICKET-110: emits the com.apple.developer.applesignin entitlement so
+        // expo-apple-authentication's native sheet works. The EAS build with
+        // APPLE_TEAM_ID set manages the provisioning-profile capability.
+        usesAppleSignIn: true,
         // ARCH-REVIEW-1: Set CFBundleDisplayName explicitly on main app so
         // the home-screen icon label reads "Napkin" (not "dining-journal-app").
         infoPlist: {
@@ -51,6 +77,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         },
         // Read from env var; unset = plugin warns but prebuild still works for sim.
         ...(process.env.APPLE_TEAM_ID ? { appleTeamId: process.env.APPLE_TEAM_ID } : {}),
+        // TICKET-131: key-gated Google-on-iOS map tiles. The entry exists ONLY
+        // when GOOGLE_MAPS_IOS_KEY is set at build time — an empty/undefined
+        // config.googleMapsApiKey would still trigger the Google Maps pods at
+        // prebuild. Keyless builds stay Apple Maps (PROVIDER_DEFAULT + vellum
+        // wash); WishlistMapView reads Constants.expoConfig.ios.config to flip
+        // to PROVIDER_GOOGLE + heirloomMapStyle at runtime.
+        ...(process.env.GOOGLE_MAPS_IOS_KEY
+            ? { config: { googleMapsApiKey: process.env.GOOGLE_MAPS_IOS_KEY } }
+            : {}),
     },
     android: {
         adaptiveIcon: {
@@ -79,6 +114,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
     plugins: [
         'expo-router',
+        // TICKET-110: GoogleSignIn v16 pulls in AppCheckCore, whose deps
+        // (GoogleUtilities, RecaptchaInterop) can't integrate as static
+        // libraries without module maps. Static frameworks give them modules.
+        [
+            'expo-build-properties',
+            {
+                ios: { useFrameworks: 'static' },
+            },
+        ],
         [
             'expo-image-picker',
             {
@@ -116,11 +160,42 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
             },
         ],
         'expo-web-browser',
+        // TICKET-120: device-LOCAL import-completion notifications (no APNs/remote
+        // push, no token). Defaults — no custom notification icon/sound/color.
+        'expo-notifications',
         // TICKET-075: native month-calendar date picker for the logger WHEN row.
         '@react-native-community/datetimepicker',
         // @bacons/apple-targets auto-discovers targets/ dirs containing
         // expo-target.config.js. No inline config needed.
         '@bacons/apple-targets',
+        // TICKET-110: native Sign in with Apple.
+        'expo-apple-authentication',
+        // TICKET-110: Google sign-in. iosUrlScheme is the REVERSED iOS OAuth
+        // client id (from Google Cloud console); env-driven so the real value
+        // isn't committed. The placeholder lets prebuild/EAS build succeed —
+        // Google sign-in silently no-ops until the founder sets the env + wires
+        // the Supabase dashboard (see ticket SHIP GATE). Coexists with the
+        // napkin:// scheme in CFBundleURLTypes.
+        [
+            '@react-native-google-signin/google-signin',
+            {
+                iosUrlScheme:
+                    process.env.GOOGLE_IOS_URL_SCHEME ??
+                    'com.googleusercontent.apps.REPLACE_ME',
+            },
+        ],
+        // TICKET-121: crash reporting. org/project/url identify where source
+        // maps upload (EU data region → de.sentry.io). Auth is via the
+        // SENTRY_AUTH_TOKEN build env (secret, never committed); production
+        // enables upload by dropping SENTRY_DISABLE_AUTO_UPLOAD in eas.json.
+        [
+            '@sentry/react-native/expo',
+            {
+                organization: 'napkin-h7',
+                project: 'react-native',
+                url: 'https://de.sentry.io/',
+            },
+        ],
     ],
     experiments: {
         typedRoutes: true,
@@ -130,5 +205,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         eas: {
             projectId: '21d56495-18b4-46c9-9a81-673649cc1dca',
         },
+        // TICKET-131 cold-review P1 fix: the runtime manifest STRIPS ios.config,
+        // so WishlistMapView can never read the key from there. Mirror the key's
+        // PRESENCE (never the key itself) into extra, which survives into
+        // Constants.expoConfig. Same env var gates the native pods at prebuild,
+        // so flag ⇔ native Google support by construction.
+        hasGoogleMapsIosKey: !!process.env.GOOGLE_MAPS_IOS_KEY,
     },
 });

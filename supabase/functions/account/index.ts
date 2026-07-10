@@ -24,6 +24,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { errorResponse } from '../_shared/errors.ts';
 
 const PHOTO_BUCKET = 'entry-photos';
@@ -227,6 +228,7 @@ serve(async (req: Request) => {
         return errorResponse('INVALID_INPUT', 'Unknown action', 400);
     } catch (err) {
         console.error('account error:', err);
+        reportError(err, { fn: 'account' });
         return errorResponse('INTERNAL', 'Internal server error', 500);
     }
 });

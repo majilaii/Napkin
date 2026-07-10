@@ -10,26 +10,27 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { visibleSearchTabs, type SearchMode } from './searchModeTabsGate';
 
-export type SearchMode = 'places' | 'people';
+export type { SearchMode };
 
 interface Props {
     mode: SearchMode;
     onModeChange: (mode: SearchMode) => void;
+    /** TICKET-106: People is curtained under FRIEND_TEST.hidePeopleSearch, but the
+     *  Lists tab must render regardless. Pass true to drop the People tab. */
+    hidePeople?: boolean;
 }
 
-const TABS: { mode: SearchMode; label: string }[] = [
-    { mode: 'places', label: 'Places' },
-    { mode: 'people', label: 'People' },
-];
-
-export function SearchModeTabs({ mode, onModeChange }: Props) {
+export function SearchModeTabs({ mode, onModeChange, hidePeople = false }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
+    const tabs = visibleSearchTabs(hidePeople);
+
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
-            {TABS.map((tab) => {
+            {tabs.map((tab) => {
                 const isActive = tab.mode === mode;
                 return (
                     <Pressable

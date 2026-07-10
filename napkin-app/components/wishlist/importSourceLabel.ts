@@ -3,6 +3,29 @@
  * No React / native imports (unit-testable).
  */
 import type { WishlistSource } from '@/lib/types/wishlistSource';
+import { isInstagramUrl } from '@/lib/instagramPerception';
+
+/**
+ * True when a 'web' source is actually an Instagram post/reel. Instagram saves
+ * as type 'web' + the reel URL (the wishlist_items_source_shape DB CHECK has no
+ * first-class 'instagram' variant) — so provenance surfaces detect it from the
+ * URL host, which also covers rows saved before this helper existed.
+ */
+export function isInstagramSource(source: WishlistSource | null | undefined): boolean {
+    const s = source as { type?: string; url?: string } | null | undefined;
+    return s?.type === 'web' && !!s.url && isInstagramUrl(s.url);
+}
+
+/** Ionicons glyph for where an import came from (pairs with importSourceLabel). */
+export function importSourceIcon(
+    source: WishlistSource | null | undefined,
+): 'logo-tiktok' | 'logo-instagram' | 'map-outline' | 'download-outline' {
+    const type = (source as { type?: string } | null | undefined)?.type;
+    if (type === 'tiktok') return 'logo-tiktok';
+    if (isInstagramSource(source)) return 'logo-instagram';
+    if (type === 'google_maps') return 'map-outline';
+    return 'download-outline';
+}
 
 /** Human phrase for where an import came from, e.g. "from a video". */
 export function importSourceLabel(source: WishlistSource | null | undefined): string {
@@ -15,7 +38,7 @@ export function importSourceLabel(source: WishlistSource | null | undefined): st
         case 'google_maps':
             return 'from Google Maps';
         case 'web':
-            return 'from a link';
+            return isInstagramSource(source) ? 'from Instagram' : 'from a link';
         case 'screenshot':
             return 'from a screenshot';
         case 'vision':

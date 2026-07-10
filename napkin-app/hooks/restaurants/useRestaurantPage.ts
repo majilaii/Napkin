@@ -48,6 +48,11 @@ export type RestaurantPageRestaurant = {
     // TICKET-081 fix-pass: durable Places-sync sentinel — gates the lazy backfill so
     // a place with no phone/hours stops re-hitting Place Details after one sync.
     places_synced_at: string | null;
+    // TICKET-149: direct booking-page URL resolved server-side from the venue's
+    // website (Reserve pill). checked_at gates the lazy resolve the same way
+    // places_synced_at gates the metadata backfill.
+    reserve_url: string | null;
+    reserve_url_checked_at: string | null;
 };
 
 export type PageVisit = {
@@ -216,6 +221,9 @@ async function fetchRestaurantPage(
         if (r.google_maps_uri === undefined) r.google_maps_uri = null;
         if (r.hours === undefined) r.hours = null;
         if (r.places_synced_at === undefined) r.places_synced_at = null;
+        // TICKET-149: back-fill reserve fields for responses predating the column add.
+        if (r.reserve_url === undefined) r.reserve_url = null;
+        if (r.reserve_url_checked_at === undefined) r.reserve_url_checked_at = null;
     }
     if (!data.distributions) {
         data.distributions = { you: [0,0,0,0,0], your_table: null, napkin: [0,0,0,0,0] };
@@ -337,5 +345,9 @@ export function restaurantFromPlace(
         // A ghost is not yet persisted/synced — null sentinel (no backfill gating uses
         // this on the ghost path; the page only backfills persisted rows).
         places_synced_at: null,
+        // TICKET-149: never resolved for ghosts — the page falls back to the
+        // client-side tier-0 check (website itself being a booking page).
+        reserve_url: null,
+        reserve_url_checked_at: null,
     };
 }

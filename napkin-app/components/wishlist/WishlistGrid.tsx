@@ -237,8 +237,9 @@ const styles = StyleSheet.create({
         paddingBottom: 100,
     },
     ledgerContent: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.xs,
+        // 20/4 matches the personal Pinned ledger (wishlist.tsx rListContent).
+        paddingHorizontal: 20,
+        paddingTop: 4,
         paddingBottom: 100,
     },
     row: {

@@ -21,6 +21,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
+import { reportError } from '../_shared/report.ts';
 import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -75,6 +76,19 @@ const ALLOWED_MIME_TYPES = new Set([
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 serve(async (req) => {
+    // TICKET-121: table-shares had no outer catch — thrown errors escaped to
+    // the runtime's opaque 500, unreported. Wrap + rethrow: reporting only;
+    // the rethrow preserves the exact response the runtime already produced.
+    try {
+        return await handleTableShares(req);
+    } catch (error) {
+        console.error('table-shares error:', error);
+        reportError(error, { fn: 'table-shares' });
+        throw error;
+    }
+});
+
+async function handleTableShares(req: Request): Promise<Response> {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
     }
@@ -124,11 +138,11 @@ serve(async (req) => {
         return handleDismissFloat(supabase, user, body as DismissFloatBody & { action: string });
     }
     if (action === 'remove_share') {
-        return handleRemoveShare(supabase, user, body as { action: string; share_id?: string });
+        return handleRemoveShare(supabase, user, body as { action: string; share_id?: string; share_ids?: string[] });
     }
 
     return err('UNKNOWN_ACTION', `Unknown action: ${action}`, 400);
-});
+}
 
 // ── Action: create_import ─────────────────────────────────────────────────────
 
@@ -333,51 +347,76 @@ async function handleCorrect(
 }
 
 // ── Action: remove_share ──────────────────────────────────────────────────────
-// Author retracts their own shared_save card from a Table feed (soft-delete).
-// The card disappears from the feed (fn_table_activity_page filters deleted_at IS
-// NULL); existing reactions/comments stay attached to the tombstoned row rather
-// than dangling. Author-only — never removes another member's share.
+// Author retracts their own shared_save card(s) from a Table feed (soft-delete).
+// Accepts a single `share_id` or a `share_ids` batch (a "dropped N spots" digest
+// retract sends all its child ids). The cards disappear from the feed
+// (fn_table_activity_page filters deleted_at IS NULL); existing reactions/comments
+// stay attached to the tombstoned rows rather than dangling. Author-only — the
+// whole batch is rejected if ANY row belongs to another member.
+
+const REMOVE_SHARE_BATCH_MAX = 50;
 
 async function handleRemoveShare(
     supabase: any,
     user: { id: string },
-    body: { action: string; share_id?: string },
+    body: { action: string; share_id?: string; share_ids?: string[] },
 ): Promise<Response> {
-    const share_id = body.share_id;
-    if (!share_id) {
-        return err('MISSING_PARAMS', 'share_id is required', 400);
+    const ids = Array.isArray(body.share_ids) && body.share_ids.length > 0
+        ? body.share_ids
+        : body.share_id
+          ? [body.share_id]
+          : [];
+
+    if (ids.length === 0) {
+        return err('MISSING_PARAMS', 'share_id or share_ids is required', 400);
+    }
+    if (ids.length > REMOVE_SHARE_BATCH_MAX) {
+        return err('INVALID_PARAMS', `at most ${REMOVE_SHARE_BATCH_MAX} shares per call`, 400);
+    }
+    if (ids.some((id) => typeof id !== 'string' || !id)) {
+        return err('INVALID_PARAMS', 'share ids must be non-empty strings', 400);
     }
 
-    const { data: shareRow } = await supabase
+    const { data: shareRows, error: fetchErr } = await supabase
         .from('table_shares')
         .select('id, author_id, deleted_at')
-        .eq('id', share_id)
-        .maybeSingle();
+        .in('id', ids);
 
-    if (!shareRow) {
-        return err('NOT_FOUND', 'Share not found', 404);
-    }
-    if (shareRow.author_id !== user.id) {
-        // Generic 403 — only the author can retract their own share.
-        return err('FORBIDDEN', 'Only the author can remove this share', 403);
-    }
-    if (shareRow.deleted_at) {
-        // Idempotent — already retracted.
-        return json({ share_id, removed: true });
-    }
-
-    const { error: removeErr } = await supabase
-        .from('table_shares')
-        .update({ deleted_at: new Date().toISOString() })
-        .eq('id', share_id)
-        .eq('author_id', user.id);
-
-    if (removeErr) {
-        console.error('remove_share update error:', removeErr);
+    if (fetchErr) {
+        console.error('remove_share fetch error:', fetchErr);
         return err('REMOVE_FAILED', 'Failed to remove share', 500);
     }
+    if (!shareRows || shareRows.length === 0) {
+        return err('NOT_FOUND', 'Share not found', 404);
+    }
+    if (shareRows.some((row: any) => row.author_id !== user.id)) {
+        // Generic 403 — only the author can retract their own shares.
+        return err('FORBIDDEN', 'Only the author can remove this share', 403);
+    }
 
-    return json({ share_id, removed: true });
+    // Idempotent — already-retracted rows are skipped, not errors.
+    const toRemove = shareRows
+        .filter((row: any) => !row.deleted_at)
+        .map((row: any) => row.id);
+
+    if (toRemove.length > 0) {
+        const { error: removeErr } = await supabase
+            .from('table_shares')
+            .update({ deleted_at: new Date().toISOString() })
+            .in('id', toRemove)
+            .eq('author_id', user.id);
+
+        if (removeErr) {
+            console.error('remove_share update error:', removeErr);
+            return err('REMOVE_FAILED', 'Failed to remove share', 500);
+        }
+    }
+
+    return json({
+        share_id: ids.length === 1 ? ids[0] : undefined,
+        share_ids: shareRows.map((row: any) => row.id),
+        removed: true,
+    });
 }
 
 // ── Action: dismiss_float ─────────────────────────────────────────────────────

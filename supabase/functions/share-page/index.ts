@@ -27,6 +27,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { renderPage, renderTombstone } from './render.ts';
 import { buildRenderContext, buildSnapshot, loadLiveSpots } from '../handoff/snapshot.ts';
+import { reportError } from '../_shared/report.ts';
 
 // ── Token validation (Codex #8: malformed = same 410 as unknown/revoked) ──────
 
@@ -121,6 +122,7 @@ serve(async (req) => {
     } catch (err) {
         // Never expose internals — always tombstone (Codex #8)
         console.error('[share-page] error:', err);
+        reportError(err, { fn: 'share-page' });
         return tombstone();
     }
 });

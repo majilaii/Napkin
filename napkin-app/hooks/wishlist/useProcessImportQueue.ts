@@ -35,12 +35,17 @@ import {
     isVideoImportAvailable,
     appGroupFileInfo,
     deleteAppGroupFile,
+    beginBackgroundTask,
+    endBackgroundTask,
 } from '@/modules/media-extract';
+import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
+import { markImportCompleted } from '@/lib/importActivation';
 import {
     listPendingImports,
     removeImport,
     setImportSpots,
     setImportDiagnostics,
+    setDefaultImportMode,
     bumpImportAttempt,
     acquireDrainLock,
     releaseDrainLock,
@@ -55,6 +60,8 @@ import {
     downloadTikTokVideo,
     deleteCachedTikTokVideo,
 } from '@/lib/tiktokPerception';
+import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
+import { isMapsShareUrl } from '@/lib/mapsShare';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
 import type { SaveImportSpotsResult } from './useSaveImportSpots';
 
@@ -154,6 +161,16 @@ export function useProcessImportQueue() {
             if (!spots || spots.length === 0) {
                 freshlyResolved = true;
                 let candidates: ResolvedCandidate[] = [];
+                let resolvedSourceType: string | null = null;
+
+                // TICKET-113: this is the first time the app sees this import's
+                // authored mode — the user's explicit per-share choice (the iOS
+                // extension "auto-save" toggle). Remember it so the NEXT import
+                // defaults the same way. Recorded ONCE per fresh manifest — a
+                // re-drain has `spots` set and skips this. Deliberately NOT the
+                // import-review drain-release (that flips to 'auto' as a mechanism,
+                // not a preference — decision 4).
+                setDefaultImportMode(m.mode);
 
                 if (m.kind === 'url') {
                     // TICKET-086/086b/086c extraction for TikTok links — FUSE
@@ -163,9 +180,23 @@ export function useProcessImportQueue() {
                     // + 07-03). Ladder: page text (caption + TikTok's own ASR,
                     // fetched on-device) + playAddr download → media-extract OCR
                     // → fused extracted_text → server caption resolve as fallback.
+                    // Instagram Reels ride the SAME ladder (caption + embed-page
+                    // video_url; no platform ASR, so speech is transcribed
+                    // on-device) — the server's Instagram branch is login-walled
+                    // by design and returns zero candidates, so without this an
+                    // IG share died instantly.
                     let extractedText: string | null = null;
-                    if (isTikTokUrl(m.url)) {
-                        let perception = await fetchTikTokPerception(m.url as string);
+                    const provider = isTikTokUrl(m.url)
+                        ? 'tiktok'
+                        : isInstagramUrl(m.url)
+                          ? 'instagram'
+                          : null;
+                    if (provider) {
+                        const fetchPerception = () =>
+                            provider === 'tiktok'
+                                ? fetchTikTokPerception(m.url as string)
+                                : fetchInstagramPerception(m.url as string);
+                        let perception = await fetchPerception();
                         // Caption ALWAYS fuses: even a name-free caption carries
                         // the city signal (hashtags/handle) that Places needs.
                         // (086c — it was dropped whenever the ASR was missing.)
@@ -180,13 +211,14 @@ export function useProcessImportQueue() {
                             if (!perception?.playAddr) break;
                             const fileUri = await downloadTikTokVideo(
                                 perception.playAddr,
-                                m.url as string,
+                                // IG's fbcdn checks the embed-page referer;
+                                // TikTok's CDN wants the video page itself.
+                                (perception as { refererUrl?: string }).refererUrl ??
+                                    (m.url as string),
                             );
                             if (!fileUri) {
                                 if (attempt === 0) {
-                                    perception =
-                                        (await fetchTikTokPerception(m.url as string)) ??
-                                        perception;
+                                    perception = (await fetchPerception()) ?? perception;
                                 }
                                 continue;
                             }
@@ -224,6 +256,7 @@ export function useProcessImportQueue() {
                         // Which channels actually contributed — without this the
                         // "why did this import flop?" question is unanswerable.
                         const diag = {
+                            provider,
                             page: !!perception,
                             caption_chars: pageText?.length ?? 0,
                             tiktok_asr: perception?.hasTranscript ?? false,
@@ -240,11 +273,16 @@ export function useProcessImportQueue() {
                         body: extractedText ? { extracted_text: extractedText } : { url: m.url },
                     });
                     candidates = resolved?.candidates ?? [];
-                    if (candidates.length === 0 && extractedText) {
+                    resolvedSourceType = resolved?.source_type ?? null;
+                    // Instagram's url tier is a login-walled constant (zero
+                    // candidates + ig_nudge, which this queue ignores) — the
+                    // fallback would burn a resolve_url rate slot for nothing.
+                    if (candidates.length === 0 && extractedText && provider !== 'instagram') {
                         const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
                             body: { url: m.url },
                         });
                         candidates = fallback?.candidates ?? [];
+                        resolvedSourceType = fallback?.source_type ?? resolvedSourceType;
                     }
                 } else {
                     let info = { exists: true, size: 1 };
@@ -280,6 +318,13 @@ export function useProcessImportQueue() {
                 // override; in auto mode they're dropped here.
                 if (m.mode === 'auto') {
                     candidates = candidates.filter((c) => c.stance !== 'warned');
+                }
+                // google_maps 'low' candidates are ALTERNATIVE Places matches
+                // for the same spot (single-place: [exact, low, low]), not
+                // additional spots — auto-saving them pins duplicates/wrong
+                // places. Review mode keeps them for the picker.
+                if (m.mode === 'auto' && resolvedSourceType === 'google_maps') {
+                    candidates = candidates.filter((c) => c.confidence !== 'low');
                 }
 
                 if (candidates.length === 0) {
@@ -320,6 +365,27 @@ export function useProcessImportQueue() {
                 if (freshlyResolved) {
                     const n = spots.length;
                     toast.show(`${n} ${n === 1 ? 'spot' : 'spots'} ready to review`);
+                    // TICKET-120: the toast is invisible if the user backgrounded the
+                    // app mid-import — post a local notification instead. Foreground
+                    // stays toast-only (never double-announce).
+                    if (AppState.currentState !== 'active') {
+                        presentImportNotification({
+                            title: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review`,
+                            body: 'tap to confirm your import',
+                        });
+                    }
+                    // TICKET-123: write the SILENT durable inbox row (outcome
+                    // 'review'). Always — never AppState-gated (the loud channel
+                    // above is; the row is the quiet always-on third). The drain
+                    // has no service-role INSERT, so it emits via the self-directed
+                    // notifications action. Fire-and-forget — never fail the import.
+                    callEdgeFn('notifications', {
+                        action: 'emit_self',
+                        body: {
+                            kind: 'import_done',
+                            subject_meta: { job_id: m.jobId, count: n, outcome: 'review' },
+                        },
+                    }).catch(() => {});
                     if (userId) {
                         queryClient.invalidateQueries({
                             queryKey: queryKeys.importJobs.all(userId),
@@ -335,13 +401,19 @@ export function useProcessImportQueue() {
             // Save (idempotent on import_nonce + per-spot client_nonce). Wishlist is
             // the base destination; per-spot table_id fans out to the Table.
             // Provenance: a tiktok link gets a 'tiktok' source so the restaurant
-            // page shows "saved from tiktok" + taps out to that exact video; other
-            // links → 'web'; a shared file → 'video' (no URL to deep-link).
+            // page shows "saved from tiktok" + taps out to that exact video; a
+            // maps link → 'google_maps' (list/place share); other links → 'web';
+            // a shared file → 'video' (no URL to deep-link).
+            // Instagram deliberately saves as 'web' (still taps out to the reel):
+            // the wishlist_items_source_shape DB CHECK whitelists source types, so
+            // a first-class 'instagram' variant needs a migration — separate ticket.
             const source: Record<string, string> =
                 m.kind === 'url' && m.url
                     ? /tiktok\.com/i.test(m.url)
                         ? { type: 'tiktok', url: m.url }
-                        : { type: 'web', url: m.url }
+                        : isMapsShareUrl(m.url)
+                            ? { type: 'google_maps', url: m.url }
+                            : { type: 'web', url: m.url }
                     : { type: 'video' };
 
             // Multi-table fan-out: one save_spots call per destination table (same
@@ -359,17 +431,26 @@ export function useProcessImportQueue() {
                     table_client_nonce:
                         s.table_shares?.[t] ?? (s.table_id === t ? s.table_client_nonce : null),
                 }));
+            // TICKET-123: the WISHLIST-BASE call carries notify_done so the server
+            // writes the durable `import_done` row (outcome 'saved') off its own
+            // savedCount — set on the single no-tables call AND the i===0 fan-out
+            // call ONLY. Never on tables 2..N, which would double-emit the row.
             let result: SaveImportSpotsResult | undefined;
             if (tableIds.length === 0) {
                 result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                     action: 'save_spots',
-                    body: { import_nonce: m.importNonce, spots, source },
+                    body: { import_nonce: m.importNonce, spots, source, notify_done: true },
                 });
             } else {
                 for (let i = 0; i < tableIds.length; i++) {
                     const r = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                         action: 'save_spots',
-                        body: { import_nonce: m.importNonce, spots: spotsForTable(tableIds[i]), source },
+                        body: {
+                            import_nonce: m.importNonce,
+                            spots: spotsForTable(tableIds[i]),
+                            source,
+                            notify_done: i === 0,
+                        },
                     });
                     if (i === 0) result = r; // first call pinned the wishlist + did routing
                 }
@@ -406,6 +487,9 @@ export function useProcessImportQueue() {
             const done = saved + already;
             // TICKET-088: the capture funnel's terminal event (fire-and-forget).
             track('import_completed', { spot_count: done, source_type: source.type });
+            // TICKET-122: first completed import flips the activation-hub signal so
+            // the empty-state hub collapses full→compact. Idempotent, best-effort.
+            if (done > 0) markImportCompleted();
             // Extraction is fallible by nature — the toast carries a "review"
             // action so a wrong pin is taps away from corrected. Routes via the
             // imports HUB (hierarchical back-nav is sacred — never deep-link
@@ -421,6 +505,15 @@ export function useProcessImportQueue() {
                       : "couldn't import that",
                 reviewAction,
             );
+            // TICKET-120: mirror the "pinned N" success to a local notification when
+            // backgrounded (only on a fresh save — an already-pinned re-drain stays
+            // silent). Foreground = toast-only.
+            if (saved > 0 && AppState.currentState !== 'active') {
+                presentImportNotification({
+                    title: `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`,
+                    body: 'tap to fix anything',
+                });
+            }
 
             if (userId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.wishlist.personal(userId) });
@@ -446,6 +539,17 @@ export function useProcessImportQueue() {
         if (!isVideoImportAvailable()) return;
         if (!acquireDrainLock()) return;
 
+        // TICKET-120: iOS suspends JS a few seconds after backgrounding; a background
+        // task buys ~30s so an import that finishes while backgrounded can post its
+        // completion notification. Guarded (absent module → -1 → release no-ops).
+        // Ended in finally; the Swift expiration handler is a backstop.
+        let bgTask = -1;
+        try {
+            bgTask = beginBackgroundTask();
+        } catch {
+            /* native module absent — no-op */
+        }
+
         try {
             const pending = listPendingImports().filter(
                 // Review-mode manifests ARE drained — they get resolved (OCR/caption)
@@ -454,6 +558,11 @@ export function useProcessImportQueue() {
                 // skipped (their destinations belong to the other user).
                 (m) => !(m.userId && m.userId !== userId),
             );
+            // TICKET-120: actively draining ≥1 import while the user is here is the
+            // demonstrated-value beat to (quietly, cadence-gated) offer notifications.
+            if (pending.length > 0 && AppState.currentState === 'active') {
+                maybeOfferNotifPrompt();
+            }
             for (const m of pending) {
                 if (!session) break;
                 try {
@@ -463,6 +572,25 @@ export function useProcessImportQueue() {
                     const updated = bumpImportAttempt(m.jobId);
                     if (updated?.status === 'failed') {
                         toast.show("couldn't import that");
+                        // TICKET-120: notify the poison too when backgrounded (the
+                        // toast is invisible then). Foreground = toast-only.
+                        if (AppState.currentState !== 'active') {
+                            presentImportNotification({
+                                title: "couldn't import that",
+                                body: 'tap to try again',
+                            });
+                        }
+                        // TICKET-123: SILENT durable inbox row (outcome 'failed',
+                        // count 0). Always written regardless of AppState; the row
+                        // is the quiet always-on record so a decliner/missed-banner
+                        // user can still catch it. Fire-and-forget.
+                        callEdgeFn('notifications', {
+                            action: 'emit_self',
+                            body: {
+                                kind: 'import_done',
+                                subject_meta: { job_id: m.jobId, count: 0, outcome: 'failed' },
+                            },
+                        }).catch(() => {});
                         // Keep the .mov: a poisoned manifest stays for "try again" in
                         // the progress hub (re-OCR needs the source). The .mov is
                         // deleted on success (processOne) or when the user discards.
@@ -471,6 +599,14 @@ export function useProcessImportQueue() {
             }
         } finally {
             releaseDrainLock();
+            // TICKET-120: release the background-task grant (safe on an invalid id).
+            if (bgTask >= 0) {
+                try {
+                    endBackgroundTask(bgTask);
+                } catch {
+                    /* best-effort */
+                }
+            }
         }
     }, [userId, session, processOne, toast]);
 

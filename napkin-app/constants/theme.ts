@@ -44,6 +44,7 @@ export const Colors = {
     terracottaInk: '#9a3412',        // --terracotta-ink (nib-stroke)
     terracottaScrim: 'rgba(160, 63, 40, 0.05)',
     terracottaBorder: 'rgba(160, 63, 40, 0.10)',
+    terracottaBorderStrong: 'rgba(160, 63, 40, 0.35)', // outline pills (invite / follow CTAs)
 
     // Secondary — olive
     secondary: '#5c614d',            // olive
@@ -64,6 +65,16 @@ export const Colors = {
 
     // Cream — ambient backgrounds on elevated/hero surfaces
     cream: '#f6ecd9',
+
+    // Plate tints (TICKET-146 engraving system) — 6 warm tonal creams for the
+    // Top-4 marquee plates + future crest. Assigned by tintFor(restaurant_id).
+    // Never per-item; stay in the warm-paper family.
+    plateAmber: '#f4e6cd',
+    plateOlive: '#e6ead5',
+    plateRose: '#f2e3da',
+    plateGrey: '#eae6dc',
+    plateSlate: '#e3e8e4',
+    plateSand: '#f0e8d6',
 
     // Overlay variants
     overlayPhoto: 'rgba(0, 0, 0, 0.35)',
@@ -128,6 +139,7 @@ export const Colors = {
     terracottaInk: '#ff967d',
     terracottaScrim: 'rgba(255, 180, 163, 0.06)',
     terracottaBorder: 'rgba(255, 180, 163, 0.12)',
+    terracottaBorderStrong: 'rgba(255, 180, 163, 0.35)', // outline pills (invite / follow CTAs)
 
     secondary: '#c4c9b1',
     secondaryContainer: '#444937',
@@ -144,6 +156,14 @@ export const Colors = {
     sanguineOnCream: '#fff0e0',
 
     cream: '#3a3025',
+
+    // Plate tints (TICKET-146) — muted dark equivalents, same order as light.
+    plateAmber: '#2f2a22',
+    plateOlive: '#282c22',
+    plateRose: '#2e2724',
+    plateGrey: '#272420',
+    plateSlate: '#232825',
+    plateSand: '#2c2820',
 
     overlayPhoto: 'rgba(0, 0, 0, 0.5)',
     overlayHeavy: 'rgba(0, 0, 0, 0.75)',

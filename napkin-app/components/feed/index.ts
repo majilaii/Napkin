@@ -23,5 +23,22 @@ export { FriendFeedCard } from './FriendFeedCard';
 export { TrendingRail } from './TrendingRail';
 export { InlineStars } from './InlineStars';
 
-// Feed empty-state rescue (TICKET-101)
-export { FeedEmptyState } from './FeedEmptyState';
+// Feed re-dress — discovery ledger + sparse tail (TICKET-103)
+export { DiscoveryLedger } from './DiscoveryLedger';
+export { FeedSparseTail } from './FeedSparseTail';
+
+// Feed modes — For You / Following (TICKET-125)
+export { FeedModeTabs, type FeedMode } from './FeedModeTabs';
+export { FeedHeader } from './FeedHeader';
+export { FollowingFeed } from './FollowingFeed';
+export { ForYouFeed } from './ForYouFeed';
+export { FollowingEmptyState } from './FollowingEmptyState';
+export { PublicListsBrowseBlock } from './PublicListsBrowseBlock';
+export { PeopleToFollowBlock } from './PeopleToFollowBlock';
+
+// TICKET-115 Table lists — quiet ledger line for table-list adds
+export { ListAddLedgerLine } from './ListAddLedgerLine';
+
+// TICKET-130 Gazette mix — shared big kicker + engraved cuisine chip
+export { SectionKicker } from './SectionKicker';
+export { GlyphChip, chipTint } from './GlyphChip';

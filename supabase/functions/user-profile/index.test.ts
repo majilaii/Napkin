@@ -70,6 +70,15 @@ Deno.test('user-profile edge function', async (t) => {
         // should return 404 (not_found).
     });
 
+    await t.step('regulars photo_url is the owner\'s own entry photo, never restaurants.photo_url - TODO (skipped)', () => {
+        // TICKET-105 (2026-07-05): fetchRegulars must NOT source photo_url from
+        // restaurants (Google Places). Each regular's photo_url is the profile
+        // owner's most-recent entry_photos row on one of THEIR OWN entries at that
+        // restaurant, else null. Non-self viewers only see photos from non-private
+        // entries (same visibility gate as the entries aggregation / public diary).
+        // Implement integration assertion when a test DB fixture is available.
+    });
+
     // ── pre-existing ─────────────────────────────────────────────────────────
 
     await t.step('Missing auth returns 401 - TODO (skipped)', () => {

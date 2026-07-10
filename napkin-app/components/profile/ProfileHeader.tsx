@@ -7,10 +7,13 @@
  *   Identity block: display name (serif italic 24) + @handle + bio (italic serif 13)
  *   Numbers row below: logs · places · avg
  *
- * No centering. No circle avatar. Gear renders inline, not floating.
+ * No centering. The avatar shape stays a rounded square (radius 10), NOT a circle.
+ * When `profile.avatar_url` is set, the photo layers absolutely OVER the monogram
+ * plate (same 72x72 footprint) — a broken/absent image falls through to the
+ * initials with no state to track. Gear renders inline, not floating.
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -18,6 +21,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type {
     Calibration,
+    SocialCounts,
     UserProfileRow,
     UserStats,
     ViewerRelationship,
@@ -28,14 +32,23 @@ import { RateMoreToUnlockPrompt } from './RateMoreToUnlockPrompt';
 import { NotifBell } from '@/components/notifications/NotifBell';
 import { useUnreadCount } from '@/hooks/notifications';
 import { useAuth } from '@/providers/AuthProvider';
+import { profileStatSegments } from './statsLine';
 
 interface Props {
     profile: UserProfileRow;
     isSelf: boolean;
     relationship: ViewerRelationship;
     stats?: UserStats | null;
+    /**
+     * Follower/following counts when `stats` is withheld (private tablemate).
+     * Falls back through stats → social → placeholder so a real count never
+     * renders as a lying 0.
+     */
+    social?: SocialCounts | null;
     /** Whether the viewing user is currently following the target. Used for the Follow button. */
     isFollowingViewer?: boolean;
+    /** Whether the target follows the viewing user back. Drives the relationship meta line. */
+    followsViewer?: boolean;
     /**
      * Calibration result from user-profile endpoint.
      * undefined = still loading, null = hidden (insufficient overlap / Tablemate / error).
@@ -59,7 +72,7 @@ function initials(displayName: string): string {
     return displayName.slice(0, 1).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowingViewer = false, calibration, viewerRatedEntryCount, onSafetyMenu }: Props) {
+export function ProfileHeader({ profile, isSelf, relationship, stats, social, isFollowingViewer = false, followsViewer = false, calibration, viewerRatedEntryCount, onSafetyMenu }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -72,10 +85,35 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
         relationship === 'public_only' ||
         relationship === 'public_and_tables';
 
-    const totalLogs = stats?.total_logs ?? 0;
-    const totalPlaces = stats?.total_restaurants ?? 0;
-    const followersCount = stats?.followers_count ?? 0;
-    const followingCount = stats?.following_count ?? 0;
+    // Social counts fall back stats → social → null. null → omitted from the line
+    // (older cache / genuinely unknown) rather than a lying 0. PLACES / THIS YR
+    // are gone (cities/countries live in the TASTE band) — TICKET-144.
+    const followersCount: number | null = stats
+        ? stats.followers_count
+        : social
+          ? social.followers_count
+          : null;
+    const followingCount: number | null = stats
+        ? stats.following_count
+        : social
+          ? social.following_count
+          : null;
+    // meals only when stats are present (a withheld tablemate shows none, not 0).
+    const statSegments = profileStatSegments({
+        meals: stats ? (stats.total_logs ?? 0) : null,
+        following: followingCount,
+        followers: followersCount,
+    });
+
+    // One terse relationship meta line (non-self only). 'follows you' wins when
+    // the target follows back; otherwise flag an unreciprocated outbound follow.
+    const relationshipNote = isSelf
+        ? null
+        : followsViewer
+          ? 'follows you'
+          : isFollowingViewer
+            ? "doesn't follow you back yet"
+            : null;
 
     const openFollowList = (kind: 'followers' | 'following') =>
         router.push({
@@ -90,6 +128,14 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                     <Text style={styles.avatarInitials}>
                         {initials(profile.display_name)}
                     </Text>
+                    {profile.avatar_url ? (
+                        // Layer the photo OVER the monogram so a failed load falls
+                        // through to the initials — no error state to track.
+                        <Image
+                            source={{ uri: profile.avatar_url }}
+                            style={styles.avatarPhoto}
+                        />
+                    ) : null}
                 </View>
 
                 <View style={styles.identity}>
@@ -104,9 +150,38 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                             @{profile.username}
                         </Text>
                     )}
+                    {/* TICKET-144: one quiet counts line — meals · following ·
+                        follower(s). Follow segments tap → /follows (correct tab). */}
+                    {statSegments.length > 0 ? (
+                        <Text style={[styles.statsLine, { color: palette.textMuted }]}>
+                            {statSegments.map((seg, i) => (
+                                <React.Fragment key={seg.key}>
+                                    {i > 0 ? <Text>{' · '}</Text> : null}
+                                    {seg.tappable ? (
+                                        <Text
+                                            onPress={() =>
+                                                openFollowList(seg.key as 'followers' | 'following')
+                                            }
+                                            accessibilityRole="button"
+                                            accessibilityLabel={seg.text}
+                                        >
+                                            {seg.text}
+                                        </Text>
+                                    ) : (
+                                        <Text>{seg.text}</Text>
+                                    )}
+                                </React.Fragment>
+                            ))}
+                        </Text>
+                    ) : null}
                     {profile.bio ? (
                         <Text style={[styles.bio, { color: palette.textSecondary }]}>
                             {profile.bio}
+                        </Text>
+                    ) : null}
+                    {relationshipNote ? (
+                        <Text style={[styles.relationshipNote, { color: palette.textMuted }]}>
+                            {relationshipNote}
                         </Text>
                     ) : null}
                 </View>
@@ -172,68 +247,7 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, isFollowin
                     </View>
                 );
             })()}
-
-            {/* TICKET-092: stats strip in the ScoreBand grammar — ledger counts
-                first, social last (the Letterboxd move). One identity-counts
-                surface; the old inline sans row is gone. */}
-            <View style={[styles.statsStrip, { borderColor: 'rgba(28,28,25,0.07)' }]}>
-                <StatCell label="meals" value={totalLogs} palette={palette} />
-                <View style={styles.statRule} />
-                <StatCell label="places" value={totalPlaces} palette={palette} />
-                <View style={styles.statRule} />
-                <StatCell
-                    label="this yr"
-                    value={stats?.logs_this_year ?? 0}
-                    palette={palette}
-                />
-                <View style={styles.statRule} />
-                <StatCell
-                    label="followers"
-                    value={followersCount}
-                    palette={palette}
-                    onPress={() => openFollowList('followers')}
-                />
-                <View style={styles.statRule} />
-                <StatCell
-                    label="following"
-                    value={followingCount}
-                    palette={palette}
-                    onPress={() => openFollowList('following')}
-                />
-            </View>
         </View>
-    );
-}
-
-function StatCell({
-    label,
-    value,
-    palette,
-    onPress,
-}: {
-    label: string;
-    value: number;
-    palette: typeof Colors.light;
-    onPress?: () => void;
-}) {
-    const body = (
-        <>
-            <Text style={[styles.statValue, { color: palette.text, opacity: value === 0 ? 0.4 : 1 }]}>
-                {value === 0 ? '—' : value}
-            </Text>
-            <Text style={[styles.statLabel, { color: palette.textMuted }]}>{label}</Text>
-        </>
-    );
-    if (!onPress) return <View style={styles.statCell}>{body}</View>;
-    return (
-        <Pressable
-            onPress={onPress}
-            style={({ pressed }) => [styles.statCell, { opacity: pressed ? 0.7 : 1 }]}
-            accessibilityRole="button"
-            accessibilityLabel={`${value} ${label}`}
-        >
-            {body}
-        </Pressable>
     );
 }
 
@@ -262,6 +276,14 @@ const styles = StyleSheet.create({
         fontSize: 22,
         letterSpacing: 0.5,
     },
+    // Photo fills the monogram footprint. Hairline outline matches Avatar.tsx so
+    // photos read as consistent depth on warm paper.
+    avatarPhoto: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.08)',
+    },
     identity: {
         flex: 1,
         paddingTop: 4,
@@ -279,11 +301,25 @@ const styles = StyleSheet.create({
         marginTop: 2,
         letterSpacing: 0.2,
     },
+    // TICKET-144: one quiet counts line under the @handle (meals · following ·
+    // follower). Low-key Manrope; follow segments are tappable (no underline).
+    statsLine: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        marginTop: 6,
+        letterSpacing: 0.2,
+    },
     bio: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 13,
         marginTop: 8,
         lineHeight: 19,
+    },
+    relationshipNote: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        marginTop: 6,
+        letterSpacing: 0.2,
     },
     gear: {
         width: 32,
@@ -301,33 +337,5 @@ const styles = StyleSheet.create({
     calibrationRow: {
         marginTop: Spacing.sm,
         paddingHorizontal: 0,
-    },
-    statsStrip: {
-        marginTop: 16,
-        flexDirection: 'row',
-        alignItems: 'stretch',
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        paddingVertical: 10,
-    },
-    statRule: {
-        width: StyleSheet.hairlineWidth,
-        backgroundColor: 'rgba(28,28,25,0.07)',
-    },
-    statCell: {
-        flex: 1,
-        alignItems: 'center',
-        gap: 2,
-    },
-    statValue: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 21,
-        lineHeight: 25,
-    },
-    statLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 8.5,
-        letterSpacing: 1.1,
-        textTransform: 'uppercase',
     },
 });
