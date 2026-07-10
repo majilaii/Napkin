@@ -198,8 +198,12 @@ async function fetchPage(
             while (total < MAX_HTML_BYTES) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                chunks.push(value);
-                total += value.byteLength;
+                // Hard cap: slice the final chunk to the remaining budget so a
+                // single large chunk can't push the buffer past MAX_HTML_BYTES.
+                const remaining = MAX_HTML_BYTES - total;
+                const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+                chunks.push(chunk);
+                total += chunk.byteLength;
             }
             await reader.cancel().catch(() => {});
 
