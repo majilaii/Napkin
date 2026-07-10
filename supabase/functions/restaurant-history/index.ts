@@ -15,7 +15,6 @@
  *   GET  ?action=user_history&restaurant_id=X[&exclude_entry_id=Z]
  *   GET  ?action=page&restaurant_id=X[&table_id=Y]
  *   GET  ?action=reserve_link&restaurant_id=X   (TICKET-149 booking-page resolver)
- *   POST ?action=reviews  { restaurant_id, cursor?, limit? }   (TICKET-154 all-reviews page)
  *
  * Both filter to data the requesting user is entitled to see. Table history
  * verifies the caller is a member of the table; user history is trivially
@@ -26,7 +25,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { resolveReserveUrl } from '../_shared/reserveLink.ts';
-import { buildPage, decodeCursor, encodeCursor } from '../_shared/pagination.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { projectRound } from '../_shared/round_projection.ts';
 
@@ -145,13 +143,6 @@ type RestaurantPageData = {
         your_table: number[] | null;
         napkin: number[];
     };
-    /** TICKET-154: 10 half-star bins [0.5 … 5.0]. The legacy 5-bucket field
-     * above is frozen for old clients. */
-    distributions_half: {
-        you: number[];
-        your_table: number[] | null;
-        napkin: number[];
-    };
     napkin_aggregate: {
         average: number | null;
         count: number;
@@ -200,31 +191,12 @@ async function fetchProfiles(
     return map;
 }
 
-/**
- * Build a 5-element distribution array [1★ count, …, 5★ count].
- * LEGACY (whole-star, Math.round — 4.5 lands in the 5 bucket): kept only so
- * clients predating distributions_half keep rendering. New clients use
- * buildHalfDistribution below. Do not add consumers.
- */
+/** Build a 5-element distribution array [1★ count, 2★ count, 3★ count, 4★ count, 5★ count] */
 function buildDistribution(ratings: number[]): number[] {
     const dist = [0, 0, 0, 0, 0];
     for (const r of ratings) {
         const bucket = Math.round(Math.max(1, Math.min(5, r))) - 1;
         dist[bucket]++;
-    }
-    return dist;
-}
-
-/**
- * TICKET-154: 10 half-star bins [0.5, 1.0, …, 5.0] so a 4.5 is a 4.5 —
- * ratings are DOUBLE PRECISION 0.5–5.0 and the logger records halves;
- * rounding them into whole stars misrepresented the histogram.
- */
-function buildHalfDistribution(ratings: number[]): number[] {
-    const dist = new Array(10).fill(0);
-    for (const r of ratings) {
-        const bin = Math.round(Math.max(0.5, Math.min(5, r)) * 2); // 1..10
-        dist[bin - 1]++;
     }
     return dist;
 }
@@ -254,14 +226,7 @@ serve(async (req) => {
         const action = url.searchParams.get('action');
         const restaurantId = url.searchParams.get('restaurant_id');
 
-        // GET for the classic read actions; POST only for action=reviews
-        // (paginated — cursor strings don't belong in query params).
-        if (req.method !== 'GET' && req.method !== 'POST') {
-            return fail('Method not allowed', 405);
-        }
-        if (req.method === 'POST' && action !== 'reviews') {
-            return fail('Method not allowed', 405);
-        }
+        if (req.method !== 'GET') return fail('Method not allowed', 405);
 
         // ── Restaurant search ─────────────────────────────────────────────
         if (action === 'search') {
@@ -545,120 +510,6 @@ serve(async (req) => {
             });
         }
 
-        // ── Paginated public reviews (TICKET-154) — the all-reviews page ──
-        // POST { restaurant_id, cursor?, limit? } → canonical Page<PublicReviewCard>.
-        // Same eligibility SSOT as the page's capped list (get_public_reviews),
-        // keyset-paginated in SQL (get_public_reviews_page), enriched with the
-        // same followee flags + Ring-2 calibrations.
-        if (action === 'reviews') {
-            const body = await req.json().catch(() => ({}));
-            const rid = (body?.restaurant_id ?? restaurantId) as string | null;
-            if (!rid) return fail('restaurant_id is required');
-
-            // Accept UUID or external_id, like action=page.
-            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-            let resolvedId = rid;
-            if (!uuidPattern.test(rid)) {
-                const { data: r, error: ridErr } = await supabase
-                    .from('restaurants')
-                    .select('id')
-                    .eq('external_id', rid)
-                    .maybeSingle();
-                if (ridErr) throw ridErr;
-                if (!r) return json({ data: { rows: [], next_cursor: null, has_more: false } });
-                resolvedId = r.id as string;
-            }
-
-            const pageSize = Math.min(Math.max(Number(body?.limit) || 30, 1), 50);
-            const cursor = decodeCursor(body?.cursor);
-
-            const { data: reviewRows, error: reviewsErr } = await supabase
-                .rpc('get_public_reviews_page', {
-                    p_restaurant_id: resolvedId,
-                    p_limit: pageSize + 1,
-                    p_cursor_date: cursor?.sort_date ?? null,
-                    p_cursor_id: cursor?.id ?? null,
-                });
-            if (reviewsErr) throw reviewsErr;
-            const raw = (reviewRows ?? []) as any[];
-
-            // Ring-1 exclusion set (viewer's tablemates) — calibration is Ring 2 only.
-            const sharedIds = new Set<string>();
-            {
-                const { data: memberships, error: memberErr } = await supabase
-                    .from('table_members')
-                    .select('table_id')
-                    .eq('member_id', user.id);
-                if (memberErr) throw memberErr;
-                const tableIds = (memberships ?? []).map((m: any) => m.table_id as string);
-                if (tableIds.length > 0) {
-                    const { data: shared, error: sharedErr } = await supabase
-                        .from('table_members')
-                        .select('member_id')
-                        .in('table_id', tableIds)
-                        .neq('member_id', user.id);
-                    if (sharedErr) throw sharedErr;
-                    for (const m of shared ?? []) sharedIds.add((m as any).member_id as string);
-                }
-            }
-
-            // Followee flags — non-fatal, same as the page block.
-            const followedSet = new Set<string>();
-            {
-                const reviewerIds = [...new Set<string>(
-                    raw.map((r) => r.user_id as string).filter((uid) => !!uid && uid !== user.id),
-                )];
-                if (reviewerIds.length > 0) {
-                    const { data: followRows, error: followErr } = await supabase
-                        .from('follows')
-                        .select('following_id')
-                        .eq('follower_id', user.id)
-                        .in('following_id', reviewerIds);
-                    if (followErr) console.error('restaurant-history follows error:', followErr);
-                    for (const fr of followRows ?? []) {
-                        followedSet.add((fr as { following_id: string }).following_id);
-                    }
-                }
-            }
-
-            // Ring-2 calibrations — non-fatal.
-            let calMap = new Map<string, Calibration | null>();
-            const calAuthorIds = [...new Set<string>(
-                raw
-                    .map((r) => r.user_id as string)
-                    .filter((uid) => uid !== user.id && !sharedIds.has(uid)),
-            )];
-            if (calAuthorIds.length > 0) {
-                try {
-                    calMap = await computeCalibrations(supabase, user.id, calAuthorIds);
-                } catch (calErr) {
-                    console.error('restaurant-history calibration error:', calErr);
-                }
-            }
-
-            const cards: PublicReviewCard[] = raw.map((row: any) => ({
-                entry_id: row.entry_id,
-                user_id: row.user_id,
-                display_name: row.display_name ?? 'User',
-                username: row.username ?? null,
-                avatar_url: row.avatar_url ?? null,
-                rating: row.rating,
-                note_excerpt: row.content ?? '',
-                photo_url: row.photo_url ?? null,
-                created_at: row.created_at,
-                public_reaction_count: row.public_reaction_count ?? 0,
-                public_reply_count: row.public_reply_count ?? 0,
-                calibration: (row.user_id === user.id || sharedIds.has(row.user_id))
-                    ? null
-                    : (calMap.get(row.user_id) ?? null),
-                is_followee: followedSet.has(row.user_id),
-            }));
-
-            const page = buildPage(cards, pageSize, (row) =>
-                ({ sort_date: row.created_at, id: row.entry_id }));
-            return json({ data: page });
-        }
-
         // ── Reserve link (TICKET-149) ─────────────────────────────────────
         // Resolve the venue's direct booking-page URL (OpenTable/Resy/
         // SevenRooms/…) by scanning its own website — Google Places exposes
@@ -739,7 +590,6 @@ serve(async (req) => {
 
             // Empty page for ghost restaurants not yet in DB
             const emptyDistributions = { you: [0,0,0,0,0], your_table: null, napkin: [0,0,0,0,0] };
-            const emptyHalfDistributions = { you: new Array(10).fill(0), your_table: null, napkin: new Array(10).fill(0) };
             const emptyPhotos = { from_your_table: [], from_others: [] };
             const emptyPlaceDetails: PlaceDetails = { hours_today: null, open_now: null, hours_week: null, website: null, phone: null, menu_url: null, lat: null, lng: null };
 
@@ -755,7 +605,6 @@ serve(async (req) => {
                         public_reviews: [],
                         public_reviews_total: 0,
                         distributions: emptyDistributions,
-                        distributions_half: emptyHalfDistributions,
                         napkin_aggregate: { average: null, count: 0 },
                         photos: emptyPhotos,
                         place_details: emptyPlaceDetails,
@@ -1286,13 +1135,6 @@ serve(async (req) => {
                         you: youDist,
                         your_table: yourTableDist,
                         napkin: napkinDist,
-                    },
-                    // TICKET-154: half-star truth. Legacy 5-bucket stays above
-                    // for clients predating this field.
-                    distributions_half: {
-                        you: buildHalfDistribution(personalRatings),
-                        your_table: tableChip ? buildHalfDistribution(tableRatings) : null,
-                        napkin: buildHalfDistribution(napkinRatings),
                     },
                     napkin_aggregate: {
                         average: napkinAverage,

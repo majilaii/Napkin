@@ -47,9 +47,6 @@ interface Props {
      * When provided, zero-voices state reads "— no one's written about {name} yet."
      */
     restaurantName?: string | null;
-    /** TICKET-154: opens the all-reviews page. Renders the "all reviews" affordance
-     * in the section header when set and there are public reviews to expand. */
-    onSeeAllReviews?: () => void;
 }
 
 // Calibration filter thresholds (locked for v1 per TICKET-022 AC)
@@ -188,7 +185,6 @@ export function VoicesStream({
     onVisitPress,
     onPublicReviewPress,
     restaurantName,
-    onSeeAllReviews,
 }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
@@ -248,21 +244,7 @@ export function VoicesStream({
             {/* Section label */}
             <View style={styles.secRow}>
                 <Text style={[styles.secLabel, { color: palette.textMuted }]}>VOICES</Text>
-                {onSeeAllReviews && publicReviews.length > 0 ? (
-                    <Pressable
-                        onPress={onSeeAllReviews}
-                        hitSlop={8}
-                        accessibilityRole="button"
-                        accessibilityLabel="all reviews"
-                        style={({ pressed }) => [styles.seeAll, { opacity: pressed ? 0.6 : 1 }]}
-                    >
-                        <Text style={[styles.secCount, { color: palette.textSecondary }]}>
-                            ALL REVIEWS →
-                        </Text>
-                    </Pressable>
-                ) : (
-                    <Text style={[styles.secCount, { color: palette.textSecondary }]}>{total}</Text>
-                )}
+                <Text style={[styles.secCount, { color: palette.textSecondary }]}>{total}</Text>
             </View>
 
             {/* Self */}
@@ -402,9 +384,6 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 9,
         letterSpacing: 1,
-    },
-    seeAll: {
-        paddingVertical: 2,
     },
     tierRow: {
         marginTop: 16,

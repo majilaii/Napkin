@@ -294,16 +294,6 @@ export default function RestaurantScreen() {
         router.push({ pathname: '/entry-detail', params: { entryId, viewAs: 'public' } });
     }, [router]);
 
-    // TICKET-154: the all-reviews page (Letterboxd film → Reviews).
-    const handleSeeAllReviews = useCallback(() => {
-        const targetId = pageData?.restaurant?.id;
-        if (!targetId) return;
-        router.push({
-            pathname: '/restaurant-reviews',
-            params: { id: targetId, name: pageData?.restaurant?.name ?? '' },
-        });
-    }, [router, pageData?.restaurant?.id, pageData?.restaurant?.name]);
-
     // ── Signal strip + histogram state ────────────────────────────────────
     const personalCount = pageData?.personal?.visit_count ?? 0;
     const tableCount = pageData?.table_chip?.visit_count ?? 0;
@@ -732,7 +722,7 @@ export default function RestaurantScreen() {
                     {restaurant ? (
                         <SwitchableDistribution
                             activeTier={activeTier}
-                            distributions={pageData?.distributions_half ?? { you: new Array(10).fill(0), your_table: null, napkin: new Array(10).fill(0) }}
+                            distributions={pageData?.distributions ?? { you: [0, 0, 0, 0, 0], your_table: null, napkin: [0, 0, 0, 0, 0] }}
                             onTierChange={setActiveTier}
                         />
                     ) : null}
@@ -793,7 +783,6 @@ export default function RestaurantScreen() {
                                 onVisitPress={handleVisitPress}
                                 onPublicReviewPress={handlePublicReviewPress}
                                 restaurantName={restaurant?.name ?? null}
-                                onSeeAllReviews={handleSeeAllReviews}
                             />
                         </View>
                     ) : null}
