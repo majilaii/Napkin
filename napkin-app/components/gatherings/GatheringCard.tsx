@@ -135,8 +135,6 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
         isExpired,
         supperCancelled,
         canClear,
-        canRescue,
-        isRescued,
         leaf,
         ins,
         outs,
@@ -216,12 +214,6 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
     const openSupper = () => {
         if (!supper_id) return;
         router.push({ pathname: '/supper/[id]', params: { id: supper_id } });
-    };
-
-    // TICKET-159 rescue — the card is a jump-off (like its body tap): land on
-    // the detail with rescue=1 so the screen opens the prefilled SetTableSheet.
-    const openRescue = () => {
-        router.push({ pathname: '/gathering/[id]', params: { id, rescue: '1' } });
     };
 
     const openSource = () => {
@@ -376,59 +368,23 @@ export function GatheringCard({ gathering, viewerId }: GatheringCardProps) {
                 ) : null}
 
                 {/* ── Footer zone ────────────────────────────────────────────── */}
-                {isRescued ? (
-                    // TICKET-159: expired but rescued — the supper exists; offer it.
+                {isExpired ? (
                     <View style={styles.footerRow}>
-                        <Pressable
-                            onPress={openSupper}
-                            accessibilityRole="button"
-                            accessibilityLabel="see the table"
-                            style={({ pressed }) => [
-                                styles.ghostPill,
-                                { borderColor: palette.ruleInkSoft, opacity: pressed ? 0.7 : 1 },
-                            ]}
-                        >
-                            <Text style={[styles.ghostPillText, { color: palette.primary }]}>see the table →</Text>
-                        </Pressable>
-                    </View>
-                ) : null}
-
-                {isExpired && !isRescued ? (
-                    <View style={styles.expiredWrap}>
-                        <View style={styles.footerRow}>
-                            <Text style={[styles.expired, styles.footerMeta, { color: palette.textMuted }]}>
-                                didn&apos;t come together
-                            </Text>
-                            {canClear ? (
-                                <Pressable
-                                    onPress={() => setOwnerSheet(true)}
-                                    disabled={del.isPending}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="clear this gathering"
-                                    style={({ pressed }) => [
-                                        styles.ghostPill,
-                                        { borderColor: palette.ruleInkSoft, opacity: del.isPending ? 0.5 : pressed ? 0.7 : 1 },
-                                    ]}
-                                >
-                                    <Text style={[styles.ghostPillText, { color: palette.textMuted }]}>clear</Text>
-                                </Pressable>
-                            ) : null}
-                        </View>
-                        {/* TICKET-159 rescue — host-only; opens the prefilled sheet
-                            via the gathering detail (the server re-enforces both). */}
-                        {canRescue ? (
+                        <Text style={[styles.expired, styles.footerMeta, { color: palette.textMuted }]}>
+                            didn&apos;t come together
+                        </Text>
+                        {canClear ? (
                             <Pressable
-                                onPress={openRescue}
+                                onPress={() => setOwnerSheet(true)}
+                                disabled={del.isPending}
                                 accessibilityRole="button"
-                                accessibilityLabel="it happened anyway — set the table"
+                                accessibilityLabel="clear this gathering"
                                 style={({ pressed }) => [
-                                    styles.rescueBtn,
-                                    { borderColor: palette.ruleInkSoft, opacity: pressed ? 0.7 : 1 },
+                                    styles.ghostPill,
+                                    { borderColor: palette.ruleInkSoft, opacity: del.isPending ? 0.5 : pressed ? 0.7 : 1 },
                                 ]}
                             >
-                                <Text style={[styles.rescueBtnText, { color: palette.primary }]}>
-                                    it happened anyway — set the table
-                                </Text>
+                                <Text style={[styles.ghostPillText, { color: palette.textMuted }]}>clear</Text>
                             </Pressable>
                         ) : null}
                     </View>
@@ -788,23 +744,6 @@ const styles = StyleSheet.create({
     },
     controlsWrap: {
         gap: 8,
-    },
-    // TICKET-159 rescue — expired meta row + a full-width ghost CTA under it.
-    expiredWrap: {
-        gap: 8,
-    },
-    rescueBtn: {
-        height: 38,
-        borderRadius: 999,
-        borderWidth: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 14,
-    },
-    rescueBtnText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
-        letterSpacing: 0.2,
     },
     rsvpRow: {
         flexDirection: 'row',

@@ -29,51 +29,6 @@ import { coerceClientNonce } from '../_shared/uuid.ts';
 // Food establishment types from Google Places
 const FOOD_TYPES = ['restaurant', 'cafe', 'bar', 'bakery', 'meal_takeaway', 'food', 'meal_delivery'];
 
-// TICKET-159 stray-log stitch: the suggest-only candidacy, computed by ONE SQL
-// RPC (fn_supper_stitch_suggestion) so the fresh-create and dedup paths can
-// never drift. Returns the single best suggestion or null. Best-effort — a
-// suggestion failure must NEVER fail the entry create (log-and-null).
-interface SupperSuggestion {
-    supper_id: string;
-    restaurant_name: string | null;
-    gathered_count: number;
-    /** 'YYYY-MM-DD' — the supper's night (gather_on for gather-born, else created day, HKT). */
-    night: string;
-}
-
-async function fetchSupperSuggestion(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    supabase: any,
-    userId: string,
-    restaurantId: string,
-    visitedAt: string,
-    entryId: string,
-): Promise<SupperSuggestion | null> {
-    try {
-        const { data, error } = await supabase.rpc('fn_supper_stitch_suggestion', {
-            p_user: userId,
-            p_restaurant_id: restaurantId,
-            p_visited_at: visitedAt,
-            p_entry_id: entryId,
-        });
-        if (error) {
-            console.error('[entry] fn_supper_stitch_suggestion failed (non-fatal):', error);
-            return null;
-        }
-        const row = Array.isArray(data) ? data[0] : data;
-        if (!row?.supper_id) return null;
-        return {
-            supper_id: row.supper_id,
-            restaurant_name: row.restaurant_name ?? null,
-            gathered_count: typeof row.gathered_count === 'number' ? row.gathered_count : 0,
-            night: row.night,
-        };
-    } catch (e) {
-        console.error('[entry] fn_supper_stitch_suggestion threw (non-fatal):', e);
-        return null;
-    }
-}
-
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
@@ -438,20 +393,6 @@ serve(async (req) => {
                     .eq('id', supperRow.restaurant_id)
                     .maybeSingle();
 
-                // TICKET-159 provenance: a supper born from a gather shows its
-                // lineage (`planned <created_at> · gathered <gather_on>`). The
-                // reverse lookup rides idx_gatherings_one_supper (≤1 row); a
-                // set-a-table supper (no gather) yields null → no lineage line.
-                const { data: lineageRow, error: lineageErr } = await supabase
-                    .from('gatherings')
-                    .select('created_at, gather_on')
-                    .eq('supper_id', supperId)
-                    .maybeSingle();
-                if (lineageErr) throw lineageErr;
-                const lineage = lineageRow
-                    ? { planned: lineageRow.created_at, gathered: lineageRow.gather_on }
-                    : null;
-
                 return new Response(
                     JSON.stringify({
                         data: {
@@ -459,7 +400,6 @@ serve(async (req) => {
                             restaurant: supperRestaurant ?? null,
                             roster,
                             takes,
-                            lineage,
                         },
                     }),
                     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -1031,45 +971,6 @@ serve(async (req) => {
                 );
             }
 
-            // ── attach-take action (TICKET-159 stray-log stitch) ───────────
-            // Confirms a supper_suggestion: binds an EXISTING entry the caller
-            // owns to a supper they belong to. ALL validation lives in the
-            // locking SECDEF RPC (owner, membership, unattached, same
-            // restaurant, no existing take) so a stale or manipulated
-            // confirmation is rejected server-side. Never called by the server
-            // on its own — the client's explicit confirm is the only trigger.
-            if (body.action === 'attach-take') {
-                const { entry_id: attachEntryId, supper_id: attachSupperId } = body;
-                const ATTACH_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-                if (typeof attachEntryId !== 'string' || !ATTACH_UUID_RE.test(attachEntryId) ||
-                    typeof attachSupperId !== 'string' || !ATTACH_UUID_RE.test(attachSupperId)) {
-                    return new Response(
-                        JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'entry_id and supper_id are required' } }),
-                        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-                    );
-                }
-
-                const { data: attachedRow, error: attachErr } = await supabase.rpc('fn_attach_take_to_supper', {
-                    p_user: user.id,
-                    p_entry_id: attachEntryId,
-                    p_supper_id: attachSupperId,
-                });
-                if (attachErr) {
-                    // attach_denied → 403, attach_conflict / 23505 → 409 (mapPgError).
-                    const { code, status } = mapPgError(attachErr);
-                    return errorResponse(code, attachErr.message ?? 'attach-take failed', status);
-                }
-                const attached = Array.isArray(attachedRow) ? attachedRow[0] : attachedRow;
-                if (!attached?.id) {
-                    throw new Error('attach-take: fn_attach_take_to_supper returned no entry');
-                }
-
-                return new Response(
-                    JSON.stringify({ data: attached }),
-                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-                );
-            }
-
             // ── add-take action ────────────────────────────────────────────
             if (body.action === 'add-take') {
                 const { entry_id, rating, notes } = body;
@@ -1130,24 +1031,6 @@ serve(async (req) => {
                         return new Response(
                             JSON.stringify({ error: { code: 'FORBIDDEN', message: 'Not a member of this supper' } }),
                             { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-                        );
-                    }
-
-                    // TICKET-159 (one take per member per supper): pre-check so a
-                    // double-tap never creates an orphan entry. The partial unique
-                    // index idx_entries_one_take_per_supper is the authoritative
-                    // race guard — its 23505 on the bind below maps to the same 409.
-                    const { data: priorTake, error: priorTakeErr } = await supabase
-                        .from('entries')
-                        .select('id')
-                        .eq('supper_id', supperTakeId)
-                        .eq('user_id', user.id)
-                        .maybeSingle();
-                    if (priorTakeErr) throw priorTakeErr;
-                    if (priorTake) {
-                        return new Response(
-                            JSON.stringify({ error: { code: 'ATTACH_CONFLICT', message: 'You already added your take to this supper' } }),
-                            { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                         );
                     }
 
@@ -1230,25 +1113,11 @@ serve(async (req) => {
 
                     // Bind the take entry to the supper (group key). The RPC does not
                     // carry supper_id, so we patch it here via service-role UPDATE.
-                    // TICKET-159: idx_entries_one_take_per_supper turns a raced
-                    // second bind into 23505 → clean 409 (the fresh orphan entry is
-                    // removed so the loser leaves no stray log behind).
                     const { error: takeBindErr } = await supabase
                         .from('entries')
                         .update({ supper_id: supperTakeId })
                         .eq('id', takeEntryId);
-                    if (takeBindErr) {
-                        if ((takeBindErr as { code?: string }).code === '23505') {
-                            if (!takeWasDedup) {
-                                await supabase.from('entries').delete().eq('id', takeEntryId);
-                            }
-                            return new Response(
-                                JSON.stringify({ error: { code: 'ATTACH_CONFLICT', message: 'You already added your take to this supper' } }),
-                                { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-                            );
-                        }
-                        throw takeBindErr;
-                    }
+                    if (takeBindErr) throw takeBindErr;
 
                     // Bulk-insert this take's extra photos (non-fatal). Skip on dedup
                     // so a retried take doesn't double-insert photos.
@@ -1719,31 +1588,12 @@ serve(async (req) => {
                     .select('id', { count: 'exact', head: true })
                     .eq('user_id', user.id)
                     .lte('created_at', existingEntry?.created_at ?? new Date().toISOString());
-
-                // TICKET-159 stitch (finding 14): the dedup path suggests too —
-                // a retried create whose entry is still unattached deserves the
-                // same "add this as your take?" moment. Same RPC as the fresh
-                // path; suggest-only (the server never sets supper_id itself).
-                const dedupRestaurantId = existingEntry?.restaurant_id ?? restaurantId ?? null;
-                const dedupSupperSuggestion =
-                    dedupRestaurantId && !existingEntry?.supper_id
-                        ? await fetchSupperSuggestion(
-                            supabase,
-                            user.id,
-                            dedupRestaurantId,
-                            existingEntry?.visited_at ?? visitedAtValue,
-                            entryId,
-                        )
-                        : null;
-
                 return new Response(
                     JSON.stringify({
                         data: {
                             ...(existingEntry ?? { id: entryId }),
                             table_id: effectiveTableIds[0] ?? null,
                             table_ids: effectiveTableIds,
-                            // Nested INSIDE data — callEdgeFn strips the envelope.
-                            supper_suggestion: dedupSupperSuggestion,
                         },
                         entry_ordinal: dupCount ?? null,
                         warnings: [{ type: 'duplicate_submission' }],
@@ -2022,16 +1872,6 @@ serve(async (req) => {
             }
             const entry_ordinal = countErr ? null : (entryCount ?? null);
 
-            // ── TICKET-159 stray-log stitch (suggest-only) ──────────────────────
-            // A fresh restaurant log that ISN'T already supper-bound (no supper
-            // opened here, no take path) gets at most ONE supper_suggestion when a
-            // supper the author belongs to matches restaurant + night (±1 day HKT).
-            // The client shows a confirm sheet; the server NEVER attaches on its own.
-            const supperSuggestion =
-                restaurantId && !createdSupperId
-                    ? await fetchSupperSuggestion(supabase, user.id, restaurantId, visitedAtValue, entryData.id)
-                    : null;
-
             return new Response(
                 JSON.stringify({
                     // TICKET-043: author-facing response includes table_ids[].
@@ -2044,8 +1884,6 @@ serve(async (req) => {
                         // TICKET-082: nest supper_id INSIDE data (callEdgeFn strips the
                         // outer envelope, so a sibling field would be dropped).
                         supper_id: createdSupperId,
-                        // TICKET-159: same nesting rule as supper_id/merge_outcome.
-                        supper_suggestion: supperSuggestion,
                     },
                     entry_ordinal,
                     ...(warnings.length > 0 ? { warnings } : {}),

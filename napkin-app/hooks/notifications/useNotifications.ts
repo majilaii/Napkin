@@ -22,8 +22,7 @@ export type NotificationType =
     | 'table_invite_accepted'
     | 'claim_city'
     | 'reservation_reminder'
-    | 'import_done'
-    | 'supper_set';
+    | 'import_done';
 
 interface BaseNotification {
     id: string;
@@ -120,18 +119,6 @@ export interface ImportDoneNotification extends BaseNotification {
     jobId?: string;
 }
 
-/**
- * TICKET-159: self-directed dispatch nudge — "the table gathered at «spot»".
- * Null actor (olive glyph); tap deep-links /supper/[supperId].
- */
-export interface SupperSetNotification extends BaseNotification {
-    type: 'supper_set';
-    supperId: string;
-    restaurantName: string;
-    restaurantId?: string;
-    photoUrl?: string | null;
-}
-
 export type Notification =
     | FriendLoggedNotification
     | FriendPinnedNotification
@@ -140,17 +127,7 @@ export type Notification =
     | TableInviteAcceptedNotification
     | ClaimCityNotification
     | ReservationReminderNotification
-    | ImportDoneNotification
-    | SupperSetNotification;
-
-/**
- * TICKET-159 (forward-compat, finding 15): the server hydrator emits a generic
- * row for any kind newer than this build. It arrives typed as `Notification`
- * over the wire but its `type` matches no known arm — the inbox renders it via
- * the switch's `default` fallback so the unread badge never overcounts the
- * visible rows. Runtime shape: BaseNotification with an unrecognised `type`.
- */
-export type UnknownNotification = Omit<BaseNotification, 'type'> & { type: string };
+    | ImportDoneNotification;
 
 /** Extra top-level field on the inbox page envelope (first page only; subsequent pages have null). */
 export type InboxExtras = { unread_count: number | null };

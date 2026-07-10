@@ -19,8 +19,6 @@ export {
     type TableInviteAcceptedNotification,
     type ClaimCityNotification,
     type ReservationReminderNotification,
-    type SupperSetNotification,
-    type UnknownNotification,
 } from './useNotifications';
 
 export { useMarkNotificationRead } from './useMarkNotificationRead';

@@ -17,13 +17,3 @@ export { useGatheringViewModel } from './useGatheringViewModel';
 export type { GatheringViewModel } from './useGatheringViewModel';
 
 export { useGathering, GONE_CODES } from './useGathering';
-
-export { useRescueGathering } from './useRescueGathering';
-export type {
-    RescueGatheringInput,
-    RescueGatheringResult,
-    RescueRosterMember,
-} from './useRescueGathering';
-
-export { useReminderWindow } from './useReminderWindow';
-export type { ReminderWindowRow } from './useReminderWindow';

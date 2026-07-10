@@ -274,10 +274,6 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
         case 'reservation_reminder':
             router.push('/create-entry');
             return;
-        case 'supper_set':
-            // TICKET-159: the table gathered — land on the supper to add a take.
-            router.push({ pathname: '/supper/[id]', params: { id: n.supperId } });
-            return;
         case 'import_done':
             // saved → the batch detail (server job_id); review/failed → the hub.
             // Hierarchical nav is sacred: never deep-link past /import-progress.
@@ -286,10 +282,6 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
             } else {
                 router.push('/import-progress' as any);
             }
-            return;
-        default:
-            // TICKET-159 (finding 15): an unknown (newer-server) kind renders as
-            // a generic row; tapping it just marks it read — nowhere to route.
             return;
     }
 }
@@ -546,38 +538,6 @@ function NotificationRow({
                     trailing={<NotifAction label="Log" variant="filledInk" />}
                 />
             );
-        case 'supper_set':
-            // TICKET-159: self-directed dispatch nudge (null actor → olive glyph,
-            // same add-your-take mark as reservation_reminder). Tap → the supper.
-            return (
-                <NotifRow
-                    tone={tone}
-                    onPress={onPress}
-                    leading={<NotifGlyph tone="olive">{'✎'}</NotifGlyph>}
-                    title={
-                        <>
-                            {'the table gathered at '}
-                            <I>{n.restaurantName}</I>
-                        </>
-                    }
-                    time={n.timeLabel}
-                />
-            );
-        default: {
-            // TICKET-159 (finding 15): a kind newer than this build still shows a
-            // quiet generic row, so the unread badge can never exceed the visible
-            // rows. No route on tap (handleTap's default) — read-marking still works.
-            const unknown = n as { timeLabel: string };
-            return (
-                <NotifRow
-                    tone={tone}
-                    onPress={onPress}
-                    leading={<NotifGlyph tone="amber">{'·'}</NotifGlyph>}
-                    title={'something new'}
-                    time={unknown.timeLabel}
-                />
-            );
-        }
     }
 }
 

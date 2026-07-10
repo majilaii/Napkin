@@ -69,13 +69,6 @@ export interface SupperDetail {
     restaurant: SupperRestaurant | null;
     roster: SupperRosterMember[];
     takes: SupperTake[];
-    /**
-     * TICKET-159 provenance: the gather this supper was born from — reverse
-     * lookup on the unique gatherings.supper_id. `planned` is the gather's
-     * created_at (ISO timestamptz), `gathered` its gather_on ('YYYY-MM-DD').
-     * Null for a set-a-table supper (no gather) → no lineage line renders.
-     */
-    lineage: { planned: string; gathered: string } | null;
 }
 
 async function fetchSupper(supperId: string): Promise<SupperDetail> {

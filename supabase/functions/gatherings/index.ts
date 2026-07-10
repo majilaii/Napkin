@@ -27,30 +27,17 @@
  *     'cancelled'; fn_table_activity_page excludes cancelled rows.
  *
  *   delete — the host clears a dead gathering off the table for good: hard
- *     DELETE (rsvps cascade). Allowed for proposed / expired / cancelled rows
- *     with NO supper link. The ONE block (TICKET-159 tightened): ANY gathering
- *     with a live supper_id — dispatched or rescued — that history belongs to
- *     the supper; cancel the supper first.
- *
- *   rescue — TICKET-159 "it happened anyway — set the table": the HOST of an
- *     EXPIRED gathering creates the supper after the fact. Atomic + idempotent
- *     via fn_rescue_expired_gathering (a repeat/concurrent completion returns
- *     the EXISTING supper). Returns the canonical supper with roster +
- *     member_count (SetTableResult shape). The gathering stays 'expired'.
- *
- *   reconcile_window — TICKET-159 morning-after ping driver: a member-gated
- *     read of the table's gatherings with gather_on in [today-1, today+90]
- *     INCLUDING cancelled and expired rows, each carrying status,
- *     viewer_response and restaurant {id, name}. The device reminder reconcile
- *     decides keep/cancel purely from this state — never from a row's absence.
+ *     DELETE (rsvps cascade). Allowed for proposed / expired / cancelled and
+ *     for a dispatched row whose supper link died (supper_id null). The ONE
+ *     block: dispatched with a live supper — that history belongs to the
+ *     supper; cancel the supper first.
  *
  * All writes are service-role (gatherings/gathering_rsvps have NO client write
  * policy) — membership is validated here against table_members.member_id
  * (NEVER tm.user_id — CLAUDE.md doctrine).
  *
  * Dispatch (proposal → supper) does NOT live here: fn_dispatch_due_gatherings
- * runs from table-activity on the first feed page load, and the hourly
- * pg_cron 'gathering-sweep' drives fn_dispatch_all_due_gatherings globally.
+ * runs from table-activity on the first feed page load.
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
@@ -175,12 +162,6 @@ serve(async (req) => {
         }
         if (action === 'delete') {
             return await handleDelete(supabase, user, body);
-        }
-        if (action === 'rescue') {
-            return await handleRescue(supabase, user, body);
-        }
-        if (action === 'reconcile_window') {
-            return await handleReconcileWindow(supabase, user, body);
         }
 
         return err('UNKNOWN_ACTION', `Unknown action: ${action}`, 400);
@@ -686,23 +667,20 @@ async function handleDelete(
     if (gathering.host_user_id !== user.id) {
         return err('NOT_HOST', 'Only the host can clear this', 403);
     }
-    // TICKET-159 (finding 6): a live supper link blocks deletion REGARDLESS of
-    // status — a rescued (expired + supper_id) gathering carries the supper's
-    // provenance and is not deletable, same as a dispatched one.
-    if (gathering.supper_id) {
+    if (gathering.status === 'dispatched' && gathering.supper_id) {
         return err('GATHERING_LOCKED', 'This gathering became a supper — cancel the supper instead', 409);
     }
 
-    // Guarded hard delete (rsvps cascade). The supper_id re-assertion means a
-    // dispatch OR rescue that wins the race between the read above and this
-    // call can't have its supper history erased (both hold FOR UPDATE row
+    // Guarded hard delete (rsvps cascade). The .or() re-asserts the live-supper
+    // block so a dispatch that wins the race between the read above and this
+    // call can't have its supper history erased (dispatch holds FOR UPDATE row
     // locks, so this delete waits and then re-evaluates against the new state).
     const { data: deletedRows, error: deleteErr } = await supabase
         .from('gatherings')
         .delete()
         .eq('id', gatheringId)
         .eq('host_user_id', user.id)
-        .is('supper_id', null)
+        .or('status.neq.dispatched,supper_id.is.null')
         .select('id');
     if (deleteErr) throw deleteErr;
     if (!deletedRows || deletedRows.length === 0) {
@@ -710,186 +688,4 @@ async function handleDelete(
     }
 
     return json({ deleted: true });
-}
-
-// ── Action: rescue (TICKET-159) ───────────────────────────────────────────────
-// "it happened anyway — set the table": the HOST of an EXPIRED gathering creates
-// the supper after the fact, pre-crewed with the members they picked. Host-only
-// is enforced HERE (403) and again inside the RPC's (id, host) claim; the host
-// must also still be a CURRENT table member (rescue is unavailable after host
-// departure — accepted). The RPC is atomic + idempotent: it re-checks
-// status='expired' AND supper_id IS NULL under lock and returns the EXISTING
-// supper on a repeat/concurrent completion — never a second one.
-// Response: the canonical supper with roster + member_count (SetTableResult
-// shape — mirrors entry?action=set-table).
-async function handleRescue(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    supabase: any,
-    user: { id: string },
-    body: Record<string, unknown>,
-): Promise<Response> {
-    const gatheringId = body.gathering_id;
-    const rawMemberIds: unknown = body.member_ids;
-
-    if (typeof gatheringId !== 'string' || !UUID_RE.test(gatheringId)) {
-        return err('INVALID_INPUT', 'gathering_id is required');
-    }
-    const memberIds = Array.isArray(rawMemberIds)
-        ? [...new Set(rawMemberIds.filter(
-            (id): id is string => typeof id === 'string' && UUID_RE.test(id) && id !== user.id,
-        ))]
-        : [];
-
-    const { data: gathering, error: gatheringErr } = await supabase
-        .from('gatherings')
-        .select('id, table_id, host_user_id, status, supper_id')
-        .eq('id', gatheringId)
-        .maybeSingle();
-    if (gatheringErr) throw gatheringErr;
-    if (!gathering) {
-        return err('NOT_FOUND', 'Gathering not found', 404);
-    }
-    if (gathering.host_user_id !== user.id) {
-        return err('NOT_HOST', 'Only the host can set this table', 403);
-    }
-    // Host must still be a CURRENT member (finding 7) — mirrors cancel/delete.
-    if (!(await isTableMember(supabase, gathering.table_id, user.id))) {
-        return err('FORBIDDEN', 'Not a member of this table', 403);
-    }
-    // The rescue exists ONLY for expired gatherings — never proposed/dispatched,
-    // so it can never create a supper before gather_on.
-    if (gathering.status !== 'expired') {
-        return err('GATHERING_NOT_EXPIRED', 'Only an expired gathering can be set after the fact', 409);
-    }
-
-    // The RPC re-validates member_ids against CURRENT table_members (member_id
-    // doctrine) and drops non-members — same silent-drop contract as set-table.
-    const { data: supperId, error: rpcErr } = await supabase.rpc('fn_rescue_expired_gathering', {
-        p_gathering_id: gatheringId,
-        p_host: user.id,
-        p_member_ids: memberIds,
-    });
-    if (rpcErr) throw rpcErr;
-    if (!supperId) {
-        // The pre-read said expired-and-ours, so a NULL here means we lost a
-        // race (deleted, or host dropped off the table mid-flight).
-        return err('GATHERING_NOT_EXPIRED', 'Only an expired gathering can be set after the fact', 409);
-    }
-
-    // Read back the canonical supper + roster (finding 16 — SetTableResult
-    // shape with roster + member_count, so the sheet's confirm step is honest).
-    const { data: supperRow, error: supperErr } = await supabase
-        .from('suppers')
-        .select('id, restaurant_id, host_user_id, table_id, created_at')
-        .eq('id', supperId)
-        .single();
-    if (supperErr) throw supperErr;
-
-    const { data: rosterRows, error: rosterErr } = await supabase
-        .from('supper_members')
-        .select(`
-            user_id,
-            profiles:user_id (
-                display_name,
-                avatar_url
-            )
-        `)
-        .eq('supper_id', supperId);
-    if (rosterErr) throw rosterErr;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const roster = ((rosterRows ?? []) as any[]).map((r) => {
-        const p = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles;
-        return {
-            user_id: r.user_id,
-            display_name: p?.display_name ?? null,
-            avatar_url: p?.avatar_url ?? null,
-        };
-    });
-
-    return json({ ...supperRow, member_count: roster.length, roster });
-}
-
-// ── Action: reconcile_window (TICKET-159) ─────────────────────────────────────
-// The authoritative read the device-reminder reconcile runs against: this
-// table's gatherings with gather_on in [today-1, today+90] (HKT), INCLUDING
-// cancelled and expired rows, each carrying status + the CALLER's own RSVP +
-// restaurant {id, name}. Keep/cancel/reschedule of the local pings is decided
-// purely from this state — a row's absence (within the window) means it was
-// hard-deleted, never merely filtered.
-async function handleReconcileWindow(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    supabase: any,
-    user: { id: string },
-    body: Record<string, unknown>,
-): Promise<Response> {
-    const tableId = body.table_id;
-    if (typeof tableId !== 'string' || !UUID_RE.test(tableId)) {
-        return err('INVALID_INPUT', 'table_id is required');
-    }
-
-    if (!(await isTableMember(supabase, tableId, user.id))) {
-        return err('FORBIDDEN', 'Not a member of this table', 403);
-    }
-
-    const today = todayHKT();
-    const from = addDays(today, -1);
-    const to = addDays(today, MAX_DAYS_AHEAD);
-
-    const { data: rows, error: rowsErr } = await supabase
-        .from('gatherings')
-        .select('id, restaurant_id, gather_on, status, supper_id')
-        .eq('table_id', tableId)
-        .gte('gather_on', from)
-        .lte('gather_on', to)
-        .order('gather_on', { ascending: true });
-    if (rowsErr) throw rowsErr;
-
-    const gatherings = (rows ?? []) as {
-        id: string; restaurant_id: string; gather_on: string;
-        status: string; supper_id: string | null;
-    }[];
-
-    if (gatherings.length === 0) {
-        return json({ rows: [] });
-    }
-
-    const gatheringIds = gatherings.map((g) => g.id);
-    const restIds = [...new Set(gatherings.map((g) => g.restaurant_id).filter(Boolean))];
-
-    const { data: restaurants } = restIds.length > 0
-        ? await supabase.from('restaurants').select('id, name').in('id', restIds)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        : { data: [] as any[] };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const restMap = new Map((restaurants ?? []).map((r: any) => [r.id, r]));
-
-    // Only the CALLER's own responses — the ping approximates the roster via
-    // the viewer's RSVP at reconcile time (spec's accepted approximation).
-    const { data: rsvpRows, error: rsvpErr } = await supabase
-        .from('gathering_rsvps')
-        .select('gathering_id, response')
-        .in('gathering_id', gatheringIds)
-        .eq('user_id', user.id);
-    if (rsvpErr) throw rsvpErr;
-    const viewerRespByGathering = new Map<string, string>(
-        ((rsvpRows ?? []) as { gathering_id: string; response: string }[])
-            .map((r) => [r.gathering_id, r.response]),
-    );
-
-    const out = gatherings.map((g) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rest = (restMap.get(g.restaurant_id) ?? null) as any;
-        return {
-            id: g.id,
-            gather_on: g.gather_on,
-            status: g.status as 'proposed' | 'dispatched' | 'cancelled' | 'expired',
-            supper_id: g.supper_id ?? null,
-            restaurant: rest ? { id: rest.id, name: rest.name ?? null } : null,
-            viewer_response: (viewerRespByGathering.get(g.id) ?? null) as
-                'in' | 'out' | 'counter' | null,
-        };
-    });
-
-    return json({ rows: out });
 }
