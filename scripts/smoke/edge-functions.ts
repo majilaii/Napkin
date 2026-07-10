@@ -351,6 +351,46 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-159: gatherings?action=rescue bogus id → 404 (missing-row gate).
+    // Exercises the new action's routing + the pre-read against gatherings
+    // schema; a random UUID is never a gathering, so the RPC (and any write)
+    // never runs. A 500 here means the routing or the read path drifted.
+    {
+        name: 'gatherings?action=rescue bogus id → 404 not-found gate (TICKET-159)',
+        method: 'POST',
+        fn: 'gatherings',
+        body: { action: 'rescue', gathering_id: '00000000-0000-0000-0000-000000000000', member_ids: [] },
+        expectedStatus: 404,
+        shape: (json) => {
+            const err = (json as { error?: { code?: string } }).error;
+            if (!err) return 'missing error envelope';
+            if (err.code !== 'NOT_FOUND') return `expected error.code NOT_FOUND, got ${err.code}`;
+            return null;
+        },
+    },
+    // TICKET-159: entry?action=attach-take bogus ids → 403. The locking RPC
+    // (fn_attach_take_to_supper) raises attach_denied for an entry the caller
+    // doesn't own — a random UUID is never the smoke user's entry — which the
+    // edge fn maps to 403 ATTACH_DENIED. Exercises the action routing + the
+    // SECDEF RPC end-to-end without ever writing (validation precedes the
+    // UPDATE). A 500 here means the RPC or its error mapping drifted.
+    {
+        name: 'entry?action=attach-take bogus ids → 403 owner/member gate (TICKET-159)',
+        method: 'POST',
+        fn: 'entry',
+        body: {
+            action: 'attach-take',
+            entry_id: '00000000-0000-0000-0000-000000000000',
+            supper_id: '00000000-0000-0000-0000-000000000000',
+        },
+        expectedStatus: 403,
+        shape: (json) => {
+            const err = (json as { error?: { code?: string } }).error;
+            if (!err) return 'missing error envelope';
+            if (err.code !== 'ATTACH_DENIED') return `expected error.code ATTACH_DENIED, got ${err.code}`;
+            return null;
+        },
+    },
     // TICKET-133: respond_invitation read-safe guard. A bogus invitation id →
     // HTTP 404 (invitation not found). This exercises the new POST action's
     // routing + the table_invitations read path post-migration (catches a
