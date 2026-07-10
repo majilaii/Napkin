@@ -2,26 +2,43 @@
  * avatarPicker — the standard "Take photo / Choose from library / Cancel"
  * source sheet for profile photos.
  *
- * The system pickers take ~1–2s to PRESENT cold (PHPicker spin-up — nothing we
- * can preload), so a bare "change photo" tap reads as a dead button. The native
- * action sheet is instant: the tap always gets immediate feedback, and the slow
- * part happens behind a sheet the user just chose. Library picks need no
+ * LATENCY DOCTRINE — why library picks must NEVER pass allowsEditing:
+ * expo-image-picker routes `allowsEditing: true` library picks to the LEGACY
+ * UIImagePickerController (ios/ImagePickerModule.swift launchImagePicker —
+ * only `!allowsEditing && sourceType != .camera` gets the modern PHPicker).
+ * The legacy picker takes 1–2s to present; PHPicker is near-instant — this
+ * was the whole "other apps are instant, ours isn't" gap. Apple's crop screen
+ * is redundant anyway: compressAndUploadAvatar center-crops to 512² itself.
+ * `preferredAssetRepresentationMode: 'current'` skips post-selection
+ * transcoding (we re-encode ourselves). The camera path always uses the
+ * legacy controller regardless, so it keeps allowsEditing — Move-and-Scale
+ * after capture is the standard avatar framing step.
+ *
+ * The action sheet gives instant tap feedback; library picks need no
  * permission (out-of-process system picker, SDK 54); the camera does.
  */
 import { ActionSheetIOS, Alert, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
-const PICK_OPTS: ImagePicker.ImagePickerOptions = {
+const LIBRARY_OPTS: ImagePicker.ImagePickerOptions = {
+    mediaTypes: ['images'],
+    // NO allowsEditing — it silently swaps in the slow legacy picker (above).
+    preferredAssetRepresentationMode:
+        ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+    quality: 0.85, // recompressed to 512² @0.8 on upload — no need for max here
+};
+
+const CAMERA_OPTS: ImagePicker.ImagePickerOptions = {
     mediaTypes: ['images'],
     allowsEditing: true,
     aspect: [1, 1],
-    quality: 0.85, // recompressed to 512² @0.8 on upload — no need for max here
+    quality: 0.85,
 };
 
 async function fromLibrary(): Promise<ImagePicker.ImagePickerAsset | null> {
     let picked: ImagePicker.ImagePickerResult;
     try {
-        picked = await ImagePicker.launchImageLibraryAsync(PICK_OPTS);
+        picked = await ImagePicker.launchImageLibraryAsync(LIBRARY_OPTS);
     } catch {
         Alert.alert("Couldn't open your library", 'Please try again.');
         return null;
@@ -38,7 +55,7 @@ async function fromCamera(): Promise<ImagePicker.ImagePickerAsset | null> {
     }
     let picked: ImagePicker.ImagePickerResult;
     try {
-        picked = await ImagePicker.launchCameraAsync(PICK_OPTS);
+        picked = await ImagePicker.launchCameraAsync(CAMERA_OPTS);
     } catch {
         Alert.alert("Couldn't open the camera", 'Try choosing from your library.');
         return null;
