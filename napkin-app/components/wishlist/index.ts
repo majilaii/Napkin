@@ -37,7 +37,3 @@ export { FilterTabsSheet, type FilterTabConfig } from './FilterTabsSheet';
 // TICKET-137: Discover people picker (exclusive-include) — replaces the friend rail.
 export { DiscoverPeopleSheet } from './DiscoverPeopleSheet';
 export { ImportInboxCard } from './ImportInboxCard';
-export {
-    PlacesWorkspaceHeader,
-    PLACES_WORKSPACE_HEADER_HEIGHT,
-} from './PlacesWorkspaceHeader';

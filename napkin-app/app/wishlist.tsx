@@ -1,17 +1,17 @@
 /**
  * /wishlist — Map-first saved places workspace.
  *
- * Workspace anatomy:
- *   Persistent Places header + Map/List switch + Import entry point.
- *   Map keeps the import/review inbox visible above the bottom controls.
- *   List is an alternate presentation; lists are a collection action, not a
- *   peer destination beside pinned places.
- *   Imports section: PendingSaveCard rows (pending / needs_confirm captures)
- *   "PINNED · {N}" kicker + flat rows: 52px r12 initial-tile · italic serif 17 name
- *                                        muted 12 meta (city · cuisine) · pin icon
- *   E· empty slab when no pinned items
- *   "YOUR LISTS" kicker + rows (italic serif 17 name · muted "{N} spots" · quiet
- *   terracotta `share`) + "+ new list" murmur → /list/new (TICKET-074)
+ * Chrome diet (TICKET-163): no workspace header — the map runs edge to edge and
+ * owns its corner chrome (corner law v2):
+ *   top-LEFT   Your map · Discover source pills (the only toggle)
+ *   top-RIGHT  filter chip · Import chip · pending-import status chip
+ *   bottom-RIGHT  locate FAB stacked over the List pill
+ *   bottom-LEFT   people chip (Discover only)
+ * List is an alternate full-screen presentation: a slim workspace bar
+ * (Pinned | Lists segment + filter/import icons) tops the ledger, and a
+ * frosted Map pill (bottom-right, mirroring the List pill) flips back.
+ * The import/review inbox renders as a CARD only in list mode; on the map it
+ * shrinks to the top-right status chip (never squats over pins).
  *
  * TICKET-060 corrections: pending/needs_confirm → CorrectModal flow preserved.
  */
@@ -32,7 +32,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing, Type, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import {
@@ -49,8 +49,6 @@ import {
     type FilterOption,
     ImportInboxCard,
     DiscoverPeopleSheet,
-    PlacesWorkspaceHeader,
-    PLACES_WORKSPACE_HEADER_HEIGHT,
 } from '@/components/wishlist';
 import { AddToListSheet } from '@/components/lists';
 import { priceTierLabel } from '@/lib/priceLevel';
@@ -291,6 +289,8 @@ export default function WishlistScreen() {
         if (review.length > 0) {
             const n = review.reduce((sum, m) => sum + m.spotCount, 0);
             return {
+                kind: 'review' as const,
+                count: n,
                 icon: 'sparkles-outline' as const,
                 title: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review`,
                 sublabel: 'review and pin',
@@ -302,6 +302,8 @@ export default function WishlistScreen() {
         }
         if (working.length > 0) {
             return {
+                kind: 'working' as const,
+                count: null,
                 icon: 'sync-outline' as const,
                 title: working.length === 1 ? 'importing…' : `importing ${working.length}…`,
                 sublabel: 'spots land here when done',
@@ -310,6 +312,8 @@ export default function WishlistScreen() {
         }
         if (failed.length > 0) {
             return {
+                kind: 'failed' as const,
+                count: null,
                 icon: 'alert-circle-outline' as const,
                 title: 'an import needs attention',
                 sublabel: 'try again or discard',
@@ -322,6 +326,8 @@ export default function WishlistScreen() {
         );
         if (latest) {
             return {
+                kind: 'recent' as const,
+                count: null,
                 icon: importSourceIcon(latest.source),
                 title: `${latest.item_count} ${latest.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(latest.source)}`,
                 sublabel: `${relativeTime(latest.created_at)} · fix or prune in imports`,
@@ -711,15 +717,6 @@ export default function WishlistScreen() {
         if (mode === 'map') requestLocation();
     }, [requestLocation]);
 
-    const handleToggleLists = useCallback(() => {
-        if (viewMode === 'list' && activeTab === 'lists') {
-            setActiveTab('pinned');
-            return;
-        }
-        setViewMode('list');
-        setActiveTab('lists');
-    }, [activeTab, viewMode]);
-
     const totalPinned = pinnedRows.length;
     const listsCount = myLists?.length ?? 0;
 
@@ -765,16 +762,23 @@ export default function WishlistScreen() {
                     params: { entryId, viewAs: 'public' },
                 })
             }
-            bottomDock={
-                importSlot ? (
-                    <ImportInboxCard
-                        title={importSlot.title}
-                        sublabel={importSlot.sublabel}
-                        iconName={importSlot.icon}
-                        palette={palette}
-                        onPress={() => router.push(importSlot.route as any)}
-                    />
-                ) : undefined
+            // Chrome diet (TICKET-163): the workspace header is gone. The map owns
+            // its corner chrome — filter chip + Import chip top-right, List pill
+            // bottom-right (corner law v2). The old inbox card shrinks to a
+            // status chip; the full card survives only as the list-mode inbox row.
+            onSwitchToList={() => handleSelectView('list')}
+            onOpenFilters={() => setFiltersOpen(true)}
+            filtersActive={mapFiltersActive}
+            onImport={() => setImportSheetVisible(true)}
+            importStatus={
+                importSlot && importSlot.kind !== 'recent'
+                    ? {
+                          icon: importSlot.icon,
+                          count: importSlot.kind === 'review' ? importSlot.count : null,
+                          accessibilityLabel: importSlot.title,
+                          onPress: () => router.push(importSlot.route as any),
+                      }
+                    : undefined
             }
             sources={{
                 options: [
@@ -794,7 +798,7 @@ export default function WishlistScreen() {
             // TICKET-138: overlap peek cards render "gather here" (only overlap
             // items call this; reachable on Discover with the people filter off).
             onGather={(item) => setGatherItem(item)}
-            chromeTopOffset={insets.top + PLACES_WORKSPACE_HEADER_HEIGHT + Spacing.sm}
+            chromeTopOffset={insets.top + Spacing.sm}
             palette={palette}
         />
     );
@@ -815,10 +819,73 @@ export default function WishlistScreen() {
                         styles.listOverlay,
                         {
                             backgroundColor: palette.background,
-                            paddingTop: insets.top + PLACES_WORKSPACE_HEADER_HEIGHT,
+                            paddingTop: insets.top + Spacing.xs,
                         },
                     ]}
                 >
+                    {/* Workspace bar — the list's own tools (chrome diet, TICKET-163):
+                        Pinned | Lists segment + filter and import icon buttons. */}
+                    <View style={styles.listBar}>
+                        <View style={[styles.listSegment, { backgroundColor: palette.surfaceContainerLow }]}>
+                            {(
+                                [
+                                    { key: 'pinned', label: 'Pinned' },
+                                    { key: 'lists', label: listsCount > 0 ? `Lists · ${listsCount}` : 'Lists' },
+                                ] as const
+                            ).map((seg) => {
+                                const on = activeTab === seg.key;
+                                return (
+                                    <Pressable
+                                        key={seg.key}
+                                        onPress={() => setActiveTab(seg.key)}
+                                        style={[
+                                            styles.listSegmentBtn,
+                                            on && { backgroundColor: palette.card },
+                                            on && Shadow.ambient,
+                                        ]}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={seg.label}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.listSegmentText,
+                                                { color: on ? palette.text : palette.textMuted },
+                                            ]}
+                                        >
+                                            {seg.label}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                        <View style={{ flex: 1 }} />
+                        <Pressable
+                            onPress={() => setFiltersOpen(true)}
+                            hitSlop={8}
+                            style={styles.listBarIcon}
+                            accessibilityRole="button"
+                            accessibilityLabel="filters"
+                        >
+                            <Ionicons
+                                name="options-outline"
+                                size={19}
+                                color={filtersActive ? palette.primary : palette.textSecondary}
+                            />
+                            {filtersActive ? (
+                                <View style={[styles.listBarDot, { backgroundColor: palette.primary }]} />
+                            ) : null}
+                        </Pressable>
+                        <Pressable
+                            onPress={() => setImportSheetVisible(true)}
+                            hitSlop={8}
+                            style={styles.listBarIcon}
+                            accessibilityRole="button"
+                            accessibilityLabel="import spots"
+                        >
+                            <Ionicons name="download-outline" size={19} color={palette.textSecondary} />
+                        </Pressable>
+                    </View>
+
                     {activeTab === 'pinned' ? (
                         isLoading && allItems.length === 0 ? (
                             <View style={styles.loadingCenter}>
@@ -960,23 +1027,24 @@ export default function WishlistScreen() {
                             </Pressable>
                         </ScrollView>
                     )}
+
+                    {/* Map pill — frosted, bottom-right; mirrors the map's List
+                        pill geometry so the flip lives in one spot (corner law v2). */}
+                    <Pressable
+                        onPress={() => handleSelectView('map')}
+                        style={[
+                            styles.mapPill,
+                            { backgroundColor: palette.card, bottom: insets.bottom + 92 },
+                            Shadow.ambient,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="map view"
+                    >
+                        <Ionicons name="map-outline" size={15} color={palette.primary} />
+                        <Text style={[styles.mapPillText, { color: palette.primary }]}>Map</Text>
+                    </Pressable>
                 </View>
             ) : null}
-
-            <View style={styles.workspaceHeaderLayer}>
-                <PlacesWorkspaceHeader
-                    topInset={insets.top}
-                    viewMode={viewMode}
-                    section={activeTab === 'lists' ? 'lists' : 'places'}
-                    listsCount={listsCount}
-                    filtersActive={viewMode === 'map' ? mapFiltersActive : filtersActive}
-                    palette={palette}
-                    onSelectView={handleSelectView}
-                    onOpenFilters={() => setFiltersOpen(true)}
-                    onToggleLists={handleToggleLists}
-                    onImport={() => setImportSheetVisible(true)}
-                />
-            </View>
 
             <ImportLinkSheet
                 visible={importSheetVisible}
@@ -1086,15 +1154,58 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
-    workspaceHeaderLayer: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 20,
-    },
     listOverlay: {
         zIndex: 10,
+    },
+    // List workspace bar — Pinned|Lists segment + filter/import icons (TICKET-163).
+    listBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.xs,
+        paddingBottom: Spacing.sm,
+        gap: 4,
+    },
+    listSegment: {
+        flexDirection: 'row',
+        borderRadius: 999,
+        padding: 3,
+        gap: 2,
+    },
+    listSegmentBtn: {
+        borderRadius: 999,
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+    },
+    listSegmentText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+    },
+    listBarIcon: {
+        padding: 8,
+    },
+    listBarDot: {
+        position: 'absolute',
+        top: 7,
+        right: 6,
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+    },
+    // Map pill — frosted flip back to the map, bottom-right over the list.
+    mapPill: {
+        position: 'absolute',
+        right: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        borderRadius: 999,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    },
+    mapPillText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
     },
     rListContent: {
         paddingHorizontal: 20,
@@ -1165,37 +1276,6 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
         fontSize: 13,
         letterSpacing: 0.2,
-    },
-    // Header (legacy — retained for unaffected styles below)
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingBottom: Spacing.md,
-        paddingHorizontal: 22,
-    },
-    headerSide: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    headerSideRight: {
-        justifyContent: 'flex-end',
-        gap: 6,
-    },
-    headerBack: {
-        width: 32,
-    },
-    headerTitle: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 26,
-        lineHeight: 30,
-        textAlign: 'center',
-    },
-    headerActionLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        letterSpacing: 1.0,
-        textTransform: 'lowercase',
     },
     headerActionDot: {
         fontFamily: 'Manrope_500Medium',

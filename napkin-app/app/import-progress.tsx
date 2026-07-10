@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.xs,
     },
     headerBack: { width: 32, alignItems: 'flex-start' },
-    headerTitle: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 22 },
+    headerTitle: { ...Type.screenTitle },
     hubWrap: { paddingTop: Spacing.sm, paddingBottom: Spacing.md },
     emptyWrap: { paddingTop: 56, alignItems: 'center', gap: 8 },
     emptyText: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 18 },

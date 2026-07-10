@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Radius } from '@/constants/theme';
+import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserTaste } from '@/hooks/users/useUserTaste';
@@ -299,8 +299,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.sm,
     },
     headerTitle: {
-        fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 20,
+        ...Type.screenTitle,
     },
     center: {
         flex: 1,

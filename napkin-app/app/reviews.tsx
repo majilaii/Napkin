@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Shadow } from '@/constants/theme';
+import { Colors, Spacing, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserReviews } from '@/hooks/users/useUserReviews';
@@ -47,7 +47,7 @@ export default function ReviewsScreen() {
                 <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back} accessibilityLabel="back">
                     <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
                 </Pressable>
-                <Text style={[styles.title, { color: palette.text }]}>reviews</Text>
+                <Text style={[styles.title, { color: palette.text }]}>Reviews</Text>
                 <View style={styles.back} />
             </View>
 
@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.sm,
     },
     back: { width: 32, alignItems: 'flex-start' },
-    title: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 22 },
+    title: { ...Type.screenTitle },
     emptyWrap: { paddingTop: 80, alignItems: 'center', paddingHorizontal: 40 },
     emptyMurmur: {
         fontFamily: 'Newsreader_400Regular_Italic',
