@@ -348,6 +348,26 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-161: entry action=delete-supper bogus id → HTTP 404 (host gate). A
+    // random UUID is never a supper the SMOKE_TEST_JWT user HOSTS, so the host check
+    // (suppers.host_user_id === caller) refuses with a generic 404 BEFORE any
+    // re-home insert or anchor delete — the probe has ZERO side effects. This
+    // exercises the new destructive POST action's routing + the suppers-row read
+    // (catches a missing-table / column / RLS drift); a 500 here means the delete
+    // path drifted. Mirrors the supper-detail bogus-id smoke.
+    {
+        name: 'entry?action=delete-supper bogus id → 404 host gate (TICKET-161)',
+        method: 'POST',
+        fn: 'entry',
+        body: { action: 'delete-supper', supper_id: '00000000-0000-0000-0000-000000000000' },
+        expectedStatus: 404,
+        shape: (json) => {
+            const err = (json as { error?: { code?: string } }).error;
+            if (!err) return 'missing error envelope';
+            if (err.code !== 'NOT_FOUND') return `expected error.code NOT_FOUND, got ${err.code}`;
+            return null;
+        },
+    },
     // TICKET-136: gatherings action=get bogus id → HTTP 404 (missing-row / not-found
     // gate). Mirrors the supper-detail bogus-id smoke: a random UUID is never a
     // gathering the SMOKE_TEST_JWT user can read, so the single-row read path

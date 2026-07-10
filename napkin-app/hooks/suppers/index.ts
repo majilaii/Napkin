@@ -11,3 +11,6 @@ export type { AddSupperTakeInput } from './useAddSupperTake';
 
 export { useSetTable } from './useSetTable';
 export type { SetTableInput, SetTableResult } from './useSetTable';
+
+export { useDeleteSupper, isSupperGone } from './useDeleteSupper';
+export type { DeleteSupperInput, DeleteSupperResult } from './useDeleteSupper';
