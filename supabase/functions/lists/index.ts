@@ -1016,7 +1016,10 @@ serve(async (req) => {
                         .order(orderCol, { ascending: orderAsc })
                         .limit(1)
                         .maybeSingle();
-                    if (coverErr) throw coverErr;
+                    if (coverErr) {
+                        console.warn('lists browse cover lookup failed:', coverErr);
+                        return { ...list, cover_photo_url: null };
+                    }
 
                     return {
                         ...list,

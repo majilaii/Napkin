@@ -95,9 +95,11 @@ function LedgerRow({
                         {meta}
                     </Text>
                 )}
-                <Text numberOfLines={1} style={[styles.signal, { color: palette.primary }]}>
-                    {signal}
-                </Text>
+                {!!signal && (
+                    <Text numberOfLines={1} style={[styles.signal, { color: palette.primary }]}>
+                        {signal}
+                    </Text>
+                )}
             </View>
         </Pressable>
     );
