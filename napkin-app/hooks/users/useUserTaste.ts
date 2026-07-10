@@ -22,6 +22,12 @@ export interface CuisineStat {
     n: number;
 }
 
+/** One half-star histogram bucket — r is the snapped rating (0.5 … 5.0). */
+export interface HistogramBucket {
+    r: number;
+    n: number;
+}
+
 export interface TasteData {
     /** Rated entries (rating not null). Client treats 0 as empty state. */
     entry_count: number;
@@ -32,8 +38,10 @@ export interface TasteData {
         value: CategoryStat;
         vibe: CategoryStat;
     };
-    top_cuisines: CuisineStat[];    // n>=2, desc, max 3
-    bottom_cuisines: CuisineStat[]; // n>=2, asc,  max 3
+    top_cuisines: CuisineStat[];    // n>=2, junk venue types excluded, desc, max 3
+    bottom_cuisines: CuisineStat[]; // n>=2, disjoint from top, asc, max 3
+    /** Sparse half-star buckets (TICKET-150). Absent on stale caches — guard `?? []`. */
+    rating_histogram?: HistogramBucket[];
 }
 
 async function fetchUserTaste(identifier: string): Promise<TasteData> {
