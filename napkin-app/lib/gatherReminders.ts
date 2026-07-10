@@ -462,8 +462,9 @@ export function reconcileGatherReminders(
 ): Promise<void> {
     reconcileChain = reconcileChain
         .then(() => doReconcile(rows, tableName, tableId))
-        .catch(() => {
+        .catch((err) => {
             /* never let a reminder pass surface an error into the UI */
+            if (__DEV__) console.warn('[gatherReminders] reconcile failed', err);
         });
     return reconcileChain;
 }
@@ -525,7 +526,8 @@ async function doReconcile(
         }
 
         await writeReminderMap(next);
-    } catch {
+    } catch (err) {
         /* never let a reminder pass surface an error into the UI */
+        if (__DEV__) console.warn('[gatherReminders] reconcile failed', err);
     }
 }
