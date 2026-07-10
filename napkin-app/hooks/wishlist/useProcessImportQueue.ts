@@ -44,6 +44,7 @@ import {
     listPendingImports,
     removeImport,
     setImportSpots,
+    setImportListCount,
     setImportDiagnostics,
     setDefaultImportMode,
     bumpImportAttempt,
@@ -54,6 +55,7 @@ import {
     type ImportManifest,
     type PersistedImportSpot,
 } from '@/lib/importQueue';
+import { truncationNote } from '@/lib/importTruncation';
 import {
     fetchTikTokPerception,
     isTikTokUrl,
@@ -155,6 +157,12 @@ export function useProcessImportQueue() {
         async (m: ImportManifest) => {
             let spots: PersistedImportSpot[] | undefined = m.spots;
             let freshlyResolved = false;
+            // TICKET-151: the resolver's true Maps-list size (candidates are capped
+            // at MAPS_LIST_CAP). Seed from the manifest so a re-drain — which skips
+            // resolve entirely — inherits the persisted value; a fresh resolve
+            // overwrites it below. The toast reads THIS local, never m.listCount:
+            // setImportListCount writes the file without mutating this in-memory m.
+            let listCount: number | null = m.listCount ?? null;
 
             // First process: acquire candidates (OCR for video / caption for url),
             // build + PERSIST spots (frozen nonces) before the save.
@@ -274,6 +282,10 @@ export function useProcessImportQueue() {
                     });
                     candidates = resolved?.candidates ?? [];
                     resolvedSourceType = resolved?.source_type ?? null;
+                    // TICKET-151: a Maps list carries its true item count here (the
+                    // candidates array is capped at MAPS_LIST_CAP). Non-list resolves
+                    // omit it → null. The video branch below never touches listCount.
+                    listCount = resolved?.list_count ?? null;
                     // Instagram's url tier is a login-walled constant (zero
                     // candidates + ig_nudge, which this queue ignores) — the
                     // fallback would burn a resolve_url rate slot for nothing.
@@ -356,6 +368,9 @@ export function useProcessImportQueue() {
                     };
                 });
                 setImportSpots(m.jobId, spots);
+                // TICKET-151: checkpoint the list size alongside the spots so it
+                // survives the review hold + any re-drain (readAll parses it back).
+                if (listCount != null) setImportListCount(m.jobId, listCount);
             }
 
             // Review mode: resolved → HOLD for in-app confirmation. The review
@@ -497,11 +512,21 @@ export function useProcessImportQueue() {
             const reviewAction = done > 0
                 ? { label: 'review', onPress: () => router.push('/import-progress' as any) }
                 : undefined;
+            // TICKET-151: when a Maps list was truncated (list_count > kept), say so
+            // — "pinned 18 · first 20 of 117". Null for non-list / ≤20 imports, where
+            // the toast reads exactly as before. Appended to the success + already-
+            // pinned branches only; never the error branch, never the backgrounded
+            // local-notification mirror below (a terse push title, not a metadata line).
+            const note = truncationNote(listCount, spots.length);
             toast.show(
                 saved > 0
-                    ? `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
+                    ? note
+                        ? `pinned ${saved} · ${note}`
+                        : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
                     : done > 0
-                      ? 'already in your wishlist'
+                      ? note
+                          ? `already in your wishlist · ${note}`
+                          : 'already in your wishlist'
                       : "couldn't import that",
                 reviewAction,
             );

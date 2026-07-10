@@ -27,6 +27,7 @@ import {
     pokeImportQueue,
     type PersistedImportSpot,
 } from '@/lib/importQueue';
+import { truncationNote } from '@/lib/importTruncation';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
 
@@ -109,6 +110,16 @@ export default function ImportReviewScreen() {
     );
 
     const keptCount = ticked.size;
+
+    // TICKET-151: honesty line when a Maps list was capped (list_count > kept).
+    // shownCount = the persisted candidate count — stable under untick/fix, so the
+    // numerator doesn't drift as the user edits. Null (no line) for non-list / ≤20
+    // imports; today Maps lists drain as auto, so this stays dead-quiet until the
+    // TICKET-152 large-list review path lights it up.
+    const truncationLine = useMemo(
+        () => truncationNote(manifest?.listCount, manifest?.spots?.length ?? spots.length),
+        [manifest, spots.length],
+    );
 
     const destSummary = useMemo(() => {
         const d = manifest?.destinations;
@@ -213,6 +224,12 @@ export default function ImportReviewScreen() {
                         </Text>
                     </Pressable>
                 </View>
+                {/* TICKET-151: "first 20 of 117" when the source list was truncated. */}
+                {truncationLine ? (
+                    <Text style={[styles.subtitle, { color: palette.textMuted, marginTop: Spacing.xs }]}>
+                        {truncationLine}
+                    </Text>
+                ) : null}
             </View>
 
             <ScrollView
