@@ -21,8 +21,13 @@ export interface GatheringViewModel {
     isExpired: boolean;
     /** dispatched but the supper link died (supper_id null). */
     supperCancelled: boolean;
-    /** host may clear a dead gathering (expired or supper-cancelled). */
+    /** host may clear a dead gathering (unrescued expired or supper-cancelled).
+     *  TICKET-159: a rescued gathering (expired + supper_id) is NOT clearable. */
     canClear: boolean;
+    /** TICKET-159: host-only `it happened anyway — set the table` (expired, unlinked). */
+    canRescue: boolean;
+    /** TICKET-159: expired but rescued — the card/detail offer `see the table →`. */
+    isRescued: boolean;
     /** calendar-leaf pieces for gather_on, or null when unparseable. */
     leaf: { wd: string; day: string; mo: string } | null;
     /** seats with response 'in', viewer-first ordering. */
@@ -77,7 +82,11 @@ export function useGatheringViewModel(
     const isExpired = status === 'expired';
 
     const supperCancelled = isDispatched && !supper_id;
-    const canClear = isHost && (isExpired || supperCancelled);
+    // TICKET-159: a RESCUED gathering (expired + supper_id) carries the supper's
+    // provenance — not clearable (the server's delete guard rejects it too).
+    const canClear = isHost && ((isExpired && !supper_id) || supperCancelled);
+    const canRescue = isHost && isExpired && !supper_id;
+    const isRescued = isExpired && !!supper_id;
 
     const leaf = dateLeaf(gather_on);
     const ins = orderSeats(seats.filter((s) => s.response === 'in'), viewerId);
@@ -134,6 +143,8 @@ export function useGatheringViewModel(
         isExpired,
         supperCancelled,
         canClear,
+        canRescue,
+        isRescued,
         leaf,
         ins,
         outs,

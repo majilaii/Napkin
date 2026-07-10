@@ -55,6 +55,7 @@ function detail(over: Partial<SupperDetail> = {}): SupperDetail {
         restaurant: null,
         roster: [member(HOST, 'Jacky'), member(CLARA, 'Clara'), member(THOMAS, 'Thomas')],
         takes: [],
+        lineage: null,
         ...over,
     };
 }

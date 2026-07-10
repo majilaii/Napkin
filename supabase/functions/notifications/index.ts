@@ -48,7 +48,9 @@ type HydratedNotification =
     | TableInviteNotification
     | TableInviteAcceptedNotification
     | ImportDoneNotification
-    | PassthroughNotification;
+    | SupperSetNotification
+    | PassthroughNotification
+    | UnknownKindNotification;
 
 interface BaseHydrated {
     id: string;
@@ -104,6 +106,28 @@ interface ImportDoneNotification extends BaseHydrated {
 
 interface PassthroughNotification extends BaseHydrated {
     type: 'friend_pinned' | 'claim_city' | 'reservation_reminder';
+}
+
+/**
+ * TICKET-159: self-directed dispatch nudge — "the table gathered at «spot»".
+ * Null actor; restaurant hydrates from subject_restaurant_id; supperId deep-links
+ * the tap to /supper/[id] (carried in subject_meta by the dispatch transaction).
+ */
+interface SupperSetNotification extends BaseHydrated {
+    type: 'supper_set';
+    supperId: string;
+    restaurantName: string;
+    restaurantId: string | undefined;
+    photoUrl: string | null;
+}
+
+/**
+ * TICKET-159 (finding 15): the generic forward-compat arm. Any kind this
+ * hydrator doesn't recognise still emits a row, so the visible inbox can never
+ * show fewer rows than unread_notification_count_for counted (no ghost badge).
+ */
+interface UnknownKindNotification extends BaseHydrated {
+    type: string;
 }
 
 interface InboxResponse {
@@ -443,6 +467,28 @@ async function hydrate(
                 break;
             }
 
+            case 'supper_set': {
+                // TICKET-159: self-directed (null actor) dispatch nudge. The
+                // restaurant is already prefetched via subject_restaurant_id;
+                // the supper deep link rides subject_meta.supper_id.
+                const meta = (r.subject_meta ?? {}) as { supper_id?: string };
+                const restaurant = r.subject_restaurant_id
+                    ? restaurantById.get(r.subject_restaurant_id)
+                    : null;
+                out.push({
+                    id: r.id,
+                    type: 'supper_set',
+                    read: !!r.read_at,
+                    createdAt: r.created_at,
+                    timeLabel: formatTimeLabel(r.created_at),
+                    supperId: meta.supper_id ?? '',
+                    restaurantName: restaurant?.name ?? '',
+                    restaurantId: restaurant?.id,
+                    photoUrl: restaurant?.photo_url ?? null,
+                });
+                break;
+            }
+
             case 'friend_pinned':
             case 'claim_city':
             case 'reservation_reminder':
@@ -450,6 +496,20 @@ async function hydrate(
                 out.push({
                     id: r.id,
                     type: r.kind as 'friend_pinned' | 'claim_city' | 'reservation_reminder',
+                    read: !!r.read_at,
+                    createdAt: r.created_at,
+                    timeLabel: formatTimeLabel(r.created_at),
+                });
+                break;
+
+            default:
+                // TICKET-159 (finding 15): NEVER silently drop an unknown kind —
+                // unread_notification_count_for counts every non-friend_logged
+                // row, so a dropped row would leave a ghost unread badge. Emit a
+                // generic self-directed row; the client renders its own fallback.
+                out.push({
+                    id: r.id,
+                    type: r.kind,
                     read: !!r.read_at,
                     createdAt: r.created_at,
                     timeLabel: formatTimeLabel(r.created_at),

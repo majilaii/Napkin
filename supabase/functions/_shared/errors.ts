@@ -37,10 +37,16 @@ export function mapPgError(err: { code?: string; message?: string }): { code: Er
         case 'NOT_A_TABLE_MEMBER':
         case 'NOT_AUTHORIZED':
         case 'NOT_OWNER':
+        // TICKET-159: fn_attach_take_to_supper typed raise (not owner / not a
+        // supper member / restaurant mismatch) — a stale or manipulated
+        // confirmation is rejected.
+        case 'ATTACH_DENIED':
             return { code: m, status: 403 };
         case 'ROUND_NOT_RATING':
         case 'ALREADY_SUBMITTED':
         case 'ATTENDEE_NOT_MEMBER':
+        // TICKET-159: entry already attached / caller already has a take.
+        case 'ATTACH_CONFLICT':
             return { code: m, status: 409 };
         default:
             return { code: 'INTERNAL', status: 500 };
