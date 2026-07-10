@@ -142,6 +142,41 @@ describe('useToggleReaction', () => {
         expect(Array.isArray(cache?.reactions)).toBe(true);
         expect(cache!.counts.reactions).toBeGreaterThanOrEqual(0);
     });
+
+    it('(d) no cached thread: skips the cancel and invalidates so the screen converges', async () => {
+        // Regression: tapping react before the initial GET resolved used to
+        // cancelQueries the in-flight fetch (killing it for good) and onSuccess
+        // only patched an EXISTING cache — the detail screen became a dead zone
+        // where every tap toggled the server invisibly.
+        mockEdgeFnResolves({
+            added: true,
+            removed: false,
+            reaction: {
+                id: 'server-reaction-3',
+                user_id: VIEWER_ID,
+                emoji: '❤️',
+                created_at: '2026-07-10T12:00:00Z',
+                profiles: null,
+            },
+            counts: { reactions: 1, top_emojis: [{ emoji: '❤️', count: 1, last_reacted_at: '2026-07-10T12:00:00Z' }] },
+        });
+
+        const { result, client } = renderHookWithClient(() => useToggleReaction());
+        // Deliberately NO setQueryData — the thread query never landed.
+        const cancelSpy = jest.spyOn(client, 'cancelQueries');
+        const invalidateSpy = jest.spyOn(client, 'invalidateQueries');
+
+        act(() => {
+            result.current.mutate({ targetType: TARGET_TYPE, targetId: TARGET_ID, emoji: '❤️', scope: SCOPE });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        // The dataless thread query was never cancelled…
+        expect(cancelSpy).not.toHaveBeenCalledWith({ queryKey: interactionsKey });
+        // …and the missing cache triggers a refetch instead of silently no-oping.
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: interactionsKey });
+    });
 });
 
 // ── useAddComment ─────────────────────────────────────────────────────────────

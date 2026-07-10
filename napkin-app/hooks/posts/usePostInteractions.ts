@@ -249,7 +249,15 @@ export function useToggleReaction() {
           const key = queryKeys.postInteractions.all(targetType, targetId, scope);
           // Optimistic-update failures must NEVER abort the real reaction toggle.
           try {
-            await queryClient.cancelQueries({ queryKey: key });
+            // Only cancel the thread query when there is cached data to protect.
+            // Cancelling an IN-FLIGHT INITIAL fetch (no data yet) killed it for
+            // good: React Query leaves a cancelled dataless query idle, nothing
+            // here refetched it, and the detail screen became a dead zone where
+            // every tap toggled the server invisibly (the share-detail
+            // "pressing does nothing" bug).
+            if (queryClient.getQueryData<PostInteractionsData>(key) !== undefined) {
+                await queryClient.cancelQueries({ queryKey: key });
+            }
 
             // TICKET-098 [ARCH-REVIEW-2]: card caches are scope-owned —
             // table → Table activity pages, public → friends-feed pages.
@@ -370,8 +378,12 @@ export function useToggleReaction() {
                         }
                         return r;
                     });
-                    // If no optimistic row matched (e.g. cache was cleared mid-flight), append.
-                    if (!swapped) nextReactions = [...nextReactions, serverReaction];
+                    // If no optimistic row matched (e.g. cache landed fresh from the
+                    // initial fetch mid-flight), append — unless that fetch already
+                    // included the server row.
+                    if (!swapped && !nextReactions.some((r) => r.id === serverReaction.id)) {
+                        nextReactions = [...nextReactions, serverReaction];
+                    }
                 }
                 // For removed reactions the optimistic filter already dropped it; nothing to swap.
                 queryClient.setQueryData<PostInteractionsData>(key, {
@@ -381,6 +393,11 @@ export function useToggleReaction() {
                         ? { ...current.counts, reactions: result.counts.reactions, top_emojis: result.counts.top_emojis }
                         : current.counts,
                 });
+            } else {
+                // No cache to patch — the initial fetch failed or never resolved
+                // (see the onMutate cancel guard). Force a refetch so an open
+                // detail screen converges instead of staying a dead zone.
+                queryClient.invalidateQueries({ queryKey: key });
             }
 
             if (result.counts) {

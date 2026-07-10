@@ -17,26 +17,19 @@
  * The wireframes drop the avatar stack from the card body — the voices
  * label carries that weight. Member identity lives on the card detail view.
  */
-import React, { useRef, useState } from 'react';
+import React from 'react';
 import {
     View,
     Text,
     StyleSheet,
     Pressable,
-    findNodeHandle,
-    UIManager,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
 
 import { Colors, Spacing } from '@/constants/theme';
-import { queryKeys } from '@/lib/queryKeys';
 import { type TableNightActivity } from '@/hooks/tables/useTableActivity';
-import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { PulseDot } from '@/components/ui/napkin/PulseDot';
 import { FeedActionRow } from './FeedActionRow';
-import { ReactionPicker } from './ReactionPicker';
 
 type Palette = typeof Colors.light;
 
@@ -65,8 +58,6 @@ interface Props {
 
 export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [], receiptWhisper }: Props) {
     const router = useRouter();
-    const toggleReaction = useToggleReaction();
-    const queryClient = useQueryClient();
 
     // TICKET-044: branch on round_kind for merged vs live.
     // Undefined round_kind = pre-TICKET-044 row -> treat as live.
@@ -85,36 +76,6 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
     const voiceTotal = item.participants?.length ?? 0;
     const voiceVoted =
         item.participants?.filter((p) => p.rating != null).length ?? voiceTotal;
-
-    const cardRef = useRef<View>(null);
-    const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
-
-    const handleLongPress = () => {
-        if (isActive) return;
-        const handle = findNodeHandle(cardRef.current);
-        if (handle == null) return;
-        Haptics.selectionAsync().catch(() => undefined);
-        UIManager.measureInWindow(handle, (x, y, width) => {
-            setPickerAnchor({ x: x + width - 40, y: y + 12 });
-        });
-    };
-
-    const handlePickEmoji = (emoji: string) => {
-        setPickerAnchor(null);
-        toggleReaction.mutate(
-            { targetType: 'table_night', targetId: item.id, emoji, scope: 'table' },
-            {
-                onSuccess: () => {
-                    if (tableId) {
-                        queryClient.invalidateQueries({
-                            queryKey: queryKeys.tables.activityForTable(tableId),
-                            exact: false,
-                        });
-                    }
-                },
-            },
-        );
-    };
 
     return (
         <View>
@@ -143,12 +104,9 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
                         });
                     }
                 }}
-                onLongPress={handleLongPress}
-                delayLongPress={500}
                 style={({ pressed }) => ({ opacity: pressed ? 0.95 : 1 })}
             >
                 <View
-                    ref={cardRef}
                     style={[
                         styles.card,
                         {
@@ -249,7 +207,6 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
                                 <FeedActionRow
                                     targetType="table_night"
                                     targetId={item.id}
-                                    topEmojis={item.top_emojis ?? []}
                                     reactionCount={item.reaction_count ?? 0}
                                     commentCount={item.comment_count ?? 0}
                                     myReactions={item.my_reactions ?? []}
@@ -262,13 +219,6 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
                         )}
                     </View>
                 </View>
-
-                <ReactionPicker
-                    visible={!!pickerAnchor}
-                    anchor={pickerAnchor}
-                    onPick={handlePickEmoji}
-                    onClose={() => setPickerAnchor(null)}
-                />
             </Pressable>
         </View>
     );

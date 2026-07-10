@@ -124,11 +124,8 @@ export function CommentThread({
 
     return (
         <View style={styles.container}>
-            {comments.length === 0 ? (
-                <Text style={[styles.empty, { color: palette.textMuted }]}>
-                    The table is quiet — say something.
-                </Text>
-            ) : (
+            {/* No empty-state prompt — the composer carries the invite. */}
+            {comments.length === 0 ? null : (
                 <View>
                     {threadRoots.map((root, idx) => (
                         <View
@@ -268,12 +265,6 @@ export function CommentThread({
 const styles = StyleSheet.create({
     container: {
         gap: Spacing.sm + 4,
-    },
-    empty: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
-        textAlign: 'center',
-        paddingVertical: Spacing.md,
     },
     repliesOff: {
         fontFamily: 'Newsreader_400Regular_Italic',

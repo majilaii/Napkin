@@ -9,31 +9,24 @@
  *   Rating row: inline Rating (italic 12pt amber + /5) + optional "On our list"
  *   Italic prose quote (Newsreader italic 13pt, max 3 lines)
  *
- * Preserved functional bits: long-press reactions, unseen dot, FeedActionRow below.
+ * Preserved functional bits: unseen dot, FeedActionRow below (heart = like/unlike).
  */
-import React, { useRef, useState } from 'react';
+import React from 'react';
 import {
     View,
     Text,
     StyleSheet,
     Pressable,
-    findNodeHandle,
-    UIManager,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
 
-import { Colors, Spacing, Radius, Shadow } from '@/constants/theme';
-import { queryKeys } from '@/lib/queryKeys';
+import { Colors, Shadow } from '@/constants/theme';
 import { type SoloShareActivity } from '@/hooks/tables/useTableActivity';
-import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { extractHighlight, formatRelativeTime } from '@/lib/textHighlight';
 import { formatCompanions } from '@/lib/companions';
 import { Avatar } from './Avatar';
 import { Rating } from '@/components/ui/napkin/Rating';
 import { FeedActionRow } from './FeedActionRow';
-import { ReactionPicker } from './ReactionPicker';
 
 type Palette = typeof Colors.light;
 
@@ -46,8 +39,6 @@ interface Props {
 
 export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
     const router = useRouter();
-    const toggleReaction = useToggleReaction();
-    const queryClient = useQueryClient();
 
     const displayName = item.profiles?.display_name ?? 'Someone';
     const restaurantName = item.restaurants?.name ?? 'somewhere';
@@ -59,9 +50,6 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
     const relativeTime = item.sort_date ? formatRelativeTime(item.sort_date) : null;
     const highlight = extractHighlight(item.content);
 
-    const cardRef = useRef<View>(null);
-    const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
-
     const handleAuthorPress = () => {
         if (item.user_id && tableId) {
             router.push({
@@ -71,43 +59,14 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
         }
     };
 
-    const handleLongPress = () => {
-        const handle = findNodeHandle(cardRef.current);
-        if (handle == null) return;
-        Haptics.selectionAsync().catch(() => undefined);
-        UIManager.measureInWindow(handle, (x, y, width) => {
-            setPickerAnchor({ x: x + width - 40, y: y + 12 });
-        });
-    };
-
-    const handlePickEmoji = (emoji: string) => {
-        setPickerAnchor(null);
-        toggleReaction.mutate(
-            { targetType: 'entry', targetId: item.id, emoji, scope: 'table' },
-            {
-                onSuccess: () => {
-                    if (tableId) {
-                        queryClient.invalidateQueries({
-                            queryKey: queryKeys.tables.activityForTable(tableId),
-                            exact: false,
-                        });
-                    }
-                },
-            },
-        );
-    };
-
     return (
         <Pressable
             onPress={() =>
                 router.push({ pathname: '/entry-detail', params: { entryId: item.id } })
             }
-            onLongPress={handleLongPress}
-            delayLongPress={500}
             style={({ pressed }) => ({ opacity: pressed ? 0.95 : 1 })}
         >
             <View
-                ref={cardRef}
                 style={[styles.card, { backgroundColor: palette.surfaceNote, borderColor: 'rgba(221,192,186,0.08)' }]}
             >
                 {isUnseen && (
@@ -185,7 +144,6 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
                     <FeedActionRow
                         targetType="entry"
                         targetId={item.id}
-                        topEmojis={item.top_emojis ?? []}
                         reactionCount={item.reaction_count ?? 0}
                         commentCount={item.comment_count ?? 0}
                         myReactions={item.my_reactions ?? []}
@@ -196,13 +154,6 @@ export function SoloShareCard({ item, palette, tableId, lastSeenAt }: Props) {
                     />
                 </View>
             </View>
-
-            <ReactionPicker
-                visible={!!pickerAnchor}
-                anchor={pickerAnchor}
-                onPick={handlePickEmoji}
-                onClose={() => setPickerAnchor(null)}
-            />
         </Pressable>
     );
 }
