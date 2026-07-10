@@ -9,11 +9,6 @@
 
 export const HALF_BIN_COUNT = 10;
 
-/** Star value represented by half-star bin i. */
-export function halfBinValue(i: number): number {
-    return (i + 1) * 0.5;
-}
-
 /**
  * Legacy 5-bucket → 10 half-star bins. Whole-star counts land on whole-star
  * bins (index i → bin 2i+1); half-star truth was already rounded away
