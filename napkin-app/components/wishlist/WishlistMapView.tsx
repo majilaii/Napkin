@@ -74,6 +74,8 @@ import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/
 import { cuisineGlyph, tintIndex } from '@/lib/engraving';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { describePeekWho } from './peekWho';
+import { useClusteredPins, pinVariant, type ClusterEntry } from './useClusteredPins';
+import { ClusterMarker } from './ClusterBubble';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -599,6 +601,25 @@ export function WishlistMapView({
     const mapRef = useRef<MapViewType>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
+    // TICKET-153: the live map region drives clustering. Tracked on gesture
+    // SETTLE (onRegionChangeComplete), debounced ~120ms so a burst of settle
+    // events (animateToRegion tails, repeated micro-pans) collapses to one
+    // recompute. Continuous onRegionChange is deliberately NOT used — clusters
+    // re-form a beat after the gesture ends, which is the right feel for a paper
+    // map and far cheaper than per-frame reclustering.
+    const [region, setRegion] = useState<Region | null>(null);
+    const regionDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const handleRegionChangeComplete = useCallback((next: Region) => {
+        if (regionDebounce.current) clearTimeout(regionDebounce.current);
+        regionDebounce.current = setTimeout(() => setRegion(next), 120);
+    }, []);
+    useEffect(
+        () => () => {
+            if (regionDebounce.current) clearTimeout(regionDebounce.current);
+        },
+        [],
+    );
+
     // Scheme follows the palette the parent passed (the app's use-color-scheme
     // hook is hard-forced to 'light', so a hook call here can't see dark; the
     // palette reference is the render-truth either way).
@@ -749,6 +770,31 @@ export function WishlistMapView({
             longitudeDelta: 0.08,
         };
     }, [items]);
+
+    // TICKET-153: cluster the pin set for the CURRENT region. Before the first
+    // settle event `region` is null, so fall back to `initialRegion` — clustering
+    // engages from frame one (no burst of 500 unclustered markers on open). At
+    // friend-test densities (≤ CLUSTER_MIN) the hook passes items straight
+    // through, so the render below is byte-for-byte what it is today.
+    const activeRegion = region ?? initialRegion ?? null;
+    const clusterEntries = useClusteredPins(items, activeRegion);
+
+    // Cluster tap → zoom the camera to the cluster's expansion zoom. NO
+    // setSelectedId: a cluster never opens the peek (it only zooms). Uses the
+    // one-region camera API the file standardized on (latitudeDelta ≈ 360/2^z).
+    const handleClusterPress = useCallback((entry: Extract<ClusterEntry, { type: 'cluster' }>) => {
+        const z = entry.expansionZoom();
+        const delta = 360 / 2 ** z;
+        mapRef.current?.animateToRegion(
+            {
+                latitude: entry.lat,
+                longitude: entry.lng,
+                latitudeDelta: delta,
+                longitudeDelta: delta,
+            },
+            300,
+        );
+    }, []);
 
     // Locate FAB: center on the user AND zoom in to a walkable radius — the
     // founder's explicit ask (centering alone left the map at city zoom).
@@ -949,6 +995,10 @@ export function WishlistMapView({
                 rotateEnabled={false}
                 showsUserLocation={locationStatus === 'granted'}
                 onPress={() => setSelectedId(null)}
+                // TICKET-153: track region on gesture settle to drive clustering
+                // (debounced in the handler). Complete, not continuous — one
+                // recompute per settle, not per frame.
+                onRegionChangeComplete={handleRegionChangeComplete}
             >
                 {/* MapTiler cream raster — first child, beneath the markers. iOS
                     replaces the base (kills grey dark tiles ⑧); Android draws over
@@ -962,19 +1012,30 @@ export function WishlistMapView({
                         maximumZ={20}
                     />
                 ) : null}
-                {items.map((item) => (
-                    <WishlistMarker
-                        // Layer-qualified key: the same restaurant can appear in
-                        // several layers — remounting per layer re-arms each
-                        // marker's tracksViewChanges window for the new pin shape.
-                        // `o:` = overlap count bubble (TICKET-138) ranks first.
-                        key={`${item.overlap != null ? 'o' : item.entryId != null ? 'n' : item.been ? 'b' : 's'}:${item.id}`}
-                        item={item}
-                        selected={selectedId === item.id}
-                        palette={palette}
-                        onPress={() => setSelectedId(item.id)}
-                    />
-                ))}
+                {/* TICKET-153: clustered entries. Individual pins render EXACTLY
+                    as before — same WishlistMarker, same layer-qualified key
+                    (`${variant}:${id}`) so an item that was clustered and
+                    re-emerges reattaches to a stable native view. Cluster bubbles
+                    key on `c:${cluster_id}` (stable within a zoom → pans reuse
+                    the native view; a zoom change legitimately remounts). */}
+                {clusterEntries.map((entry) =>
+                    entry.type === 'cluster' ? (
+                        <ClusterMarker
+                            key={`c:${entry.id}`}
+                            entry={entry}
+                            palette={palette}
+                            onPress={() => handleClusterPress(entry)}
+                        />
+                    ) : (
+                        <WishlistMarker
+                            key={`${pinVariant(entry.item)}:${entry.item.id}`}
+                            item={entry.item}
+                            selected={selectedId === entry.item.id}
+                            palette={palette}
+                            onPress={() => setSelectedId(entry.item.id)}
+                        />
+                    ),
+                )}
             </MapView>
 
             {/* Cream tint — maptiler mode only (TICKET-137). It warms the residual
