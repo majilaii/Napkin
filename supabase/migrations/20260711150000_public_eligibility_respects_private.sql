@@ -60,3 +60,13 @@ RETURNS BOOLEAN LANGUAGE SQL STABLE AS $$
           AND char_length(trim(COALESCE(e.content, ''))) >= 20
     );
 $$;
+
+-- ── Adjacent hardening (same verdict, dual-review cycle 1) ──────────────────
+-- The entry-photos bucket is PUBLIC (20260416100000) and carried a blanket
+-- storage.objects SELECT policy — which public-URL serving does not need
+-- (public buckets bypass RLS for /object/public/), but which let ANY caller
+-- LIST/enumerate the bucket via the Storage API. The app performs only
+-- upload / getPublicUrl / remove (verified: no .list(), no .download()), so
+-- dropping the policy removes anonymous enumeration with zero behavior change.
+-- Full private-photo protection (signed URLs, URL migration) = TICKET-174.
+DROP POLICY IF EXISTS "Public read entry-photos" ON storage.objects;

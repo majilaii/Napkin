@@ -1335,7 +1335,9 @@ serve(async (req) => {
                         const entryUserId = p.entries?.user_id as string;
                         const visibility = p.entries?.visibility as string | null;
                         const isSelf = entryUserId === user.id;
-                        return isSelf || visibility !== 'private';
+                        // TICKET-173: NULL must fail CLOSED — `!== 'private'`
+                        // alone let a NULL-visibility entry's photos through.
+                        return isSelf || (visibility != null && visibility !== 'private');
                     });
 
                     // Collect all user IDs to fetch profiles
