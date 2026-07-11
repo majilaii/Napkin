@@ -17,7 +17,43 @@ export type SearchPayload = {
      * recovering from missing-payload deep links.
      */
     persist?: boolean;
+    /**
+     * TICKET-174: when true AND the request carries coords (i.e. the first
+     * text-search pass was location-biased) AND that pass returns zero places,
+     * the server re-runs the same textQuery once with a world-scale rectangle
+     * bias and tags those rows `fartherAfield`. Opt-in per request so the
+     * resolve-url import-verification callers (which must treat "nothing
+     * nearby-or-named-right" as an unverified ghost) can never inherit it.
+     */
+    global_fallback?: boolean;
 };
+
+/**
+ * World-scale rectangle bias for the TICKET-174 fallback pass. Omitting
+ * locationBias entirely is NOT global — Google then IP-biases to the edge
+ * function's data-center egress (nondeterministic, wrong continent). An
+ * explicit whole-world rectangle disables IP biasing deterministically while
+ * letting prominence ranking do the work.
+ */
+export const WORLD_RECT_BIAS = {
+    rectangle: {
+        low: { latitude: -85, longitude: -180 },
+        high: { latitude: 85, longitude: 180 },
+    },
+} as const;
+
+/**
+ * The fallback second pass fires only under the double gate:
+ * the caller opted in AND the first pass was actually location-biased
+ * (coords present) AND it came back empty. Callers that never send coords
+ * (all resolve-url import paths) can never trigger it, by construction.
+ */
+export function shouldGlobalFallback(payload: SearchPayload, firstPassCount: number): boolean {
+    return payload.global_fallback === true &&
+        typeof payload.latitude === 'number' &&
+        typeof payload.longitude === 'number' &&
+        firstPassCount === 0;
+}
 
 export async function parsePayload(req: Request): Promise<SearchPayload> {
     const { searchParams } = new URL(req.url);
@@ -35,6 +71,9 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
                 persist: typeof body.persist === 'boolean'
                     ? body.persist
                     : searchParams.get('persist') === 'true' || undefined,
+                global_fallback: typeof body.global_fallback === 'boolean'
+                    ? body.global_fallback
+                    : searchParams.get('global_fallback') === 'true' || undefined,
             };
         } catch {
             // fall through to query params only
@@ -49,6 +88,7 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
         limit: firstNumber(undefined, searchParams.get('limit')),
         radius: firstNumber(undefined, searchParams.get('radius')),
         persist: searchParams.get('persist') === 'true' || undefined,
+        global_fallback: searchParams.get('global_fallback') === 'true' || undefined,
     };
 }
 

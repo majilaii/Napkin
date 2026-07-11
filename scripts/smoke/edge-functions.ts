@@ -680,6 +680,33 @@ if (Deno.env.get('PLACES_SMOKE') === '1') {
             return null;
         },
     });
+    // TICKET-174: global fallback — a well-known name biased to the Icelandic
+    // highlands must come back non-empty: either the biased pass finds it
+    // (Google prominence can override a bias) or the world-rectangle second
+    // pass does. Deliberately NOT asserting fartherAfield — which pass wins is
+    // Google behavior, not deploy drift, and a flaky assertion here would
+    // auto-revert healthy builds. Up to two real Google calls.
+    CHECKS.push({
+        name: 'places-search POST global fallback from remote coords (PLACES_SMOKE=1 — deploy-time only, real Google cost)',
+        method: 'POST',
+        fn: 'places-search',
+        body: {
+            query: 'blue bottle coffee',
+            latitude: 64.8,
+            longitude: -18.5,
+            radius: 10000,
+            global_fallback: true,
+            limit: 5,
+        },
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!Array.isArray(data)) return 'data is not an array';
+            if (data.length === 0) return 'located search with global_fallback returned nothing for a well-known name';
+            const first = data[0] as Record<string, unknown>;
+            if (typeof first.id !== 'string') return 'places[0].id is not a string';
+            return null;
+        },
+    });
 }
 
 // ── Runner state ────────────────────────────────────────────────────────────

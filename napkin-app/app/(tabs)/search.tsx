@@ -83,7 +83,14 @@ function buildFlatList(
 
     // TICKET-167: one flat ranked list, no tier headers. The been-here signal
     // rides each row (the pin), and the address disambiguates same-name venues.
+    // TICKET-174: global-fallback rows (ranked last by mergeUnified) sit under
+    // one quiet divider so a distant match never masquerades as nearby.
+    let fartherHeaderAdded = false;
     for (const row of rows) {
+        if (row.fartherAfield && !fartherHeaderAdded) {
+            fartherHeaderAdded = true;
+            items.push({ _type: 'header', label: 'Farther afield', key: 'hdr-farther' });
+        }
         items.push({ _type: 'result', row, key: `r-${row.id ?? row.placeId ?? row.name}` });
     }
 

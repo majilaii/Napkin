@@ -64,7 +64,10 @@ export const queryKeys = {
 
     // Search (restaurant search — Places + local DB)
     search: {
-        places: (q: string) => ['search', 'places', q] as const,
+        // TICKET-174: results are location-biased, so the key carries a coarse
+        // coords bucket ('nolo' when unlocated) alongside the query text.
+        places: (q: string, coordsBucket?: string | null) =>
+            ['search', 'places', coordsBucket ?? 'nolo', q] as const,
         persisted: (q: string, userId: string) => ['search', 'persisted', userId, q] as const,
     },
 

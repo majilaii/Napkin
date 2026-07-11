@@ -8,7 +8,14 @@ import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
 // Import from utils.ts (doesn't trigger serve())
-import { parsePayload, clamp, firstNumber, mapRegularOpeningHours } from './utils.ts';
+import {
+    parsePayload,
+    clamp,
+    firstNumber,
+    mapRegularOpeningHours,
+    shouldGlobalFallback,
+    WORLD_RECT_BIAS,
+} from './utils.ts';
 
 Deno.test('places-search utility functions', async (t) => {
 
@@ -57,6 +64,52 @@ Deno.test('places-search utility functions', async (t) => {
         assertEquals(payload.query, 'sushi');
         assertEquals(payload.latitude, 35.6);
         assertEquals(payload.limit, 10);
+    });
+
+    await t.step('parsePayload() carries global_fallback from body and query param', async () => {
+        const withBody = await parsePayload(new Request('http://localhost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: 'kamer', global_fallback: true }),
+        }));
+        assertEquals(withBody.global_fallback, true);
+
+        const withParam = await parsePayload(
+            new Request('http://localhost?query=kamer&global_fallback=true', { method: 'GET' }),
+        );
+        assertEquals(withParam.global_fallback, true);
+
+        const absent = await parsePayload(
+            new Request('http://localhost?query=kamer', { method: 'GET' }),
+        );
+        assertEquals(absent.global_fallback, undefined);
+    });
+});
+
+Deno.test('shouldGlobalFallback (TICKET-174)', async (t) => {
+    const biased = { query: 'kamer', latitude: 51.5, longitude: -0.1, global_fallback: true };
+
+    await t.step('fires only on opt-in + coords + zero results', () => {
+        assertEquals(shouldGlobalFallback(biased, 0), true);
+    });
+
+    await t.step('never fires when the biased pass found something', () => {
+        assertEquals(shouldGlobalFallback(biased, 1), false);
+    });
+
+    await t.step('never fires without opt-in — even biased and empty', () => {
+        assertEquals(shouldGlobalFallback({ query: 'kamer', latitude: 51.5, longitude: -0.1 }, 0), false);
+    });
+
+    await t.step('never fires without coords — resolve-url import callers send bare {query,limit}', () => {
+        assertEquals(shouldGlobalFallback({ query: 'kamer', global_fallback: true }, 0), false);
+        assertEquals(shouldGlobalFallback({ query: 'kamer', global_fallback: true, latitude: 51.5 }, 0), false);
+    });
+
+    await t.step('world rectangle is an explicit bias (never bias omission → IP bias)', () => {
+        assertEquals(WORLD_RECT_BIAS.rectangle.low.latitude < WORLD_RECT_BIAS.rectangle.high.latitude, true);
+        assertEquals(WORLD_RECT_BIAS.rectangle.low.longitude, -180);
+        assertEquals(WORLD_RECT_BIAS.rectangle.high.longitude, 180);
     });
 });
 

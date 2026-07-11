@@ -45,8 +45,12 @@ export function SearchResultRow({ item, onPress, distanceLabel }: Props) {
     // Meta line: address · cuisine. TICKET-167 flips the preference to address
     // (falling back to city) so same-name venues at different addresses read as
     // distinct in the unified list. One line, tail-truncated.
+    // TICKET-174: farther-afield rows prefer city — a long street prefix
+    // tail-truncates before the city token, hiding the one fact that matters
+    // for a distant match ("Amsterdam").
     const metaParts: string[] = [];
-    if (item.address) metaParts.push(item.address);
+    if (item.fartherAfield && item.city) metaParts.push(item.city);
+    else if (item.address) metaParts.push(item.address);
     else if (item.city) metaParts.push(item.city);
     if (item.cuisine) metaParts.push(item.cuisine);
     if (distanceLabel) metaParts.push(distanceLabel);

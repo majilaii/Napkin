@@ -53,6 +53,12 @@ export function mergeUnified(results: SearchResults, query: string): SearchResul
     return all
         .map((row, index) => ({ row, index, match: nameMatchRank(row.name, query) }))
         .sort((a, b) => {
+            // TICKET-174: global-fallback rows always trail non-fallback rows,
+            // whatever their match strength — they render as one "Farther
+            // afield" section after everything local/persisted.
+            const af = a.row.fartherAfield ? 1 : 0;
+            const bf = b.row.fartherAfield ? 1 : 0;
+            if (af !== bf) return af - bf;
             if (a.match !== b.match) return a.match - b.match;
             const at = TIER_ORDER[a.row.tier];
             const bt = TIER_ORDER[b.row.tier];

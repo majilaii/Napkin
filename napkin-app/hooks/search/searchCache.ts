@@ -56,6 +56,12 @@ export interface PlacesResult {
      * picker mint an id for a never-logged Google place. Absent on text search.
      */
     restaurant_id?: string | null;
+    /**
+     * TICKET-174: true when this row came from the server's global fallback
+     * pass (nearby bias returned zero, world-rectangle re-query found it).
+     * Client renders these city-first under a "Farther afield" divider.
+     */
+    fartherAfield?: boolean;
 }
 
 export interface PersistedRow {
@@ -84,6 +90,9 @@ export interface PersistedSearchResult {
 const LRU_CAPACITY = 10;
 const RECENT_CAPACITY = 8;
 const RECENTS_STORAGE_KEY = 'napkin.recentSearches.v1';
+// TICKET-174: entries expire — `timestamp` was written but never read before,
+// which pinned zero-result responses for the whole session.
+const LRU_TTL_MS = 15 * 60 * 1000;
 
 // Module-scope state — survives tab unmounts
 const cache = new Map<string, CachedSearchResult>();
@@ -107,6 +116,14 @@ let recentsEpoch = 0;
 
 function normalizeQuery(q: string): string {
     return q.trim().toLowerCase();
+}
+
+// TICKET-174: results are location-biased, so the cache key must carry the
+// location context — a query cached with London bias must not replay for the
+// same text searched from Amsterdam. Callers pass a coarse coords bucket
+// (~0.1° ≈ 11 km, matching the 10 km bias scale) or null when unlocated.
+function composeKey(query: string, coordsBucket: string | null | undefined): string {
+    return `${coordsBucket ?? 'nolo'}|${normalizeQuery(query)}`;
 }
 
 function emitRecents(): void {
@@ -163,13 +180,19 @@ function ensureRecentsHydrated(): void {
 }
 
 export const searchCache = {
-    get(query: string): CachedSearchResult | undefined {
-        const key = normalizeQuery(query);
-        return cache.get(key);
+    get(query: string, coordsBucket?: string | null): CachedSearchResult | undefined {
+        const key = composeKey(query, coordsBucket);
+        const entry = cache.get(key);
+        if (!entry) return undefined;
+        if (Date.now() - entry.timestamp > LRU_TTL_MS) {
+            cache.delete(key);
+            return undefined;
+        }
+        return entry;
     },
 
-    set(query: string, result: CachedSearchResult): void {
-        const key = normalizeQuery(query);
+    set(query: string, result: CachedSearchResult, coordsBucket?: string | null): void {
+        const key = composeKey(query, coordsBucket);
 
         // Evict oldest if at capacity
         if (cache.size >= LRU_CAPACITY && !cache.has(key)) {
@@ -194,8 +217,8 @@ export const searchCache = {
         persistRecents();
     },
 
-    has(query: string): boolean {
-        return cache.has(normalizeQuery(query));
+    has(query: string, coordsBucket?: string | null): boolean {
+        return this.get(query, coordsBucket) !== undefined;
     },
 
     getRecentQueries(): readonly string[] {

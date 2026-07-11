@@ -152,3 +152,41 @@ describe('mergeUnified — stable', () => {
         expect(mergeUnified(results(), 'anything')).toEqual([]);
     });
 });
+
+// ── Farther afield (TICKET-174) ──────────────────────────────────────────────
+
+describe('mergeUnified — farther-afield rows trail everything', () => {
+    it('a fallback exact match ranks below a local substring match', () => {
+        const merged = mergeUnified(
+            results({
+                visited: [row('visited', 'De Kamer Club')], // substring, local
+                morePlaces: [row('morePlaces', 'Kamer', { fartherAfield: true })], // exact, fallback
+            }),
+            'kamer',
+        );
+        expect(names(merged)).toEqual(['De Kamer Club', 'Kamer']);
+    });
+
+    it('fallback rows keep match-strength order among themselves', () => {
+        const merged = mergeUnified(
+            results({
+                morePlaces: [
+                    row('morePlaces', 'Kamer Thirteen', { fartherAfield: true }),
+                    row('morePlaces', 'Kamer', { fartherAfield: true }),
+                ],
+            }),
+            'kamer',
+        );
+        expect(names(merged)).toEqual(['Kamer', 'Kamer Thirteen']);
+    });
+
+    it('rows without the flag are unaffected', () => {
+        const merged = mergeUnified(
+            results({
+                morePlaces: [row('morePlaces', 'Kamer'), row('morePlaces', 'Kamer Two')],
+            }),
+            'kamer',
+        );
+        expect(names(merged)).toEqual(['Kamer', 'Kamer Two']);
+    });
+});

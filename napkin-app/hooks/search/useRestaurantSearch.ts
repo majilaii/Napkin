@@ -60,6 +60,12 @@ export interface SearchResultRow {
      * placePayload — the trimmed row starves the restaurant page.
      */
     place?: PlacesResult;
+    /**
+     * TICKET-174: ghost rows only — true when the row came from the server's
+     * global fallback pass (nearby bias found nothing). Ranked after all
+     * non-fallback rows and rendered city-first under a quiet divider.
+     */
+    fartherAfield?: boolean;
 }
 
 export interface SearchResults {
@@ -79,9 +85,25 @@ async function fetchPlaces(
         body.latitude = coords.latitude;
         body.longitude = coords.longitude;
         body.radius = 10000; // 10 km bias
+        // TICKET-174: when the biased pass returns zero (distant name like
+        // "kamer" searched from London), the server re-queries with a world
+        // rectangle and tags rows fartherAfield. Only meaningful with coords.
+        body.global_fallback = true;
     }
     const data = await callEdgeFn<PlacesResult[]>('places-search', { body });
     return data ?? [];
+}
+
+/**
+ * TICKET-174: coarse location bucket (~0.1° ≈ 11 km, matching the 10 km bias)
+ * for cache keys. Results are location-biased, so caching by query text alone
+ * replays London results in Amsterdam (and pins pre-fallback empties).
+ */
+function toCoordsBucket(
+    coords?: { latitude: number; longitude: number } | null,
+): string | null {
+    if (!coords) return null;
+    return `${coords.latitude.toFixed(1)},${coords.longitude.toFixed(1)}`;
 }
 
 async function fetchPersistedDirect(
@@ -148,6 +170,7 @@ function mergeResults(
             photoReference: p.photoReference,
             photoAttributionHtml: p.photoAttributionHtml,
             tier: 'morePlaces',
+            fartherAfield: p.fartherAfield,
             place: p,
         }));
 
@@ -174,14 +197,17 @@ export function useRestaurantSearch(
 } {
     const trimmed = query.trim();
     const enabled = trimmed.length >= 2 && !!userId;
+    // TICKET-174: results are location-biased, so both cache layers key on a
+    // coarse coords bucket alongside the query text.
+    const coordsBucket = toCoordsBucket(coords);
 
     // Check LRU cache synchronously before React Query fires
-    const cachedResult = enabled ? searchCache.get(trimmed) : undefined;
+    const cachedResult = enabled ? searchCache.get(trimmed, coordsBucket) : undefined;
 
     const placesQuery = useQuery({
-        queryKey: queryKeys.search.places(trimmed),
+        queryKey: queryKeys.search.places(trimmed, coordsBucket),
         queryFn: async () => {
-            const cached = searchCache.get(trimmed);
+            const cached = searchCache.get(trimmed, coordsBucket);
             if (cached) return cached.places;
             return fetchPlaces(trimmed, coords);
         },
@@ -193,7 +219,7 @@ export function useRestaurantSearch(
     const persistedQuery = useQuery({
         queryKey: queryKeys.search.persisted(trimmed, userId ?? ''),
         queryFn: async () => {
-            const cached = searchCache.get(trimmed);
+            const cached = searchCache.get(trimmed, coordsBucket);
             if (cached) return cached.persisted;
             return fetchPersistedDirect(trimmed);
         },
@@ -212,11 +238,20 @@ export function useRestaurantSearch(
             placesQuery.data &&
             persistedQuery.data
         ) {
+            // TICKET-174: never pin a fully-empty result set — a transient
+            // zero (network blip, pre-fallback response) would otherwise
+            // replay as "No results" until the TTL. React Query still
+            // dedupes refetches for 5 min under its own key.
+            const isEmpty =
+                placesQuery.data.length === 0 &&
+                persistedQuery.data.visitedByMyTables.length === 0 &&
+                persistedQuery.data.onNapkin.length === 0;
+            if (isEmpty) return;
             searchCache.set(trimmed, {
                 places: placesQuery.data,
                 persisted: persistedQuery.data,
                 timestamp: Date.now(),
-            });
+            }, coordsBucket);
         }
     }, [
         enabled,
@@ -226,6 +261,7 @@ export function useRestaurantSearch(
         placesQuery.data,
         persistedQuery.data,
         trimmed,
+        coordsBucket,
     ]);
 
     const results = useMemo<SearchResults>(() => {

@@ -3,7 +3,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant } from '../_shared/restaurant.ts';
-import { parsePayload, clamp, mapRegularOpeningHours, type SearchPayload } from './utils.ts';
+import {
+    parsePayload,
+    clamp,
+    mapRegularOpeningHours,
+    shouldGlobalFallback,
+    WORLD_RECT_BIAS,
+    type SearchPayload,
+} from './utils.ts';
 
 const GOOGLE_PLACES_API_KEY = Deno.env.get('GOOGLE_PLACES_API_KEY');
 const GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com/v1/places:searchText';
@@ -371,29 +378,27 @@ serve(async req => {
         // Extended field mask to include rating, price, and address components
         const fieldMask = PLACE_FIELDS.map(f => `places.${f}`).join(',');
 
-        const upstream = await fetch(GOOGLE_PLACES_BASE_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-                'X-Goog-FieldMask': fieldMask,
-            },
-            body: JSON.stringify(requestBody),
-        });
+        const runTextSearch = async (body: any) => {
+            const res = await fetch(GOOGLE_PLACES_BASE_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+                    'X-Goog-FieldMask': fieldMask,
+                },
+                body: JSON.stringify(body),
+            });
+            return { ok: res.ok, status: res.status, body: await res.json() };
+        };
 
-        const responseBody = await upstream.json();
-
-        // DEBUG: Log the first result to see the raw structure
-        if (responseBody.places && responseBody.places.length > 0) {
-            console.log('Raw Google Places Result:', JSON.stringify(responseBody.places[0]));
-        }
+        const upstream = await runTextSearch(requestBody);
 
         if (!upstream.ok) {
-            console.error('Google Places API error:', responseBody);
+            console.error('Google Places API error:', upstream.body);
             return new Response(
                 JSON.stringify({
-                    error: responseBody?.error?.message || 'Google Places request failed',
-                    details: responseBody,
+                    error: upstream.body?.error?.message || 'Google Places request failed',
+                    details: upstream.body,
                 }),
                 {
                     status: upstream.status,
@@ -403,7 +408,35 @@ serve(async req => {
         }
 
         // Transform to normalized shape for Napkin clients
-        const sanitized = (responseBody?.places ?? []).map(sanitizePlace);
+        let sanitized = (upstream.body?.places ?? []).map(sanitizePlace);
+
+        // ── TICKET-174: global fallback pass ──────────────────────────────
+        // A tight bias circle legitimately returns zero for a distant name
+        // ("kamer" from London misses the Amsterdam restaurant). When the
+        // caller opted in AND the first pass was biased AND it came back
+        // empty, re-run the same query with a world rectangle bias and tag
+        // the rows so the client can render them as farther afield.
+        // Best-effort: a fallback error degrades to the empty first pass.
+        // Cost note: this doubles Google calls only on the zero-result path;
+        // the 120/hr places_search bucket counts edge invocations, so the
+        // retry is invisible to the limiter — accepted at friends-test scale.
+        if (shouldGlobalFallback(payload, sanitized.length)) {
+            try {
+                const fallback = await runTextSearch({
+                    ...requestBody,
+                    locationBias: WORLD_RECT_BIAS,
+                });
+                if (fallback.ok) {
+                    sanitized = (fallback.body?.places ?? [])
+                        .map(sanitizePlace)
+                        .map((p: ReturnType<typeof sanitizePlace>) => ({ ...p, fartherAfield: true }));
+                } else {
+                    console.error('Global fallback pass failed:', fallback.body);
+                }
+            } catch (e) {
+                console.error('Global fallback pass threw:', e);
+            }
+        }
 
         return new Response(JSON.stringify({ data: sanitized }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
