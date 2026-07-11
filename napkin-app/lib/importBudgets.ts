@@ -19,10 +19,15 @@
 
 /**
  * Stage-wide download deadline (R8): shared across BOTH retry attempts AND the
- * page/VTT re-fetches — NOT 2×30s. A signed CDN URL that stalls past this is
+ * page/VTT re-fetches — NOT 2×N. A signed CDN URL that stalls past this is
  * abandoned (partial file cleaned up) and the import falls back to caption text.
+ *
+ * TICKET-175: 30s (sized to the "~12MB" assumption) killed every multi-minute
+ * TopJaw download → OCR never ran → the review sheet held ASR garbles (Ep.245
+ * repro, 2026-07-11 22:03 — cheap-tier row, no fused row). 90s fits real
+ * 50–150MB clips while staying bounded.
  */
-export const VIDEO_DOWNLOAD_TIMEOUT_MS = 30_000;
+export const VIDEO_DOWNLOAD_TIMEOUT_MS = 90_000;
 
 /**
  * OCR wall-clock budget: bounds the frame-GENERATION phase AND the 240-frame

@@ -62,12 +62,20 @@ export interface TikTokPerception {
     desc: string;
     /**
      * TICKET-164: TikTok's OWN ASR voiceover ALONE (the fast path sends this as
-     * `extracted_text`). Empty when no subtitleInfos track was found. Its char
-     * count drives the fast-path ASR gate (≥80 = a real voiceover).
+     * `extracted_text`). Empty when no subtitleInfos track was found.
+     * (Its char count no longer gates anything — TICKET-175 made the TikTok
+     * fast path single-candidate-only.)
      */
     transcript: string;
     /** True when TikTok's ASR transcript was fetched (tier 1 is GO). */
     hasTranscript: boolean;
+    /**
+     * TICKET-175: true when the RESOLVED page URL is a photo-mode post
+     * (/photo/{id}). Photo posts have no video and no ASR — the queue skips the
+     * cheap tier + video ladder and resolves {url} (server thumbnail vision).
+     * URL-derived, never blob-shape-derived (the blob differs for photos).
+     */
+    isPhotoPost: boolean;
     /** Signed mp4 URL for the tier-2 video fallback. Use now, never store. */
     playAddr: string | null;
     /**
@@ -81,6 +89,17 @@ export interface TikTokPerception {
 
 export function isTikTokUrl(url: string | null | undefined): boolean {
     return !!url && /tiktok\.com/i.test(url);
+}
+
+/**
+ * TICKET-175: photo-mode detection from a RESOLVED page URL (/photo/{id}).
+ * Runs on Response.url (final, post-redirect — verified RN 0.81 populates it
+ * from the native response), NEVER the share link (vm.tiktok.com says nothing).
+ * Pure + exported for tests: this exact URL-shape assumption silently broke
+ * photo imports once already.
+ */
+export function isTikTokPhotoUrl(url: string | null | undefined): boolean {
+    return !!url && /\/photo\//.test(url);
 }
 
 /** Strip a webvtt file to its spoken text (ASR cues repeat — dedupe them). */
@@ -122,12 +141,27 @@ export async function fetchTikTokPerception(
             },
         }, budget(PAGE_FETCH_TIMEOUT_MS));
         if (!pageRes.ok) return null;
+        // TICKET-175: vm.tiktok.com share links redirect; the FINAL url tells us
+        // photo-mode (/photo/{id}) regardless of how the blob is shaped. A photo
+        // post must reach the queue as a marker (never null) so it routes to the
+        // server url tier instead of dying in the video ladder.
+        const isPhotoPost = isTikTokPhotoUrl(pageRes.url);
+        const photoMarker: TikTokPerception = {
+            text: '',
+            desc: '',
+            transcript: '',
+            hasTranscript: false,
+            isPhotoPost: true,
+            playAddr: null,
+            thumbnailUrl: null,
+        };
         const html = await pageRes.text();
 
         const m = html.match(
             /<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/,
         );
         if (!m) {
+            if (isPhotoPost) return photoMarker;
             console.log('[tiktokPerception] no universal-data blob (page shape changed?)');
             return null;
         }
@@ -140,9 +174,13 @@ export async function fetchTikTokPerception(
             scope['webapp.video-detail']?.itemInfo?.itemStruct ??
             null;
         if (!item) {
+            if (isPhotoPost) return photoMarker;
             console.log('[tiktokPerception] blob present but no itemStruct — shape changed');
             return null;
         }
+        // Photo-mode posts sometimes DO carry an itemStruct (desc, imagePost) —
+        // still a photo: no video, no ASR. The marker routes it to the url tier.
+        if (isPhotoPost) return photoMarker;
 
         const desc = typeof item.desc === 'string' ? item.desc.trim() : '';
         const video = item.video ?? {};
@@ -179,11 +217,13 @@ export async function fetchTikTokPerception(
 
         const text = [desc, transcript].filter(Boolean).join('\n').trim().slice(0, TRANSCRIPT_CAP);
         if (!text && !playAddr) return null;
+        // (video posts from here — photo posts returned the marker above)
         // TICKET-164 [R6]: expose desc + transcript SEPARATELY so the fast path can
         // send them as caption + extracted_text without re-fusing. Each capped
         // independently; the server slices the fused fullText to 8000 regardless.
         return {
             text,
+            isPhotoPost: false,
             desc: desc.slice(0, TRANSCRIPT_CAP),
             transcript: transcript.slice(0, TRANSCRIPT_CAP),
             hasTranscript: transcript.length > 0,
