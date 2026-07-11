@@ -68,11 +68,16 @@ const FIXTURES = [
         rating: 4,
         content: 'Smoke fixture — first of two entries that keep the diary keyset walk honest.',
         visited_at: '2025-01-01T12:00:00.000Z',
+        // TICKET-173: is_entry_publicly_eligible now rejects visibility='private'
+        // (the entry-fn default). The scope=public smoke check needs these rows
+        // publicly eligible, so pin a non-private ring visibility explicitly.
+        visibility: 'table',
     },
     {
         rating: 4.5,
         content: 'Smoke fixture — second entry, distinct visited_at so page 2 exists at limit=1.',
         visited_at: '2025-01-02T12:00:00.000Z',
+        visibility: 'table',
     },
 ];
 
