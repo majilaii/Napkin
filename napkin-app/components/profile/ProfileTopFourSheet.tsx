@@ -350,9 +350,13 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                     </View>
                 </View>
             )}
-            </Modal>
 
-            {/* Per-slot chosen-memory picker (own Modal — overlays the grid). */}
+            {/* Per-slot chosen-memory picker. MUST live INSIDE this Modal: on
+                Fabric a Modal presents from the VC its host view is mounted in
+                (RCTModalHostViewComponentView), so a SIBLING of an open pageSheet
+                presents from the root VC — already presenting — and is silently
+                rejected with _isPresented latched true. Nested here it presents
+                from the pageSheet VC (legal stacked presentation). */}
             <ChooseMemorySheet
                 visible={choosingSlot != null}
                 onClose={() => setChoosingSlot(null)}
@@ -362,6 +366,7 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                 currentPhotoId={memorySlot?.hero_entry_photo_id ?? null}
                 onSelect={handleChooseMemory}
             />
+            </Modal>
         </>
     );
 }
