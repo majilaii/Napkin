@@ -1,6 +1,15 @@
 import { requireNativeModule } from 'expo';
 
 import type { ExtractOptions, ExtractResult } from './src/MediaExtract.types';
+// TICKET-164: the four stage budgets live in ONE place (lib/importBudgets); the
+// native OCR/STT budgets are threaded here so they are never scattered magic
+// numbers. The Swift side mirrors these as nil-arg fallbacks, but JS is
+// authoritative on an apiVersion >= 2 binary.
+import {
+    OCR_WALLCLOCK_BUDGET_MS,
+    STT_TIMEOUT_MS,
+    STT_MAX_DURATION_SEC,
+} from '@/lib/importBudgets';
 
 export * from './src/MediaExtract.types';
 
@@ -10,11 +19,22 @@ export * from './src/MediaExtract.types';
 // (ImportLinkSheet imports this barrel at the top level); video import just
 // fails gracefully instead.
 type NativeMediaExtract = {
+    /**
+     * TICKET-164 [R4]: capability constant. Present + >= 2 on a native build that
+     * accepts the OCR/STT budget params; absent (undefined) on the pre-164 binary.
+     * The JS wrapper gates the grown 7-arg call on it — a blind positional grow
+     * throws an ExpoModulesCore arg-count mismatch on every un-updated binary.
+     */
+    apiVersion?: number;
     extractFromVideo(
         uri: string,
         maxFrames: number,
         fps: number,
         transcribe: boolean,
+        // apiVersion >= 2 only — see extractFromVideo() below.
+        ocrBudgetMs?: number,
+        sttTimeoutMs?: number,
+        sttMaxDurationSec?: number,
     ): Promise<ExtractResult>;
     // App-Group import queue (TICKET-083 inc3) — synchronous file ops.
     listImportManifests(): string[];
@@ -68,12 +88,28 @@ export async function extractFromVideo(
     uri: string,
     opts?: ExtractOptions,
 ): Promise<ExtractResult> {
-    return getNative().extractFromVideo(
-        uri,
-        opts?.maxFrames ?? 60,
-        opts?.fps ?? 1,
-        opts?.transcribe ?? true,
-    );
+    const native = getNative();
+    const maxFrames = opts?.maxFrames ?? 60;
+    const fps = opts?.fps ?? 1;
+    const transcribe = opts?.transcribe ?? true;
+    // R4: the native module grew OCR/STT budget params in apiVersion 2. On an
+    // OLDER binary (OTA JS ahead of native) the 7-arg call throws an arg-count
+    // mismatch and poisons video imports — so gate the grown signature on the
+    // capability constant and fall back to the legacy 4-arg call. The defaults
+    // come from importBudgets so every apiVersion-2 call gets real budgets even
+    // when a caller omits opts (e.g. the shared-file video path).
+    if ((native.apiVersion ?? 0) >= 2) {
+        return native.extractFromVideo(
+            uri,
+            maxFrames,
+            fps,
+            transcribe,
+            opts?.ocrBudgetMs ?? OCR_WALLCLOCK_BUDGET_MS,
+            opts?.sttTimeoutMs ?? STT_TIMEOUT_MS,
+            opts?.sttMaxDurationSec ?? STT_MAX_DURATION_SEC,
+        );
+    }
+    return native.extractFromVideo(uri, maxFrames, fps, transcribe);
 }
 
 // ── App-Group import queue (TICKET-083 inc3) ────────────────────────────────
