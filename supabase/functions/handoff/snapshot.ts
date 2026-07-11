@@ -250,6 +250,10 @@ export async function loadLiveSpots(
             .eq('user_id', ownerId)
             .in('restaurant_id', restaurantIds)
             .not('rating', 'is', null)
+            // TICKET-173: the share page is UNAUTHENTICATED — a rating from an
+            // entry the owner marked private must not enrich it. SQL <> fails
+            // closed on NULL. Falls back to the newest non-private rating.
+            .neq('visibility', 'private')
             .order('created_at', { ascending: false });
 
         if (ratingErr) throw ratingErr;

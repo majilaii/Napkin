@@ -339,6 +339,7 @@ function sequencedClient(tableSequences: Record<string, any[][]>): LiveSpotsClie
             eq: () => builder,
             is: () => builder,
             not: () => builder,
+            neq: () => builder, // TICKET-173: snapshot rating read filters visibility
             in: () => builder,
             order: () => builder,
             maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
