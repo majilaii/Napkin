@@ -510,6 +510,12 @@ export function useCreateEntry(
             if (primaryTableId) {
                 qc.invalidateQueries({ queryKey: queryKeys.atlas.index(primaryTableId) });
             }
+
+            // ── Profile stats invalidate — server-derived aggregate (TICKET-165) ─
+            // The profile's rating histogram / averages / counts derive from
+            // entries server-side and can't be patched client-side. Same
+            // convention as useDeleteEntry / useEntryPhotoMutations.
+            qc.invalidateQueries({ queryKey: queryKeys.users.profile(userId) });
         },
     });
 }

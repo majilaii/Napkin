@@ -301,6 +301,12 @@ export function useCreateEntryWithMerge() {
 
         onSuccess: (result, input, context) => {
             if (!context || !user?.id) return;
+
+            // TICKET-165: profile stats (rating histogram, averages, counts)
+            // derive from entries server-side — B's entry exists regardless of
+            // merge outcome, so refetch on both branches below.
+            qc.invalidateQueries({ queryKey: queryKeys.users.profile(user.id) });
+
             const { nonce, entry_a_id, table_id, restaurant_id } = context;
             const { merge_outcome } = result;
 

@@ -466,10 +466,6 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
-            name="regulars"
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
             name="day/[date]"
             options={{ presentation: 'modal', headerShown: false }}
           />

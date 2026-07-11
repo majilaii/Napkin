@@ -3,7 +3,7 @@
  * TICKET-025
  *
  * Matches the canvas: serif italic value + muted " / 5" suffix.
- * Used inside TopFour badges, RegularRow, DiaryRow.
+ * Used inside TopFour badges, DiaryRow.
  */
 import React from 'react';
 import { Text } from 'react-native';

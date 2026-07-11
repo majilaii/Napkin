@@ -9,7 +9,7 @@
  *   → TopFour (self: editable; public: read view)
  *   → TasteBand (top cuisines · cities · countries — Beli)
  *   → DiningMapPreview (been-pins → /dining-map — Beli)
- *   → RegularsRail
+ *   → RatingHistogram (rating distribution — the Letterboxd profile histogram)
  *   → ProfileIndex (Journal · Spots · Reviews · Lists · Wishlist · Likes)
  *   → TablesInCommonSection
  *
@@ -42,7 +42,7 @@ import { TopFour } from './TopFour';
 import { ProfileTopFourSheet } from './ProfileTopFourSheet';
 import { TasteBand } from './TasteBand';
 import { DiningMapPreview } from './DiningMapPreview';
-import { RegularsRail } from './RegularsRail';
+import { RatingHistogram } from './RatingHistogram';
 import { ProfileIndex } from './ProfileIndex';
 import { TablesInCommonSection } from './TablesInCommonSection';
 import { NotFoundState } from './NotFoundState';
@@ -357,12 +357,15 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 />
             )}
 
-            {/* Regulars rail */}
+            {/* Rating histogram — "how they rate, at a glance" (TICKET-165,
+                replacing the Regulars rail). Self taps through to /taste. */}
             {hasPalateAccess && (
-                <RegularsRail
-                    regulars={profileData.regulars_preview ?? []}
-                    userId={targetUserId}
-                    showSeeAll={isSelf}
+                <RatingHistogram
+                    histogram={stats?.rating_histogram}
+                    dimensionAvgs={stats?.dimension_avgs}
+                    averageRating={stats?.average_rating}
+                    isSelf={isSelf}
+                    onPress={isSelf ? () => router.push('/taste') : undefined}
                 />
             )}
 

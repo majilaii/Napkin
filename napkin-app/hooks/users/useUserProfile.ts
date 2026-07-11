@@ -13,6 +13,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import type { HistogramBucket } from './useUserTaste';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,19 @@ export type UserProfileRow = {
     allow_public_replies: boolean;
 };
 
+/** TICKET-165: per-dimension mean + sample size (vibe/flavor/service/value). */
+export type DimensionStat = {
+    avg: number | null;
+    n: number;
+};
+
+export type DimensionAvgs = {
+    vibe: DimensionStat;
+    flavor: DimensionStat;
+    service: DimensionStat;
+    value: DimensionStat;
+};
+
 export type UserStats = {
     total_logs: number;
     total_restaurants: number;
@@ -50,6 +64,10 @@ export type UserStats = {
     logs_this_year?: number;
     /** TICKET-092: entries with written notes. Optional — older cached payloads. */
     reviews_count?: number;
+    /** TICKET-165: sparse half-star histogram over rated entries. Optional — older cached payloads (guard `?? []`). */
+    rating_histogram?: HistogramBucket[];
+    /** TICKET-165: per-dimension mean + count. Optional — older cached payloads. */
+    dimension_avgs?: DimensionAvgs;
 };
 
 export type ProfileListSummary = {
@@ -175,6 +193,12 @@ export type UserProfileData = {
     recently_logged: RestaurantTile[] | null;
     tables_in_common: TablePreview[];
     top_four: TopPick[];
+    /**
+     * @deprecated TICKET-165 — the Regulars rail was replaced by the profile
+     * rating histogram (see RatingHistogram). The server still populates this
+     * (freeze doctrine: pre-165 client builds still render the rail), so the
+     * field stays on the type; new client code must not consume it.
+     */
     regulars_preview: RegularSummary[];
     is_self: boolean;
     /** True if the viewing user is following the target. False for self, false for unauthenticated. */
