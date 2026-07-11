@@ -4,7 +4,7 @@
  * Canvas spec (Kit 06, table variant + P·TABLE):
  *   [24px avatar] Name tried/pinned RestaurantName · timestamp
  *   ── tick row: rating · neighborhood · weekday ──
- *   [optional photo 130px, r12]
+ *   [optional photo 4:5 portrait, r12 — TICKET-166 immersive hero; canvas had a 130px strip]
  *   — em-dash italic pull-quote 16/24
  *   dish · with companions  (sans 12 muted)
  *   [heart N]  [chat N reply]  (reactions strip)
@@ -17,10 +17,10 @@ import React from 'react';
 import {
     View,
     Text,
-    Image,
     StyleSheet,
     Pressable,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -140,7 +140,8 @@ export function TableEntryCard({
                             key={`${uri}-${i}`}
                             source={{ uri }}
                             style={styles.supperPhoto}
-                            resizeMode="cover"
+                            contentFit="cover"
+                            transition={200}
                         />
                     ))}
                 </View>
@@ -148,7 +149,8 @@ export function TableEntryCard({
                 <Image
                     source={{ uri: photoUrl }}
                     style={styles.photo}
-                    resizeMode="cover"
+                    contentFit="cover"
+                    transition={200}
                 />
             ) : null}
 
@@ -325,7 +327,9 @@ const styles = StyleSheet.create({
     },
     photo: {
         width: '100%',
-        height: 130,
+        // 4:5 portrait — the hero owns the card (TICKET-166); cover-crops
+        // extreme verticals rather than letterboxing everything at 130px.
+        aspectRatio: 4 / 5,
         borderRadius: 12,
     },
     supperPhotoRow: {
