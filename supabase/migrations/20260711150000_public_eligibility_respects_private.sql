@@ -42,8 +42,13 @@
 --   (c) Out of scope — NON-entry semantics or ring-only: fn_restaurant_saves_visible
 --       (saves doctrine), fn_search_public_lists (list curation), user/profile
 --       top-4 read policies, fn_user_taste (owner-only aggregate), table-activity
---       feeds & can_view_entry Branch 2 (tablemate ring — a private entry carries
---       no entry_tables row, so TICKET-034 already hides it there).
+--       feeds & can_view_entry Branch 2 (tablemate ring). RING-PRECEDENCE RULE
+--       (locked with the verdict): an explicit entry_tables share edge is an act
+--       of sharing that SUPERSEDES the entry's default visibility WITHIN rings —
+--       TICKET-161 re-homed supper takes (private + entry_tables) are tablemate-
+--       visible BY DESIGN via Branch 2, while THIS SSOT keeps them off every
+--       public surface. The verdict ("private hides everywhere") governs
+--       public/non-ring surfaces.
 --
 -- Body otherwise byte-identical to 20260430000000.
 
@@ -61,12 +66,23 @@ RETURNS BOOLEAN LANGUAGE SQL STABLE AS $$
     );
 $$;
 
--- ── Adjacent hardening (same verdict, dual-review cycle 1) ──────────────────
+-- ── Adjacent hardening (same verdict, dual-review cycles 1+2) ───────────────
 -- The entry-photos bucket is PUBLIC (20260416100000) and carried a blanket
 -- storage.objects SELECT policy — which public-URL serving does not need
 -- (public buckets bypass RLS for /object/public/), but which let ANY caller
--- LIST/enumerate the bucket via the Storage API. The app performs only
--- upload / getPublicUrl / remove (verified: no .list(), no .download()), so
--- dropping the policy removes anonymous enumeration with zero behavior change.
+-- LIST/enumerate the bucket via the Storage API. Replaced with an own-folder
+-- authenticated SELECT: storage-js remove() requires SELECT + DELETE (cycle-2
+-- catch — dropping SELECT outright would have made every client-side photo
+-- deletion silently orphan its object), and the own-folder scope keeps owner
+-- deletion working while denying anonymous / cross-user enumeration. Mirrors
+-- the INSERT/DELETE policies' folder rule.
 -- Full private-photo protection (signed URLs, URL migration) = TICKET-174.
 DROP POLICY IF EXISTS "Public read entry-photos" ON storage.objects;
+CREATE POLICY "Own folder read entry-photos"
+    ON storage.objects
+    FOR SELECT
+    TO authenticated
+    USING (
+        bucket_id = 'entry-photos'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+    );
