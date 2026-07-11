@@ -48,12 +48,13 @@ describe('evaluateFastPath — gates in order', () => {
     });
 
     it('count_short does NOT fire when list_count_raw is null (no marker → gate passes)', () => {
-        // 2 candidates, no advertised count, real voiceover → the count gate is a
-        // no-op and the import passes (proves null ≠ 0-with-teeth).
+        // Single candidate, no advertised count → the count gate is a no-op and
+        // the import passes (proves null ≠ 0-with-teeth). Single because TikTok
+        // multi always escalates post-175.
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
-                candidates: [ok(), ok()],
+                candidates: [ok()],
                 listCountRaw: null,
                 transcriptChars: 200,
             }),
@@ -151,15 +152,18 @@ describe('evaluateFastPath — ASR / ambiguity gate', () => {
         ).toBe('pass');
     });
 
-    it('TikTok: a real voiceover (>=80 chars) carries a multi-candidate → pass', () => {
+    it('TikTok: multi-candidate ALWAYS escalates — even with a real voiceover (TICKET-175)', () => {
+        // Haiku's 'high' confidence does not catch ASR garbles ("Tishun",
+        // "Elmersym", "Lockdown Bakery" all rated high in prod, 2026-07-11) —
+        // multi-spot TikToks must earn the fused OCR pass.
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
                 candidates: [ok(), ok(), ok()],
                 listCountRaw: null,
-                transcriptChars: 80,
+                transcriptChars: 4000,
             }),
-        ).toBe('pass');
+        ).toBe('no_asr_ambiguous');
     });
 
     it('Instagram: multi-candidate with NO caption list marker → no_asr_ambiguous', () => {
@@ -208,7 +212,7 @@ describe('evaluateFastPath — all-pass', () => {
         ).toBe('pass');
     });
 
-    it('TikTok full listicle: count met + real voiceover + all resolved high/recommended → pass', () => {
+    it('TikTok full listicle: even count-met + voiceover escalates (TICKET-175 — ASR garbles)', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
@@ -216,7 +220,7 @@ describe('evaluateFastPath — all-pass', () => {
                 listCountRaw: 3,
                 transcriptChars: 500,
             }),
-        ).toBe('pass');
+        ).toBe('no_asr_ambiguous');
     });
 });
 

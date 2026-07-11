@@ -588,6 +588,9 @@ export function useProcessImportQueue() {
                 let fastPathGate = 'no_cheap_tier';
                 let cheapTierRan = false;
                 let escalationAddedEvidence = false;
+                // TICKET-175: read by the R5 fallback refinement OUTSIDE the
+                // provider block — a no-video escalation may still fall back.
+                let downloadOk = false;
 
                 // TICKET-113: this is the first time the app sees this import's
                 // authored mode — the user's explicit per-share choice (the iOS
@@ -637,6 +640,15 @@ export function useProcessImportQueue() {
                         let latestPageText = pageText;
                         let pageTextGained = false;
 
+                        // TICKET-175: photo-mode posts have no video and no ASR —
+                        // the spots live in the IMAGES. Neither the cheap tier nor
+                        // the video ladder can help; the server's url tier (oEmbed
+                        // + thumbnail vision) is how photo lists have always
+                        // resolved. Detected from the RESOLVED page URL, never the
+                        // blob shape.
+                        const isPhotoPost =
+                            (perception as { isPhotoPost?: boolean })?.isPhotoPost === true;
+
                         // ── TICKET-164 FAST PATH: caption + platform-ASR text ONLY ──
                         // Resolve the cheap tier (NO video download) and auto-save iff
                         // every conservative gate passes. desc + transcript ride
@@ -645,7 +657,7 @@ export function useProcessImportQueue() {
                         // uncertain ⇒ escalate to today's download → OCR → STT ladder.
                         const desc = (perception as { desc?: string })?.desc ?? '';
                         const transcript = (perception as { transcript?: string })?.transcript ?? '';
-                        if (desc || transcript) {
+                        if (!isPhotoPost && (desc || transcript)) {
                             cheapTierRan = true;
                             // [review-1 Codex-4] The cheap tier is an OPTIMIZATION and
                             // must never fail an import the ladder would have handled.
@@ -683,7 +695,6 @@ export function useProcessImportQueue() {
 
                         let ocrLines = 0;
                         let sttChars = 0;
-                        let downloadOk = false;
                         if (!fastPath) {
                             // ── ESCALATION: today's download → OCR → STT ladder ──
                             // Ladder: page text (caption + ASR) + playAddr download →
@@ -772,8 +783,15 @@ export function useProcessImportQueue() {
                                 deleteCachedTikTokVideo(fileUri);
                                 break; // extraction ran — don't re-download
                             }
-                            extractedText =
-                                [ocrText, latestPageText].filter(Boolean).join('\n').trim() || null;
+                            // TICKET-175: a photo post's page text is caption-only —
+                            // resolving it as extracted_text would return zero and
+                            // (pre-fix) suppress the {url} fallback. Force the url
+                            // tier: the server's thumbnail-vision path reads the
+                            // IMAGES, which is where a photo list's spots live.
+                            extractedText = isPhotoPost
+                                ? null
+                                : [ocrText, latestPageText].filter(Boolean).join('\n').trim() ||
+                                  null;
                             // R3: did escalation add ANY new perception text? OCR
                             // lines, on-device STT, or a page-text CHANNEL the retry
                             // recovered that the cheap tier never saw — if none, the
@@ -793,6 +811,7 @@ export function useProcessImportQueue() {
                             caption_chars: latestPageText?.length ?? 0,
                             tiktok_asr: perception?.hasTranscript ?? false,
                             video: downloadOk,
+                            photo_post: isPhotoPost,
                             ocr_lines: ocrLines,
                             stt_chars: sttChars,
                             fast_path: fastPath,
@@ -857,13 +876,17 @@ export function useProcessImportQueue() {
                         // Instagram's url tier is a login-walled constant (zero
                         // candidates + ig_nudge, which this queue ignores) — the
                         // fallback would burn a resolve_url rate slot for nothing.
-                        // R5: also skip whenever the cheap tier already ran this import
-                        // (caps escalation at 2 resolve_url slots, not 3).
+                        // R5 (refined, TICKET-175): skip only when the ladder truly
+                        // FUSED video-derived text (cheap tier ran AND a download
+                        // succeeded) — then the fallback re-resolves the same data.
+                        // A no-video escalation (flaked download / perception-shape
+                        // drift) may fall back: the server's url tier adds oEmbed +
+                        // thumbnail vision the client never had.
                         if (
                             candidates.length === 0 &&
                             extractedText &&
                             provider !== 'instagram' &&
-                            !cheapTierRan
+                            !(cheapTierRan && downloadOk)
                         ) {
                             const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
                                 body: { url: m.url },

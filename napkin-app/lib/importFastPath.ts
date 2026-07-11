@@ -100,13 +100,18 @@ export function evaluateFastPath(input: FastPathInput): FastPathGate {
         if (c.stance !== 'recommended') return 'stance';
     }
 
-    // 6. ASR / ambiguity [structural].
-    //    TikTok: a real voiceover (≥80 transcript chars) OR a single candidate.
-    //    Instagram (no platform ASR): a single candidate OR a caption list marker
-    //    whose count is fully satisfied (guaranteed by step 3 when listCountRaw is
-    //    non-null, so this only bites multi-candidate IG with NO marker).
+    // 6. Ambiguity [structural].
+    //    TikTok: SINGLE candidate only (TICKET-175). The original ≥80-transcript-
+    //    chars multi-candidate allowance trusted Haiku's confidence to catch ASR
+    //    garbles — it doesn't ("Tishun", "Elmersym", "Lockdown Bakery" all rated
+    //    'high'; 2026-07-11 prod evidence). Multi-spot TikToks always earn the
+    //    fused OCR pass, whose on-screen spellings anchor the names.
+    //    Instagram (typed captions, no ASR): a single candidate OR a caption list
+    //    marker whose count is fully satisfied (guaranteed by step 3 when
+    //    listCountRaw is non-null, so this only bites multi-candidate IG with NO
+    //    marker).
     if (provider === 'tiktok') {
-        if (transcriptChars < 80 && candidates.length !== 1) return 'no_asr_ambiguous';
+        if (candidates.length !== 1) return 'no_asr_ambiguous';
     } else {
         const markerSatisfied = listCountRaw != null && candidates.length >= listCountRaw;
         if (candidates.length !== 1 && !markerSatisfied) return 'no_asr_ambiguous';
