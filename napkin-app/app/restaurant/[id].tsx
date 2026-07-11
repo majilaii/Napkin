@@ -794,6 +794,20 @@ export default function RestaurantScreen() {
                         )
                     ) : null}
 
+                    {/* TICKET-168: reviews stay reachable when VOICES is absent
+                        (warm-but-voiceless + cold pages). Ghosts have no persisted
+                        id → no link (handleSeeAllReviews would no-op anyway). */}
+                    {pageData?.restaurant?.id && !hasVoices ? (
+                        <Text
+                            style={[styles.allReviewsQuiet, { color: palette.textSecondary }]}
+                            onPress={handleSeeAllReviews}
+                            accessibilityRole="button"
+                            accessibilityLabel="all reviews"
+                        >
+                            all reviews →
+                        </Text>
+                    ) : null}
+
                     {/* ── BELOW CANVAS — gated/quiet ────────────────────────────────── */}
 
                     {/* Voices stream — public reviews + tablemate visits */}
@@ -809,7 +823,9 @@ export default function RestaurantScreen() {
                                 onVisitPress={handleVisitPress}
                                 onPublicReviewPress={handlePublicReviewPress}
                                 restaurantName={restaurant?.name ?? null}
-                                onSeeAllReviews={handleSeeAllReviews}
+                                onSeeAllReviews={
+                                    pageData?.restaurant?.id ? handleSeeAllReviews : undefined
+                                }
                             />
                         </View>
                     ) : null}
@@ -1030,6 +1046,16 @@ const styles = StyleSheet.create({
         fontSize: 13.5,
         lineHeight: 20,
         textAlign: 'center',
+        paddingHorizontal: 20,
+    },
+    // TICKET-168: quiet reviews link when the VOICES header (its usual home)
+    // is absent. Functional text = Manrope, never decorative italic.
+    allReviewsQuiet: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
+        letterSpacing: 0.3,
+        textAlign: 'center',
+        marginTop: 8,
         paddingHorizontal: 20,
     },
     murmur: {

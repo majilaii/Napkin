@@ -248,7 +248,10 @@ export function VoicesStream({
             {/* Section label */}
             <View style={styles.secRow}>
                 <Text style={[styles.secLabel, { color: palette.textMuted }]}>VOICES</Text>
-                {onSeeAllReviews && publicReviews.length > 0 ? (
+                {/* TICKET-168: always reachable on persisted restaurants — the
+                    page withholds the handler for ghosts; zero public reviews
+                    lands on the reader's invitation state, not a hidden feature. */}
+                {onSeeAllReviews ? (
                     <Pressable
                         onPress={onSeeAllReviews}
                         hitSlop={8}
