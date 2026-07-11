@@ -8,10 +8,12 @@
  * (wishlist always; lists via add_entries; one Table via per-spot table_id) — with
  * a non-blocking toast.
  *
- *   kind 'video' → on-device OCR;  kind 'url' → caption resolve (no OCR).
- *   mode 'auto'  → save silently here.
- *   mode 'review' (video only) → SKIPPED here; the candidate picker opens on next
- *                 app-open (useReviewImportTrigger). url is always auto.
+ *   kind 'video' → on-device OCR;  kind 'url' → cheap caption+ASR fast path,
+ *                 escalating into download+OCR when the gate rejects (TICKET-164).
+ *   mode 'auto'  → save silently here. A content-reason gate reject that
+ *                 escalation adds no evidence to flips to 'review' instead (R3).
+ *   mode 'review' → resolved + persisted, then HELD; surfaced via the imports
+ *                 hub (import-progress → import-review) on next app-open.
  *
  * Replay-safety: spots (with their nonces) are PERSISTED on the manifest after the
  * first resolve; a re-drain reuses them and re-runs only the idempotent save.
@@ -568,6 +570,12 @@ export function useProcessImportQueue() {
             let igAuthorHandle: string | null = null;
             let clipThumbUrl: string | null = null;
             let clipProvider: ClipThumbSourceType | null = null;
+            // TICKET-164 [review-1 FAIL-1]: hoisted like the TICKET-156 locals above
+            // — the toast/track site reads THIS on a fresh pass (setImportDiagnostics
+            // writes the manifest file, never the in-memory `m`, so `m.diag` is stale
+            // until a re-drain re-parses it). Stays false on a re-drain; the persisted
+            // diag covers that side.
+            let fastPath = false;
 
             // First process: acquire candidates (OCR for video / caption for url),
             // build + PERSIST spots (frozen nonces) before the save.
@@ -577,7 +585,6 @@ export function useProcessImportQueue() {
                 let resolvedSourceType: string | null = null;
                 // TICKET-164 fast-path bookkeeping — read by the diag write, the R3
                 // no-new-evidence guard, and (for the R5 rate cap) the shared resolve.
-                let fastPath = false;
                 let fastPathGate = 'no_cheap_tier';
                 let cheapTierRan = false;
                 let escalationAddedEvidence = false;
@@ -611,10 +618,12 @@ export function useProcessImportQueue() {
                           ? 'instagram'
                           : null;
                     if (provider) {
-                        const fetchPerception = () =>
+                        // deadlineAt (epoch ms) caps the perception fetches' internal
+                        // timeouts — only the escalation RETRY passes one (R8).
+                        const fetchPerception = (deadlineAt?: number) =>
                             provider === 'tiktok'
-                                ? fetchTikTokPerception(m.url as string)
-                                : fetchInstagramPerception(m.url as string);
+                                ? fetchTikTokPerception(m.url as string, deadlineAt)
+                                : fetchInstagramPerception(m.url as string, deadlineAt);
                         let perception = await fetchPerception();
                         // Caption ALWAYS fuses: even a name-free caption carries
                         // the city signal (hashtags/handle) that Places needs.
@@ -631,24 +640,37 @@ export function useProcessImportQueue() {
                         const transcript = (perception as { transcript?: string })?.transcript ?? '';
                         if (desc || transcript) {
                             cheapTierRan = true;
-                            const cheap = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                                body: transcript
-                                    ? { caption: desc || undefined, extracted_text: transcript }
-                                    : { extracted_text: desc },
-                            });
-                            const cheapCandidates = cheap?.candidates ?? [];
-                            fastPathGate = evaluateFastPath({
-                                provider,
-                                candidates: cheapCandidates,
-                                listCountRaw: (cheap as { list_count_raw?: number | null })
-                                    ?.list_count_raw,
-                                transcriptChars: transcript.length,
-                            });
-                            if (fastPathGate === 'pass') {
-                                fastPath = true;
-                                candidates = cheapCandidates;
-                                resolvedSourceType = cheap?.source_type ?? 'video';
-                                listCount = null; // a video source is never a denominator
+                            // [review-1 Codex-4] The cheap tier is an OPTIMIZATION and
+                            // must never fail an import the ladder would have handled.
+                            // Session/transient rethrow (same drain semantics as every
+                            // resolve: break the round, resume later); anything
+                            // deterministic fails OPEN into the ladder. cheapTierRan
+                            // stays true — the server may have billed the slot (R5).
+                            let cheap: ResolveUrlData | null = null;
+                            try {
+                                cheap = await callEdgeFn<ResolveUrlData>('resolve-url', {
+                                    body: transcript
+                                        ? { caption: desc || undefined, extracted_text: transcript }
+                                        : { extracted_text: desc },
+                                });
+                            } catch (err) {
+                                if (isSessionError(err) || isTransientError(err)) throw err;
+                                fastPathGate = 'cheap_error'; // structural — never review-holds
+                            }
+                            if (cheap) {
+                                const cheapCandidates = cheap.candidates ?? [];
+                                fastPathGate = evaluateFastPath({
+                                    provider,
+                                    candidates: cheapCandidates,
+                                    listCountRaw: cheap.list_count_raw,
+                                    transcriptChars: transcript.length,
+                                });
+                                if (fastPathGate === 'pass') {
+                                    fastPath = true;
+                                    candidates = cheapCandidates;
+                                    resolvedSourceType = cheap.source_type ?? 'video';
+                                    listCount = null; // a video source is never a denominator
+                                }
                             }
                         }
 
@@ -677,8 +699,13 @@ export function useProcessImportQueue() {
                                     Math.max(0, stageDeadlineAt - Date.now()),
                                 );
                                 if (!fileUri) {
-                                    if (attempt === 0) {
-                                        perception = (await fetchPerception()) ?? perception;
+                                    // [review-1 Codex-5] the refetch's own page/VTT
+                                    // fetches run against the REMAINING stage budget
+                                    // (threaded as a deadline), never fresh timeouts —
+                                    // and are skipped outright when the stage is spent.
+                                    if (attempt === 0 && stageDeadlineAt - Date.now() > 1000) {
+                                        perception =
+                                            (await fetchPerception(stageDeadlineAt)) ?? perception;
                                     }
                                     continue;
                                 }
@@ -846,6 +873,28 @@ export function useProcessImportQueue() {
                     candidates = resolved?.candidates ?? [];
                 }
 
+                // ── TICKET-164 [R3] no-new-evidence escalation guard ────────────
+                // A CONTENT-reason gate reject (stance / count_short / ghost /
+                // low_conf) that escalation could NOT add perception text to (0 OCR
+                // lines AND empty STT ⇒ the fused text ≡ the cheap-tier text ⇒
+                // re-extraction only reproduces the same rejected candidates) must
+                // NOT auto-save from text alone — flip to the EXISTING review-hold.
+                // [review-1 Codex-3] This runs BEFORE the 086c auto-mode filters:
+                // a warned-only reject would otherwise filter to empty and be
+                // DISCARDED below before the flip could hold it — the flipped
+                // review keeps warned candidates visible (unticked) in the picker.
+                // Structural rejects (old_server / no_asr_ambiguous / cheap_error /
+                // never-ran) and evidence-adding escalations save as today.
+                if (
+                    m.mode === 'auto' &&
+                    !fastPath &&
+                    isContentGate(fastPathGate) &&
+                    !escalationAddedEvidence
+                ) {
+                    setImportMode(m.jobId, 'review');
+                    m.mode = 'review';
+                }
+
                 // 086c: 'warned' spots ("most overrated…") never auto-save. In
                 // review mode they stay visible — unticked — so the user can
                 // override; in auto mode they're dropped here.
@@ -892,25 +941,6 @@ export function useProcessImportQueue() {
                 // TICKET-151: checkpoint the list size alongside the spots so it
                 // survives the review hold + any re-drain (readAll parses it back).
                 if (listCount != null) setImportListCount(m.jobId, listCount);
-
-                // ── TICKET-164 [R3] no-new-evidence escalation guard ────────────
-                // A CONTENT-reason gate reject (stance / count_short / ghost /
-                // low_conf) that escalation could NOT add perception text to (0 OCR
-                // lines AND empty STT ⇒ the fused text ≡ the cheap-tier text ⇒
-                // re-extraction only reproduces the same rejected candidates) must
-                // NOT auto-save from text alone — flip to the EXISTING review-hold
-                // (the block just below catches the mode change). Structural rejects
-                // (old_server / no_asr_ambiguous / never-ran) and evidence-adding
-                // escalations save as today.
-                if (
-                    m.mode === 'auto' &&
-                    !fastPath &&
-                    isContentGate(fastPathGate) &&
-                    !escalationAddedEvidence
-                ) {
-                    setImportMode(m.jobId, 'review');
-                    m.mode = 'review';
-                }
             }
 
             // Review mode: resolved → HOLD for in-app confirmation. The review
@@ -1056,10 +1086,14 @@ export function useProcessImportQueue() {
             // On a retry/re-drain the save may have landed on the prior pass and now
             // come back as already_pinned — still a success, count both.
             const done = saved + already;
-            // TICKET-164 [R9]: read fast_path from the PERSISTED diag (not a local —
-            // a re-drain skips the fresh resolve, so the local would be false; the
-            // diag was checkpointed on the first pass and survives).
-            const fastPathDiag = (m.diag as { fast_path?: boolean } | undefined)?.fast_path === true;
+            // TICKET-164 [R9 + review-1 FAIL-1]: a FRESH pass reads the hoisted local
+            // (setImportDiagnostics writes the manifest FILE, never this in-memory
+            // `m`, so `m.diag` is stale until a re-drain re-parses it); a RE-DRAIN
+            // (spots persisted, resolve skipped, local false) reads the checkpointed
+            // diag instead.
+            const fastPathDiag = freshlyResolved
+                ? fastPath
+                : (m.diag as { fast_path?: boolean } | undefined)?.fast_path === true;
             // TICKET-088: the capture funnel's terminal event (fire-and-forget).
             track('import_completed', {
                 spot_count: done,

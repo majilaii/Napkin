@@ -264,16 +264,26 @@ public class MediaExtractModule: Module {
         cont.resume(returning: result)
       }
 
-      // Watchdog: at the deadline, cancel in-flight generation + resume the partial.
+      // [review-1 Codex-6] Deadline already spent (e.g. the app was suspended
+      // between computing it and reaching here) → never START generation; an
+      // unstarted generator has nothing to cancel and no watchdog would bound it.
       let remainingSec = deadline.timeIntervalSinceNow
-      if remainingSec > 0 {
-        DispatchQueue.global().asyncAfter(deadline: .now() + remainingSec) {
-          lock.lock(); let already = resumed; let snapshot = collected; lock.unlock()
-          if already { return }
-          generator.cancelAllCGImageGenerations()
-          finish(snapshot)
-        }
+      if remainingSec <= 0 {
+        finish([])
+        return
       }
+
+      // Watchdog: at the deadline, cancel in-flight generation + resume the
+      // partial. A DispatchWorkItem so normal completion CANCELS it — otherwise
+      // the closure retains every decoded frame until the deadline fires
+      // (review-1 NIT-1: up to 240 CGImages held ~42s after a fast pass).
+      let watchdog = DispatchWorkItem {
+        lock.lock(); let already = resumed; let snapshot = collected; lock.unlock()
+        if already { return }
+        generator.cancelAllCGImageGenerations()
+        finish(snapshot)
+      }
+      DispatchQueue.global().asyncAfter(deadline: .now() + remainingSec, execute: watchdog)
 
       generator.generateCGImagesAsynchronously(forTimes: times) { _, image, _, result, _ in
         lock.lock()
@@ -284,7 +294,10 @@ public class MediaExtractModule: Module {
         lock.unlock()
         // A cancelled generation still fires per remaining time with .cancelled,
         // so `remaining` reaches 0 either way; `finish` is idempotent.
-        if done { finish(snapshot) }
+        if done {
+          watchdog.cancel()
+          finish(snapshot)
+        }
       }
     }
 
@@ -330,10 +343,34 @@ public class MediaExtractModule: Module {
   }
 
   private static func transcribe(url: URL, timeoutMs: Int) async throws -> String {
-    let status: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { cont in
-      SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0) }
+    // [review-1 Codex-1] ONE deadline covers the WHOLE stage, INCLUDING the
+    // authorization wait — an unanswered permission prompt (first-ever import,
+    // or backgrounded mid-prompt) previously sat OUTSIDE any timeout and hung
+    // the import indefinitely. The auth continuation is exactly-once guarded;
+    // an unanswered prompt at the deadline reads as not-authorized → skip STT
+    // (OCR still carries the spots). If the user later answers, the late
+    // callback hits the guard and is dropped.
+    let deadlineAt = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
+    let status: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation {
+      (cont: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
+      let authLock = NSLock()
+      var authResumed = false
+      func finishAuth(_ s: SFSpeechRecognizerAuthorizationStatus) {
+        authLock.lock()
+        if authResumed { authLock.unlock(); return }
+        authResumed = true
+        authLock.unlock()
+        cont.resume(returning: s)
+      }
+      DispatchQueue.global().asyncAfter(deadline: .now() + Double(timeoutMs) / 1000.0) {
+        finishAuth(.notDetermined)
+      }
+      SFSpeechRecognizer.requestAuthorization { finishAuth($0) }
     }
     guard status == .authorized else { return "" }
+    // Whatever the auth wait consumed comes out of the recognition budget.
+    let recognitionBudgetSec = deadlineAt.timeIntervalSinceNow
+    guard recognitionBudgetSec > 0 else { return "" }
     // On-device ONLY — never send audio off the phone (keeps the privacy promise
     // in NSSpeechRecognitionUsageDescription true). If no locale can do local
     // STT, skip the transcript; OCR still carries the spots.
@@ -365,15 +402,18 @@ public class MediaExtractModule: Module {
         cont.resume(returning: text)
       }
 
-      // Hard timeout: cancel the task and resume with whatever partial we have.
-      DispatchQueue.global().asyncAfter(deadline: .now() + Double(timeoutMs) / 1000.0) {
-        lock.lock(); let already = done; let partial = latest; lock.unlock()
+      // Hard timeout at the REMAINING stage budget (the auth wait already
+      // consumed its share): cancel the task, resume with the latest partial.
+      // [review-1 NIT-2] `task` is read under the same lock it is assigned
+      // under — the optional-chain on a torn read was benign, but free to fix.
+      DispatchQueue.global().asyncAfter(deadline: .now() + recognitionBudgetSec) {
+        lock.lock(); let already = done; let partial = latest; let t = task; lock.unlock()
         if already { return }
-        task?.cancel()
+        t?.cancel()
         finish(partial)
       }
 
-      task = recognizer.recognitionTask(with: request) { result, error in
+      let started = recognizer.recognitionTask(with: request) { result, error in
         if let result = result {
           lock.lock(); latest = result.bestTranscription.formattedString; lock.unlock()
           if result.isFinal { finish(result.bestTranscription.formattedString) }
@@ -385,6 +425,7 @@ public class MediaExtractModule: Module {
           finish(partial)
         }
       }
+      lock.lock(); task = started; lock.unlock()
     }
   }
 }

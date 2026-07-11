@@ -235,5 +235,8 @@ describe('isContentGate — R3 content vs structural classification', () => {
         expect(isContentGate('pass')).toBe(false);
         // The hook's "cheap tier never ran" sentinel is not a content reason either.
         expect(isContentGate('no_cheap_tier')).toBe(false);
+        // Nor is a failed cheap-tier call (review-1 Codex-4: it fails OPEN into
+        // the ladder and must never review-hold on its own).
+        expect(isContentGate('cheap_error')).toBe(false);
     });
 });

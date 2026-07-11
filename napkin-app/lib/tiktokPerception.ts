@@ -101,7 +101,18 @@ function parseVtt(vtt: string): string {
     return out.join(' ');
 }
 
-export async function fetchTikTokPerception(url: string): Promise<TikTokPerception | null> {
+/**
+ * `deadlineAt` (epoch ms, optional): caps each internal fetch at the REMAINING
+ * time to that deadline — the escalation retry threads its shared stage budget
+ * here so a refetch can never stack fresh 12s timeouts past it (R8). An already-
+ * spent deadline aborts immediately (→ null). Omitted = the plain per-fetch caps.
+ */
+export async function fetchTikTokPerception(
+    url: string,
+    deadlineAt?: number,
+): Promise<TikTokPerception | null> {
+    const budget = (cap: number) =>
+        deadlineAt !== undefined ? Math.max(1, Math.min(cap, deadlineAt - Date.now())) : cap;
     try {
         const pageRes = await fetchWithTimeout(url, {
             headers: {
@@ -109,7 +120,7 @@ export async function fetchTikTokPerception(url: string): Promise<TikTokPercepti
                 Accept: 'text/html,application/xhtml+xml',
                 'Accept-Language': 'en-GB,en;q=0.9',
             },
-        }, PAGE_FETCH_TIMEOUT_MS);
+        }, budget(PAGE_FETCH_TIMEOUT_MS));
         if (!pageRes.ok) return null;
         const html = await pageRes.text();
 
@@ -158,7 +169,7 @@ export async function fetchTikTokPerception(url: string): Promise<TikTokPercepti
                 const vttRes = await fetchWithTimeout(
                     chosen.Url,
                     { headers: { 'User-Agent': MOBILE_UA } },
-                    PAGE_FETCH_TIMEOUT_MS,
+                    budget(PAGE_FETCH_TIMEOUT_MS),
                 );
                 if (vttRes.ok) transcript = parseVtt(await vttRes.text());
             } catch {
