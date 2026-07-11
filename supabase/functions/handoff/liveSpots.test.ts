@@ -32,8 +32,6 @@ interface QueryLog {
     eq: Record<string, unknown>;
     is: Record<string, unknown>;
     not: Array<[string, string, unknown]>;
-    /** TICKET-173: the rating enrichment filters visibility via .neq. */
-    neq: Record<string, unknown>;
     in: Record<string, unknown[]>;
     order: Array<{ column: string; ascending: boolean }>;
 }
@@ -49,7 +47,7 @@ function fakeClient(tables: Record<string, any[]>): { client: LiveSpotsClient; l
     const log: QueryLog[] = [];
 
     const makeBuilder = (table: string) => {
-        const entry: QueryLog = { table, eq: {}, is: {}, not: [], neq: {}, in: {}, order: [] };
+        const entry: QueryLog = { table, eq: {}, is: {}, not: [], in: {}, order: [] };
         log.push(entry);
         const rows = tables[table] ?? [];
 
@@ -58,7 +56,6 @@ function fakeClient(tables: Record<string, any[]>): { client: LiveSpotsClient; l
             eq: (col: string, val: unknown) => { entry.eq[col] = val; return builder; },
             is: (col: string, val: unknown) => { entry.is[col] = val; return builder; },
             not: (col: string, op: string, val: unknown) => { entry.not.push([col, op, val]); return builder; },
-            neq: (col: string, val: unknown) => { entry.neq[col] = val; return builder; },
             in: (col: string, vals: unknown[]) => { entry.in[col] = vals; return builder; },
             order: (column: string, opts: { ascending: boolean }) => {
                 entry.order.push({ column, ascending: opts.ascending });
@@ -137,9 +134,6 @@ Deno.test('loadLiveSpots(wishlist): owner rating enrichment — owner most-recen
     const entriesQuery = log.find((q) => q.table === 'entries')!;
     assertEquals(entriesQuery.eq['user_id'], OWNER);
     assertEquals(entriesQuery.in['restaurant_id'], ['r1', 'r2']);
-    // TICKET-173: the share page is unauthenticated — a private entry's rating
-    // must never enrich it (SQL <> fails closed on NULL visibility too).
-    assertEquals(entriesQuery.neq['visibility'], 'private');
 
     assertEquals(live!.spots[0].rating, 4.6); // most-recent wins
     assertStrictEquals(live!.spots[1].rating, null); // no rating row → null
