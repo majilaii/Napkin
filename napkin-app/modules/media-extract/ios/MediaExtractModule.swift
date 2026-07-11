@@ -297,6 +297,12 @@ public class MediaExtractModule: Module {
         if done {
           watchdog.cancel()
           finish(snapshot)
+          // [review-2 Codex-2] cancel() prevents EXECUTION but the queue still
+          // retains the cancelled closure — and its captured vars — until the
+          // deadline passes. Rebind `collected` so that capture stops pinning
+          // up to 240 decoded frames for the rest of the budget (`snapshot`
+          // carries them forward to the Vision loop, which is their real user).
+          lock.lock(); collected = []; lock.unlock()
         }
       }
     }
@@ -425,7 +431,16 @@ public class MediaExtractModule: Module {
           finish(partial)
         }
       }
-      lock.lock(); task = started; lock.unlock()
+      lock.lock()
+      task = started
+      let timedOutBeforeAssignment = done
+      lock.unlock()
+      // [review-2 Codex-3] the timeout is scheduled BEFORE the task exists; when
+      // the auth wait ate nearly the whole budget it can fire in that window,
+      // see task == nil, and resume — leaving the task created HERE as a zombie
+      // that outlives the stage and reads a file the queue then deletes. The
+      // continuation already resumed (exactly-once holds); just kill the task.
+      if timedOutBeforeAssignment { started.cancel() }
     }
   }
 }

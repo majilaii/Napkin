@@ -629,6 +629,11 @@ export function useProcessImportQueue() {
                         // the city signal (hashtags/handle) that Places needs.
                         // (086c — it was dropped whenever the ASR was missing.)
                         const pageText = perception?.text || null;
+                        // [review-2 Codex-1] the escalation retry may REFRESH
+                        // perception (e.g. the initial VTT fetch failed, the retry
+                        // recovered TikTok's ASR) — the fuse, the R3 evidence test,
+                        // and the diag all read the LATEST text via this.
+                        let latestPageText = pageText;
 
                         // ── TICKET-164 FAST PATH: caption + platform-ASR text ONLY ──
                         // Resolve the cheap tier (NO video download) and auto-save iff
@@ -706,6 +711,9 @@ export function useProcessImportQueue() {
                                     if (attempt === 0 && stageDeadlineAt - Date.now() > 1000) {
                                         perception =
                                             (await fetchPerception(stageDeadlineAt)) ?? perception;
+                                        // '' never clobbers a real initial caption.
+                                        latestPageText =
+                                            (perception?.text || null) ?? latestPageText;
                                     }
                                     continue;
                                 }
@@ -743,11 +751,16 @@ export function useProcessImportQueue() {
                                 break; // extraction ran — don't re-download
                             }
                             extractedText =
-                                [ocrText, pageText].filter(Boolean).join('\n').trim() || null;
-                            // R3: did escalation add ANY new perception text? If not,
-                            // the fused text ≡ the cheap-tier text, so a content-reason
-                            // gate reject holds for review instead of auto-saving.
-                            escalationAddedEvidence = ocrLines > 0 || sttChars > 0;
+                                [ocrText, latestPageText].filter(Boolean).join('\n').trim() || null;
+                            // R3: did escalation add ANY new perception text? OCR
+                            // lines, on-device STT, or page text the retry recovered
+                            // that the cheap tier never saw — if none, the fused text
+                            // ≡ the cheap-tier text, so a content-reason gate reject
+                            // holds for review instead of auto-saving.
+                            escalationAddedEvidence =
+                                ocrLines > 0 ||
+                                sttChars > 0 ||
+                                (latestPageText ?? '') !== (pageText ?? '');
                         }
 
                         // Which channels actually contributed — without this the
@@ -757,7 +770,7 @@ export function useProcessImportQueue() {
                         const diag = {
                             provider,
                             page: !!perception,
-                            caption_chars: pageText?.length ?? 0,
+                            caption_chars: latestPageText?.length ?? 0,
                             tiktok_asr: perception?.hasTranscript ?? false,
                             video: downloadOk,
                             ocr_lines: ocrLines,
