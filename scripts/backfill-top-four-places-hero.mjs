@@ -83,6 +83,13 @@ const PER_ROW_COST = DETAILS_COST + PHOTO_COST; // ≈ $0.024 worst-case per row
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has('--dry-run');
 const FORCE = args.has('--force');
+// --refresh-stale: legacy rows can carry EXPIRED Google place ids (Details →
+// 404 "no longer valid"; hit 2026-07-11, 4/4 legacy Top-4 rows). With the flag,
+// a 404 re-finds the place via places:searchText on name+address, CAS-updates
+// external_id (guarded by a name-overlap check), and mirrors the photo from
+// the SAME search response. searchText Pro w/ photos mask ≈ $0.032, only spent
+// on rows whose Details 404'd.
+const REFRESH_STALE = args.has('--refresh-stale');
 
 function loadEnvFromFile(filePath) {
     if (!fs.existsSync(filePath)) return {};
@@ -262,7 +269,7 @@ async function fetchCoverage(candidateIds) {
     for (let i = 0; i < ids.length; i += 100) {
         const chunk = ids.slice(i, i + 100);
         const inList = chunk.map((id) => `"${id}"`).join(',');
-        const url = `${SB_URL}/rest/v1/restaurants?select=id,external_id,photo_url,photo_source` +
+        const url = `${SB_URL}/rest/v1/restaurants?select=id,external_id,photo_url,photo_source,name,city,address` +
             `&id=in.(${inList})`;
         const res = await fetch(url, { headers: REST_HEADERS });
         if (!res.ok) {
@@ -272,7 +279,13 @@ async function fetchCoverage(candidateIds) {
         const rows = await res.json();
         for (const r of rows) {
             if (r.photo_url === null && r.photo_source === null && r.external_id != null) {
-                coverage.push({ id: r.id, external_id: r.external_id });
+                coverage.push({
+                    id: r.id,
+                    external_id: r.external_id,
+                    name: r.name ?? null,
+                    city: r.city ?? null,
+                    address: r.address ?? null,
+                });
             }
         }
     }
@@ -330,6 +343,69 @@ async function uploadHero(id, photoName) {
         return { ok: false };
     }
     return { ok: true, publicUrl: `${SB_URL}/storage/v1/object/public/${objectPath}` };
+}
+
+/**
+ * Lenient name overlap — mirrors the app matcher's contract: normalized token
+ * containment either direction. Guards the stale-id refresh so a searchText
+ * top-hit for a DIFFERENT venue never rewrites external_id.
+ */
+function namesOverlapLoose(a, b) {
+    const tokens = (s) =>
+        (s ?? '')
+            .toLowerCase()
+            .normalize('NFKD')
+            .replace(/[^\p{L}\p{N}\s]/gu, '')
+            .split(/\s+/)
+            .filter((t) => t && t !== 'the');
+    const ta = tokens(a);
+    const tb = tokens(b);
+    if (ta.length === 0 || tb.length === 0) return false;
+    const sa = new Set(ta);
+    const sb = new Set(tb);
+    const contains = (outer, inner) => [...inner].every((t) => outer.has(t));
+    return contains(sa, sb) || contains(sb, sa);
+}
+
+/**
+ * places:searchText refresh for an expired place id — ONE call returns the fresh
+ * id AND the photo resources, so no second Details call is needed.
+ */
+async function searchTextRefresh(name, address, city) {
+    const textQuery = [name, address ?? city].filter(Boolean).join(', ');
+    const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST',
+        headers: {
+            'X-Goog-Api-Key': PLACES_KEY,
+            'X-Goog-FieldMask':
+                'places.id,places.displayName,places.formattedAddress,places.photos.name,places.photos.authorAttributions',
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ textQuery, maxResultCount: 1 }),
+    });
+    if (!res.ok) return { ok: false, status: res.status };
+    const body = await res.json();
+    const place = body?.places?.[0] ?? null;
+    if (!place?.id) return { ok: false, status: 'empty' };
+    return { ok: true, place };
+}
+
+/**
+ * CAS UPDATE — swap an expired external_id for the refreshed one. Guarded on the
+ * OLD id so a concurrent writer never gets clobbered. A 409 (unique violation:
+ * another restaurants row already carries the new id — duplicate venue rows)
+ * reports ok:false and the caller skips.
+ */
+async function updateExternalId(id, oldExternalId, newExternalId) {
+    const url = `${SB_URL}/rest/v1/restaurants?id=eq.${id}&external_id=eq.${encodeURIComponent(oldExternalId)}`;
+    const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { ...REST_HEADERS, Prefer: 'return=representation' },
+        body: JSON.stringify({ external_id: newExternalId }),
+    });
+    if (!res.ok) return false;
+    const rows = await res.json();
+    return Array.isArray(rows) && rows.length > 0;
 }
 
 /** CAS UPDATE — stamp the 'none' sentinel. Guard: photo_url IS NULL. */
@@ -401,12 +477,46 @@ async function main() {
     let nulled = 0;
     let raced = 0;
     let errors = 0;
+    let refreshed = 0;
 
     for (let i = 0; i < coverage.length; i++) {
-        const { id, external_id } = coverage[i];
+        const { id, external_id, name, city, address } = coverage[i];
         const label = `[${i + 1}/${total}] id=${id} external_id=${external_id}`;
 
-        const details = await fetchPlaceDetails(external_id);
+        let details = await fetchPlaceDetails(external_id);
+
+        // Expired place id (Details 404 "no longer valid") + --refresh-stale:
+        // re-find via searchText, CAS-swap external_id behind the name guard,
+        // and reuse the SAME response's photo resources (no second Details).
+        if (!details.ok && details.status === 404 && REFRESH_STALE && name) {
+            const found = await searchTextRefresh(name, address, city);
+            if (!found.ok) {
+                console.warn(`${label} → WARN stale id, searchText failed (${found.status}), skipping`);
+                errors++;
+                await sleep(100);
+                continue;
+            }
+            const foundName = found.place.displayName?.text ?? '';
+            if (!namesOverlapLoose(name, foundName)) {
+                console.warn(
+                    `${label} → WARN stale id, refresh guard REJECTED ("${name}" vs "${foundName}"), skipping`,
+                );
+                errors++;
+                await sleep(100);
+                continue;
+            }
+            const swapped = await updateExternalId(id, external_id, found.place.id);
+            if (!swapped) {
+                console.warn(`${label} → WARN stale id, external_id CAS/unique miss, skipping`);
+                errors++;
+                await sleep(100);
+                continue;
+            }
+            console.log(`${label} → refreshed external_id → ${found.place.id} ("${foundName}")`);
+            refreshed++;
+            details = { ok: true, body: { photos: found.place.photos ?? [] } };
+        }
+
         if (!details.ok) {
             console.warn(`${label} → WARN Place Details http=${details.status}, skipping`);
             errors++;
@@ -444,6 +554,7 @@ async function main() {
     console.log(`  attributed (photo_source='places'): ${attributed}`);
     console.log(`  nulled (sentinel='none'):           ${nulled}`);
     console.log(`  raced (CAS miss, no-op):            ${raced}`);
+    console.log(`  refreshed (stale external_id):      ${refreshed}`);
     console.log(`  errors (http/upload):               ${errors}`);
 }
 
