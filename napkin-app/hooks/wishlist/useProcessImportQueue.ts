@@ -632,8 +632,10 @@ export function useProcessImportQueue() {
                         // [review-2 Codex-1] the escalation retry may REFRESH
                         // perception (e.g. the initial VTT fetch failed, the retry
                         // recovered TikTok's ASR) — the fuse, the R3 evidence test,
-                        // and the diag all read the LATEST text via this.
+                        // and the diag all read the LATEST text via this. Channels
+                        // merge (never shrink); only a GAINED channel is evidence.
                         let latestPageText = pageText;
+                        let pageTextGained = false;
 
                         // ── TICKET-164 FAST PATH: caption + platform-ASR text ONLY ──
                         // Resolve the cheap tier (NO video download) and auto-save iff
@@ -709,11 +711,31 @@ export function useProcessImportQueue() {
                                     // (threaded as a deadline), never fresh timeouts —
                                     // and are skipped outright when the stage is spent.
                                     if (attempt === 0 && stageDeadlineAt - Date.now() > 1000) {
-                                        perception =
-                                            (await fetchPerception(stageDeadlineAt)) ?? perception;
-                                        // '' never clobbers a real initial caption.
-                                        latestPageText =
-                                            (perception?.text || null) ?? latestPageText;
+                                        const refreshed = await fetchPerception(stageDeadlineAt);
+                                        if (refreshed) {
+                                            perception = refreshed;
+                                            // [review-3 Codex-1] merge channel-by-
+                                            // channel: a DEGRADED refetch (page ok,
+                                            // VTT failed) must never LOSE an initial
+                                            // channel — and only a channel the cheap
+                                            // tier never saw counts as R3 evidence
+                                            // (string inequality read channel loss /
+                                            // whitespace drift as "new evidence").
+                                            const mergedDesc = refreshed.desc || desc;
+                                            const mergedTranscript =
+                                                refreshed.transcript || transcript;
+                                            if (
+                                                (refreshed.desc && !desc) ||
+                                                (refreshed.transcript && !transcript)
+                                            ) {
+                                                pageTextGained = true;
+                                            }
+                                            latestPageText =
+                                                [mergedDesc, mergedTranscript]
+                                                    .filter(Boolean)
+                                                    .join('\n')
+                                                    .trim() || latestPageText;
+                                        }
                                     }
                                     continue;
                                 }
@@ -753,14 +775,12 @@ export function useProcessImportQueue() {
                             extractedText =
                                 [ocrText, latestPageText].filter(Boolean).join('\n').trim() || null;
                             // R3: did escalation add ANY new perception text? OCR
-                            // lines, on-device STT, or page text the retry recovered
-                            // that the cheap tier never saw — if none, the fused text
-                            // ≡ the cheap-tier text, so a content-reason gate reject
-                            // holds for review instead of auto-saving.
+                            // lines, on-device STT, or a page-text CHANNEL the retry
+                            // recovered that the cheap tier never saw — if none, the
+                            // fused text ≡ the cheap-tier text, so a content-reason
+                            // gate reject holds for review instead of auto-saving.
                             escalationAddedEvidence =
-                                ocrLines > 0 ||
-                                sttChars > 0 ||
-                                (latestPageText ?? '') !== (pageText ?? '');
+                                ocrLines > 0 || sttChars > 0 || pageTextGained;
                         }
 
                         // Which channels actually contributed — without this the

@@ -413,10 +413,20 @@ public class MediaExtractModule: Module {
       // [review-1 NIT-2] `task` is read under the same lock it is assigned
       // under — the optional-chain on a torn read was benign, but free to fix.
       DispatchQueue.global().asyncAfter(deadline: .now() + recognitionBudgetSec) {
-        lock.lock(); let already = done; let partial = latest; let t = task; lock.unlock()
-        if already { return }
+        // [review-3 Codex-2] CLAIM completion inside the snapshot's critical
+        // section. Snapshot-unlock-then-finish left a window where the task
+        // assignment below read done == false while this timeout was already
+        // committed to resuming — neither side cancelled the task (zombie
+        // reading a file the queue then deletes). Claiming `done` here means
+        // the assignment ALWAYS observes it and cancels the late-created task.
+        lock.lock()
+        if done { lock.unlock(); return }
+        done = true
+        let partial = latest
+        let t = task
+        lock.unlock()
         t?.cancel()
-        finish(partial)
+        cont.resume(returning: partial)
       }
 
       let started = recognizer.recognitionTask(with: request) { result, error in
