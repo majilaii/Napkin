@@ -57,8 +57,8 @@ export interface FastPathInput {
     candidates: FastPathCandidate[];
     /** The server's UNCLAMPED, caption-first list count. undefined = old server. */
     listCountRaw: number | null | undefined;
-    /** Chars of platform ASR transcript INCLUDED in the cheap tier. TikTok only —
-     * always 0 for Instagram (no platform ASR). */
+    /** RESERVED (kept for a future IG-ASR gate): no longer consulted —
+     * TICKET-175 made the TikTok fast path single-candidate-only. */
     transcriptChars: number;
 }
 
@@ -68,7 +68,7 @@ export interface FastPathInput {
  * no_asr_ambiguous.
  */
 export function evaluateFastPath(input: FastPathInput): FastPathGate {
-    const { provider, candidates, listCountRaw, transcriptChars } = input;
+    const { provider, candidates, listCountRaw } = input;
 
     // 1. Old server (field absent mid-rollout) → escalate [structural]. The server
     //    ships first, so after rollout list_count_raw is always present.

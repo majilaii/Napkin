@@ -62,8 +62,9 @@ export interface TikTokPerception {
     desc: string;
     /**
      * TICKET-164: TikTok's OWN ASR voiceover ALONE (the fast path sends this as
-     * `extracted_text`). Empty when no subtitleInfos track was found. Its char
-     * count drives the fast-path ASR gate (≥80 = a real voiceover).
+     * `extracted_text`). Empty when no subtitleInfos track was found.
+     * (Its char count no longer gates anything — TICKET-175 made the TikTok
+     * fast path single-candidate-only.)
      */
     transcript: string;
     /** True when TikTok's ASR transcript was fetched (tier 1 is GO). */
@@ -88,6 +89,17 @@ export interface TikTokPerception {
 
 export function isTikTokUrl(url: string | null | undefined): boolean {
     return !!url && /tiktok\.com/i.test(url);
+}
+
+/**
+ * TICKET-175: photo-mode detection from a RESOLVED page URL (/photo/{id}).
+ * Runs on Response.url (final, post-redirect — verified RN 0.81 populates it
+ * from the native response), NEVER the share link (vm.tiktok.com says nothing).
+ * Pure + exported for tests: this exact URL-shape assumption silently broke
+ * photo imports once already.
+ */
+export function isTikTokPhotoUrl(url: string | null | undefined): boolean {
+    return !!url && /\/photo\//.test(url);
 }
 
 /** Strip a webvtt file to its spoken text (ASR cues repeat — dedupe them). */
@@ -133,7 +145,7 @@ export async function fetchTikTokPerception(
         // photo-mode (/photo/{id}) regardless of how the blob is shaped. A photo
         // post must reach the queue as a marker (never null) so it routes to the
         // server url tier instead of dying in the video ladder.
-        const isPhotoPost = /\/photo\//.test(pageRes.url ?? '');
+        const isPhotoPost = isTikTokPhotoUrl(pageRes.url);
         const photoMarker: TikTokPerception = {
             text: '',
             desc: '',
