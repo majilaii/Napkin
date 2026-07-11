@@ -81,6 +81,10 @@ export interface ResolveUrlData {
      * (true item count; candidates capped at 20). All other sources: a caption
      * heuristic clamped to ≤6 — never render it as a denominator (TICKET-151). */
     list_count?: number | null;
+    /** TICKET-164: the UNCLAMPED, caption-first list count for the import fast-path
+     * count gate (handleVideoText only). ABSENT (undefined) = an old server →
+     * escalate; null = no marker → the count gate passes. Never a denominator. */
+    list_count_raw?: number | null;
 }
 
 export type ResolveUrlState = 'idle' | 'loading' | 'success' | 'error';

@@ -46,6 +46,7 @@ import {
     setImportSpots,
     setImportListCount,
     setImportDiagnostics,
+    setImportMode,
     setDefaultImportMode,
     setLargeJob,
     bumpImportAttempt,
@@ -57,6 +58,13 @@ import {
     type PersistedImportSpot,
     type LargeImportJob,
 } from '@/lib/importQueue';
+import { evaluateFastPath, isContentGate } from '@/lib/importFastPath';
+import {
+    VIDEO_DOWNLOAD_TIMEOUT_MS,
+    OCR_WALLCLOCK_BUDGET_MS,
+    STT_TIMEOUT_MS,
+    STT_MAX_DURATION_SEC,
+} from '@/lib/importBudgets';
 import {
     buildLargeJob,
     isLargeListEnumeration,
@@ -172,6 +180,13 @@ function safeDeleteMov(path: string | undefined): void {
         /* best-effort */
     }
 }
+
+// TICKET-164 [R10]: set when a drain is requested while another drain holds the
+// lock (an enqueue/poke that lands mid-drain). The in-flight drain rescans on
+// release — otherwise that wakeup is LOST (nothing re-triggers until the next
+// foreground/enqueue) and a just-enqueued import sits idle. Module-level so it
+// survives the double-mount / StrictMode, exactly like the drain lock itself.
+let drainRescanRequested = false;
 
 export function useProcessImportQueue() {
     const { session } = useAuth();
@@ -560,6 +575,12 @@ export function useProcessImportQueue() {
                 freshlyResolved = true;
                 let candidates: ResolvedCandidate[] = [];
                 let resolvedSourceType: string | null = null;
+                // TICKET-164 fast-path bookkeeping — read by the diag write, the R3
+                // no-new-evidence guard, and (for the R5 rate cap) the shared resolve.
+                let fastPath = false;
+                let fastPathGate = 'no_cheap_tier';
+                let cheapTierRan = false;
+                let escalationAddedEvidence = false;
 
                 // TICKET-113: this is the first time the app sees this import's
                 // authored mode — the user's explicit per-share choice (the iOS
@@ -599,60 +620,113 @@ export function useProcessImportQueue() {
                         // the city signal (hashtags/handle) that Places needs.
                         // (086c — it was dropped whenever the ASR was missing.)
                         const pageText = perception?.text || null;
-                        let ocrText: string | null = null;
+
+                        // ── TICKET-164 FAST PATH: caption + platform-ASR text ONLY ──
+                        // Resolve the cheap tier (NO video download) and auto-save iff
+                        // every conservative gate passes. desc + transcript ride
+                        // SEPARATELY (caption + extracted_text) so the server fuses
+                        // [desc, transcript] exactly once, never double (R6). Bias:
+                        // uncertain ⇒ escalate to today's download → OCR → STT ladder.
+                        const desc = (perception as { desc?: string })?.desc ?? '';
+                        const transcript = (perception as { transcript?: string })?.transcript ?? '';
+                        if (desc || transcript) {
+                            cheapTierRan = true;
+                            const cheap = await callEdgeFn<ResolveUrlData>('resolve-url', {
+                                body: transcript
+                                    ? { caption: desc || undefined, extracted_text: transcript }
+                                    : { extracted_text: desc },
+                            });
+                            const cheapCandidates = cheap?.candidates ?? [];
+                            fastPathGate = evaluateFastPath({
+                                provider,
+                                candidates: cheapCandidates,
+                                listCountRaw: (cheap as { list_count_raw?: number | null })
+                                    ?.list_count_raw,
+                                transcriptChars: transcript.length,
+                            });
+                            if (fastPathGate === 'pass') {
+                                fastPath = true;
+                                candidates = cheapCandidates;
+                                resolvedSourceType = cheap?.source_type ?? 'video';
+                                listCount = null; // a video source is never a denominator
+                            }
+                        }
+
                         let ocrLines = 0;
                         let sttChars = 0;
                         let downloadOk = false;
-                        // Signed playAddr URLs are session-bound and flaky; one
-                        // fresh-perception retry halves silent OCR-channel loss.
-                        for (let attempt = 0; attempt < 2; attempt++) {
-                            if (!perception?.playAddr) break;
-                            const fileUri = await downloadTikTokVideo(
-                                perception.playAddr,
-                                // IG's fbcdn checks the embed-page referer;
-                                // TikTok's CDN wants the video page itself.
-                                (perception as { refererUrl?: string }).refererUrl ??
-                                    (m.url as string),
-                            );
-                            if (!fileUri) {
-                                if (attempt === 0) {
-                                    perception = (await fetchPerception()) ?? perception;
-                                }
-                                continue;
-                            }
-                            downloadOk = true;
-                            try {
-                                const { ocr, transcript: spoken } = await extractFromVideo(
-                                    fileUri,
-                                    // 2fps: creators flash "Name, Area" overlays
-                                    // for ~1s — the old 60-frame/1.5s stride
-                                    // missed most of them (086c E2E: 2/7 caught
-                                    // at 1.5s stride, 7/7 at 0.5s).
-                                    // TikTok's ASR already covers speech when
-                                    // present — only transcribe as a fallback.
-                                    {
-                                        maxFrames: 240,
-                                        fps: 2,
-                                        transcribe: !perception?.hasTranscript,
-                                    },
+                        if (!fastPath) {
+                            // ── ESCALATION: today's download → OCR → STT ladder ──
+                            // Ladder: page text (caption + ASR) + playAddr download →
+                            // media-extract OCR → fused extracted_text (086c). ONE
+                            // shared stage deadline spans BOTH retry attempts + the
+                            // re-fetch (R8) — signed playAddr URLs are session-bound
+                            // and flaky; one fresh-perception retry halves silent
+                            // OCR-channel loss.
+                            let ocrText: string | null = null;
+                            const stageDeadlineAt = Date.now() + VIDEO_DOWNLOAD_TIMEOUT_MS;
+                            for (let attempt = 0; attempt < 2; attempt++) {
+                                if (!perception?.playAddr) break;
+                                const fileUri = await downloadTikTokVideo(
+                                    perception.playAddr,
+                                    // IG's fbcdn checks the embed-page referer;
+                                    // TikTok's CDN wants the video page itself.
+                                    (perception as { refererUrl?: string }).refererUrl ??
+                                        (m.url as string),
+                                    // R8: the REMAINING shared budget, never a fresh 30s.
+                                    Math.max(0, stageDeadlineAt - Date.now()),
                                 );
-                                ocrLines = ocr?.length ?? 0;
-                                sttChars = (spoken ?? '').length;
-                                ocrText =
-                                    [...(ocr ?? []), perception?.hasTranscript ? '' : (spoken ?? '')]
-                                        .filter(Boolean)
-                                        .join('\n')
-                                        .trim() || null;
-                            } catch {
-                                // OCR channel is best-effort by contract.
+                                if (!fileUri) {
+                                    if (attempt === 0) {
+                                        perception = (await fetchPerception()) ?? perception;
+                                    }
+                                    continue;
+                                }
+                                downloadOk = true;
+                                try {
+                                    const { ocr, transcript: spoken } = await extractFromVideo(
+                                        fileUri,
+                                        // 2fps: creators flash "Name, Area" overlays
+                                        // for ~1s — the old 60-frame/1.5s stride
+                                        // missed most of them (086c E2E: 2/7 caught
+                                        // at 1.5s stride, 7/7 at 0.5s).
+                                        // TikTok's ASR already covers speech when
+                                        // present — only transcribe as a fallback.
+                                        // Budgets threaded (R8/R4 — native-gated).
+                                        {
+                                            maxFrames: 240,
+                                            fps: 2,
+                                            transcribe: !perception?.hasTranscript,
+                                            ocrBudgetMs: OCR_WALLCLOCK_BUDGET_MS,
+                                            sttTimeoutMs: STT_TIMEOUT_MS,
+                                            sttMaxDurationSec: STT_MAX_DURATION_SEC,
+                                        },
+                                    );
+                                    ocrLines = ocr?.length ?? 0;
+                                    sttChars = (spoken ?? '').length;
+                                    ocrText =
+                                        [...(ocr ?? []), perception?.hasTranscript ? '' : (spoken ?? '')]
+                                            .filter(Boolean)
+                                            .join('\n')
+                                            .trim() || null;
+                                } catch {
+                                    // OCR channel is best-effort by contract.
+                                }
+                                deleteCachedTikTokVideo(fileUri);
+                                break; // extraction ran — don't re-download
                             }
-                            deleteCachedTikTokVideo(fileUri);
-                            break; // extraction ran — don't re-download
+                            extractedText =
+                                [ocrText, pageText].filter(Boolean).join('\n').trim() || null;
+                            // R3: did escalation add ANY new perception text? If not,
+                            // the fused text ≡ the cheap-tier text, so a content-reason
+                            // gate reject holds for review instead of auto-saving.
+                            escalationAddedEvidence = ocrLines > 0 || sttChars > 0;
                         }
-                        extractedText =
-                            [ocrText, pageText].filter(Boolean).join('\n').trim() || null;
+
                         // Which channels actually contributed — without this the
-                        // "why did this import flop?" question is unanswerable.
+                        // "why did this import flop?" question is unanswerable. R9:
+                        // fast_path + gate ride in the diag (MERGE via
+                        // setImportDiagnostics) so a re-drain reports truthfully.
                         const diag = {
                             provider,
                             page: !!perception,
@@ -661,6 +735,8 @@ export function useProcessImportQueue() {
                             video: downloadOk,
                             ocr_lines: ocrLines,
                             stt_chars: sttChars,
+                            fast_path: fastPath,
+                            gate: fastPathGate,
                         };
                         console.log('[import] channels', JSON.stringify(diag));
                         setImportDiagnostics(m.jobId, diag);
@@ -677,59 +753,69 @@ export function useProcessImportQueue() {
                                 (perception as { authorHandle?: string | null })?.authorHandle ?? null;
                         }
                     }
-                    // Same proven contract as the video path: extracted_text
-                    // rides alone (never alongside url).
-                    // TICKET-152: advertise supports_large_lists on the url tier so a
-                    // Maps list over the sync cap ENUMERATES (no Places call) instead
-                    // of truncating at 20. Harmless for non-maps urls (server ignores
-                    // the flag below the cap / for non-list sources).
-                    const resolved = await callEdgeFn<ResolveUrlData & Partial<LargeListEnumeration>>(
-                        'resolve-url',
-                        {
-                            body: extractedText
-                                ? { extracted_text: extractedText }
-                                : { url: m.url, supports_large_lists: true },
-                        },
-                    );
-                    // A large Maps list → build the durable job + HOLD for the kickoff
-                    // sheet. Feature-detect on `mode` (never a version): an old server
-                    // or a ≤20 list returns normal candidates and falls through to
-                    // today's path, byte-for-byte.
-                    if (isLargeListEnumeration(resolved)) {
-                        setLargeJob(
-                            m.jobId,
-                            buildLargeJob({
-                                title: resolved.title ?? null,
-                                items: resolved.items,
-                                list_count: resolved.list_count,
-                            }),
+                    // ── Shared resolve — SKIPPED on the fast path (candidates set). ──
+                    if (!fastPath) {
+                        // Same proven contract as the video path: extracted_text
+                        // rides alone (never alongside url).
+                        // TICKET-152: advertise supports_large_lists on the url tier so a
+                        // Maps list over the sync cap ENUMERATES (no Places call) instead
+                        // of truncating at 20. Harmless for non-maps urls (server ignores
+                        // the flag below the cap / for non-list sources).
+                        const resolved = await callEdgeFn<ResolveUrlData & Partial<LargeListEnumeration>>(
+                            'resolve-url',
+                            {
+                                body: extractedText
+                                    ? { extracted_text: extractedText }
+                                    : { url: m.url, supports_large_lists: true },
+                            },
                         );
-                        pokeImportQueue(); // surface the kickoff row + trip the trigger
-                        return;
-                    }
-                    candidates = resolved?.candidates ?? [];
-                    resolvedSourceType = resolved?.source_type ?? null;
-                    // TICKET-151: only a google_maps LIST carries a truthful total here
-                    // (candidates capped at MAPS_LIST_CAP). Every other source returns
-                    // the TICKET-063 listicle heuristic — a caption-regex guess clamped
-                    // to ≤6 — which must never render as a denominator (review P1-1).
-                    listCount = resolvedSourceType === 'google_maps'
-                        ? (resolved?.list_count ?? null)
-                        : null;
-                    // Instagram's url tier is a login-walled constant (zero
-                    // candidates + ig_nudge, which this queue ignores) — the
-                    // fallback would burn a resolve_url rate slot for nothing.
-                    if (candidates.length === 0 && extractedText && provider !== 'instagram') {
-                        const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                            body: { url: m.url },
-                        });
-                        candidates = fallback?.candidates ?? [];
-                        resolvedSourceType = fallback?.source_type ?? resolvedSourceType;
-                        // listCount must describe the response that produced candidates —
-                        // same google_maps-only gate as above.
-                        listCount = fallback?.source_type === 'google_maps'
-                            ? (fallback?.list_count ?? null)
+                        // A large Maps list → build the durable job + HOLD for the kickoff
+                        // sheet. Feature-detect on `mode` (never a version): an old server
+                        // or a ≤20 list returns normal candidates and falls through to
+                        // today's path, byte-for-byte.
+                        if (isLargeListEnumeration(resolved)) {
+                            setLargeJob(
+                                m.jobId,
+                                buildLargeJob({
+                                    title: resolved.title ?? null,
+                                    items: resolved.items,
+                                    list_count: resolved.list_count,
+                                }),
+                            );
+                            pokeImportQueue(); // surface the kickoff row + trip the trigger
+                            return;
+                        }
+                        candidates = resolved?.candidates ?? [];
+                        resolvedSourceType = resolved?.source_type ?? null;
+                        // TICKET-151: only a google_maps LIST carries a truthful total here
+                        // (candidates capped at MAPS_LIST_CAP). Every other source returns
+                        // the TICKET-063 listicle heuristic — a caption-regex guess clamped
+                        // to ≤6 — which must never render as a denominator (review P1-1).
+                        listCount = resolvedSourceType === 'google_maps'
+                            ? (resolved?.list_count ?? null)
                             : null;
+                        // Instagram's url tier is a login-walled constant (zero
+                        // candidates + ig_nudge, which this queue ignores) — the
+                        // fallback would burn a resolve_url rate slot for nothing.
+                        // R5: also skip whenever the cheap tier already ran this import
+                        // (caps escalation at 2 resolve_url slots, not 3).
+                        if (
+                            candidates.length === 0 &&
+                            extractedText &&
+                            provider !== 'instagram' &&
+                            !cheapTierRan
+                        ) {
+                            const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
+                                body: { url: m.url },
+                            });
+                            candidates = fallback?.candidates ?? [];
+                            resolvedSourceType = fallback?.source_type ?? resolvedSourceType;
+                            // listCount must describe the response that produced candidates —
+                            // same google_maps-only gate as above.
+                            listCount = fallback?.source_type === 'google_maps'
+                                ? (fallback?.list_count ?? null)
+                                : null;
+                        }
                     }
                 } else {
                     let info = { exists: true, size: 1 };
@@ -806,6 +892,25 @@ export function useProcessImportQueue() {
                 // TICKET-151: checkpoint the list size alongside the spots so it
                 // survives the review hold + any re-drain (readAll parses it back).
                 if (listCount != null) setImportListCount(m.jobId, listCount);
+
+                // ── TICKET-164 [R3] no-new-evidence escalation guard ────────────
+                // A CONTENT-reason gate reject (stance / count_short / ghost /
+                // low_conf) that escalation could NOT add perception text to (0 OCR
+                // lines AND empty STT ⇒ the fused text ≡ the cheap-tier text ⇒
+                // re-extraction only reproduces the same rejected candidates) must
+                // NOT auto-save from text alone — flip to the EXISTING review-hold
+                // (the block just below catches the mode change). Structural rejects
+                // (old_server / no_asr_ambiguous / never-ran) and evidence-adding
+                // escalations save as today.
+                if (
+                    m.mode === 'auto' &&
+                    !fastPath &&
+                    isContentGate(fastPathGate) &&
+                    !escalationAddedEvidence
+                ) {
+                    setImportMode(m.jobId, 'review');
+                    m.mode = 'review';
+                }
             }
 
             // Review mode: resolved → HOLD for in-app confirmation. The review
@@ -951,8 +1056,16 @@ export function useProcessImportQueue() {
             // On a retry/re-drain the save may have landed on the prior pass and now
             // come back as already_pinned — still a success, count both.
             const done = saved + already;
+            // TICKET-164 [R9]: read fast_path from the PERSISTED diag (not a local —
+            // a re-drain skips the fresh resolve, so the local would be false; the
+            // diag was checkpointed on the first pass and survives).
+            const fastPathDiag = (m.diag as { fast_path?: boolean } | undefined)?.fast_path === true;
             // TICKET-088: the capture funnel's terminal event (fire-and-forget).
-            track('import_completed', { spot_count: done, source_type: source.type });
+            track('import_completed', {
+                spot_count: done,
+                source_type: source.type,
+                fast_path: fastPathDiag,
+            });
             // TICKET-122: first completed import flips the activation-hub signal so
             // the empty-state hub collapses full→compact. Idempotent, best-effort.
             if (done > 0) markImportCompleted();
@@ -969,11 +1082,22 @@ export function useProcessImportQueue() {
             // pinned branches only; never the error branch, never the backgrounded
             // local-notification mirror below (a terse push title, not a metadata line).
             const note = truncationNote(listCount, spots.length);
+            // TICKET-164: a single-spot fast-path save carries the MATCHED NAME
+            // ("pinned Moor Hall") — the whole point of the cheap tier is one
+            // confident spot. Name only, no extra sentence (copy economy). Falls
+            // back to the generic count when it's not a single fast-path save or the
+            // name is missing.
+            const fastPathName =
+                fastPathDiag && saved === 1 && spots.length === 1
+                    ? (spots[0].restaurant_name ?? null)
+                    : null;
             toast.show(
                 saved > 0
-                    ? note
-                        ? `pinned ${saved} · ${note}`
-                        : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
+                    ? fastPathName
+                        ? `pinned ${fastPathName}`
+                        : note
+                          ? `pinned ${saved} · ${note}`
+                          : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
                     : done > 0
                       ? note
                           ? `already in your wishlist · ${note}`
@@ -1013,7 +1137,12 @@ export function useProcessImportQueue() {
     const drain = useCallback(async () => {
         if (!userId) return;
         if (!isVideoImportAvailable()) return;
-        if (!acquireDrainLock()) return;
+        // R10: another drain holds the lock — remember that a rescan was asked for
+        // so the in-flight drain re-runs on release (a lost enqueue wakeup else).
+        if (!acquireDrainLock()) {
+            drainRescanRequested = true;
+            return;
+        }
 
         // TICKET-120: iOS suspends JS a few seconds after backgrounding; a background
         // task buys ~30s so an import that finishes while backgrounded can post its
@@ -1082,6 +1211,14 @@ export function useProcessImportQueue() {
                 } catch {
                     /* best-effort */
                 }
+            }
+            // R10: a drain was requested while we held the lock — rescan now that it's
+            // free. Deferred so THIS drain's release settles first (a synchronous
+            // re-enter would race the just-cleared lock); pokeImportQueue fans out to
+            // the same onImportEnqueued → drain listener the enqueue would have hit.
+            if (drainRescanRequested) {
+                drainRescanRequested = false;
+                setTimeout(() => pokeImportQueue(), 0);
             }
         }
     }, [userId, session, processOne, toast]);
