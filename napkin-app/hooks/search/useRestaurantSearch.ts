@@ -49,6 +49,12 @@ export interface SearchResultRow {
     /** Tier 1 only: "visited by [Table]" */
     socialTag?: string;
     /**
+     * TICKET-167: visited rows only — ISO timestamp of the most recent Table
+     * activity on this restaurant. Drives the within-visited recency sort in
+     * mergeUnified. Absent on onNapkin / ghost rows.
+     */
+    mostRecentActivityAt?: string | null;
+    /**
      * Ghost rows: the FULL sanitized Places object from the server (coords,
      * price, rating, categories, phone, hours…). Navigation must pass THIS as
      * placePayload — the trimmed row starves the restaurant page.
@@ -107,12 +113,13 @@ function mergeResults(
         name: r.name,
         city: r.city,
         cuisine: r.cuisine,
-        address: null,
+        address: r.address ?? null,
         photoUrl: r.photo_url,
         photoReference: null,
         photoAttributionHtml: null,
         tier: 'visited',
         socialTag: `visited by ${r.table_name}`,
+        mostRecentActivityAt: r.most_recent_activity_at,
     }));
 
     const onNapkin: SearchResultRow[] = persisted.onNapkin.map((r) => ({
@@ -121,7 +128,7 @@ function mergeResults(
         name: r.name,
         city: r.city,
         cuisine: r.cuisine,
-        address: null,
+        address: r.address ?? null,
         photoUrl: r.photo_url,
         photoReference: null,
         photoAttributionHtml: null,
@@ -146,6 +153,12 @@ function mergeResults(
 
     return { visited, onNapkin, morePlaces };
 }
+
+// ── Unified ranking (TICKET-167) ─────────────────────────────────────────────
+// The pure ranking lives in ./mergeUnified (no React / supabase imports) so it
+// stays jest-importable. search.tsx imports it from here; the two tier-based
+// consumers (TopFourSearchScreen / EditTop4Sheet) stay on `results`.
+export { mergeUnified } from './mergeUnified';
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 

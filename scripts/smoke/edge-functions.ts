@@ -223,6 +223,26 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-167: restaurant-history?action=search — the Search tab's persisted
+    // read path (visited-by-my-Tables + on-Napkin tiers). Both SELECTs now carry
+    // `address` for the unified list. A 2-char query returns the two-array
+    // envelope; empty arrays are legitimate for the smoke fixture (no matching
+    // restaurant). A 500 here means the SELECT / table_members embed / ilike drifted.
+    {
+        name: 'restaurant-history?action=search (TICKET-167 unified search read path)',
+        method: 'GET',
+        fn: 'restaurant-history',
+        query: 'action=search&q=aa',
+        shape: (json) => {
+            const data = (json as {
+                data?: { visitedByMyTables?: unknown; onNapkin?: unknown };
+            }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.visitedByMyTables)) return 'data.visitedByMyTables is not an array';
+            if (!Array.isArray(data.onNapkin)) return 'data.onNapkin is not an array';
+            return null;
+        },
+    },
     // TICKET-098: feed-friends replaces the deleted legacy `feed` fn. Page
     // envelope check — an empty rows array is a legitimate zero-follow state.
     {

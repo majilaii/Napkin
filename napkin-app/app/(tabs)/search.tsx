@@ -42,6 +42,7 @@ import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import {
     useRestaurantSearch,
     useRecentSearches,
+    mergeUnified,
     type SearchResultRow as SearchResultRowType,
 } from '@/hooks/search/useRestaurantSearch';
 import { searchCache } from '@/hooks/search/searchCache';
@@ -75,34 +76,18 @@ type ListItem = { _type: 'list'; list: MyList; key: string };
 type FlatItem = SectionHeaderItem | ResultItem | ListItem;
 
 function buildFlatList(
-    results: {
-        visited: SearchResultRowType[];
-        onNapkin: SearchResultRowType[];
-        morePlaces: SearchResultRowType[];
-    },
+    rows: SearchResultRowType[],
     matchingLists: MyList[],
 ): FlatItem[] {
     const items: FlatItem[] = [];
 
-    if (results.visited.length > 0) {
-        items.push({ _type: 'header', label: 'Your Tables', key: 'hdr-visited' });
-        for (const row of results.visited) {
-            items.push({ _type: 'result', row, key: `r-${row.id ?? row.placeId ?? row.name}` });
-        }
+    // TICKET-167: one flat ranked list, no tier headers. The been-here signal
+    // rides each row (the pin), and the address disambiguates same-name venues.
+    for (const row of rows) {
+        items.push({ _type: 'result', row, key: `r-${row.id ?? row.placeId ?? row.name}` });
     }
-    if (results.onNapkin.length > 0) {
-        items.push({ _type: 'header', label: 'On Napkin', key: 'hdr-onnapkin' });
-        for (const row of results.onNapkin) {
-            items.push({ _type: 'result', row, key: `r-${row.id ?? row.placeId ?? row.name}` });
-        }
-    }
-    if (results.morePlaces.length > 0) {
-        items.push({ _type: 'header', label: 'More places', key: 'hdr-more' });
-        for (const row of results.morePlaces) {
-            items.push({ _type: 'result', row, key: `r-${row.id ?? row.placeId ?? row.name}` });
-        }
-    }
-    // TICKET-097 (TICKET-094 option A): matching lists tail the tiered results.
+
+    // TICKET-097 (TICKET-094 option A): matching lists tail the restaurant results.
     if (matchingLists.length > 0) {
         items.push({ _type: 'header', label: 'Your lists', key: 'hdr-lists' });
         for (const list of matchingLists) {
@@ -236,20 +221,35 @@ export default function SearchScreen() {
         [myLists, debouncedQuery],
     );
 
-    const hasQuery = immediateQuery.trim().length > 0;
-    const hasResults =
-        results.visited.length > 0 ||
-        results.onNapkin.length > 0 ||
-        results.morePlaces.length > 0;
+    // TICKET-167: collapse the three tiers into one deterministically-ranked
+    // flat list (keyed off the debounced query, which drives the search hook).
+    const mergedResults = useMemo(
+        () => mergeUnified(results, debouncedQuery),
+        [results, debouncedQuery],
+    );
 
-    const flatData = hasQuery ? buildFlatList(results, matchingLists) : [];
+    const hasQuery = immediateQuery.trim().length > 0;
+    const hasResults = mergedResults.length > 0;
+
+    const flatData = hasQuery ? buildFlatList(mergedResults, matchingLists) : [];
 
     // Pick the first table as context for persisted restaurant navigation
     const activeTableId = tables?.[0]?.tables?.id;
 
     const handleResultPress = useCallback(
         (item: SearchResultRowType) => {
-            if (item.tier === 'morePlaces' && item.placeId) {
+            // TICKET-167: branch on persistence, not tier. A persisted row (any
+            // tier) carries a Napkin DB id; a ghost carries only a placeId.
+            if (item.id) {
+                // Persisted: navigate with Napkin DB id
+                router.push({
+                    pathname: '/restaurant/[id]',
+                    params: {
+                        id: item.id,
+                        ...(activeTableId ? { tableId: activeTableId } : {}),
+                    },
+                });
+            } else if (item.placeId) {
                 // Ghost: pass the FULL Places object (item.place) — the trimmed row
                 // starves the page of coords/price/rating/hours (Ritz empty-page bug).
                 router.push({
@@ -258,15 +258,6 @@ export default function SearchScreen() {
                         id: item.placeId,
                         placeId: item.placeId,
                         placePayload: JSON.stringify(item.place ?? item),
-                    },
-                });
-            } else if (item.id) {
-                // Persisted: navigate with Napkin DB id
-                router.push({
-                    pathname: '/restaurant/[id]',
-                    params: {
-                        id: item.id,
-                        ...(activeTableId ? { tableId: activeTableId } : {}),
                     },
                 });
             }
