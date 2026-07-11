@@ -104,7 +104,7 @@ export function useUpdateEntry(entryId: string) {
             }
         },
 
-        onSuccess: (_data, input) => {
+        onSuccess: (data, input) => {
             // Invalidate detail so it refetches the canonical row (companions, etc).
             qc.invalidateQueries({ queryKey: queryKeys.entries.detail(entryId) });
 
@@ -146,10 +146,19 @@ export function useUpdateEntry(entryId: string) {
                 console.warn('[useUpdateEntry] list-cache reconcile skipped:', reconcileErr?.message);
             }
 
-            // No userId in scope here; mySolo cache uses the entry's user_id which
-            // we don't have access to without an extra fetch. The detail invalidation
-            // covers any user navigating to detail; the feed patches above cover the
-            // visible-list case for the current user.
+            // TICKET-165: profile stats (rating histogram, dimension means,
+            // averages, counts) are server-derived from entries — refetch when a
+            // scalar edit lands. The scalar PATCH returns the row, so user_id is
+            // in hand; a companions-only edit never reaches here (early return
+            // above) and doesn't touch stats anyway.
+            const ownerId = (data as { user_id?: string } | null)?.user_id;
+            if (ownerId) {
+                qc.invalidateQueries({ queryKey: queryKeys.users.profile(ownerId) });
+            }
+
+            // mySolo cache still isn't reconciled here (uses the entry's user_id
+            // per-row shape); the detail invalidation covers detail views and the
+            // feed patches above cover the visible-list case for the current user.
         },
     });
 }

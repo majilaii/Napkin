@@ -117,6 +117,20 @@ describe('useCreateEntry', () => {
         expect(mySoloData?.find((r) => r.id === 'server-entry-1')).toBeDefined();
     });
 
+    it('(a2) success invalidates profile stats (TICKET-165 rating histogram)', async () => {
+        const { result, client } = renderHookWithClient(
+            () => useCreateEntry(USER_ID, null),
+        );
+        const spy = jest.spyOn(client, 'invalidateQueries');
+
+        act(() => {
+            result.current.mutate({ ...ENTRY_INPUT });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.users.profile(USER_ID) });
+    });
+
     it('(b) rolls back mySolo and forDay on server error', async () => {
         const { supabase: mockSupabase } = require('@/__mocks__/supabase');
         mockSupabase.functions.invoke.mockResolvedValue({

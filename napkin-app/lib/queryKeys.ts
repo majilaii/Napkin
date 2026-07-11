@@ -97,7 +97,6 @@ export const queryKeys = {
         profile: (identifier: string) => ['users', 'profile', identifier] as const,
         diary: (userId: string) =>
             ['users', 'diary', userId] as const,
-        regulars: (userId: string) => ['users', 'regulars', userId] as const,
         // TICKET-092 profile revamp
         spots: (userId: string) => ['users', 'spots', userId] as const,
         // TICKET-144 pt2: the caller's OWN entry photos at a restaurant (Top-4 hero picker).

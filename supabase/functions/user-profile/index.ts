@@ -46,6 +46,12 @@ import {
     strangerCanReadPalate,
     type ViewerRelationship,
 } from './gates.ts';
+import {
+    computeRatingHistogram,
+    computeDimensionAvgs,
+    type HistogramBucket,
+    type DimensionAvgs,
+} from './stats.ts';
 
 type ProfileRow = {
     user_id: string;
@@ -67,6 +73,10 @@ type Stats = {
     logs_this_year: number;
     /** TICKET-092: entries with real written notes (the Reviews count). */
     reviews_count: number;
+    /** TICKET-165: sparse half-star histogram over the rated (gated) entries. */
+    rating_histogram: HistogramBucket[];
+    /** TICKET-165: per-dimension mean + count (vibe/flavor/service/value). */
+    dimension_avgs: DimensionAvgs;
 };
 
 /** TICKET-092: one distinct logged restaurant (the profile "Spots" ledger +
@@ -273,7 +283,10 @@ async function fetchStats(supabase: any, targetId: string, includePrivate = fals
     // Public viewers keep the doctrinal bar: non-private AND rated.
     let entriesQuery = supabase
         .from('entries')
-        .select('id, restaurant_id, rating, content, visited_at, created_at')
+        .select(
+            'id, restaurant_id, rating, content, visited_at, created_at, ' +
+                'vibe_rating, flavor_rating, service_rating, value_rating',
+        )
         .eq('user_id', targetId);
     if (!includePrivate) {
         entriesQuery = entriesQuery.neq('visibility', 'private').not('rating', 'is', null);
@@ -301,6 +314,10 @@ async function fetchStats(supabase: any, targetId: string, includePrivate = fals
         content: string | null;
         visited_at: string | null;
         created_at: string | null;
+        vibe_rating: number | null;
+        flavor_rating: number | null;
+        service_rating: number | null;
+        value_rating: number | null;
     }>;
     const totalLogs = rows.length;
     const uniqueRestaurants = new Set(rows.map((r) => r.restaurant_id).filter(Boolean));
@@ -311,6 +328,12 @@ async function fetchStats(supabase: any, targetId: string, includePrivate = fals
         ratedRows.length > 0
             ? ratedRows.reduce((sum, r) => sum + (r.rating as number), 0) / ratedRows.length
             : null;
+
+    // TICKET-165: profile rating histogram + dimension means. Both derive from
+    // the already-fetched (gated) rows — zero extra queries. The histogram bins
+    // the rated ratings; the dimension means each ride their own non-null set.
+    const ratingHistogram = computeRatingHistogram(ratedRows.map((r) => r.rating));
+    const dimensionAvgs = computeDimensionAvgs(rows);
 
     const yearStart = `${new Date().getFullYear()}-01-01`;
     let logsThisYear = 0;
@@ -329,6 +352,8 @@ async function fetchStats(supabase: any, targetId: string, includePrivate = fals
         following_count: followingRes.count ?? 0,
         logs_this_year: logsThisYear,
         reviews_count: reviewsCount,
+        rating_histogram: ratingHistogram,
+        dimension_avgs: dimensionAvgs,
     };
 }
 

@@ -8,6 +8,7 @@
 import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { buildPrivateProfileStub } from './gates.ts';
+import { computeRatingHistogram, computeDimensionAvgs } from './stats.ts';
 
 Deno.test('user-profile edge function', async (t) => {
 
@@ -96,6 +97,49 @@ Deno.test('user-profile edge function', async (t) => {
             'top_four',
             'viewer_target_relationship',
         ]);
+    });
+
+    // ── TICKET-165: profile rating histogram + dimension means ─────────────────
+    // fetchStats can't be reached in a unit test (index.ts calls serve() at the
+    // top level, not import-safe), so the binning lives in pure ./stats.ts
+    // helpers — same "extracted so testable" pattern as gates.ts. These pin the
+    // exact fields fetchStats now attaches to the Stats payload.
+
+    await t.step('rating_histogram: half-star snap + clamp, sparse, ascending', () => {
+        // 4.2 → 4.0, 4.3 → 4.5, 0 → clamp 0.5, 6 → clamp 5.0, nulls dropped.
+        const hist = computeRatingHistogram([4.2, 4.3, 4.5, 3, 3, null, 0, 6, undefined]);
+        assertEquals(hist, [
+            { r: 0.5, n: 1 }, // 0 clamped up
+            { r: 3.0, n: 2 },
+            { r: 4.0, n: 1 }, // 4.2 snaps down
+            { r: 4.5, n: 2 }, // 4.3 + 4.5
+            { r: 5.0, n: 1 }, // 6 clamped down
+        ]);
+    });
+
+    await t.step('rating_histogram: no rated rows → empty array', () => {
+        assertEquals(computeRatingHistogram([null, undefined]), []);
+    });
+
+    await t.step('dimension_avgs: per-dimension mean over its own non-null set', () => {
+        const rows = [
+            { vibe_rating: 4, flavor_rating: 5, service_rating: null, value_rating: 3 },
+            { vibe_rating: 3, flavor_rating: null, service_rating: null, value_rating: 4 },
+            { vibe_rating: null, flavor_rating: 4, service_rating: 2, value_rating: null },
+        ];
+        const dims = computeDimensionAvgs(rows);
+        assertEquals(dims.vibe, { avg: 3.5, n: 2 });
+        assertEquals(dims.flavor, { avg: 4.5, n: 2 });
+        assertEquals(dims.service, { avg: 2, n: 1 });
+        assertEquals(dims.value, { avg: 3.5, n: 2 });
+    });
+
+    await t.step('dimension_avgs: dimension with no values → { avg: null, n: 0 }', () => {
+        const dims = computeDimensionAvgs([
+            { vibe_rating: null, flavor_rating: null, service_rating: null, value_rating: null },
+        ]);
+        assertEquals(dims.vibe, { avg: null, n: 0 });
+        assertEquals(dims.value, { avg: null, n: 0 });
     });
 
     // ── diary action ──────────────────────────────────────────────────────────

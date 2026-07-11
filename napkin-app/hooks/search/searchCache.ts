@@ -63,6 +63,10 @@ export interface PersistedRow {
     name: string;
     city: string | null;
     cuisine: string | null;
+    // TICKET-167: SELECTed by restaurant-history?action=search so the unified
+    // list can disambiguate same-name venues. Optional — stale in-memory cache
+    // entries written before this field existed lack it.
+    address?: string | null;
     photo_url: string | null;
     external_id: string | null; // Google Place ID — see migration 20251215134700
 }

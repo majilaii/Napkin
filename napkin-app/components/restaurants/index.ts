@@ -4,7 +4,6 @@ export { VisitListRow } from './VisitListRow';
 export { RestaurantHero } from './RestaurantHero';
 export { RestaurantNumbers } from './RestaurantNumbers';
 export { WhoBeenRow } from './WhoBeenRow';
-export { RatingDistribution } from './RatingDistribution';
 export { LogVisitSheet } from './LogVisitSheet';
 export { RestaurantTabs, type RestaurantTab } from './RestaurantTabs';
 export { RestaurantTabsV3, type RestaurantTabV3 } from './RestaurantTabsV3';

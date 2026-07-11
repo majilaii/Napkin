@@ -3,8 +3,8 @@
  *
  * The TICKET-070 body (header + Top 4 + the WHOLE journal auto-expanded) is
  * gone. Own profile now shares ProfileScreenBody with /u/[identifier]:
- * identity + stats strip + Top 4 + taste band + dining map + regulars + the
- * index (Journal · Spots · Reviews · Lists · Wishlist). The journal lives
+ * identity + stats strip + Top 4 + taste band + dining map + rating histogram +
+ * the index (Journal · Spots · Reviews · Lists · Wishlist). The journal lives
  * behind its index row — one tap, not a dump.
  */
 import React from 'react';
