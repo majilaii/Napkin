@@ -522,6 +522,12 @@ export default function RestaurantScreen() {
         selfVisits.length > 0 ||
         tablemateVisits.length > 0 ||
         (pageData?.public_reviews ?? []).length > 0;
+    // TICKET-168 [review-1 FAIL-1]: what VoicesStream ACTUALLY renders — it is
+    // fed selfVisits=[] (self history lives in YOUR HISTORY) and early-returns
+    // on empty, so hasVoices (which counts selfVisits) over-claims on self-only
+    // pages. The stream mount + the quiet all-reviews fallback both key on THIS.
+    const voicesVisible =
+        tablemateVisits.length > 0 || (pageData?.public_reviews ?? []).length > 0;
 
     // Cold restaurant: no Napkin signal at all (no self/tablemate/public voices, no
     // you/table/napkin numbers). Google is external and never makes a page "warm".
@@ -794,22 +800,42 @@ export default function RestaurantScreen() {
                         )
                     ) : null}
 
+                    {/* TICKET-168: reviews stay reachable when VOICES is absent
+                        (warm-but-voiceless + cold pages — INCLUDING self-only
+                        pages: hasVoices counts selfVisits but VoicesStream is fed
+                        selfVisits=[] and early-returns, so the gate here must be
+                        the child's REAL render predicate, not the superset bool
+                        [review-1 FAIL-1]). Ghosts have no persisted id → no link. */}
+                    {pageData?.restaurant?.id && !voicesVisible ? (
+                        <Text
+                            style={[styles.allReviewsQuiet, { color: palette.textSecondary }]}
+                            onPress={handleSeeAllReviews}
+                            accessibilityRole="button"
+                            accessibilityLabel="all reviews"
+                        >
+                            all reviews →
+                        </Text>
+                    ) : null}
+
                     {/* ── BELOW CANVAS — gated/quiet ────────────────────────────────── */}
 
                     {/* Voices stream — public reviews + tablemate visits */}
-                    {restaurant && pageData && hasVoices ? (
+                    {restaurant && pageData && voicesVisible ? (
                         <View style={styles.belowSection}>
                             <VoicesStream
                                 selfVisits={[]}
                                 tablemateVisits={tablemateVisits}
                                 publicReviews={pageData.public_reviews ?? []}
+                                reviewCount={pageData.public_reviews_total ?? null}
                                 viewerUserId={user?.id ?? null}
                                 matchFilterOn={matchFilterOn}
                                 onToggleMatchFilter={() => setMatchFilterOn((v) => !v)}
                                 onVisitPress={handleVisitPress}
                                 onPublicReviewPress={handlePublicReviewPress}
                                 restaurantName={restaurant?.name ?? null}
-                                onSeeAllReviews={handleSeeAllReviews}
+                                onSeeAllReviews={
+                                    pageData?.restaurant?.id ? handleSeeAllReviews : undefined
+                                }
                             />
                         </View>
                     ) : null}
@@ -1030,6 +1056,16 @@ const styles = StyleSheet.create({
         fontSize: 13.5,
         lineHeight: 20,
         textAlign: 'center',
+        paddingHorizontal: 20,
+    },
+    // TICKET-168: quiet reviews link when the VOICES header (its usual home)
+    // is absent. Functional text = Manrope, never decorative italic.
+    allReviewsQuiet: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
+        letterSpacing: 0.3,
+        textAlign: 'center',
+        marginTop: 8,
         paddingHorizontal: 20,
     },
     murmur: {

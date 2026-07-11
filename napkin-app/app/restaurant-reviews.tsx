@@ -65,6 +65,21 @@ export default function RestaurantReviewsScreen() {
                     <Text style={[styles.emptyMurmur, { color: palette.textMuted }]}>
                         {name ? `— no one's written about ${name} yet.` : '— nothing written yet.'}
                     </Text>
+                    {/* TICKET-168: an invitation, not a dead end. */}
+                    {id ? (
+                        <Text
+                            style={[styles.emptyCta, { color: palette.primary }]}
+                            onPress={() =>
+                                router.push({
+                                    pathname: '/create-entry',
+                                    params: { restaurantId: id },
+                                })
+                            }
+                            accessibilityRole="button"
+                        >
+                            been here? log it →
+                        </Text>
+                    ) : null}
                 </View>
             ) : (
                 <FlatList
@@ -150,6 +165,12 @@ const styles = StyleSheet.create({
     title: { ...Type.screenTitle },
     subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 11, marginTop: 1 },
     emptyWrap: { paddingTop: 80, alignItems: 'center', paddingHorizontal: 40 },
+    emptyCta: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+        letterSpacing: 0.3,
+        marginTop: Spacing.md,
+    },
     emptyMurmur: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 15,

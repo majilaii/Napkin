@@ -34,6 +34,9 @@ interface Props {
     selfVisits: PageVisit[];
     tablemateVisits: PageVisit[];
     publicReviews: PublicReviewCard[];
+    /** TICKET-168: total public reviews (page payload `public_reviews_total`) —
+     * the ALL REVIEWS label carries it when > 0 ("ALL REVIEWS · 12 →"). */
+    reviewCount?: number | null;
     /** Authenticated viewer's id — suppresses calibration chip on their own public rows. */
     viewerUserId?: string | null;
     /** Controlled filter state for "matches mine" toggle pill (TICKET-022 Surface C). */
@@ -182,6 +185,7 @@ export function VoicesStream({
     selfVisits,
     tablemateVisits,
     publicReviews,
+    reviewCount,
     viewerUserId,
     matchFilterOn = false,
     onToggleMatchFilter,
@@ -248,7 +252,10 @@ export function VoicesStream({
             {/* Section label */}
             <View style={styles.secRow}>
                 <Text style={[styles.secLabel, { color: palette.textMuted }]}>VOICES</Text>
-                {onSeeAllReviews && publicReviews.length > 0 ? (
+                {/* TICKET-168: always reachable on persisted restaurants — the
+                    page withholds the handler for ghosts; zero public reviews
+                    lands on the reader's invitation state, not a hidden feature. */}
+                {onSeeAllReviews ? (
                     <Pressable
                         onPress={onSeeAllReviews}
                         hitSlop={8}
@@ -257,7 +264,9 @@ export function VoicesStream({
                         style={({ pressed }) => [styles.seeAll, { opacity: pressed ? 0.6 : 1 }]}
                     >
                         <Text style={[styles.secCount, { color: palette.textSecondary }]}>
-                            ALL REVIEWS →
+                            {reviewCount && reviewCount > 0
+                                ? `ALL REVIEWS · ${reviewCount} →`
+                                : 'ALL REVIEWS →'}
                         </Text>
                     </Pressable>
                 ) : (
