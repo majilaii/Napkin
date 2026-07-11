@@ -2,10 +2,14 @@
  * ProfileHeader — canvas-faithful header block.
  * TICKET-025
  *
- * Layout (from profile-canvas.jsx ProfileHero):
+ * Layout (from profile-canvas.jsx ProfileHero — bio/counts order restored 2026-07-11):
  *   Row: Avatar (72x72 rounded square, radius 10) | Identity block | Gear (self)
- *   Identity block: display name (serif italic 24) + @handle + bio (italic serif 13)
- *   Numbers row below: logs · places · avg
+ *   Identity block: display name (serif italic 24) + @handle + bio (italic serif 13,
+ *   tight under the handle — canvas mt 8 / lh 1.45)
+ *   Counts line BELOW the row, full width (canvas mt 14): meals · following ·
+ *   follower(s) — bold counts, muted labels; TICKET-144 language kept. The line
+ *   spent a while INSIDE the identity column between handle and bio, which pushed
+ *   the bio deep into the narrow column and read cluttered next to the avatar.
  *
  * No centering. The avatar shape stays a rounded square (radius 10), NOT a circle.
  * When `profile.avatar_url` is set, the photo layers absolutely OVER the monogram
@@ -133,6 +137,18 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
             params: { userId: profile.user_id, kind },
         });
 
+    // Canvas counts treatment: the number reads bold ink, the label stays muted.
+    const renderCounts = (text: string) =>
+        text.split(/(\d[\d,]*)/).filter(Boolean).map((part, j) =>
+            /^\d/.test(part) ? (
+                <Text key={j} style={[styles.statCount, { color: palette.text }]}>
+                    {part}
+                </Text>
+            ) : (
+                <Text key={j}>{part}</Text>
+            ),
+        );
+
     return (
         <View style={styles.container}>
             <View style={styles.row}>
@@ -162,38 +178,9 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                             @{profile.username}
                         </Text>
                     )}
-                    {/* TICKET-144: one quiet counts line — meals · following ·
-                        follower(s). Follow segments tap → /follows (correct tab). */}
-                    {statSegments.length > 0 ? (
-                        <Text style={[styles.statsLine, { color: palette.textMuted }]}>
-                            {statSegments.map((seg, i) => (
-                                <React.Fragment key={seg.key}>
-                                    {i > 0 ? <Text>{' · '}</Text> : null}
-                                    {seg.tappable ? (
-                                        <Text
-                                            onPress={() =>
-                                                openFollowList(seg.key as 'followers' | 'following')
-                                            }
-                                            accessibilityRole="button"
-                                            accessibilityLabel={seg.text}
-                                        >
-                                            {seg.text}
-                                        </Text>
-                                    ) : (
-                                        <Text>{seg.text}</Text>
-                                    )}
-                                </React.Fragment>
-                            ))}
-                        </Text>
-                    ) : null}
                     {profile.bio ? (
                         <Text style={[styles.bio, { color: palette.textSecondary }]}>
                             {profile.bio}
-                        </Text>
-                    ) : null}
-                    {relationshipNote ? (
-                        <Text style={[styles.relationshipNote, { color: palette.textMuted }]}>
-                            {relationshipNote}
                         </Text>
                     ) : null}
                 </View>
@@ -240,6 +227,37 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                     </View>
                 )}
             </View>
+
+            {/* TICKET-144 counts, at the canvas position: ONE quiet line BELOW the
+                row, full width — bold counts, muted labels. Follow segments tap →
+                /follows (correct tab); meals never does. */}
+            {statSegments.length > 0 ? (
+                <Text style={[styles.statsLine, { color: palette.textSecondary }]}>
+                    {statSegments.map((seg, i) => (
+                        <React.Fragment key={seg.key}>
+                            {i > 0 ? <Text>{' · '}</Text> : null}
+                            {seg.tappable ? (
+                                <Text
+                                    onPress={() =>
+                                        openFollowList(seg.key as 'followers' | 'following')
+                                    }
+                                    accessibilityRole="button"
+                                    accessibilityLabel={seg.text}
+                                >
+                                    {renderCounts(seg.text)}
+                                </Text>
+                            ) : (
+                                <Text>{renderCounts(seg.text)}</Text>
+                            )}
+                        </React.Fragment>
+                    ))}
+                </Text>
+            ) : null}
+            {relationshipNote ? (
+                <Text style={[styles.relationshipNote, { color: palette.textMuted }]}>
+                    {relationshipNote}
+                </Text>
+            ) : null}
 
             {/* Calibration chip row — only for public_only, and only when there's something to show.
                  Outer row is gated so its margin collapses when both the chip and the prompt would be empty. */}
@@ -313,13 +331,17 @@ const styles = StyleSheet.create({
         marginTop: 2,
         letterSpacing: 0.2,
     },
-    // TICKET-144: one quiet counts line under the @handle (meals · following ·
-    // follower). Low-key Manrope; follow segments are tappable (no underline).
+    // TICKET-144 counts at the canvas position: full-width line below the row
+    // (ProfileHero mt 14). Low-key Manrope; counts bold via statCount; follow
+    // segments are tappable (no underline).
     statsLine: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 13,
-        marginTop: 6,
+        fontSize: 12,
+        marginTop: 14,
         letterSpacing: 0.2,
+    },
+    statCount: {
+        fontFamily: 'Manrope_700Bold',
     },
     bio: {
         fontFamily: 'Newsreader_400Regular_Italic',
