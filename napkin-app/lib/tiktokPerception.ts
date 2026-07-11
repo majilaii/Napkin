@@ -22,6 +22,8 @@
  * spoken listicle. See .kanban/ready/TICKET-086.
  */
 
+import { VIDEO_DOWNLOAD_TIMEOUT_MS } from './importBudgets';
+
 const MOBILE_UA =
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 ' +
     '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
@@ -29,9 +31,41 @@ const MOBILE_UA =
 /** Bound the text we ship to the extraction endpoint. */
 const TRANSCRIPT_CAP = 8000;
 
+/**
+ * TICKET-164 [R8]: bound each perception fetch — the page + VTT requests had NO
+ * timeout, so a stalled TikTok CDN hung the import behind a spinner-less drain.
+ */
+const PAGE_FETCH_TIMEOUT_MS = 12_000;
+
+/** fetch with a hard abort deadline (never hangs). Throws on timeout → caller nulls. */
+async function fetchWithTimeout(
+    input: string,
+    init: RequestInit,
+    timeoutMs: number,
+): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 export interface TikTokPerception {
     /** desc + transcript, joined — ready to be resolve-url `extracted_text`. */
     text: string;
+    /**
+     * TICKET-164: the caption ALONE (the fast path sends this as `caption`, never
+     * fused with the transcript — R6). Empty when the clip has no caption.
+     */
+    desc: string;
+    /**
+     * TICKET-164: TikTok's OWN ASR voiceover ALONE (the fast path sends this as
+     * `extracted_text`). Empty when no subtitleInfos track was found. Its char
+     * count drives the fast-path ASR gate (≥80 = a real voiceover).
+     */
+    transcript: string;
     /** True when TikTok's ASR transcript was fetched (tier 1 is GO). */
     hasTranscript: boolean;
     /** Signed mp4 URL for the tier-2 video fallback. Use now, never store. */
@@ -67,15 +101,26 @@ function parseVtt(vtt: string): string {
     return out.join(' ');
 }
 
-export async function fetchTikTokPerception(url: string): Promise<TikTokPerception | null> {
+/**
+ * `deadlineAt` (epoch ms, optional): caps each internal fetch at the REMAINING
+ * time to that deadline — the escalation retry threads its shared stage budget
+ * here so a refetch can never stack fresh 12s timeouts past it (R8). An already-
+ * spent deadline aborts immediately (→ null). Omitted = the plain per-fetch caps.
+ */
+export async function fetchTikTokPerception(
+    url: string,
+    deadlineAt?: number,
+): Promise<TikTokPerception | null> {
+    const budget = (cap: number) =>
+        deadlineAt !== undefined ? Math.max(1, Math.min(cap, deadlineAt - Date.now())) : cap;
     try {
-        const pageRes = await fetch(url, {
+        const pageRes = await fetchWithTimeout(url, {
             headers: {
                 'User-Agent': MOBILE_UA,
                 Accept: 'text/html,application/xhtml+xml',
                 'Accept-Language': 'en-GB,en;q=0.9',
             },
-        });
+        }, budget(PAGE_FETCH_TIMEOUT_MS));
         if (!pageRes.ok) return null;
         const html = await pageRes.text();
 
@@ -121,7 +166,11 @@ export async function fetchTikTokPerception(url: string): Promise<TikTokPercepti
         let transcript = '';
         if (chosen && typeof chosen.Url === 'string' && chosen.Url.startsWith('http')) {
             try {
-                const vttRes = await fetch(chosen.Url, { headers: { 'User-Agent': MOBILE_UA } });
+                const vttRes = await fetchWithTimeout(
+                    chosen.Url,
+                    { headers: { 'User-Agent': MOBILE_UA } },
+                    budget(PAGE_FETCH_TIMEOUT_MS),
+                );
                 if (vttRes.ok) transcript = parseVtt(await vttRes.text());
             } catch {
                 // transcript is optional — playAddr may still enable tier 2
@@ -130,7 +179,17 @@ export async function fetchTikTokPerception(url: string): Promise<TikTokPercepti
 
         const text = [desc, transcript].filter(Boolean).join('\n').trim().slice(0, TRANSCRIPT_CAP);
         if (!text && !playAddr) return null;
-        return { text, hasTranscript: transcript.length > 0, playAddr, thumbnailUrl };
+        // TICKET-164 [R6]: expose desc + transcript SEPARATELY so the fast path can
+        // send them as caption + extracted_text without re-fusing. Each capped
+        // independently; the server slices the fused fullText to 8000 regardless.
+        return {
+            text,
+            desc: desc.slice(0, TRANSCRIPT_CAP),
+            transcript: transcript.slice(0, TRANSCRIPT_CAP),
+            hasTranscript: transcript.length > 0,
+            playAddr,
+            thumbnailUrl,
+        };
     } catch {
         return null;
     }
@@ -139,37 +198,61 @@ export async function fetchTikTokPerception(url: string): Promise<TikTokPercepti
 /**
  * Download the playAddr mp4 to the app cache for on-device OCR (TICKET-086b).
  *
+ * TICKET-164 [R8]: streams STRAIGHT TO DISK via createDownloadResumable — no
+ * blob→FileReader→base64 detour (that path held the whole file as a ~1.4×-sized
+ * base64 STRING in JS memory, minutes + memory pressure on a long clip). Raced
+ * against a hard deadline (`timeoutMs`, the REMAINING shared stage budget so two
+ * retry attempts + a re-fetch never sum to 2×): on expiry the task is cancelled
+ * and the partial file deleted. Returns null on timeout/failure.
+ *
  * The CDN binds the signed URL to the page-session cookies — iOS shares the
- * native cookie store across fetches, so call this AFTER fetchTikTokPerception
+ * native cookie store across requests, so call this AFTER fetchTikTokPerception
  * (which seeds the session). Returns a file:// URI the caller MUST delete
- * (deleteCachedTikTokVideo) after extraction; null on any failure.
+ * (deleteCachedTikTokVideo) after extraction.
  */
-export async function downloadTikTokVideo(playAddr: string, pageUrl: string): Promise<string | null> {
+export async function downloadTikTokVideo(
+    playAddr: string,
+    pageUrl: string,
+    timeoutMs: number = VIDEO_DOWNLOAD_TIMEOUT_MS,
+): Promise<string | null> {
+    if (timeoutMs <= 0) return null; // stage budget already spent → skip
     try {
         const FileSystem = await import('expo-file-system/legacy');
         const dir = FileSystem.cacheDirectory;
         if (!dir) return null;
-        const res = await fetch(playAddr, {
+        const uri = `${dir}tiktok-import-${Date.now()}.mp4`;
+
+        const task = FileSystem.createDownloadResumable(playAddr, uri, {
             headers: { 'User-Agent': MOBILE_UA, Referer: pageUrl },
         });
-        if (!res.ok) return null;
-        const blob = await res.blob();
-        // ~12MB videos → ~17MB base64 string; acceptable for a background import.
-        const base64 = await new Promise<string | null>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const s = typeof reader.result === 'string' ? reader.result : null;
-                resolve(s ? s.slice(s.indexOf(',') + 1) : null);
-            };
-            reader.onerror = () => resolve(null);
-            reader.readAsDataURL(blob);
+
+        let timedOut = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const timeout = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+                timedOut = true;
+                // Cancel the in-flight download; the raced downloadAsync then
+                // resolves undefined and we clean the partial below.
+                task.cancelAsync().catch(() => {});
+                resolve(null);
+            }, timeoutMs);
         });
-        if (!base64) return null;
-        const uri = `${dir}tiktok-import-${Date.now()}.mp4`;
-        await FileSystem.writeAsStringAsync(uri, base64, {
-            encoding: FileSystem.EncodingType.Base64,
-        });
-        return uri;
+
+        try {
+            // .catch guard (R8): a cancelled/failed download must not surface as an
+            // unhandled rejection into the race.
+            const download = task.downloadAsync().catch(() => null);
+            const result = await Promise.race([download, timeout]);
+            // status >= 400 = an expired/forbidden signed URL wrote an error body to
+            // disk — never feed that to OCR (mirrors the old `!res.ok` guard).
+            if (timedOut || !result || !result.uri || result.status >= 400) {
+                await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+                return null;
+            }
+            return result.uri;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
     } catch {
         return null;
     }

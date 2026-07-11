@@ -132,3 +132,36 @@ Deno.test('numbered lines with ) separator → isList=true', () => {
     assertEquals(result.isList, true);
     assertEquals(result.count, 2);
 });
+
+// ── countRaw (TICKET-164) — UNCLAMPED total for the fast-path count gate ───────
+
+Deno.test('countRaw is null when count is null (no marker)', () => {
+    const result = detectListMarker('We went to Nobu last night — incredible omakase');
+    assertEquals(result.count, null);
+    assertEquals(result.countRaw, null);
+});
+
+Deno.test('"top 12" → count clamps to 6, countRaw stays 12 (under-gate a 12-spot list)', () => {
+    const result = detectListMarker('top 12 restaurants in London');
+    assertEquals(result.count, 6);
+    assertEquals(result.countRaw, 12);
+});
+
+Deno.test('"top 5" → count and countRaw agree below the clamp', () => {
+    const result = detectListMarker('top 5 restaurants in Soho');
+    assertEquals(result.count, 5);
+    assertEquals(result.countRaw, 5);
+});
+
+Deno.test('"8 best spots" → countRaw=8 (unclamped), count=6', () => {
+    const result = detectListMarker('8 best spots for brunch in Brooklyn');
+    assertEquals(result.count, 6);
+    assertEquals(result.countRaw, 8);
+});
+
+Deno.test('7 numbered lines → count clamps to 6, countRaw=7', () => {
+    const lines = [1, 2, 3, 4, 5, 6, 7].map((n) => `${n}. Restaurant ${n}`).join('\n');
+    const result = detectListMarker(lines);
+    assertEquals(result.count, 6);
+    assertEquals(result.countRaw, 7);
+});

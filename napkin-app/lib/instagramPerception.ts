@@ -39,6 +39,18 @@ const CAPTION_CAP = 8000;
 export interface InstagramPerception {
     /** Caption text — ready to fuse into resolve-url `extracted_text`. */
     text: string;
+    /**
+     * TICKET-164 [R6]: the caption ALONE (= `text` for IG — there is no separate
+     * transcript to split off). Shape parity with TikTokPerception; the fast path
+     * sends it as `caption`.
+     */
+    desc: string;
+    /**
+     * TICKET-164 [R6]: always '' — Instagram exposes no platform ASR, so the fast
+     * path's ASR gate is never satisfied by a transcript (IG passes only on a
+     * single candidate or a fully-satisfied caption list marker).
+     */
+    transcript: string;
     /** Always false: Instagram exposes no ASR transcript — transcribe on-device. */
     hasTranscript: boolean;
     /** Signed fbcdn mp4 URL for the media-extract tier. Use now, never store. */
@@ -203,11 +215,14 @@ export function parseInstagramAuthorHandle(html: string): string | null {
     return null;
 }
 
-async function fetchHtml(url: string): Promise<{ html: string; finalUrl: string } | null> {
+async function fetchHtml(
+    url: string,
+    timeoutMs: number = 10000,
+): Promise<{ html: string; finalUrl: string } | null> {
     // Deadline per fetch: the interactive resolver runs this behind a spinner,
     // and iOS's 60s default would hold "reading the post…" hostage on a stall.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const res = await fetch(url, {
             headers: {
@@ -226,9 +241,17 @@ async function fetchHtml(url: string): Promise<{ html: string; finalUrl: string 
     }
 }
 
+/**
+ * `deadlineAt` (epoch ms, optional): caps each internal fetch at the REMAINING
+ * time to that deadline — the escalation retry threads its shared stage budget
+ * here (R8; mirrors fetchTikTokPerception). Omitted = the plain 10s per-fetch cap.
+ */
 export async function fetchInstagramPerception(
     url: string,
+    deadlineAt?: number,
 ): Promise<InstagramPerception | null> {
+    const budget = (cap: number) =>
+        deadlineAt !== undefined ? Math.max(1, Math.min(cap, deadlineAt - Date.now())) : cap;
     try {
         let code = extractInstagramShortcode(url);
         let pageHtml: string | null = null;
@@ -236,7 +259,7 @@ export async function fetchInstagramPerception(
         // /share/… indirection links hide the shortcode — follow the redirect
         // to the canonical /reel/{code}/ URL (also seeds session cookies).
         if (!code) {
-            const page = await fetchHtml(url);
+            const page = await fetchHtml(url, budget(10000));
             if (!page) return null;
             pageHtml = page.html;
             code =
@@ -246,7 +269,7 @@ export async function fetchInstagramPerception(
         if (!code) return null;
 
         const embedUrl = `https://www.instagram.com/p/${code}/embed/captioned/`;
-        const embed = await fetchHtml(embedUrl);
+        const embed = await fetchHtml(embedUrl, budget(10000));
         let caption: string | null = null;
         let videoUrl: string | null = null;
         // TICKET-156: cover frame + author handle for the On Socials rail.
@@ -263,7 +286,11 @@ export async function fetchInstagramPerception(
         // Caption fallback: the post page's og:description (served logged-out
         // even when the embed markup shifts).
         if (!caption) {
-            if (!pageHtml) pageHtml = (await fetchHtml(`https://www.instagram.com/reel/${code}/`))?.html ?? null;
+            if (!pageHtml) {
+                pageHtml =
+                    (await fetchHtml(`https://www.instagram.com/reel/${code}/`, budget(10000)))
+                        ?.html ?? null;
+            }
             if (pageHtml) caption = parseOgDescriptionCaption(pageHtml);
         }
         // TICKET-156: mine the cover + handle from any page HTML we ALREADY have
@@ -280,7 +307,16 @@ export async function fetchInstagramPerception(
             console.log('[instagramPerception] no caption or video_url (walled or shape changed?)');
             return null;
         }
-        return { text, hasTranscript: false, playAddr: videoUrl, refererUrl: embedUrl, thumbnailUrl, authorHandle };
+        return {
+            text,
+            desc: text, // R6: caption IS the whole cheap-tier text for IG
+            transcript: '',
+            hasTranscript: false,
+            playAddr: videoUrl,
+            refererUrl: embedUrl,
+            thumbnailUrl,
+            authorHandle,
+        };
     } catch {
         return null;
     }

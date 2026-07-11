@@ -386,11 +386,15 @@ export function setImportSpots(jobId: string, spots: PersistedImportSpot[]): voi
     writeManifest({ ...m, spots });
 }
 
-/** Persist per-channel perception diagnostics (best-effort; debugging surface). */
+/**
+ * Persist per-channel perception diagnostics (best-effort; debugging surface).
+ * TICKET-164 [R9]: MERGES into any existing diag (never replaces) so fast_path /
+ * gate and the channel fields co-exist and a re-drain reports truthfully.
+ */
 export function setImportDiagnostics(jobId: string, diag: Record<string, unknown>): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
-    writeManifest({ ...m, diag });
+    writeManifest({ ...m, diag: { ...(m.diag ?? {}), ...diag } });
 }
 
 /**
