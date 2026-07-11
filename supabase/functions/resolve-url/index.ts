@@ -194,6 +194,14 @@ interface ResolveUrlResponse {
     ig_nudge?: boolean;
     /** TICKET-063: advertised list count from the listicle heuristic (≤6). */
     list_count?: number | null;
+    /**
+     * TICKET-164: the UNCLAMPED, caption-first advertised list count for the import
+     * fast-path count gate (`list_count` is clamped to ≤6 and must not be reused as
+     * a denominator). Additive — an old client ignores it; a new client treating
+     * its ABSENCE as "old server" (→ escalate) is why the server ships first. null =
+     * no marker found → the count gate passes. Only handleVideoText emits it.
+     */
+    list_count_raw?: number | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -2427,9 +2435,16 @@ async function handleVideoText(
     const notePrefill = caption ? captionToNote(caption) : '';
     const CAP = 12;
 
-    // Caption (hashtags/handle → city hints) joins the on-device text.
+    // Caption (hashtags/handle → city hints) joins the on-device text. The cheap
+    // tier (TICKET-164 fast path) sends caption=desc + extracted_text=transcript,
+    // so this fusion is [desc, transcript] — never double-fused (R6).
     const fullText = [caption, extractedText].filter(Boolean).join('\n').slice(0, 8000);
     const listMarker = detectListMarker(fullText);
+    // TICKET-164: the count gate reads the UNCLAMPED total, computed CAPTION-FIRST
+    // (a "top 12" marker lives in the caption; the spoken transcript's stray
+    // numbers must not drive it). Falls back to fullText when no caption body field
+    // was sent (escalation / music-only clip). null = no marker → gate passes.
+    const listCountRaw = detectListMarker(caption || fullText).countRaw;
 
     // Content hash for cache + stable candidate ids (re-importing a clip is free).
     const hashBuf = await crypto.subtle.digest(
@@ -2476,6 +2491,7 @@ async function handleVideoText(
                 candidates: [],
                 partial_source: null,
                 list_count: listMarker.count,
+                list_count_raw: listCountRaw,
             } satisfies ResolveUrlResponse,
         });
     }
@@ -2595,6 +2611,7 @@ async function handleVideoText(
             candidates,
             partial_source: null,
             list_count: listMarker.count,
+            list_count_raw: listCountRaw,
         } satisfies ResolveUrlResponse,
     });
 }
