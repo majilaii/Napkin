@@ -280,7 +280,7 @@ public class MediaExtractModule: Module {
       let watchdog = DispatchWorkItem {
         lock.lock(); let already = resumed; let snapshot = collected; lock.unlock()
         if already { return }
-        generator.cancelAllCGImageGenerations()
+        generator.cancelAllCGImageGeneration()
         finish(snapshot)
       }
       DispatchQueue.global().asyncAfter(deadline: .now() + remainingSec, execute: watchdog)
