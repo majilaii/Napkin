@@ -39,6 +39,18 @@ const CAPTION_CAP = 8000;
 export interface InstagramPerception {
     /** Caption text — ready to fuse into resolve-url `extracted_text`. */
     text: string;
+    /**
+     * TICKET-164 [R6]: the caption ALONE (= `text` for IG — there is no separate
+     * transcript to split off). Shape parity with TikTokPerception; the fast path
+     * sends it as `caption`.
+     */
+    desc: string;
+    /**
+     * TICKET-164 [R6]: always '' — Instagram exposes no platform ASR, so the fast
+     * path's ASR gate is never satisfied by a transcript (IG passes only on a
+     * single candidate or a fully-satisfied caption list marker).
+     */
+    transcript: string;
     /** Always false: Instagram exposes no ASR transcript — transcribe on-device. */
     hasTranscript: boolean;
     /** Signed fbcdn mp4 URL for the media-extract tier. Use now, never store. */
@@ -280,7 +292,16 @@ export async function fetchInstagramPerception(
             console.log('[instagramPerception] no caption or video_url (walled or shape changed?)');
             return null;
         }
-        return { text, hasTranscript: false, playAddr: videoUrl, refererUrl: embedUrl, thumbnailUrl, authorHandle };
+        return {
+            text,
+            desc: text, // R6: caption IS the whole cheap-tier text for IG
+            transcript: '',
+            hasTranscript: false,
+            playAddr: videoUrl,
+            refererUrl: embedUrl,
+            thumbnailUrl,
+            authorHandle,
+        };
     } catch {
         return null;
     }
