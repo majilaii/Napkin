@@ -89,6 +89,7 @@ import { useToast } from '@/providers/ToastProvider';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { haversineMiles, formatDistance } from '@/lib/geo';
 import { callEdgeFn } from '@/lib/edgeInvoke';
+import { usePersistPlace } from '@/hooks/search/usePersistPlace';
 
 // ── Inline Places search for correction ────────────────────────────────────────
 
@@ -138,16 +139,40 @@ interface CorrectModalProps {
 
 function CorrectModal({ visible, item, userId, onDone, palette }: CorrectModalProps) {
     const [query, setQuery] = useState('');
+    const [resolveError, setResolveError] = useState(false);
     const { results, isLoading } = usePlacesSearch(query);
     const { mutate: correct, isPending } = useCorrectImport(userId);
+    const { mutateAsync: persistPlace, isPending: isResolving } = usePersistPlace();
 
-    const handleSelect = useCallback((r: SearchResult) => {
+    // The modal stays mounted across open/close (visible prop toggles) — reset
+    // per-item state on reopen so a failed attempt doesn't bleed into the next.
+    React.useEffect(() => {
+        if (visible) {
+            setQuery('');
+            setResolveError(false);
+        }
+    }, [visible, item?.job_id]);
+
+    const handleSelect = useCallback(async (r: SearchResult) => {
         if (!item?.job_id) return;
+        setResolveError(false);
+        // r.id is a Google Place id (text-search result) but fn_correct_import_job
+        // takes a Napkin restaurant UUID — persist first (idempotent upsert) and
+        // send the echoed id. Sending r.id raw fails the RPC's uuid coercion.
+        let restaurantId: string;
+        try {
+            restaurantId = await persistPlace(r.id);
+        } catch {
+            // Inline error, not a toast — the root-level toast renders BEHIND
+            // this open pageSheet on iOS. Modal stays open so the user can retry.
+            setResolveError(true);
+            return;
+        }
         correct(
-            { job_id: item.job_id, restaurant_id: r.id, restaurantName: r.name ?? undefined },
+            { job_id: item.job_id, restaurant_id: restaurantId, restaurantName: r.name ?? undefined },
             { onSettled: () => { setQuery(''); onDone(); } },
         );
-    }, [correct, item, onDone]);
+    }, [correct, item, onDone, persistPlace]);
 
     return (
         <Modal
@@ -171,7 +196,7 @@ function CorrectModal({ visible, item, userId, onDone, palette }: CorrectModalPr
                 <View style={correctStyles.inputRow}>
                     <TextInput
                         value={query}
-                        onChangeText={setQuery}
+                        onChangeText={(t) => { setQuery(t); setResolveError(false); }}
                         placeholder="search by name or city"
                         placeholderTextColor={palette.textMuted}
                         autoCapitalize="none"
@@ -183,7 +208,17 @@ function CorrectModal({ visible, item, userId, onDone, palette }: CorrectModalPr
                         ]}
                     />
                 </View>
-                {isPending || isLoading ? (
+                {resolveError ? (
+                    <Text
+                        style={[
+                            Type.bodySmall,
+                            { color: palette.error, paddingHorizontal: 22, paddingTop: Spacing.sm },
+                        ]}
+                    >
+                        {`couldn't save that place — try again`}
+                    </Text>
+                ) : null}
+                {isPending || isLoading || isResolving ? (
                     <ActivityIndicator color={palette.primary} style={{ marginTop: Spacing.lg }} />
                 ) : (
                     <FlatList

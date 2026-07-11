@@ -23,6 +23,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
+import { isUuid } from './utils.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -317,6 +318,16 @@ async function handleCorrect(
     const { job_id, restaurant_id } = body;
     if (!job_id || !restaurant_id) {
         return err('MISSING_PARAMS', 'job_id and restaurant_id are required', 400);
+    }
+    // A Google Place id here means the client skipped the persist step
+    // (place_id → places-search persist=true → Napkin UUID). Reject loudly —
+    // the RPC's uuid coercion would otherwise fail as an opaque 500.
+    if (!isUuid(restaurant_id)) {
+        return err(
+            'INVALID_RESTAURANT_ID',
+            'restaurant_id must be a Napkin restaurant UUID, not a Google Place id — persist the place first',
+            400,
+        );
     }
 
     // [N8] Route the correction through fn_correct_import_job SECURITY DEFINER RPC.
