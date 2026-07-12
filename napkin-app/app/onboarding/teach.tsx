@@ -1,8 +1,8 @@
 /**
  * Onboarding S3 — Import teach (TICKET-107; v2 TICKET-122).
- * The LAST onboarding step. A full-screen, auto-advancing import story that
- * demonstrates the real mental model (reel → share → Napkin → saved places), then
- * completes onboarding from its terminal CTA.
+ * The LAST onboarding step. A full-screen, interaction-gated simulator that
+ * teaches the real flow (reel → platform share → iOS share → Napkin → saved),
+ * then completes onboarding from its terminal CTA.
  */
 import React from 'react';
 import { View } from 'react-native';
