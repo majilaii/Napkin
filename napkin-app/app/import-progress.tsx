@@ -23,7 +23,13 @@ import { useActiveImports, type ActiveImport } from '@/hooks/wishlist/useActiveI
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { useHasImported } from '@/hooks/wishlist/useHasImported';
 import { ImportActivationHub } from '@/components/import-education';
-import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
+import {
+    importSourceIcon,
+    importSourceLabel,
+    manifestDisplaySource,
+    relativeTime,
+} from '@/components/wishlist/importSourceLabel';
+import { WatchAgainLink } from '@/components/wishlist/ImportSourceCard';
 import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue } from '@/lib/importQueue';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 
@@ -178,11 +184,33 @@ export default function ImportProgressScreen() {
                                         : `${large.imported} imported`;
                             }
                         } else {
-                            title =
-                                isReview || m.phase === 'saving'
-                                    ? `${m.spotCount} ${m.spotCount === 1 ? 'spot' : 'spots'} · ${PHASE_COPY[m.phase]}`
+                            // TICKET-180: a working row shows the LIVE stage (fetching
+                            // page → downloading video → reading the video → matching
+                            // spots → saving) instead of the coarse phase copy, so a
+                            // slow import reads as alive. Falls back to PHASE_COPY when
+                            // no stage was written yet (older manifest / mid-boundary).
+                            const stage = m.manifest.stage;
+                            title = isReview
+                                ? `${m.spotCount} ${m.spotCount === 1 ? 'spot' : 'spots'} · ready to review`
+                                : m.phase === 'saving'
+                                  ? `${m.spotCount} ${m.spotCount === 1 ? 'spot' : 'spots'} · ${stage ?? PHASE_COPY.saving}`
+                                  : m.phase === 'reading'
+                                    ? (stage ?? PHASE_COPY.reading)
                                     : PHASE_COPY[m.phase];
                         }
+                        // TICKET-180: source identity for this row — same mapping the
+                        // drain saves with (tiktok / maps / web+IG / video). A failed
+                        // row surfaces its LAST stage as "died where" context.
+                        const displaySource = manifestDisplaySource(m.manifest);
+                        const sourceGlyph = importSourceIcon(displaySource);
+                        const sourceLabel = importSourceLabel(displaySource);
+                        const sourceHandle = m.manifest.sourceHandle ?? null;
+                        // [review WARN-1] large-Maps jobs never advance `stage`
+                        // (their cursor is the progress) — a poisoned one would
+                        // show a stale "stopped while matching spots". Single-shot
+                        // imports only.
+                        const failedStage =
+                            m.phase === 'failed' && !m.large ? m.manifest.stage : undefined;
                         return (
                             <Pressable
                                 key={m.jobId}
@@ -214,10 +242,34 @@ export default function ImportProgressScreen() {
                                     <Text style={[styles.recentTitle, { color: palette.text }]} numberOfLines={1}>
                                         {title}
                                     </Text>
+                                    {/* TICKET-180: source identity — logo · from X · @handle */}
+                                    <View style={styles.sourceLine}>
+                                        <Ionicons name={sourceGlyph} size={12} color={palette.textMuted} />
+                                        <Text
+                                            style={[styles.sourceLabel, { color: palette.textMuted }]}
+                                            numberOfLines={1}
+                                        >
+                                            {sourceHandle ? `${sourceLabel} · @${sourceHandle}` : sourceLabel}
+                                        </Text>
+                                    </View>
+                                    {failedStage ? (
+                                        <Text
+                                            style={[styles.stageNote, { color: palette.textMuted }]}
+                                            numberOfLines={1}
+                                        >
+                                            {`stopped while ${failedStage}`}
+                                        </Text>
+                                    ) : null}
                                     {previewNames.length > 0 ? (
                                         <Text style={[styles.recentNames, { color: palette.textMuted }]} numberOfLines={1}>
                                             {previewNames.join(' · ')}
                                         </Text>
+                                    ) : null}
+                                    {/* TICKET-180: tap-out to the original clip on review
+                                        + failed rows (self-gates to tiktok/IG). Nested
+                                        Pressable — inner press captures, outer nav doesn't fire. */}
+                                    {isReview || m.phase === 'failed' ? (
+                                        <WatchAgainLink source={displaySource} />
                                     ) : null}
                                     {isKickoff ? (
                                         <View style={styles.failRow}>
@@ -357,5 +409,8 @@ const styles = StyleSheet.create({
     recentBody: { flex: 1, minWidth: 0, gap: 2 },
     recentTitle: { fontFamily: 'Manrope_600SemiBold', fontSize: 13.5 },
     recentNames: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 12.5 },
+    sourceLine: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 1 },
+    sourceLabel: { fontFamily: 'Manrope_500Medium', fontSize: 12, flexShrink: 1 },
+    stageNote: { fontFamily: 'Manrope_500Medium', fontSize: 11.5, marginTop: 1 },
     recentTime: { fontFamily: 'Manrope_500Medium', fontSize: 11, flexShrink: 0 },
 });

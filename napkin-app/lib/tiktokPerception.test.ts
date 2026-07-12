@@ -4,7 +4,7 @@
  * imports once (they died as "couldn't find spots" with zero prod trace), so
  * the pure mapping gets pinned here.
  */
-import { extractSlideUrls, isTikTokPhotoUrl, isTikTokUrl } from './tiktokPerception';
+import { extractSlideUrls, extractTikTokHandle, isTikTokPhotoUrl, isTikTokUrl } from './tiktokPerception';
 
 describe('isTikTokPhotoUrl', () => {
     it('true for resolved photo-mode permalinks', () => {
@@ -21,6 +21,38 @@ describe('isTikTokPhotoUrl', () => {
         expect(isTikTokPhotoUrl(null)).toBe(false);
         expect(isTikTokPhotoUrl(undefined)).toBe(false);
         expect(isTikTokPhotoUrl('')).toBe(false);
+    });
+});
+
+describe('extractTikTokHandle', () => {
+    // TICKET-180: the @handle rides the RESOLVED page URL — this pure mapping backs
+    // the review card / hub identity line, so it gets pinned like isTikTokPhotoUrl.
+    it('pulls the handle from a resolved video permalink', () => {
+        expect(extractTikTokHandle('https://www.tiktok.com/@topjaw/video/7634953283194326294')).toBe(
+            'topjaw',
+        );
+    });
+
+    it('pulls the handle from a resolved photo permalink', () => {
+        expect(extractTikTokHandle('https://www.tiktok.com/@user/photo/7412345678901234567')).toBe(
+            'user',
+        );
+    });
+
+    it('keeps dots/underscores/digits and stops at the next slash', () => {
+        expect(extractTikTokHandle('https://www.tiktok.com/@top.jaw_01/video/1?_r=1')).toBe(
+            'top.jaw_01',
+        );
+    });
+
+    it('null for a share link with no handle (vm.tiktok.com pre-redirect)', () => {
+        expect(extractTikTokHandle('https://vm.tiktok.com/ZNRoJxFpH/')).toBe(null);
+    });
+
+    it('null for null/undefined/empty (Response.url can be empty on odd stacks)', () => {
+        expect(extractTikTokHandle(null)).toBe(null);
+        expect(extractTikTokHandle(undefined)).toBe(null);
+        expect(extractTikTokHandle('')).toBe(null);
     });
 });
 
