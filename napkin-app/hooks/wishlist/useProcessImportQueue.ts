@@ -54,6 +54,7 @@ import {
     setImportMode,
     setDefaultImportMode,
     setLargeJob,
+    effectivePinWishlist,
     bumpImportAttempt,
     acquireDrainLock,
     releaseDrainLock,
@@ -1194,14 +1195,25 @@ export function useProcessImportQueue() {
             // TICKET-180 stage 6/6: the final save (auto mode only — a review hold
             // returned above; a review-confirm re-drain re-enters here and saves).
             setImportStage(m.jobId, 'saving');
+            // TICKET-181: the review editor's list-only toggle → pin_wishlist. Default
+            // true (base destination); false = the spots land only in the chosen
+            // list(s), not the personal wishlist. No-tables path only — the table
+            // fan-out below forces true. The server still returns restaurant_ids for
+            // list routing when false (large-job path precedent).
+            const pinWishlist = effectivePinWishlist(m);
             let result: SaveImportSpotsResult | undefined;
             if (tableIds.length === 0) {
                 result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                     action: 'save_spots',
-                    body: { import_nonce: m.importNonce, spots, source, notify_done: true },
+                    body: { import_nonce: m.importNonce, spots, source, notify_done: true, pin_wishlist: pinWishlist },
                 });
             } else {
                 for (let i = 0; i < tableIds.length; i++) {
+                    // pin_wishlist is FORCED true when tables exist: a table share is a
+                    // share OF the save — fn_save_import_spot mints the pin and table[0]'s
+                    // post together, and the list-only branch skips it entirely. A false
+                    // here would silently drop the pre-chosen table's share (the review
+                    // editor locks the wishlist chip on for the same reason).
                     const r = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                         action: 'save_spots',
                         body: {
@@ -1209,6 +1221,7 @@ export function useProcessImportQueue() {
                             spots: spotsForTable(tableIds[i]),
                             source,
                             notify_done: i === 0,
+                            ...(i === 0 ? { pin_wishlist: true } : {}),
                         },
                     });
                     if (i === 0) result = r; // first call pinned the wishlist + did routing
@@ -1251,9 +1264,14 @@ export function useProcessImportQueue() {
 
             const saved = result?.summary?.saved ?? 0;
             const already = result?.summary?.already_pinned ?? 0;
+            // TICKET-181: a list-only save (wishlist toggled off) comes back all
+            // `ghost` — filed into the chosen list(s) by the routing above,
+            // deliberately NOT pinned. A success, not a failure.
+            const ghost = result?.summary?.ghost ?? 0;
+            const listOnly = saved === 0 && ghost > 0;
             // On a retry/re-drain the save may have landed on the prior pass and now
-            // come back as already_pinned — still a success, count both.
-            const done = saved + already;
+            // come back as already_pinned — still a success, count all three.
+            const done = saved + already + ghost;
             // TICKET-164 [R9 + review-1 FAIL-1]: a FRESH pass reads the hoisted local
             // (setImportDiagnostics writes the manifest FILE, never this in-memory
             // `m`, so `m.diag` is stale until a re-drain re-parses it); a RE-DRAIN
@@ -1293,6 +1311,12 @@ export function useProcessImportQueue() {
                 fastPathDiag && saved === 1 && spots.length === 1
                     ? (spots[0].restaurant_name ?? null)
                     : null;
+            // TICKET-181: "pinned" stays the wishlist verb — a list-only save says
+            // where the spots actually went.
+            const listNoun =
+                m.destinations.listIds.length + m.destinations.newListTitles.length === 1
+                    ? 'your list'
+                    : 'your lists';
             toast.show(
                 saved > 0
                     ? fastPathName
@@ -1300,19 +1324,25 @@ export function useProcessImportQueue() {
                         : note
                           ? `pinned ${saved} · ${note}`
                           : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
-                    : done > 0
-                      ? note
-                          ? `already in your wishlist · ${note}`
-                          : 'already in your wishlist'
-                      : "couldn't import that",
+                    : listOnly
+                      ? ghost === 1 && spots.length === 1 && spots[0].restaurant_name
+                          ? `saved ${spots[0].restaurant_name} to ${listNoun}`
+                          : `saved ${ghost} to ${listNoun}`
+                      : done > 0
+                        ? note
+                            ? `already in your wishlist · ${note}`
+                            : 'already in your wishlist'
+                        : "couldn't import that",
                 reviewAction,
             );
-            // TICKET-120: mirror the "pinned N" success to a local notification when
-            // backgrounded (only on a fresh save — an already-pinned re-drain stays
-            // silent). Foreground = toast-only.
-            if (saved > 0 && AppState.currentState !== 'active') {
+            // TICKET-120: mirror the success to a local notification when backgrounded
+            // (only on a fresh save — an already-pinned re-drain stays silent).
+            // Foreground = toast-only.
+            if ((saved > 0 || listOnly) && AppState.currentState !== 'active') {
                 presentImportNotification({
-                    title: `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`,
+                    title: listOnly
+                        ? `saved ${ghost} to ${listNoun}`
+                        : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`,
                     body: 'tap to fix anything',
                 });
             }
