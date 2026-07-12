@@ -1,12 +1,12 @@
 /**
- * TeachShareSheetDemo — a code-native, Rodeo-style onboarding film.
+ * TeachShareSheetDemo — a code-native, Rodeo-style interaction simulator.
  *
  * Nothing here invokes Instagram or the system share sheet. It deliberately
  * recreates the useful parts in native views so the sequence is deterministic,
  * offline-friendly, accessible, theme-aware, and easy to update when Napkin's
  * import flow changes.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Image,
@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import Animated, {
     Easing,
     SharedValue,
@@ -31,10 +32,10 @@ import Animated, {
 import { Colors, Shadow } from '@/constants/theme';
 import {
     BEAT_COUNT,
-    BEAT_TIMINGS_MS,
     LAST_BEAT,
     TEACH_COPY,
-    advanceBeat,
+    type TeachTarget,
+    advanceOnTarget,
 } from './teachDemoUtils';
 
 type Palette = typeof Colors.light;
@@ -90,10 +91,9 @@ export function TeachShareSheetDemo({
     isPending = false,
 }: TeachShareSheetDemoProps) {
     const reduced = useReducedMotion();
-    const [beat, setBeat] = useState(reduced ? LAST_BEAT : 0);
-    const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+    const [beat, setBeat] = useState(0);
 
-    const beatValue = useSharedValue(reduced ? LAST_BEAT : 0);
+    const beatValue = useSharedValue(0);
     const reelFloat = useSharedValue(0);
     const tapPulse = useSharedValue(0);
     const sheetY = useSharedValue(reduced ? 0 : 52);
@@ -127,27 +127,24 @@ export function TeachShareSheetDemo({
             false,
         );
 
-        timers.current = [
-            setTimeout(() => setBeat((value) => Math.max(value, 1)), BEAT_TIMINGS_MS.promiseToShare),
-            setTimeout(() => setBeat((value) => Math.max(value, 2)), BEAT_TIMINGS_MS.shareToSheet),
-            setTimeout(() => setBeat((value) => Math.max(value, 3)), BEAT_TIMINGS_MS.sheetToResult),
-        ];
-
-        return () => {
-            timers.current.forEach(clearTimeout);
-            timers.current = [];
-        };
     }, [reduced, reelFloat, tapPulse]);
 
     useEffect(() => {
-        if (reduced) return;
         if (beat >= 2) {
-            sheetY.value = withTiming(0, { duration: 360, easing: Easing.out(Easing.cubic) });
+            sheetY.value = reduced
+                ? 0
+                : withTiming(0, { duration: 360, easing: Easing.out(Easing.cubic) });
         }
         if (beat >= LAST_BEAT) {
-            resultOne.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
-            resultTwo.value = withDelay(110, withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) }));
-            resultThree.value = withDelay(220, withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) }));
+            if (reduced) {
+                resultOne.value = 1;
+                resultTwo.value = 1;
+                resultThree.value = 1;
+            } else {
+                resultOne.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+                resultTwo.value = withDelay(110, withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) }));
+                resultThree.value = withDelay(220, withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) }));
+            }
         }
     }, [beat, reduced, resultOne, resultThree, resultTwo, sheetY]);
 
@@ -178,8 +175,9 @@ export function TeachShareSheetDemo({
         opacity: Math.min(1, Math.max(0, 3 - beatValue.value)),
     }));
 
-    const onStagePress = () => {
-        if (!reduced) setBeat((value) => advanceBeat(value));
+    const completeTarget = (target: TeachTarget) => {
+        setBeat((value) => advanceOnTarget(value, target));
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     };
 
     return (
@@ -224,13 +222,7 @@ export function TeachShareSheetDemo({
                 ) : null}
             </View>
 
-            <Pressable
-                onPress={onStagePress}
-                disabled={beat === LAST_BEAT || reduced}
-                style={styles.stage}
-                accessibilityRole="button"
-                accessibilityLabel={beat === LAST_BEAT ? 'Import tutorial complete' : 'Continue tutorial'}
-            >
+            <View style={styles.stage}>
                 <Animated.View style={[styles.scene, scene0]} pointerEvents="none">
                     <CopyBlock
                         eyebrow={TEACH_COPY.promiseEyebrow}
@@ -245,18 +237,29 @@ export function TeachShareSheetDemo({
                     </Animated.View>
                 </Animated.View>
 
-                <Animated.View style={[styles.scene, scene1]} pointerEvents="none">
+                <Animated.View
+                    style={[styles.scene, scene1]}
+                    pointerEvents={beat === 1 ? 'auto' : 'none'}
+                >
                     <CopyBlock
                         title={TEACH_COPY.shareTitle}
                         body={TEACH_COPY.shareBody}
                         palette={palette}
                     />
                     <View style={styles.reelWrap}>
-                        <ReelPhone palette={palette} highlightShare pulseStyle={pulseStyle} />
+                        <ReelPhone
+                            palette={palette}
+                            highlightShare
+                            pulseStyle={pulseStyle}
+                            onSharePress={() => completeTarget('share')}
+                        />
                     </View>
                 </Animated.View>
 
-                <Animated.View style={[styles.scene, scene2]} pointerEvents="none">
+                <Animated.View
+                    style={[styles.scene, scene2]}
+                    pointerEvents={beat === 2 ? 'auto' : 'none'}
+                >
                     <CopyBlock
                         title={TEACH_COPY.sheetTitle}
                         body={TEACH_COPY.sheetBody}
@@ -289,7 +292,15 @@ export function TeachShareSheetDemo({
                                     <ShareApp key={app.label} {...app} palette={palette} />
                                 ))}
                                 <View style={styles.shareAppCol}>
-                                    <View style={styles.napkinTarget}>
+                                    <Pressable
+                                        onPress={() => completeTarget('napkin')}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="Share to Napkin"
+                                        style={({ pressed }) => [
+                                            styles.napkinTarget,
+                                            pressed ? { transform: [{ scale: 0.96 }] } : null,
+                                        ]}
+                                    >
                                         <Animated.View
                                             style={[
                                                 styles.napkinPulse,
@@ -301,7 +312,7 @@ export function TeachShareSheetDemo({
                                             source={require('../../assets/images/icon.png')}
                                             style={styles.napkinIcon}
                                         />
-                                    </View>
+                                    </Pressable>
                                     <Text style={[styles.appLabel, { color: palette.text }]}>Napkin</Text>
                                 </View>
                             </View>
@@ -353,11 +364,33 @@ export function TeachShareSheetDemo({
                         ))}
                     </View>
                 </Animated.View>
-            </Pressable>
+            </View>
 
             <View style={styles.footer}>
-                <Animated.View style={[styles.footerLayer, continueFooter]} pointerEvents="none">
-                    <Text style={[styles.continueHint, { color: palette.textMuted }]}>{TEACH_COPY.continueHint}</Text>
+                <Animated.View
+                    style={[styles.footerLayer, continueFooter]}
+                    pointerEvents={beat === 0 ? 'auto' : 'none'}
+                >
+                    {beat === 0 ? (
+                        <Pressable
+                            onPress={() => completeTarget('start')}
+                            accessibilityRole="button"
+                            style={({ pressed }) => [
+                                styles.practiceButton,
+                                { backgroundColor: palette.text },
+                                pressed ? { transform: [{ scale: 0.96 }] } : null,
+                            ]}
+                        >
+                            <Text style={[styles.practiceButtonText, { color: palette.background }]}>
+                                {TEACH_COPY.startCta}
+                            </Text>
+                            <Ionicons name="arrow-forward" size={17} color={palette.background} />
+                        </Pressable>
+                    ) : (
+                        <Text style={[styles.continueHint, { color: palette.textMuted }]}>
+                            {beat === 1 ? TEACH_COPY.shareHint : TEACH_COPY.napkinHint}
+                        </Text>
+                    )}
                 </Animated.View>
                 <Animated.View
                     style={[styles.footerLayer, terminalFooter]}
@@ -416,12 +449,26 @@ function ReelPhone({
     compact = false,
     highlightShare = false,
     pulseStyle,
+    onSharePress,
 }: {
     palette: Palette;
     compact?: boolean;
     highlightShare?: boolean;
     pulseStyle?: object;
+    onSharePress?: () => void;
 }) {
+    const shareControl = (
+        <>
+            {highlightShare && pulseStyle ? (
+                <Animated.View style={[styles.shareActionPulse, pulseStyle]} />
+            ) : null}
+            <View style={[styles.shareAction, highlightShare && { backgroundColor: palette.primary }]}>
+                <Ionicons name="paper-plane" size={compact ? 16 : 20} color="#fff" />
+            </View>
+            {highlightShare ? <Text style={styles.tapLabel}>TAP</Text> : null}
+        </>
+    );
+
     return (
         <View style={[styles.reelPhone, compact && styles.reelPhoneCompact]}>
             <LinearGradient
@@ -450,15 +497,21 @@ function ReelPhone({
             <View style={styles.reelActions}>
                 <ReelAction icon="heart" label="12.4K" />
                 <ReelAction icon="chatbubble" label="184" />
-                <View style={styles.shareActionWrap}>
-                    {highlightShare && pulseStyle ? (
-                        <Animated.View style={[styles.shareActionPulse, pulseStyle]} />
-                    ) : null}
-                    <View style={[styles.shareAction, highlightShare && { backgroundColor: palette.primary }]}>
-                        <Ionicons name="paper-plane" size={compact ? 16 : 20} color="#fff" />
-                    </View>
-                    {highlightShare ? <Text style={styles.tapLabel}>TAP</Text> : null}
-                </View>
+                {onSharePress ? (
+                    <Pressable
+                        onPress={onSharePress}
+                        accessibilityRole="button"
+                        accessibilityLabel="Share video"
+                        style={({ pressed }) => [
+                            styles.shareActionWrap,
+                            pressed ? { transform: [{ scale: 0.96 }] } : null,
+                        ]}
+                    >
+                        {shareControl}
+                    </Pressable>
+                ) : (
+                    <View style={styles.shareActionWrap}>{shareControl}</View>
+                )}
             </View>
             <View style={styles.reelNav}>
                 <Ionicons name="home" size={compact ? 13 : 16} color="#fff" />
@@ -962,6 +1015,19 @@ const styles = StyleSheet.create({
         fontSize: 11,
         letterSpacing: 0.2,
         textAlign: 'center',
+    },
+    practiceButton: {
+        height: 48,
+        borderRadius: 24,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 7,
+    },
+    practiceButtonText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13.5,
+        letterSpacing: 0.15,
     },
     doneButton: {
         height: 52,

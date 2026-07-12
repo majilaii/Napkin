@@ -1,13 +1,13 @@
 /**
  * teachDemoUtils unit tests (TICKET-122) — the teach demo's beat state machine +
- * copy. Pins: four beats, advance clamps at the terminal beat (a tap past the end
- * is a no-op), the crossfade timings, and the exact Manrope copy (no emoji).
+ * copy. Pins: four beats, exact-target gating, terminal clamping, and exact
+ * Manrope copy (no emoji).
  */
 import {
     BEAT_COUNT,
     LAST_BEAT,
-    BEAT_TIMINGS_MS,
-    advanceBeat,
+    REQUIRED_TARGETS,
+    advanceOnTarget,
     TEACH_COPY,
 } from '../teachDemoUtils';
 
@@ -17,23 +17,22 @@ describe('beat machine', () => {
         expect(LAST_BEAT).toBe(3);
     });
 
-    it('advanceBeat steps 0 → 1 → 2 → 3', () => {
-        expect(advanceBeat(0)).toBe(1);
-        expect(advanceBeat(1)).toBe(2);
-        expect(advanceBeat(2)).toBe(3);
+    it('requires start → share → napkin in that order', () => {
+        expect(REQUIRED_TARGETS).toEqual(['start', 'share', 'napkin']);
+        expect(advanceOnTarget(0, 'start')).toBe(1);
+        expect(advanceOnTarget(1, 'share')).toBe(2);
+        expect(advanceOnTarget(2, 'napkin')).toBe(3);
     });
 
-    it('advanceBeat clamps at the terminal beat (tap past the end is a no-op)', () => {
-        expect(advanceBeat(3)).toBe(3);
-        expect(advanceBeat(5)).toBe(3);
+    it('ignores taps on the wrong simulated control', () => {
+        expect(advanceOnTarget(0, 'share')).toBe(0);
+        expect(advanceOnTarget(1, 'napkin')).toBe(1);
+        expect(advanceOnTarget(2, 'share')).toBe(2);
     });
 
-    it('crossfade timings are ordered', () => {
-        expect(BEAT_TIMINGS_MS.promiseToShare).toBe(2200);
-        expect(BEAT_TIMINGS_MS.shareToSheet).toBe(4700);
-        expect(BEAT_TIMINGS_MS.sheetToResult).toBe(7400);
-        expect(BEAT_TIMINGS_MS.promiseToShare).toBeLessThan(BEAT_TIMINGS_MS.shareToSheet);
-        expect(BEAT_TIMINGS_MS.shareToSheet).toBeLessThan(BEAT_TIMINGS_MS.sheetToResult);
+    it('clamps at the terminal beat', () => {
+        expect(advanceOnTarget(3, 'napkin')).toBe(3);
+        expect(advanceOnTarget(5, 'start')).toBe(3);
     });
 });
 
@@ -45,6 +44,7 @@ describe('copy (exact)', () => {
     it('coach-mark strings are direct instructions', () => {
         expect(TEACH_COPY.shareTitle).toBe('Tap share on the video');
         expect(TEACH_COPY.sheetTitle).toBe('Then choose Napkin');
+        expect(TEACH_COPY.startCta).toBe('Practice it');
         expect(TEACH_COPY.doneCta).toBe('Start saving');
     });
 
