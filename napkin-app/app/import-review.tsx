@@ -10,7 +10,7 @@
  * normal save+route path — no duplicated save logic here).
  */
 import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,14 +30,10 @@ import {
 import { truncationNote } from '@/lib/importTruncation';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
+import { ImportSourceCard } from '@/components/wishlist/ImportSourceCard';
+import { importSourceLabel, manifestDisplaySource } from '@/components/wishlist/importSourceLabel';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function sourceLabelFor(kind: 'video' | 'url' | undefined, url: string | undefined): string {
-    if (kind === 'url' && url && /tiktok\.com/i.test(url)) return 'from TikTok';
-    if (kind === 'url') return 'from a link';
-    return 'from a video';
-}
 
 export default function ImportReviewScreen() {
     const { jobId } = useLocalSearchParams<{ jobId: string }>();
@@ -157,18 +153,34 @@ export default function ImportReviewScreen() {
     };
 
     const handleDiscard = () => {
-        if (manifest) {
-            removeImport(manifest.jobId);
-            // Don't leak the copied .mov in the App-Group container (no GC sweep).
-            if (manifest.videoPath) {
-                try {
-                    deleteAppGroupFile(manifest.videoPath);
-                } catch {
-                    /* best-effort */
-                }
-            }
+        if (!manifest) {
+            router.back();
+            return;
         }
-        router.back();
+        // TICKET-180: confirm, and NAME the source so you know what you're binning.
+        Alert.alert(
+            `discard this import ${importSourceLabel(manifestDisplaySource(manifest))}?`,
+            "this can't be undone.",
+            [
+                { text: 'keep', style: 'cancel' },
+                {
+                    text: 'discard',
+                    style: 'destructive',
+                    onPress: () => {
+                        removeImport(manifest.jobId);
+                        // Don't leak the copied .mov in the App-Group container (no GC sweep).
+                        if (manifest.videoPath) {
+                            try {
+                                deleteAppGroupFile(manifest.videoPath);
+                            } catch {
+                                /* best-effort */
+                            }
+                        }
+                        router.back();
+                    },
+                },
+            ],
+        );
     };
 
     if (!manifest || spots.length === 0) {
@@ -199,10 +211,17 @@ export default function ImportReviewScreen() {
                 </Pressable>
             </View>
 
-            {/* Batch-grammar header: "12 spots from TikTok" */}
+            {/* TICKET-180: source card — verify WHERE it came from before approving.
+                Carries the "from TikTok · @handle · watch again" identity, so the
+                title below drops to the bare count (no duplicated source phrase). */}
+            <View style={styles.sourceCardWrap}>
+                <ImportSourceCard manifest={manifest} />
+            </View>
+
+            {/* Batch-grammar header: "12 spots" */}
             <View style={styles.header}>
                 <Text style={[styles.title, { color: palette.text }]}>
-                    {`${spots.length} ${spots.length === 1 ? 'spot' : 'spots'} ${sourceLabelFor(manifest.kind, manifest.url)}`}
+                    {`${spots.length} ${spots.length === 1 ? 'spot' : 'spots'}`}
                 </Text>
                 <View style={styles.subtitleRow}>
                     <Text style={[styles.subtitle, { color: palette.textMuted }]}>
@@ -339,6 +358,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingBottom: 80,
     },
+    sourceCardWrap: { paddingHorizontal: 22, paddingBottom: Spacing.md },
     header: { paddingHorizontal: 22, paddingBottom: Spacing.md },
     title: { ...Type.screenTitle },
     subtitleRow: {
