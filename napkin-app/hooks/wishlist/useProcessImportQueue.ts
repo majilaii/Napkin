@@ -34,6 +34,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import {
     extractFromVideo,
+    extractFromImages,
     isVideoImportAvailable,
     appGroupFileInfo,
     deleteAppGroupFile,
@@ -96,6 +97,8 @@ import {
     isTikTokUrl,
     downloadTikTokVideo,
     deleteCachedTikTokVideo,
+    downloadSlideImage,
+    deleteCachedSlide,
 } from '@/lib/tiktokPerception';
 import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
 import { captureClipThumbFromUrl, type ClipThumbSourceType } from '@/lib/clipThumbCapture';
@@ -695,6 +698,9 @@ export function useProcessImportQueue() {
 
                         let ocrLines = 0;
                         let sttChars = 0;
+                        // TICKET-176: count of photo-mode slides actually downloaded
+                        // (diagnostic — how many the OCR pass had to work with).
+                        let photoSlides = 0;
                         if (!fastPath) {
                             // ── ESCALATION: today's download → OCR → STT ladder ──
                             // Ladder: page text (caption + ASR) + playAddr download →
@@ -705,6 +711,56 @@ export function useProcessImportQueue() {
                             // OCR-channel loss.
                             let ocrText: string | null = null;
                             const stageDeadlineAt = Date.now() + VIDEO_DOWNLOAD_TIMEOUT_MS;
+                            // ── TICKET-176: photo-mode slide OCR ──────────────────
+                            // A photo list has no playAddr — the video loop below
+                            // no-ops for it (breaks on the null guard). The spots
+                            // live ON the slides (the caption is name-free), so
+                            // download each signed slide JPEG under ONE shared stage
+                            // deadline (they're small — one budget for all, not per
+                            // file) and OCR them on-device. Slide files are deleted
+                            // right after extraction. When the binary predates v3
+                            // (extractFromImages → null) OR no slide yields text,
+                            // ocrText stays null and the {url} fallback runs (167).
+                            if (isPhotoPost) {
+                                // The photo marker's `text` is '' (no transcript), so
+                                // latestPageText is null — but the caption (desc)
+                                // carries the city/hashtag signal Places needs. Route
+                                // it through latestPageText so the shared fusion below
+                                // becomes [ocr, desc] and the diag caption_chars stays
+                                // truthful. (Video posts never reach here.)
+                                latestPageText = desc || null;
+                                const slideUrls =
+                                    (perception as { slideUrls?: string[] }).slideUrls ?? [];
+                                const slideFiles: string[] = [];
+                                for (const slideUrl of slideUrls) {
+                                    // Shared budget across all slides — the signed CDN
+                                    // is not referer-bound (verified), so m.url (the
+                                    // share link in any form) is a fine Referer.
+                                    const remaining = Math.max(0, stageDeadlineAt - Date.now());
+                                    if (remaining <= 0) break;
+                                    const file = await downloadSlideImage(
+                                        slideUrl,
+                                        m.url as string,
+                                        remaining,
+                                    );
+                                    if (file) slideFiles.push(file);
+                                }
+                                photoSlides = slideFiles.length;
+                                if (slideFiles.length > 0) {
+                                    try {
+                                        const res = await extractFromImages(slideFiles, {
+                                            ocrBudgetMs: OCR_WALLCLOCK_BUDGET_MS,
+                                        });
+                                        ocrLines = res?.ocr?.length ?? 0;
+                                        ocrText =
+                                            (res?.ocr ?? []).filter(Boolean).join('\n').trim() ||
+                                            null;
+                                    } catch {
+                                        // slide OCR is best-effort — fall back to {url}
+                                    }
+                                    for (const f of slideFiles) deleteCachedSlide(f);
+                                }
+                            }
                             for (let attempt = 0; attempt < 2; attempt++) {
                                 if (!perception?.playAddr) break;
                                 const fileUri = await downloadTikTokVideo(
@@ -783,20 +839,25 @@ export function useProcessImportQueue() {
                                 deleteCachedTikTokVideo(fileUri);
                                 break; // extraction ran — don't re-download
                             }
-                            // TICKET-175: a photo post's page text is caption-only —
-                            // resolving it as extracted_text would return zero and
-                            // (pre-fix) suppress the {url} fallback. Force the url
-                            // tier: the server's thumbnail-vision path reads the
-                            // IMAGES, which is where a photo list's spots live.
-                            extractedText = isPhotoPost
-                                ? null
-                                : [ocrText, latestPageText].filter(Boolean).join('\n').trim() ||
-                                  null;
+                            // TICKET-176: a photo post now FUSES on-device slide OCR
+                            // with the caption ([ocrText, caption]) — the spots live
+                            // on the slides. The TICKET-175 force-null survives ONLY
+                            // when NO slide text was produced (old binary / all
+                            // downloads flaked / blank slides): then extractedText
+                            // stays null and the server's {url} thumbnail-vision tier
+                            // gets a chance (167 behavior, harmless when dead). A
+                            // video post is unaffected (isPhotoPost false).
+                            extractedText =
+                                isPhotoPost && !ocrText
+                                    ? null
+                                    : [ocrText, latestPageText].filter(Boolean).join('\n').trim() ||
+                                      null;
                             // R3: did escalation add ANY new perception text? OCR
-                            // lines, on-device STT, or a page-text CHANNEL the retry
-                            // recovered that the cheap tier never saw — if none, the
-                            // fused text ≡ the cheap-tier text, so a content-reason
-                            // gate reject holds for review instead of auto-saving.
+                            // lines (video frames OR photo slides), on-device STT, or
+                            // a page-text CHANNEL the retry recovered that the cheap
+                            // tier never saw — if none, the fused text ≡ the
+                            // cheap-tier text, so a content-reason gate reject holds
+                            // for review instead of auto-saving.
                             escalationAddedEvidence =
                                 ocrLines > 0 || sttChars > 0 || pageTextGained;
                         }
@@ -812,6 +873,10 @@ export function useProcessImportQueue() {
                             tiktok_asr: perception?.hasTranscript ?? false,
                             video: downloadOk,
                             photo_post: isPhotoPost,
+                            // TICKET-176: how many slides downloaded for the OCR pass
+                            // (0 on a video post) — ocr_lines above now counts slide
+                            // OCR too, so the pair explains a photo-list flop.
+                            photo_slides: photoSlides,
                             ocr_lines: ocrLines,
                             stt_chars: sttChars,
                             fast_path: fastPath,
