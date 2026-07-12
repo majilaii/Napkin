@@ -19,8 +19,11 @@ public class MediaExtractModule: Module {
     // the OCR/STT budget params — the JS wrapper calls the 7-arg signature only
     // when it sees this, else the legacy 4-arg call (OTA JS on a pre-164 binary
     // must never throw an ExpoModulesCore arg-count mismatch).
+    // TICKET-176: bumped to 3 when extractFromImages was ADDED — the JS wrapper
+    // calls it only on a >= 3 binary, else returns null so photo-slide OCR falls
+    // back to the {url} resolve (a v2 binary lacks the function entirely).
     Constants([
-      "apiVersion": 2
+      "apiVersion": 3
     ])
 
     // uri: file:// or absolute path to the picked/shared video.
@@ -57,6 +60,49 @@ public class MediaExtractModule: Module {
         "transcript": transcript,
         "durationSec": durationSec.isFinite ? durationSec : 0,
       ]
+    }
+
+    // TICKET-176: OCR a set of photo-mode slide images entirely on-device — the
+    // SAME Vision pass as extractFromVideo's frame OCR (.accurate + language
+    // correction + cross-image dedupe), fed by UIImage(contentsOfFile:) instead
+    // of AVAsset frames. A photo-mode TikTok list renders its spots ON the slides
+    // and its caption is name-free, so this is the only channel. Returns
+    // { ocr: [String] }.
+    //
+    // Deliberately a fully synchronous loop inside the async function: there is
+    // nothing async to bound (Vision's perform is synchronous per image), so NO
+    // continuation / generator / watchdog machinery is needed (unlike ocrFrames,
+    // which bounds AVAssetImageGenerator). A single wall-clock deadline is checked
+    // BETWEEN images and the lines gathered so far are returned on expiry —
+    // partial OCR still carries most spots.
+    AsyncFunction("extractFromImages") {
+      (uris: [String], ocrBudgetMs: Int?) async throws -> [String: Any] in
+      let budget = max(1000, ocrBudgetMs ?? Self.defaultOcrBudgetMs)
+      let deadline = Date().addingTimeInterval(Double(budget) / 1000.0)
+      // Cross-image dedupe (persistent handles/watermarks repeat across slides),
+      // preserving first-seen order — same Set pattern as ocrFrames.
+      var seen = Set<String>()
+      var ordered: [String] = []
+      for uri in uris {
+        if Date() >= deadline { break } // partial results on expiry
+        guard let url = Self.resolveURL(uri),
+              let image = UIImage(contentsOfFile: url.path),
+              let cg = image.cgImage else { continue }
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.usesLanguageCorrection = true
+        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+        try? handler.perform([req])
+        for obs in (req.results ?? []) {
+          guard let s = obs.topCandidates(1).first?.string else { continue }
+          let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+          if !trimmed.isEmpty, !seen.contains(trimmed) {
+            seen.insert(trimmed)
+            ordered.append(trimmed)
+          }
+        }
+      }
+      return ["ocr": ordered]
     }
 
     // ── App-Group import queue (TICKET-083 Part B inc3) ──────────────────────

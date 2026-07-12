@@ -95,6 +95,43 @@ export function namesOverlap(a: string | null | undefined, b: string | null | un
     return tokensA.some((t) => tokensB.has(t));
 }
 
+/**
+ * TICKET-177 — locality-consistency guard for Places text-search acceptance.
+ *
+ * A garbled name can EXACT-match a real venue in the wrong town: ASR heard
+ * "Cartouche" for Kartuli (East Dulwich); Places returned Cartouche in
+ * HERTFORD; namesOverlap passed (names identical) and the wrong county got
+ * pinned (founder repro 2026-07-12). The extraction already carries the
+ * video's locality signal (city + area) — a result whose own locality shares
+ * NO token with it is not the place the video meant.
+ *
+ * Lenient by design (mirrors namesOverlap's contract):
+ *   - no extracted city/area → true (no signal to gate on);
+ *   - place has no city/address info → true (can't judge);
+ *   - ANY extracted locality sharing ANY token with the place's city +
+ *     formattedAddress → true.
+ * Trade-off (documented): a Greater-London venue whose Google address omits
+ * "London" (outer-borough postal towns, e.g. "Croydon CR0") can false-ghost
+ * against an extracted city "London" — a visible, fixable ghost in review
+ * beats a confident wrong-town pin.
+ */
+export function localityConsistent(
+    extracted: { city?: string | null; area?: string | null },
+    place: { city?: string | null; formattedAddress?: string | null },
+): boolean {
+    const wanted = [extracted.city, extracted.area]
+        .map((w) => normalizeName(w))
+        .filter((w) => w.length > 0);
+    if (wanted.length === 0) return true;
+    const hay = new Set(
+        normalizeName([place.city, place.formattedAddress].filter(Boolean).join(' '))
+            .split(' ')
+            .filter(Boolean),
+    );
+    if (hay.size === 0) return true;
+    return wanted.some((w) => w.split(' ').some((tok) => hay.has(tok)));
+}
+
 /** Merge two ExtractedCandidates: `primary` wins on non-null fields; `secondary` fills nulls. */
 export function mergeExtracted(
     primary: ExtractedCandidate,

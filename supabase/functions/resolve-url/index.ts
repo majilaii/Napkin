@@ -63,6 +63,7 @@ import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.
 import {
     dedupeAndRank,
     namesOverlap,
+    localityConsistent,
     normalizeName,
     type StagedCandidate,
 } from '../_shared/candidateDedupe.ts';
@@ -635,6 +636,12 @@ async function resolveCandidateToPlace(
         // collapse two distinct spots onto the same wrong place). No plausible
         // name overlap → ghost instead; the review UI already handles ghosts.
         if (top && !namesOverlap(candidate.name, top.name)) return null;
+        // TICKET-177 locality guard: a garbled name can EXACT-match a real venue
+        // in the wrong town ("Cartouche" for Kartuli → Cartouche, HERTFORD, while
+        // the video said London). A result whose locality shares no token with
+        // the extracted city/area becomes a ghost — visible + fixable in review
+        // — instead of a confident wrong-town pin.
+        if (top && !localityConsistent(candidate, top)) return null;
         return top;
     } catch (e: any) {
         // A Places THROTTLE must stay distinguishable by callers that surface it as

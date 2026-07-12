@@ -31,3 +31,19 @@ export interface ExtractResult {
     /** Clip duration in seconds. */
     durationSec: number;
 }
+
+/** TICKET-176: options for extractFromImages (photo-mode slide OCR). */
+export interface ImageExtractOptions {
+    /**
+     * Wall-clock budget (ms) for the whole slide-OCR loop — the deadline is
+     * checked BETWEEN images and partial lines returned on expiry. apiVersion >= 3
+     * only (the native function is absent below that).
+     */
+    ocrBudgetMs?: number;
+}
+
+/** TICKET-176: result of extractFromImages — OCR only (no audio on images). */
+export interface ImageExtractResult {
+    /** Deduped on-screen text lines across all slides, in slide + appearance order. */
+    ocr: string[];
+}

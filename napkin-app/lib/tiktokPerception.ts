@@ -32,6 +32,13 @@ const MOBILE_UA =
 const TRANSCRIPT_CAP = 8000;
 
 /**
+ * TICKET-176: cap the slides we download + OCR on-device. A photo list can carry
+ * dozens of images; the on-device OCR budget bounds the work, and a >12-slide
+ * list still resolves its first 12 (the extraction cap is 12 anyway).
+ */
+const PHOTO_SLIDE_CAP = 12;
+
+/**
  * TICKET-164 [R8]: bound each perception fetch — the page + VTT requests had NO
  * timeout, so a stalled TikTok CDN hung the import behind a spinner-less drain.
  */
@@ -85,6 +92,15 @@ export interface TikTokPerception {
      * and caches them durably (this URL itself expires — never persist it).
      */
     thumbnailUrl: string | null;
+    /**
+     * TICKET-176: photo-mode slide image URLs
+     * (imagePost.images[].imageURL.urlList[0]), capped at PHOTO_SLIDE_CAP. The
+     * spots on a caption-less photo list are rendered ON the slides, so the queue
+     * downloads these + OCRs them on-device. Populated ONLY on the has-itemStruct
+     * photo marker; the no-blob / no-itemStruct photo markers keep it empty.
+     * Signed CDN URLs — download immediately (session-bound), NEVER persist.
+     */
+    slideUrls?: string[];
 }
 
 export function isTikTokUrl(url: string | null | undefined): boolean {
@@ -100,6 +116,26 @@ export function isTikTokUrl(url: string | null | undefined): boolean {
  */
 export function isTikTokPhotoUrl(url: string | null | undefined): boolean {
     return !!url && /\/photo\//.test(url);
+}
+
+/**
+ * TICKET-176: pull the signed CDN slide URLs from a photo-mode itemStruct's
+ * `imagePost.images[].imageURL.urlList[0]`, capped at PHOTO_SLIDE_CAP. Pure +
+ * exported for tests — the blob shape drifts, so degradation (an empty list, not
+ * a throw) is the contract. Tolerant of any/missing shape (`item` is untyped blob
+ * JSON): a non-array `images`, a missing `imageURL`, or a non-http entry all just
+ * drop from the result.
+ */
+export function extractSlideUrls(item: any): string[] {
+    const images = item?.imagePost?.images;
+    if (!Array.isArray(images)) return [];
+    const urls: string[] = [];
+    for (const im of images) {
+        const u = im?.imageURL?.urlList?.[0];
+        if (typeof u === 'string' && u.startsWith('http')) urls.push(u);
+        if (urls.length >= PHOTO_SLIDE_CAP) break;
+    }
+    return urls;
 }
 
 /** Strip a webvtt file to its spoken text (ASR cues repeat — dedupe them). */
@@ -146,6 +182,10 @@ export async function fetchTikTokPerception(
         // post must reach the queue as a marker (never null) so it routes to the
         // server url tier instead of dying in the video ladder.
         const isPhotoPost = isTikTokPhotoUrl(pageRes.url);
+        // TICKET-176: the base marker (no-blob / no-itemStruct sites) keeps EMPTY
+        // desc + slideUrls — only the has-itemStruct site below can populate them
+        // (that's where imagePost lives). All three keep isPhotoPost:true so the
+        // queue routes past the video ladder.
         const photoMarker: TikTokPerception = {
             text: '',
             desc: '',
@@ -154,6 +194,7 @@ export async function fetchTikTokPerception(
             isPhotoPost: true,
             playAddr: null,
             thumbnailUrl: null,
+            slideUrls: [],
         };
         const html = await pageRes.text();
 
@@ -179,8 +220,17 @@ export async function fetchTikTokPerception(
             return null;
         }
         // Photo-mode posts sometimes DO carry an itemStruct (desc, imagePost) —
-        // still a photo: no video, no ASR. The marker routes it to the url tier.
-        if (isPhotoPost) return photoMarker;
+        // still a photo: no video, no ASR. TICKET-176: the spots live ON the
+        // slides (the caption is name-free), so this marker carries the REAL
+        // caption + the signed slide URLs for on-device OCR. Still routes past the
+        // video ladder (playAddr null, isPhotoPost true).
+        if (isPhotoPost) {
+            return {
+                ...photoMarker,
+                desc: typeof item.desc === 'string' ? item.desc.trim() : '',
+                slideUrls: extractSlideUrls(item),
+            };
+        }
 
         const desc = typeof item.desc === 'string' ? item.desc.trim() : '';
         const video = item.video ?? {};
@@ -300,6 +350,71 @@ export async function downloadTikTokVideo(
 
 /** Best-effort cleanup of a downloadTikTokVideo file. */
 export async function deleteCachedTikTokVideo(uri: string): Promise<void> {
+    try {
+        const FileSystem = await import('expo-file-system/legacy');
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+    } catch {
+        /* best-effort */
+    }
+}
+
+/**
+ * TICKET-176: download ONE photo-mode slide image to the app cache for on-device
+ * OCR. Mirrors downloadTikTokVideo (streamed straight to disk via
+ * createDownloadResumable, UA + page Referer for the signed CDN, hard deadline)
+ * but for a small JPEG — so the caller shares ONE stage deadline across every
+ * slide instead of one-per-file. Returns a file:// URI the caller MUST delete
+ * (deleteCachedSlide) after extraction; null on timeout/expiry/failure (a missing
+ * slide just drops from the OCR set — never fails the import). A unique random
+ * suffix avoids collisions when several slides download inside the same ms.
+ */
+export async function downloadSlideImage(
+    url: string,
+    referer: string,
+    timeoutMs: number,
+): Promise<string | null> {
+    if (timeoutMs <= 0) return null; // stage budget already spent → skip
+    try {
+        const FileSystem = await import('expo-file-system/legacy');
+        const dir = FileSystem.cacheDirectory;
+        if (!dir) return null;
+        const rand = Math.random().toString(36).slice(2, 10);
+        const uri = `${dir}tiktok-slide-${Date.now()}-${rand}.jpg`;
+
+        const task = FileSystem.createDownloadResumable(url, uri, {
+            headers: { 'User-Agent': MOBILE_UA, Referer: referer },
+        });
+
+        let timedOut = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const timeout = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+                timedOut = true;
+                task.cancelAsync().catch(() => {});
+                resolve(null);
+            }, timeoutMs);
+        });
+
+        try {
+            const download = task.downloadAsync().catch(() => null);
+            const result = await Promise.race([download, timeout]);
+            // status >= 400 = an expired/forbidden signed URL wrote an error body to
+            // disk — never feed that to OCR (mirrors downloadTikTokVideo).
+            if (timedOut || !result || !result.uri || result.status >= 400) {
+                await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+                return null;
+            }
+            return result.uri;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    } catch {
+        return null;
+    }
+}
+
+/** Best-effort cleanup of a downloadSlideImage file. */
+export async function deleteCachedSlide(uri: string): Promise<void> {
     try {
         const FileSystem = await import('expo-file-system/legacy');
         await FileSystem.deleteAsync(uri, { idempotent: true });
