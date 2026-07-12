@@ -1,29 +1,26 @@
 /**
- * ProfileIndex — editorial table-of-contents block.
+ * ProfileIndex — scannable table-of-contents block.
  * TICKET-025
  *
- * Rows: Diary (tappable), Reviews (disabled placeholder), Lists (tappable),
- *       Wishlist (tappable), Likes (disabled placeholder).
- *
- * Disabled rows: muted text, no chevron, no onPress, opacity 0.5.
- * Active rows: serif italic title + count + hint + chevron.
+ * Upright functional titles and readable metadata make each destination clear
+ * at a glance. Disabled rows retain contrast but omit navigation affordances.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { SectionHeader } from './SectionHeader';
 
 export interface IndexSection {
     title: string;
     count: number | null;
     hint: string;
-    /** If true, hint renders in italic serif */
-    emphasis?: boolean;
-    /** Route to push when tapped */
+    /** Route to push when tapped. */
     route?: string;
-    /** If true, row is visually de-emphasized and non-interactive */
+    /** If true, the row is non-interactive but remains legible. */
     disabled?: boolean;
 }
 
@@ -38,74 +35,64 @@ export function ProfileIndex({ sections }: Props) {
 
     return (
         <View>
-            {/* — INDEX label */}
-            <View style={styles.indexLabel}>
-                <Text style={[Type.labelSmall, { color: palette.textMuted }]}>{'— INDEX'}</Text>
-            </View>
-
-            <View style={[styles.listContainer, { borderTopColor: palette.dividerSoft, borderBottomColor: palette.dividerSoft }]}>
-                {sections.map((s, i) => {
-                    const isLast = i === sections.length - 1;
+            <SectionHeader title="Explore" />
+            <View style={[styles.listContainer, { backgroundColor: palette.surfaceJournalLow }]}>
+                {sections.map((section, index) => {
+                    const isLast = index === sections.length - 1;
                     const content = (
                         <View
                             style={[
                                 styles.row,
-                                {
-                                    borderTopColor: palette.dividerSoft,
-                                    borderBottomColor: isLast ? palette.dividerSoft : 'transparent',
-                                    opacity: s.disabled ? 0.45 : 1,
-                                },
+                                { borderBottomColor: isLast ? 'transparent' : palette.dividerSoft },
                             ]}
                         >
                             <View style={styles.rowContent}>
-                                {/* Title + count */}
                                 <View style={styles.titleRow}>
                                     <Text
                                         style={[
                                             styles.rowTitle,
-                                            { color: s.disabled ? palette.textMuted : palette.text },
+                                            { color: section.disabled ? palette.textMuted : palette.text },
                                         ]}
                                     >
-                                        {s.title}
+                                        {section.title}
                                     </Text>
-                                    {s.count != null && (
-                                        <Text style={[Type.caption, { color: palette.textMuted, fontSize: 11 }]}>
-                                            {s.count}
+                                    {section.count != null ? (
+                                        <Text style={[styles.count, { color: palette.textMuted }]}>
+                                            {section.count}
                                         </Text>
-                                    )}
+                                    ) : null}
                                 </View>
-                                {/* Hint */}
                                 <Text
                                     style={[
-                                        s.emphasis
-                                            ? styles.hintEmphasis
-                                            : styles.hint,
+                                        styles.hint,
                                         {
-                                            color: s.disabled ? palette.textMuted : palette.textSecondary,
-                                            fontFamily: s.emphasis ? 'Newsreader_400Regular_Italic' : 'Manrope_400Regular',
+                                            color: section.disabled
+                                                ? palette.textMuted
+                                                : palette.textSecondary,
                                         },
                                     ]}
-                                    numberOfLines={1}
+                                    numberOfLines={2}
                                 >
-                                    {s.hint}
+                                    {section.hint}
                                 </Text>
                             </View>
-                            {/* Chevron — only for active rows */}
-                            {!s.disabled && (
-                                <Text style={[styles.chevron, { color: palette.textMuted }]}>{'›'}</Text>
-                            )}
+                            {!section.disabled ? (
+                                <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
+                            ) : null}
                         </View>
                     );
 
-                    if (s.disabled || !s.route) {
-                        return <View key={s.title}>{content}</View>;
+                    if (section.disabled || !section.route) {
+                        return <View key={section.title}>{content}</View>;
                     }
 
                     return (
                         <Pressable
-                            key={s.title}
-                            onPress={() => router.push(s.route as any)}
-                            style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                            key={section.title}
+                            onPress={() => router.push(section.route as never)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${section.title}${section.count != null ? `, ${section.count}` : ''}. ${section.hint}`}
+                            style={({ pressed }) => (pressed ? styles.pressed : undefined)}
                         >
                             {content}
                         </Pressable>
@@ -117,20 +104,18 @@ export function ProfileIndex({ sections }: Props) {
 }
 
 const styles = StyleSheet.create({
-    indexLabel: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: 28,
-        paddingBottom: 10,
-    },
     listContainer: {
-        paddingHorizontal: Spacing.lg,
+        marginHorizontal: Spacing.lg,
+        paddingHorizontal: Spacing.md,
+        borderRadius: 16,
+        overflow: 'hidden',
     },
     row: {
+        minHeight: 64,
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: Spacing.md,
-        borderTopWidth: 1,
-        borderBottomWidth: 0,
+        paddingVertical: 12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
         gap: Spacing.sm,
     },
     rowContent: {
@@ -140,28 +125,23 @@ const styles = StyleSheet.create({
     titleRow: {
         flexDirection: 'row',
         alignItems: 'baseline',
+        flexWrap: 'wrap',
         gap: Spacing.sm,
     },
     rowTitle: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
-        fontStyle: 'italic',
-        fontWeight: '500',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 17,
         lineHeight: 22,
     },
+    count: {
+        ...Type.metadata,
+        fontVariant: ['tabular-nums'],
+    },
     hint: {
-        fontSize: 11,
-        lineHeight: 16,
+        ...Type.metadata,
         marginTop: 3,
     },
-    hintEmphasis: {
-        fontSize: 11,
-        lineHeight: 16,
-        marginTop: 3,
-        fontStyle: 'italic',
-    },
-    chevron: {
-        fontSize: 18,
-        flexShrink: 0,
+    pressed: {
+        opacity: 0.7,
     },
 });

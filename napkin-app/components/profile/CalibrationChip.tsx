@@ -8,16 +8,16 @@
  *   - calibration === undefined → "—% match · calculating" (loading)
  *   - calibration === null → hidden (insufficient overlap / Tablemate / error)
  *
- * Design rules (locked):
- *   - Numerals (NN, D, K) → Newsreader italic, textPrimary
- *   - Tail words → Manrope caption, textSecondary
+ * Design rules:
+ *   - Numerals (NN, D, K) → semibold functional type, textPrimary
+ *   - Tail words → Manrope metadata, textSecondary
  *   - Middle dot · is a literal character separator
  *   - NO accent color — calibration is a utility signal, not a brand moment
  *   - NOT tappable in v1 — no press state, no drill-down
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Calibration } from '@/hooks/users/useUserProfile';
 
@@ -68,13 +68,11 @@ const styles = StyleSheet.create({
         flexWrap: 'wrap',
     },
     numeral: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12,
-        lineHeight: 17,
+        ...Type.titleSmall,
+        lineHeight: 19,
+        fontVariant: ['tabular-nums'],
     },
     tail: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        lineHeight: 17,
+        ...Type.metadata,
     },
 });

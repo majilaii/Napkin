@@ -46,20 +46,21 @@ export function MemberStatsStrip({ stats }: MemberStatsStripProps) {
                 >
                     <Text
                         style={[
-                            isRating ? Type.rating : Type.headlineMedium,
+                            isRating ? Type.rating : Type.editorialTitle,
                             {
                                 color: isRating ? palette.tertiary : palette.text,
-                                fontSize: isRating ? 22 : 20,
                             },
                         ]}
+                        maxFontSizeMultiplier={1.4}
                     >
                         {value}
                     </Text>
                     <Text
                         style={[
-                            Type.labelSmall,
+                            Type.metadata,
                             { color: palette.textMuted, marginTop: Spacing.xs },
                         ]}
+                        maxFontSizeMultiplier={1.6}
                     >
                         {label}
                     </Text>

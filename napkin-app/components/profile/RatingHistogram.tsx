@@ -4,7 +4,7 @@
  * histogram in Napkin's own grammar.
  *
  * Same family as the restaurant RATINGS module (SwitchableDistribution) + the
- * /taste histogram (taste.tsx): a Manrope "RATINGS" kicker, ten half-star amber
+ * /taste histogram (taste.tsx): a clear section heading, ten half-star amber
  * bars over a ghosted baseline rule with ½★/5★ end labels, and a big italic
  * Newsreader average on the right. Below, up to four dimension spines
  * (VIBE / FLAVOR / SERVICE / VALUE) — a hairline track with a marker dot at the
@@ -22,14 +22,18 @@
 import React, { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { SectionHeader } from './SectionHeader';
 import { HISTOGRAM_BINS, fillHistogram } from './tasteUtils';
 import type { HistogramBucket } from '@/hooks/users/useUserTaste';
 import type { DimensionAvgs } from '@/hooks/users/useUserProfile';
 
 const BAR_AREA_HEIGHT = 48;
 const MIN_BAR = 3;
+// The chart is a fixed-width data graphic. Cap its embedded labels and expose
+// the same values in the Pressable accessibility label at every text size.
+const CHART_MAX_FONT_SCALE = 1.2;
 /** A dimension needs at least this many rated meals to earn a spine. */
 const SPINE_MIN_N = 3;
 /** The whole module hides (stranger) / ghosts (self) below this many rated meals. */
@@ -75,11 +79,12 @@ export function RatingHistogram({ histogram, dimensionAvgs, averageRating, isSel
             (s): s is { key: keyof DimensionAvgs; label: string; stat: { avg: number; n: number } } =>
                 s.stat != null && s.stat.n >= SPINE_MIN_N && s.stat.avg != null,
         );
+    const spineSummary = spines
+        .map((spine) => `${spine.label} ${spine.stat.avg.toFixed(1)}`)
+        .join(', ');
 
-    const body = (
-        <View style={styles.wrap}>
-            <Text style={[styles.kicker, { color: palette.textMuted }]}>RATINGS</Text>
-
+    const card = (
+        <View style={[styles.card, { backgroundColor: palette.surfaceJournalLow }]}>
             <View style={styles.body}>
                 <View style={styles.chart}>
                     <View style={styles.bars}>
@@ -105,16 +110,22 @@ export function RatingHistogram({ histogram, dimensionAvgs, averageRating, isSel
                         })}
                     </View>
                     <View style={styles.scale}>
-                        <Text style={[styles.scaleEnd, { color: palette.textMuted }]}>½ ★</Text>
-                        <Text style={[styles.scaleEnd, { color: palette.textMuted }]}>5 ★</Text>
+                        <Text style={[styles.scaleEnd, { color: palette.textMuted }]} maxFontSizeMultiplier={CHART_MAX_FONT_SCALE}>½ ★</Text>
+                        <Text style={[styles.scaleEnd, { color: palette.textMuted }]} maxFontSizeMultiplier={CHART_MAX_FONT_SCALE}>5 ★</Text>
                     </View>
                 </View>
 
                 <View style={styles.avgCol}>
-                    <Text style={[styles.avg, { color: palette.text }]}>
+                    <Text
+                        style={[styles.avg, { color: palette.text }]}
+                        maxFontSizeMultiplier={CHART_MAX_FONT_SCALE}
+                    >
                         {averageRating != null ? averageRating.toFixed(1) : '—'}
                     </Text>
-                    <Text style={[styles.avgSub, { color: palette.textMuted }]}>
+                    <Text
+                        style={[styles.avgSub, { color: palette.textMuted }]}
+                        maxFontSizeMultiplier={CHART_MAX_FONT_SCALE}
+                    >
                         {`${total} ${total === 1 ? 'meal' : 'meals'}`}
                     </Text>
                 </View>
@@ -126,7 +137,10 @@ export function RatingHistogram({ histogram, dimensionAvgs, averageRating, isSel
                         const pct = Math.max(0, Math.min(1, s.stat.avg / 5));
                         return (
                             <View key={s.key} style={styles.spineRow}>
-                                <Text style={[styles.spineLabel, { color: palette.textSecondary }]}>
+                                <Text
+                                    style={[styles.spineLabel, { color: palette.textSecondary }]}
+                                    maxFontSizeMultiplier={CHART_MAX_FONT_SCALE}
+                                >
                                     {s.label.toUpperCase()}
                                 </Text>
                                 <View style={styles.spineTrackWrap}>
@@ -140,7 +154,10 @@ export function RatingHistogram({ histogram, dimensionAvgs, averageRating, isSel
                                         ]}
                                     />
                                 </View>
-                                <Text style={[styles.spineNum, { color: palette.text }]}>
+                                <Text
+                                    style={[styles.spineNum, { color: palette.text }]}
+                                    maxFontSizeMultiplier={CHART_MAX_FONT_SCALE}
+                                >
                                     {s.stat.avg.toFixed(1)}
                                 </Text>
                             </View>
@@ -153,12 +170,24 @@ export function RatingHistogram({ histogram, dimensionAvgs, averageRating, isSel
 
     if (isSelf && onPress) {
         return (
-            <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel="see your taste">
-                {body}
-            </Pressable>
+            <View>
+                <SectionHeader title="Ratings" />
+                <Pressable
+                    onPress={onPress}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Ratings. Average ${averageRating != null ? averageRating.toFixed(1) : 'unavailable'} across ${total} ${total === 1 ? 'meal' : 'meals'}.${spineSummary ? ` ${spineSummary}.` : ''} See breakdown`}
+                >
+                    {card}
+                </Pressable>
+            </View>
         );
     }
-    return body;
+    return (
+        <View>
+            <SectionHeader title="Ratings" />
+            {card}
+        </View>
+    );
 }
 
 /**
@@ -168,47 +197,50 @@ export function RatingHistogram({ histogram, dimensionAvgs, averageRating, isSel
  */
 function GhostFrame({ palette }: { palette: Palette }) {
     return (
-        <View style={styles.wrap}>
-            <Text style={[styles.kicker, { color: palette.textMuted }]}>RATINGS</Text>
-            <View style={styles.body}>
-                <View style={styles.chart}>
-                    <View style={styles.bars}>
-                        <View style={[styles.baseline, { backgroundColor: palette.dividerSoft }]} />
-                        {HISTOGRAM_BINS.map((bin) => (
-                            <View key={bin} style={styles.barCol}>
-                                <View
-                                    style={[
-                                        styles.bar,
-                                        { height: MIN_BAR, backgroundColor: palette.surfaceJournalHi },
-                                    ]}
-                                />
-                            </View>
-                        ))}
+        <View>
+            <SectionHeader title="Ratings" />
+            <View style={[styles.card, { backgroundColor: palette.surfaceJournalLow }]}>
+                <View style={styles.body}>
+                    <View style={styles.chart}>
+                        <View style={styles.bars}>
+                            <View style={[styles.baseline, { backgroundColor: palette.dividerSoft }]} />
+                            {HISTOGRAM_BINS.map((bin) => (
+                                <View key={bin} style={styles.barCol}>
+                                    <View
+                                        style={[
+                                            styles.bar,
+                                            { height: MIN_BAR, backgroundColor: palette.surfaceJournalHi },
+                                        ]}
+                                    />
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                    <View style={styles.avgCol}>
+                        <Text
+                            style={[styles.avg, { color: palette.textMuted }]}
+                            maxFontSizeMultiplier={CHART_MAX_FONT_SCALE}
+                        >
+                            —
+                        </Text>
                     </View>
                 </View>
-                <View style={styles.avgCol}>
-                    <Text style={[styles.avg, { color: palette.textMuted }]}>—</Text>
-                </View>
+                <Text
+                    style={[styles.emptyLine, { color: palette.textMuted }]}
+                    maxFontSizeMultiplier={2}
+                >
+                    Your rating spread appears here
+                </Text>
             </View>
-            <Text style={[styles.emptyLine, { color: palette.textMuted }]}>
-                your rating spread appears here
-            </Text>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    wrap: {
-        marginTop: Spacing.md,
-        // Matches ProfileIndex (the module directly below) so the RATINGS
-        // kicker's left edge lines up down the stack.
-        paddingHorizontal: Spacing.lg,
-    },
-    kicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
-        letterSpacing: 1.6,
-        marginBottom: Spacing.sm,
+    card: {
+        marginHorizontal: Spacing.lg,
+        borderRadius: 16,
+        padding: 18,
     },
     body: {
         flexDirection: 'row',
@@ -246,7 +278,7 @@ const styles = StyleSheet.create({
     },
     scaleEnd: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
+        fontSize: 11,
         letterSpacing: 0.5,
     },
     avgCol: {
@@ -257,10 +289,10 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_500Medium_Italic',
         fontSize: 34,
         lineHeight: 36,
+        fontVariant: ['tabular-nums'],
     },
     avgSub: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 10,
+        ...Type.metadata,
         marginTop: 2,
     },
     spines: {
@@ -273,10 +305,10 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     spineLabel: {
-        width: 58,
+        width: 62,
         fontFamily: 'Manrope_700Bold',
-        fontSize: 9.5,
-        letterSpacing: 0.8,
+        fontSize: 11,
+        letterSpacing: 0.6,
     },
     spineTrackWrap: {
         flex: 1,
@@ -305,7 +337,6 @@ const styles = StyleSheet.create({
     },
     emptyLine: {
         marginTop: Spacing.sm,
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        ...Type.bodySmall,
     },
 });

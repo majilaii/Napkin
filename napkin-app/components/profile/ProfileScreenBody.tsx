@@ -219,7 +219,6 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             title: 'Journal',
             count: totalLogs || null,
             hint: latestEntry ? `Latest: ${latestEntry.name}` : 'The chronological log',
-            emphasis: true,
             route: `/diary?userId=${targetUserId}`,
         });
 
@@ -234,7 +233,6 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             title: 'Reviews',
             count: stats?.reviews_count || null,
             hint: 'The written ones',
-            emphasis: true,
             route: `/reviews?userId=${targetUserId}`,
         });
 
@@ -273,7 +271,6 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         title: 'Likes',
         count: null,
         hint: '— coming soon',
-        emphasis: true,
         disabled: true,
     });
 
@@ -413,11 +410,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     coldStartNudge: {
+        ...Type.bodySmall,
         marginHorizontal: Spacing.lg,
-        marginTop: Spacing.sm,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12,
-        lineHeight: 17,
+        marginTop: 12,
     },
     // TICKET-155: the one quiet private-account line, sitting where palate
     // sections would go (directly under the header). Aligns to the header's
@@ -428,14 +423,15 @@ const styles = StyleSheet.create({
     },
     unblockPill: {
         marginTop: Spacing.lg,
+        minHeight: 40,
         borderWidth: 1.5,
         borderRadius: 999,
         paddingHorizontal: 18,
         paddingVertical: 8,
+        justifyContent: 'center',
     },
     unblockLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+        ...Type.label,
         textTransform: 'lowercase',
     },
 });

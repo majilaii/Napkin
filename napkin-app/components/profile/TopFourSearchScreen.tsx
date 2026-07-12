@@ -146,8 +146,8 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
                 </Pressable>
                 <Text
                     style={[
-                        Type.headlineItalic,
-                        { fontFamily: 'Newsreader_400Regular_Italic', fontStyle: 'italic', fontSize: 18, color: palette.text },
+                        Type.screenTitle,
+                        { color: palette.text },
                     ]}
                 >
                     Add to Top 4
@@ -296,14 +296,12 @@ const styles = StyleSheet.create({
         borderRadius: Radius.md,
     },
     searchInput: {
+        ...Type.body,
         flex: 1,
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 15,
         padding: 0,
     },
     capacityNote: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        ...Type.metadata,
         marginHorizontal: 18,
         marginBottom: Spacing.xs,
     },
@@ -315,10 +313,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.xxl,
     },
     tierLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1.4,
-        textTransform: 'uppercase',
+        ...Type.sectionKicker,
         paddingHorizontal: 18,
         marginTop: Spacing.md,
         marginBottom: Spacing.xs,
@@ -343,19 +338,14 @@ const styles = StyleSheet.create({
     },
     textBlock: { flex: 1, minWidth: 0, gap: 2 },
     name: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 22,
+        ...Type.editorialBody,
     },
     meta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        ...Type.metadata,
     },
     signal: { flexShrink: 0 },
     addPill: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
-        letterSpacing: 1,
+        ...Type.label,
         borderWidth: 1,
         borderRadius: Radius.full,
         paddingHorizontal: 12,
@@ -369,7 +359,8 @@ const styles = StyleSheet.create({
         gap: 3,
     },
     addedText: {
+        ...Type.metadata,
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
+        fontWeight: '600',
     },
 });

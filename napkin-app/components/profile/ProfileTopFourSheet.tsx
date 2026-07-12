@@ -17,7 +17,7 @@ import {
     Pressable,
     StyleSheet,
     Alert,
-    ActivityIndicator,
+    ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,6 +29,7 @@ import { useSetProfileTopFour } from '@/hooks/users/useSetProfileTopFour';
 import { TopFourSearchScreen, type TopFourSearchPick } from './TopFourSearchScreen';
 import { ChooseMemorySheet } from './ChooseMemorySheet';
 import { toProfileTopFourPicks } from './topFourPicks';
+import { SheetHeader } from '@/components/ui/SheetHeader';
 
 export interface ProfileTopFourPick {
     restaurant_id: string;
@@ -101,7 +102,7 @@ function SlotCard({
 
             {filled ? (
                 <>
-                    <Text style={[styles.cardName, { color: palette.text }]} numberOfLines={2}>
+                    <Text style={[styles.cardName, { color: palette.text }]}>
                         {slot!.name}
                     </Text>
                     <Pressable
@@ -277,11 +278,11 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
     return (
         <>
             <Modal
-            visible={visible}
-            animationType="slide"
-            presentationStyle="pageSheet"
-            onRequestClose={addingSlot != null ? () => setAddingSlot(null) : handleCancel}
-        >
+                visible={visible}
+                animationType="slide"
+                presentationStyle="pageSheet"
+                onRequestClose={addingSlot != null ? () => setAddingSlot(null) : handleCancel}
+            >
             {addingSlot != null ? (
                 <TopFourSearchScreen
                     onClose={() => setAddingSlot(null)}
@@ -292,62 +293,43 @@ export function ProfileTopFourSheet({ visible, onClose, userId, currentPicks }: 
                 />
             ) : (
                 <View style={[styles.container, { backgroundColor: palette.background }]}>
-                    {/* Header */}
-                    <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
-                        <Pressable onPress={handleCancel} hitSlop={8}>
-                            <Text style={[Type.body, { color: palette.textMuted }]}>Cancel</Text>
-                        </Pressable>
+                    <View style={{ paddingTop: insets.top }}>
+                        <SheetHeader
+                            title="Top 4"
+                            onLeftPress={handleCancel}
+                            onRightPress={handleSave}
+                            rightDisabled={!hasDiff || isPending}
+                            rightPending={isPending}
+                        />
+                    </View>
+
+                    <ScrollView contentContainerStyle={styles.content}>
+                        {/* Subtitle */}
                         <Text
                             style={[
-                                Type.headlineItalic,
-                                { fontFamily: 'Newsreader_400Regular_Italic', fontStyle: 'italic', fontSize: 18, color: palette.text },
+                                Type.bodySmall,
+                                {
+                                    color: palette.textMuted,
+                                    marginHorizontal: 22,
+                                    marginBottom: Spacing.lg,
+                                },
                             ]}
                         >
-                            Top 4
+                            Tap a square to set that spot, tap a filled one to swap it, × to clear. Empty = back to automatic.
                         </Text>
-                        <Pressable onPress={handleSave} hitSlop={8} disabled={!hasDiff || isPending}>
-                            {isPending ? (
-                                <ActivityIndicator color={palette.primary} size="small" />
-                            ) : (
-                                <Text
-                                    style={[
-                                        Type.body,
-                                        { color: hasDiff ? palette.primary : palette.textMuted, fontFamily: 'Manrope_700Bold' },
-                                    ]}
-                                >
-                                    Save
-                                </Text>
-                            )}
-                        </Pressable>
-                    </View>
 
-                    {/* Subtitle */}
-                    <Text
-                        style={[
-                            Type.bodySmall,
-                            {
-                                color: palette.textMuted,
-                                fontFamily: 'Newsreader_400Regular_Italic',
-                                fontStyle: 'italic',
-                                marginHorizontal: 22,
-                                marginBottom: Spacing.lg,
-                            },
-                        ]}
-                    >
-                        Tap a square to set that spot, tap a filled one to swap it, × to clear. Empty = back to automatic.
-                    </Text>
-
-                    {/* 2×2 fixed slots */}
-                    <View style={styles.grid}>
-                        <View style={styles.gridRow}>
-                            <SlotCard index={0} slot={slots[0]} palette={palette} onPress={() => setAddingSlot(0)} onClear={() => clearSlot(0)} onChooseMemory={() => setChoosingSlot(0)} />
-                            <SlotCard index={1} slot={slots[1]} palette={palette} onPress={() => setAddingSlot(1)} onClear={() => clearSlot(1)} onChooseMemory={() => setChoosingSlot(1)} />
+                        {/* 2×2 fixed slots */}
+                        <View style={styles.grid}>
+                            <View style={styles.gridRow}>
+                                <SlotCard index={0} slot={slots[0]} palette={palette} onPress={() => setAddingSlot(0)} onClear={() => clearSlot(0)} onChooseMemory={() => setChoosingSlot(0)} />
+                                <SlotCard index={1} slot={slots[1]} palette={palette} onPress={() => setAddingSlot(1)} onClear={() => clearSlot(1)} onChooseMemory={() => setChoosingSlot(1)} />
+                            </View>
+                            <View style={styles.gridRow}>
+                                <SlotCard index={2} slot={slots[2]} palette={palette} onPress={() => setAddingSlot(2)} onClear={() => clearSlot(2)} onChooseMemory={() => setChoosingSlot(2)} />
+                                <SlotCard index={3} slot={slots[3]} palette={palette} onPress={() => setAddingSlot(3)} onClear={() => clearSlot(3)} onChooseMemory={() => setChoosingSlot(3)} />
+                            </View>
                         </View>
-                        <View style={styles.gridRow}>
-                            <SlotCard index={2} slot={slots[2]} palette={palette} onPress={() => setAddingSlot(2)} onClear={() => clearSlot(2)} onChooseMemory={() => setChoosingSlot(2)} />
-                            <SlotCard index={3} slot={slots[3]} palette={palette} onPress={() => setAddingSlot(3)} onClear={() => clearSlot(3)} onChooseMemory={() => setChoosingSlot(3)} />
-                        </View>
-                    </View>
+                    </ScrollView>
                 </View>
             )}
 
@@ -375,12 +357,9 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 22,
-        paddingBottom: Spacing.sm,
+    content: {
+        paddingTop: Spacing.md,
+        paddingBottom: Spacing.xxl,
     },
     grid: {
         paddingHorizontal: 22,
@@ -392,43 +371,43 @@ const styles = StyleSheet.create({
     },
     card: {
         flex: 1,
-        height: 100,
+        minHeight: 132,
         borderRadius: Radius.md,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: Spacing.md,
-        overflow: 'hidden',
+        paddingTop: 36,
+        paddingBottom: Spacing.sm,
     },
     cardNum: {
         position: 'absolute',
         top: 8,
         left: 11,
+        ...Type.metadata,
         fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
+        fontWeight: '700',
     },
     cardName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontStyle: 'italic',
-        fontSize: 17,
-        lineHeight: 21,
+        ...Type.editorialBody,
         textAlign: 'center',
     },
     cardRemove: {
         position: 'absolute',
-        top: 5,
-        right: 5,
-        width: 28,
-        height: 28,
+        top: 0,
+        right: 0,
+        width: 40,
+        height: 40,
         alignItems: 'center',
         justifyContent: 'center',
     },
     memoryAffordance: {
-        position: 'absolute',
-        bottom: 7,
         alignSelf: 'center',
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 4,
+        minHeight: 40,
+        marginTop: Spacing.xs,
     },
     memoryThumb: {
         width: 16,
@@ -436,9 +415,10 @@ const styles = StyleSheet.create({
         borderRadius: 3,
     },
     memoryLabel: {
+        ...Type.metadata,
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9.5,
-        letterSpacing: 0.4,
+        fontWeight: '600',
+        letterSpacing: 0.2,
         textTransform: 'lowercase',
     },
 });

@@ -99,8 +99,9 @@ export function FollowButton({ targetUserId, initialIsFollowing }: Props) {
 
 const styles = StyleSheet.create({
     button: {
-        height: 32,
+        minHeight: 44,
         paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
         borderRadius: Radius.full,
         justifyContent: 'center',
         alignItems: 'center',

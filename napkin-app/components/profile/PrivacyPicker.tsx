@@ -58,12 +58,12 @@ export function PrivacyPicker({ state, onSelect, disabled = false }: Props) {
                     >
                         <Text
                             style={[
-                                Type.caption,
+                                Type.metadata,
                                 {
-                                    fontSize: 10,
                                     letterSpacing: 0.3,
                                     color: isActive ? palette.textInverse : palette.textMuted,
-                                    fontWeight: isActive ? '600' : '400',
+                                    fontFamily: isActive ? 'Manrope_600SemiBold' : 'Manrope_500Medium',
+                                    fontWeight: isActive ? '600' : '500',
                                 },
                             ]}
                         >
@@ -84,8 +84,10 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
     },
     segment: {
-        paddingHorizontal: 9,
-        paddingVertical: 5,
+        minHeight: 40,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        justifyContent: 'center',
     },
     segmentBorder: {
         borderRightWidth: 1,

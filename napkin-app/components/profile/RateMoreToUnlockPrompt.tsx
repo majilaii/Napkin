@@ -8,13 +8,13 @@
  * Copy: "rate more restaurants to unlock taste match"
  *
  * Design rules:
- *   - Newsreader italic, textMuted, lowercase — no icon, no CTA button
+ *   - Upright functional body copy, textMuted, lowercase — no icon, no CTA button
  *   - Only renders on surfaces where a Ring 2 chip would otherwise appear
  *     (i.e., public_only relationship). Never on self or tables_in_common.
  */
 import React from 'react';
 import { Text, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 /** Minimum viewer rated-entry count before calibration is available. */
@@ -47,8 +47,6 @@ export function RateMoreToUnlockPrompt({ viewerRatedEntryCount }: RateMoreToUnlo
 
 const styles = StyleSheet.create({
     prompt: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12,
-        lineHeight: 17,
+        ...Type.bodySmall,
     },
 });

@@ -1,9 +1,9 @@
 /**
- * SheetHeader — modal/sheet header row: Cancel / italic-serif title / Save.
+ * SheetHeader — modal/sheet header row: Cancel / upright title / Save.
  *
  * Matches the Heirloom kit `SheetHeader` from logger-canvas:
  *  - Left: "Cancel" (Manrope 500 15px, textSecondary)
- *  - Center: italic Newsreader title, 18px, ink-primary
+ *  - Center: functional Manrope screen title, ink-primary
  *  - Right: "Save" / "Post" — terracotta Manrope 600 15px
  *  - Hairline divider underneath (ruleWarmSoft / dividerSoft)
  *
@@ -16,9 +16,10 @@ import {
     Pressable,
     StyleSheet,
     ActivityIndicator,
+    useWindowDimensions,
 } from 'react-native';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface SheetHeaderProps {
@@ -45,8 +46,66 @@ export function SheetHeader({
 }: SheetHeaderProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const { fontScale } = useWindowDimensions();
+    const usesStackedLayout = fontScale >= 1.5;
 
     const rightColor = rightDisabled ? palette.textMuted : palette.primary;
+
+    const leftAction = (
+        <Pressable
+            onPress={onLeftPress}
+            hitSlop={12}
+            style={({ pressed }) => [
+                styles.sideWrap,
+                usesStackedLayout ? styles.sideWrapStacked : null,
+                { opacity: pressed ? 0.6 : 1 },
+            ]}
+            accessibilityRole="button"
+        >
+            <Text style={[Type.body, { color: palette.textSecondary }]}>{leftLabel}</Text>
+        </Pressable>
+    );
+
+    const rightAction = rightLabel ? (
+        <Pressable
+            onPress={onRightPress}
+            disabled={rightDisabled || rightPending}
+            hitSlop={12}
+            style={({ pressed }) => [
+                styles.sideWrap,
+                usesStackedLayout ? styles.sideWrapStacked : null,
+                styles.rightWrap,
+                { opacity: pressed ? 0.6 : 1 },
+            ]}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: rightDisabled || rightPending }}
+        >
+            {rightPending ? (
+                <ActivityIndicator size="small" color={palette.primary} />
+            ) : (
+                <Text
+                    style={[
+                        Type.body,
+                        { color: rightColor, fontFamily: 'Manrope_600SemiBold' },
+                    ]}
+                >
+                    {rightLabel}
+                </Text>
+            )}
+        </Pressable>
+    ) : (
+        <View style={[styles.sideWrap, styles.rightWrap]} />
+    );
+
+    const titleText = (
+        <Text
+            style={[Type.screenTitle, styles.title, { color: palette.text }]}
+            numberOfLines={usesStackedLayout ? undefined : 2}
+            accessibilityRole="header"
+        >
+            {title}
+        </Text>
+    );
 
     return (
         <View>
@@ -57,81 +116,25 @@ export function SheetHeader({
                     />
                 </View>
             ) : null}
-            <View
-                style={[
-                    styles.row,
-                    { borderBottomColor: palette.dividerSoft },
-                ]}
-            >
-                <Pressable
-                    onPress={onLeftPress}
-                    hitSlop={12}
-                    style={({ pressed }) => [
-                        styles.sideWrap,
-                        { opacity: pressed ? 0.6 : 1 },
-                    ]}
-                >
-                    <Text
-                        style={{
-                            fontFamily: 'Manrope_500Medium',
-                            fontSize: 15,
-                            color: palette.textSecondary,
-                        }}
-                    >
-                        {leftLabel}
-                    </Text>
-                </Pressable>
-
-                <View style={styles.centerWrap} pointerEvents="none">
-                    <Text
-                        style={{
-                            fontFamily: 'Newsreader_400Regular_Italic',
-                            fontSize: 18,
-                            color: palette.text,
-                        }}
-                        numberOfLines={1}
-                    >
-                        {title}
-                    </Text>
+            {usesStackedLayout ? (
+                <View style={[styles.stacked, { borderBottomColor: palette.dividerSoft }]}>
+                    <View style={styles.stackedTitle} pointerEvents="none">
+                        {titleText}
+                    </View>
+                    <View style={styles.actionRow}>
+                        {leftAction}
+                        {rightAction}
+                    </View>
                 </View>
-
-                {rightLabel ? (
-                    <Pressable
-                        onPress={onRightPress}
-                        disabled={rightDisabled || rightPending}
-                        hitSlop={12}
-                        style={({ pressed }) => [
-                            styles.sideWrap,
-                            styles.rightWrap,
-                            {
-                                opacity:
-                                    rightDisabled || rightPending
-                                        ? 0.5
-                                        : pressed
-                                          ? 0.6
-                                          : 1,
-                            },
-                        ]}
-                    >
-                        {rightPending ? (
-                            <ActivityIndicator size="small" color={palette.primary} />
-                        ) : (
-                            <Text
-                                style={{
-                                    fontFamily: 'Manrope_600SemiBold',
-                                    fontSize: 15,
-                                    color: rightColor,
-                                }}
-                            >
-                                {rightLabel}
-                            </Text>
-                        )}
-                    </Pressable>
-                ) : (
-                    // Empty right slot — preserves layout balance vs the left Cancel link.
-                    <View style={[styles.sideWrap, styles.rightWrap]} />
-                )}
-            </View>
+            ) : (
+                <View style={[styles.row, { borderBottomColor: palette.dividerSoft }]}>
+                    {leftAction}
+                    <View style={styles.centerWrap} pointerEvents="none">
+                        {titleText}
+                    </View>
+                    {rightAction}
+                </View>
+            )}
         </View>
     );
 }
@@ -150,26 +153,48 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         paddingHorizontal: Spacing.lg,
         paddingTop: Spacing.sm,
         paddingBottom: Spacing.md,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     sideWrap: {
-        minWidth: 60,
+        width: 72,
+        minHeight: 44,
         paddingVertical: Spacing.xs,
+        justifyContent: 'center',
+    },
+    sideWrapStacked: {
+        width: 'auto',
+        minWidth: 120,
     },
     rightWrap: {
         alignItems: 'flex-end',
     },
     centerWrap: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
+        flex: 1,
+        minWidth: 0,
+        paddingHorizontal: Spacing.xs,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    title: {
+        textAlign: 'center',
+    },
+    stacked: {
+        paddingTop: Spacing.sm,
+        paddingBottom: Spacing.sm,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    stackedTitle: {
+        paddingHorizontal: Spacing.lg,
+        alignItems: 'center',
+    },
+    actionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: Spacing.lg,
+        marginTop: Spacing.xs,
     },
 });

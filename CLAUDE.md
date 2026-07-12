@@ -21,7 +21,8 @@ Before implementing ANY screen, component, or visual change:
 6. If the bundle is ambiguous, ask the user before implementing.
 
 **Non-negotiable brand rules** (see `project/README.md` for full detail):
-- Warm paper + italic Newsreader is the brand. Italic serif = brand voice (wordmark, Table names, restaurant names, rating numerals).
+- Warm paper + Newsreader is the brand. Upright Newsreader is the default editorial voice for names and authored content. Italic serif is a scarce accent reserved for the wordmark, rating numerals, and direct quotes — never section headings, labels, prompts, instructions, or metadata.
+- Functional type has a legibility floor: 16pt body, 13pt metadata, and 11pt uppercase labels. Smaller type is allowed only when it is non-essential text embedded inside artwork; it must never carry an action or primary meaning.
 - Never pure black. Use `#1c1c19`.
 - No 1px solid borders for sectioning. Structure = background shifts + spacing + ghosted warm rules.
 - Ambient shadows only (`0 8px 30px rgba(28,28,25,0.06)`). No hard drop shadows.
@@ -101,7 +102,7 @@ Emergent overlap, not declared nomination.
 
 - **Bottom nav stays Ionicons + labels.** Do NOT swap for the canvas text-only uppercase variant from `feed-canvas` / `profile-canvas`. 52×52 floating terracotta `+` with negative margin. User rejected text-only nav; icons are non-negotiable. When doing canvas-faithful passes, skip the bottom nav — leave `app/_layout.tsx::BottomNavBar` and `navStyles` alone. If asked to redesign nav later, confirm before replacing icons.
 - **Terse responses.** Don't narrate. Short updates, direct answers.
-- **On-screen copy economy — cut hard.** Claude Design canvases over-explain; their prose is a *maximum to cut from*, not a spec to reproduce. Prefer a succinct label ("Name", or none + a placeholder) over a full-sentence prompt — never ship "what should we call this table?". Never stack multiple explanatory sentences on one screen (reads as cluttered garbage). If a field is self-evident, don't narrate it — let the placeholder/structure carry it; one entry box per intent. Empty states get at most one short line. **The goal is instant comprehension** — the user should "get it" at a glance, which is as much about type hierarchy and contrast as word count: put functional text and field labels in Manrope (sans) with real contrast, and reserve Newsreader *italic serif* for content and brand moments (names, quotes, ratings) — NEVER for prompts, instructions, or labels (a prompt in decorative italic reads as atmosphere, not instruction). This applies to all UI agents (builder, designer, reviewer).
+- **On-screen copy economy — cut hard.** Claude Design canvases over-explain; their prose is a *maximum to cut from*, not a spec to reproduce. Prefer a succinct label ("Name", or none + a placeholder) over a full-sentence prompt — never ship "what should we call this table?". Never stack multiple explanatory sentences on one screen (reads as cluttered garbage). If a field is self-evident, don't narrate it — let the placeholder/structure carry it; one entry box per intent. Empty states get at most one short line. **The goal is instant comprehension** — the user should "get it" at a glance, which is as much about type hierarchy and contrast as word count: put functional text, section structure, and field labels in upright Manrope with real contrast; use upright Newsreader for editorial content and names; reserve Newsreader italic for rare accents such as ratings and direct quotes. A prompt in decorative italic reads as atmosphere, not instruction. This applies to all UI agents (builder, designer, reviewer).
 
 ## Terminology
 
