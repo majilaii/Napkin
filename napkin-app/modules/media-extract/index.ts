@@ -1,6 +1,11 @@
 import { requireNativeModule } from 'expo';
 
-import type { ExtractOptions, ExtractResult } from './src/MediaExtract.types';
+import type {
+    ExtractOptions,
+    ExtractResult,
+    ImageExtractOptions,
+    ImageExtractResult,
+} from './src/MediaExtract.types';
 // TICKET-164: the four stage budgets live in ONE place (lib/importBudgets); the
 // native OCR/STT budgets are threaded here so they are never scattered magic
 // numbers. The Swift side mirrors these as nil-arg fallbacks, but JS is
@@ -24,6 +29,8 @@ type NativeMediaExtract = {
      * accepts the OCR/STT budget params; absent (undefined) on the pre-164 binary.
      * The JS wrapper gates the grown 7-arg call on it — a blind positional grow
      * throws an ExpoModulesCore arg-count mismatch on every un-updated binary.
+     * TICKET-176: >= 3 additionally exposes extractFromImages (photo-slide OCR);
+     * the wrapper below never touches that function on a < 3 binary (it's absent).
      */
     apiVersion?: number;
     extractFromVideo(
@@ -36,6 +43,12 @@ type NativeMediaExtract = {
         sttTimeoutMs?: number,
         sttMaxDurationSec?: number,
     ): Promise<ExtractResult>;
+    /**
+     * TICKET-176: OCR a set of photo-mode slide images. apiVersion >= 3 ONLY —
+     * absent on a v2 binary, so extractFromImages() below gates on apiVersion
+     * before calling (a missing function would throw, same skew law as R4).
+     */
+    extractFromImages(uris: string[], ocrBudgetMs?: number): Promise<ImageExtractResult>;
     // App-Group import queue (TICKET-083 inc3) — synchronous file ops.
     listImportManifests(): string[];
     writeImportManifest(jobId: string, json: string): boolean;
@@ -110,6 +123,24 @@ export async function extractFromVideo(
         );
     }
     return native.extractFromVideo(uri, maxFrames, fps, transcribe);
+}
+
+/**
+ * TICKET-176: OCR a set of photo-mode slide images entirely on-device — the same
+ * Vision pass as extractFromVideo's frame OCR. Feature-detected on apiVersion >= 3
+ * (mirrors the extractFromVideo v2 gate EXACTLY): on an OLDER binary (OTA JS ahead
+ * of native) the native function is ABSENT, so calling it would throw — return
+ * null instead and the caller falls back to the {url} resolve (167 behavior). The
+ * budget default comes from importBudgets so every call gets a real deadline even
+ * when opts is omitted.
+ */
+export async function extractFromImages(
+    uris: string[],
+    opts?: ImageExtractOptions,
+): Promise<ImageExtractResult | null> {
+    const native = getNative();
+    if ((native.apiVersion ?? 0) < 3) return null;
+    return native.extractFromImages(uris, opts?.ocrBudgetMs ?? OCR_WALLCLOCK_BUDGET_MS);
 }
 
 // ── App-Group import queue (TICKET-083 inc3) ────────────────────────────────
