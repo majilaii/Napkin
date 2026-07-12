@@ -1,25 +1,25 @@
 /**
- * TeachShareSheetDemo — the onboarding teach body (TICKET-122, Surface A).
+ * TeachShareSheetDemo — a code-native, Rodeo-style onboarding film.
  *
- * A self-contained, auto-advancing 3-beat stage rendered entirely from theme
- * components (NO screenshots, NO real-OS overlay — iOS forbids drawing over other
- * apps, so Rodeo's "live" share-sheet demo is itself an in-app replica; this is
- * ours):
- *   Beat 0 — benefit: a video tile with a terracotta scanline sweeping top→bottom
- *            ("we watch the whole video").
- *   Beat 1 — an in-app iOS-share-sheet REPLICA sliding up: neutral app tiles + the
- *            terracotta napkin tile, with "tap share" then a bouncing "tap napkin".
- *   Beat 2 — pro-tip: a star fills on the napkin tile (add to share favourites).
- *
- * Timers live in a ref and are cleared on unmount. useReducedMotion() → skip all
- * timers/animation and render Beat 2 statically with copy visible. Tapping the
- * stage advances a beat early (clamped). Sole accent = terracotta.
+ * Nothing here invokes Instagram or the system share sheet. It deliberately
+ * recreates the useful parts in native views so the sequence is deterministic,
+ * offline-friendly, accessible, theme-aware, and easy to update when Napkin's
+ * import flow changes.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import {
+    ActivityIndicator,
+    Image,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
     Easing,
+    SharedValue,
     useAnimatedStyle,
     useReducedMotion,
     useSharedValue,
@@ -28,7 +28,7 @@ import Animated, {
     withTiming,
 } from 'react-native-reanimated';
 
-import { Colors, Radius } from '@/constants/theme';
+import { Colors, Shadow } from '@/constants/theme';
 import {
     BEAT_COUNT,
     BEAT_TIMINGS_MS,
@@ -39,297 +39,943 @@ import {
 
 type Palette = typeof Colors.light;
 
-const STAGE_H = 240;
-const SCAN_TRAVEL = 104; // px the scanline sweeps down the video tile
+export interface TeachShareSheetDemoProps {
+    palette: Palette;
+    topInset?: number;
+    bottomInset?: number;
+    onDone?: () => void;
+    onClose?: () => void;
+    doneLabel?: string;
+    isPending?: boolean;
+}
 
-export function TeachShareSheetDemo({ palette }: { palette: Palette }) {
+const RESULT_ROWS = [
+    { name: 'Mountain', area: 'Soho', tint: '#c96f4d' },
+    { name: 'Kiln', area: 'Soho', tint: '#7d8a62' },
+    { name: 'Berenjak', area: 'Borough', tint: '#d1a155' },
+] as const;
+
+const SHARE_APPS = [
+    { label: 'AirDrop', icon: 'wifi' as const, color: '#1684f8' },
+    { label: 'Messages', icon: 'chatbubble' as const, color: '#35c759' },
+    { label: 'Mail', icon: 'mail' as const, color: '#1487f8' },
+    { label: 'Notes', icon: 'document-text' as const, color: '#f5c542' },
+] as const;
+
+function useSceneStyle(index: number, beatValue: SharedValue<number>) {
+    return useAnimatedStyle(() => {
+        const distance = Math.min(Math.abs(beatValue.value - index), 1);
+        const direction = beatValue.value > index ? -1 : 1;
+        return {
+            opacity: 1 - distance,
+            transform: [{ translateY: distance * direction * 12 }],
+        };
+    });
+}
+
+function useRevealStyle(value: SharedValue<number>) {
+    return useAnimatedStyle(() => ({
+        opacity: value.value,
+        transform: [{ translateY: (1 - value.value) * 12 }],
+    }));
+}
+
+export function TeachShareSheetDemo({
+    palette,
+    topInset = 0,
+    bottomInset = 0,
+    onDone,
+    onClose,
+    doneLabel = TEACH_COPY.doneCta,
+    isPending = false,
+}: TeachShareSheetDemoProps) {
     const reduced = useReducedMotion();
     const [beat, setBeat] = useState(reduced ? LAST_BEAT : 0);
     const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-    // Crossfade driver mirrored from React state (dots need state anyway).
-    const beatSV = useSharedValue(reduced ? LAST_BEAT : 0);
-    // Per-beat animation values.
-    const intro = useSharedValue(reduced ? 1 : 0); // Beat 0 entrance
-    const scan = useSharedValue(0); // Beat 0 scanline sweep (0→1 repeat)
-    const sheetY = useSharedValue(reduced ? 0 : 40); // Beat 1 sheet slide
-    const sheetOp = useSharedValue(reduced ? 1 : 0);
-    const coach = useSharedValue(0); // Beat 1 "tap napkin" bounce
-    const star = useSharedValue(reduced ? 1 : 0); // Beat 2 star fill pulse
+    const beatValue = useSharedValue(reduced ? LAST_BEAT : 0);
+    const reelFloat = useSharedValue(0);
+    const tapPulse = useSharedValue(0);
+    const sheetY = useSharedValue(reduced ? 0 : 52);
+    const resultOne = useSharedValue(reduced ? 1 : 0);
+    const resultTwo = useSharedValue(reduced ? 1 : 0);
+    const resultThree = useSharedValue(reduced ? 1 : 0);
+
+    const scene0 = useSceneStyle(0, beatValue);
+    const scene1 = useSceneStyle(1, beatValue);
+    const scene2 = useSceneStyle(2, beatValue);
+    const scene3 = useSceneStyle(3, beatValue);
 
     useEffect(() => {
-        beatSV.value = beat;
-    }, [beat, beatSV]);
+        beatValue.value = withTiming(beat, {
+            duration: reduced ? 0 : 320,
+            easing: Easing.out(Easing.cubic),
+        });
+    }, [beat, beatValue, reduced]);
 
-    // Timeline — skipped entirely under reduced motion (Beat 2 is already shown).
     useEffect(() => {
         if (reduced) return;
-        intro.value = withTiming(1, { duration: 350, easing: Easing.out(Easing.cubic) });
-        scan.value = withRepeat(withTiming(1, { duration: 900, easing: Easing.inOut(Easing.quad) }), -1, false);
-        // Monotonic: a tap-ahead must never be yanked back by a stale timer.
-        const t1 = setTimeout(() => setBeat((b) => Math.max(b, 1)), BEAT_TIMINGS_MS.beat1To2);
-        const t2 = setTimeout(() => setBeat((b) => Math.max(b, 2)), BEAT_TIMINGS_MS.beat2To3);
-        timers.current.push(t1, t2);
+
+        reelFloat.value = withRepeat(
+            withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.quad) }),
+            -1,
+            true,
+        );
+        tapPulse.value = withRepeat(
+            withTiming(1, { duration: 900, easing: Easing.out(Easing.cubic) }),
+            -1,
+            false,
+        );
+
+        timers.current = [
+            setTimeout(() => setBeat((value) => Math.max(value, 1)), BEAT_TIMINGS_MS.promiseToShare),
+            setTimeout(() => setBeat((value) => Math.max(value, 2)), BEAT_TIMINGS_MS.shareToSheet),
+            setTimeout(() => setBeat((value) => Math.max(value, 3)), BEAT_TIMINGS_MS.sheetToResult),
+        ];
+
         return () => {
             timers.current.forEach(clearTimeout);
             timers.current = [];
         };
-    }, [reduced, intro, scan]);
+    }, [reduced, reelFloat, tapPulse]);
 
-    // Per-beat entrance animations, fired when the beat becomes visible (tap or timer).
     useEffect(() => {
         if (reduced) return;
-        if (beat >= 1) {
-            sheetY.value = withTiming(0, { duration: 320, easing: Easing.out(Easing.cubic) });
-            sheetOp.value = withTiming(1, { duration: 320 });
-            coach.value = withDelay(800, withRepeat(withTiming(1, { duration: 620, easing: Easing.inOut(Easing.quad) }), -1, true));
-        }
         if (beat >= 2) {
-            star.value = withRepeat(withTiming(1, { duration: 720, easing: Easing.inOut(Easing.quad) }), -1, true);
+            sheetY.value = withTiming(0, { duration: 360, easing: Easing.out(Easing.cubic) });
         }
-    }, [beat, reduced, sheetY, sheetOp, coach, star]);
+        if (beat >= LAST_BEAT) {
+            resultOne.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+            resultTwo.value = withDelay(110, withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) }));
+            resultThree.value = withDelay(220, withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) }));
+        }
+    }, [beat, reduced, resultOne, resultThree, resultTwo, sheetY]);
 
-    const onTap = () => {
-        if (!reduced) setBeat((b) => advanceBeat(b));
+    const reelFloatStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateY: reelFloat.value * -5 },
+            { rotate: `${-1.2 + reelFloat.value * 1.2}deg` },
+        ],
+    }));
+    const pulseStyle = useAnimatedStyle(() => ({
+        opacity: 0.72 * (1 - tapPulse.value),
+        transform: [{ scale: 0.78 + tapPulse.value * 0.72 }],
+    }));
+    const sheetStyle = useAnimatedStyle(() => ({
+        opacity: 1 - sheetY.value / 80,
+        transform: [{ translateY: sheetY.value }],
+    }));
+    const resultStyles = [
+        useRevealStyle(resultOne),
+        useRevealStyle(resultTwo),
+        useRevealStyle(resultThree),
+    ];
+    const terminalFooter = useAnimatedStyle(() => ({
+        opacity: Math.max(0, beatValue.value - 2),
+        transform: [{ translateY: Math.max(0, 3 - beatValue.value) * 8 }],
+    }));
+    const continueFooter = useAnimatedStyle(() => ({
+        opacity: Math.min(1, Math.max(0, 3 - beatValue.value)),
+    }));
+
+    const onStagePress = () => {
+        if (!reduced) setBeat((value) => advanceBeat(value));
     };
 
-    // Crossfade layer opacities (target derived from beatSV → animated on the UI thread).
-    const layer0 = useAnimatedStyle(() => ({ opacity: withTiming(beatSV.value === 0 ? 1 : 0, { duration: 280 }) }));
-    const layer1 = useAnimatedStyle(() => ({ opacity: withTiming(beatSV.value === 1 ? 1 : 0, { duration: 280 }) }));
-    const layer2 = useAnimatedStyle(() => ({ opacity: withTiming(beatSV.value === 2 ? 1 : 0, { duration: 280 }) }));
-
-    const introStyle = useAnimatedStyle(() => ({
-        opacity: intro.value,
-        transform: [{ translateY: (1 - intro.value) * 12 }],
-    }));
-    const scanStyle = useAnimatedStyle(() => ({ transform: [{ translateY: scan.value * SCAN_TRAVEL }] }));
-    const sheetStyle = useAnimatedStyle(() => ({ opacity: sheetOp.value, transform: [{ translateY: sheetY.value }] }));
-    const coachStyle = useAnimatedStyle(() => ({
-        opacity: 0.55 + 0.45 * coach.value,
-        transform: [{ translateY: -coach.value * 6 }],
-    }));
-    const starStyle = useAnimatedStyle(() => ({ opacity: star.value, transform: [{ scale: 0.9 + 0.2 * star.value }] }));
-
     return (
-        <Pressable onPress={onTap} accessibilityRole="button" accessibilityLabel="next">
-            <View style={[styles.stage, { backgroundColor: palette.surfaceJournalLow }]}>
-                {/* ── Beat 0 — benefit ─────────────────────────────────────── */}
-                <Animated.View style={[styles.layer, layer0]} pointerEvents="none">
-                    <Animated.View style={introStyle}>
-                        <View style={[styles.videoTile, { backgroundColor: palette.surfaceJournal }]}>
-                            <Ionicons name="play" size={26} color={palette.textSecondary} />
-                            <Animated.View style={[styles.scanline, { backgroundColor: palette.primary }, scanStyle]} />
-                        </View>
-                        <Text style={[styles.benefit, { color: palette.text }]}>{TEACH_COPY.benefit}</Text>
+        <View
+            style={[
+                styles.root,
+                {
+                    paddingTop: topInset + 12,
+                    paddingBottom: Math.max(bottomInset, 12),
+                },
+            ]}
+        >
+            <View style={[styles.topRail, onClose ? styles.topRailWithClose : null]}>
+                <View style={styles.progressRow} accessibilityLabel={`Step ${beat + 1} of ${BEAT_COUNT}`}>
+                    {Array.from({ length: BEAT_COUNT }).map((_, index) => (
+                        <View
+                            key={index}
+                            style={[
+                                styles.progressTrack,
+                                {
+                                    backgroundColor:
+                                        index <= beat ? palette.primary : palette.outlineVariant,
+                                    opacity: index <= beat ? 1 : 0.42,
+                                },
+                            ]}
+                        />
+                    ))}
+                </View>
+                {onClose ? (
+                    <Pressable
+                        onPress={onClose}
+                        accessibilityRole="button"
+                        accessibilityLabel="Close import tutorial"
+                        style={({ pressed }) => [
+                            styles.closeButton,
+                            { backgroundColor: palette.surfaceJournalLow },
+                            pressed ? { transform: [{ scale: 0.96 }] } : null,
+                        ]}
+                    >
+                        <Ionicons name="close" size={19} color={palette.textMuted} />
+                    </Pressable>
+                ) : null}
+            </View>
+
+            <Pressable
+                onPress={onStagePress}
+                disabled={beat === LAST_BEAT || reduced}
+                style={styles.stage}
+                accessibilityRole="button"
+                accessibilityLabel={beat === LAST_BEAT ? 'Import tutorial complete' : 'Continue tutorial'}
+            >
+                <Animated.View style={[styles.scene, scene0]} pointerEvents="none">
+                    <CopyBlock
+                        eyebrow={TEACH_COPY.promiseEyebrow}
+                        title={TEACH_COPY.promiseTitle}
+                        body={TEACH_COPY.promiseBody}
+                        palette={palette}
+                    />
+                    <Animated.View style={[styles.reelWrap, reelFloatStyle]}>
+                        <View style={[styles.backCard, styles.backCardLeft, { backgroundColor: palette.secondaryContainer }]} />
+                        <View style={[styles.backCard, styles.backCardRight, { backgroundColor: palette.surfaceJournalHi }]} />
+                        <ReelPhone compact palette={palette} />
                     </Animated.View>
                 </Animated.View>
 
-                {/* ── Beat 1 — animated in-app share-sheet replica ─────────── */}
-                <Animated.View style={[styles.layer, layer1]} pointerEvents="none">
-                    <View style={[styles.scrim, { backgroundColor: palette.overlay }]} />
-                    <Animated.View style={[styles.sheet, { backgroundColor: palette.surfaceNote }, sheetStyle]}>
-                        <View style={[styles.sheetGrip, { backgroundColor: palette.outlineVariant }]} />
-                        <View style={styles.tileRow}>
-                            {['', '', 'napkin'].map((label, i) => {
-                                const isNapkin = label === 'napkin';
-                                return (
-                                    <View key={i} style={styles.tileCol}>
-                                        <View
-                                            style={[
-                                                styles.appTile,
-                                                {
-                                                    backgroundColor: isNapkin
-                                                        ? palette.primary
-                                                        : palette.surfaceJournalHi,
-                                                },
-                                            ]}
-                                        >
-                                            {isNapkin ? (
-                                                <Ionicons name="bookmark" size={20} color="#fff" />
-                                            ) : null}
-                                        </View>
-                                        {isNapkin ? (
-                                            <Text style={[styles.tileLabel, { color: palette.textSecondary }]}>napkin</Text>
-                                        ) : (
-                                            <View style={styles.tileLabelGap} />
-                                        )}
-                                    </View>
-                                );
-                            })}
+                <Animated.View style={[styles.scene, scene1]} pointerEvents="none">
+                    <CopyBlock
+                        title={TEACH_COPY.shareTitle}
+                        body={TEACH_COPY.shareBody}
+                        palette={palette}
+                    />
+                    <View style={styles.reelWrap}>
+                        <ReelPhone palette={palette} highlightShare pulseStyle={pulseStyle} />
+                    </View>
+                </Animated.View>
+
+                <Animated.View style={[styles.scene, scene2]} pointerEvents="none">
+                    <CopyBlock
+                        title={TEACH_COPY.sheetTitle}
+                        body={TEACH_COPY.sheetBody}
+                        palette={palette}
+                    />
+                    <View style={styles.shareDemo}>
+                        <View style={styles.shareReelBackdrop}>
+                            <ReelPhone palette={palette} compact />
+                            <View style={styles.shareScrim} />
                         </View>
-                        <View style={styles.coachRow}>
-                            <View style={styles.coachItem}>
-                                <Ionicons name="share-outline" size={16} color={palette.textMuted} />
-                                <Text style={[styles.coachLabel, { color: palette.textMuted }]}>{TEACH_COPY.tapShare}</Text>
+                        <Animated.View
+                            style={[
+                                styles.shareSheet,
+                                { backgroundColor: palette.surfaceNote },
+                                sheetStyle,
+                            ]}
+                        >
+                            <View style={[styles.sheetGrip, { backgroundColor: palette.outlineVariant }]} />
+                            <View style={styles.shareMeta}>
+                                <View style={[styles.shareThumb, { backgroundColor: palette.surfaceJournalHi }]}>
+                                    <Ionicons name="restaurant" size={15} color={palette.primary} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.shareMetaTitle, { color: palette.text }]}>3 London restaurants</Text>
+                                    <Text style={[styles.shareMetaUrl, { color: palette.textMuted }]}>instagram.com</Text>
+                                </View>
                             </View>
-                            <Animated.View style={[styles.coachItem, coachStyle]}>
-                                <Ionicons name="arrow-forward" size={16} color={palette.primary} />
-                                <Text style={[styles.coachLabel, { color: palette.primary }]}>{TEACH_COPY.tapNapkin}</Text>
-                            </Animated.View>
-                        </View>
-                    </Animated.View>
-                </Animated.View>
-
-                {/* ── Beat 2 — pro-tip (terminal) ──────────────────────────── */}
-                <Animated.View style={[styles.layer, layer2]} pointerEvents="none">
-                    <View style={[styles.napkinFavTile, { backgroundColor: palette.primary }]}>
-                        <Ionicons name="bookmark" size={26} color="#fff" />
-                        {/* Sole accent stays terracotta (beat spec) — no amber here. */}
-                        <Animated.View style={[styles.starBadge, { backgroundColor: palette.surfaceNote }, starStyle]}>
-                            <Ionicons name="star" size={13} color={palette.primary} />
+                            <View style={styles.appRow}>
+                                {SHARE_APPS.map((app) => (
+                                    <ShareApp key={app.label} {...app} palette={palette} />
+                                ))}
+                                <View style={styles.shareAppCol}>
+                                    <View style={styles.napkinTarget}>
+                                        <Animated.View
+                                            style={[
+                                                styles.napkinPulse,
+                                                { borderColor: palette.primary },
+                                                pulseStyle,
+                                            ]}
+                                        />
+                                        <Image
+                                            source={require('../../assets/images/icon.png')}
+                                            style={styles.napkinIcon}
+                                        />
+                                    </View>
+                                    <Text style={[styles.appLabel, { color: palette.text }]}>Napkin</Text>
+                                </View>
+                            </View>
+                            <View style={[styles.coachPill, { backgroundColor: palette.text }]}>
+                                <Text style={[styles.coachText, { color: palette.background }]}>Tap Napkin</Text>
+                                <Ionicons name="arrow-forward" size={13} color={palette.background} />
+                            </View>
                         </Animated.View>
                     </View>
-                    <Text style={[styles.benefit, { color: palette.text }]}>{TEACH_COPY.proTip}</Text>
                 </Animated.View>
-            </View>
 
-            {/* Progress dots */}
-            <View style={styles.dots}>
-                {Array.from({ length: BEAT_COUNT }).map((_, i) => (
+                <Animated.View style={[styles.scene, scene3]} pointerEvents="none">
+                    <CopyBlock
+                        eyebrow={TEACH_COPY.resultEyebrow}
+                        title={TEACH_COPY.resultTitle}
+                        body={TEACH_COPY.resultBody}
+                        palette={palette}
+                    />
                     <View
-                        key={i}
                         style={[
-                            styles.dot,
+                            styles.resultCard,
+                            { backgroundColor: palette.surfaceNote },
+                        ]}
+                    >
+                        <View style={styles.resultHeader}>
+                            <View style={[styles.resultCheck, { backgroundColor: palette.secondaryContainer }]}>
+                                <Ionicons name="checkmark" size={17} color={palette.secondary} />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[styles.resultHeaderTitle, { color: palette.text }]}>Saved to your wishlist</Text>
+                                <Text style={[styles.resultHeaderMeta, { color: palette.textMuted }]}>From one shared video</Text>
+                            </View>
+                        </View>
+                        <View style={[styles.resultRule, { backgroundColor: palette.dividerSoft }]} />
+                        {RESULT_ROWS.map((row, index) => (
+                            <Animated.View key={row.name} style={[styles.resultRow, resultStyles[index]]}>
+                                <View style={[styles.resultThumb, { backgroundColor: row.tint }]}>
+                                    <Ionicons name="restaurant" size={15} color="#fffdf8" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.resultName, { color: palette.text }]}>{row.name}</Text>
+                                    <Text style={[styles.resultArea, { color: palette.textMuted }]}>{row.area}</Text>
+                                </View>
+                                <View style={[styles.savedBadge, { backgroundColor: palette.primaryMuted }]}>
+                                    <Ionicons name="bookmark" size={13} color={palette.primary} />
+                                    <Text style={[styles.savedText, { color: palette.primary }]}>Saved</Text>
+                                </View>
+                            </Animated.View>
+                        ))}
+                    </View>
+                </Animated.View>
+            </Pressable>
+
+            <View style={styles.footer}>
+                <Animated.View style={[styles.footerLayer, continueFooter]} pointerEvents="none">
+                    <Text style={[styles.continueHint, { color: palette.textMuted }]}>{TEACH_COPY.continueHint}</Text>
+                </Animated.View>
+                <Animated.View
+                    style={[styles.footerLayer, terminalFooter]}
+                    pointerEvents={beat === LAST_BEAT ? 'auto' : 'none'}
+                >
+                    <Pressable
+                        onPress={onDone}
+                        disabled={isPending}
+                        accessibilityRole="button"
+                        style={({ pressed }) => [
+                            styles.doneButton,
                             {
-                                backgroundColor: i === beat ? palette.primary : palette.outlineVariant,
-                                width: i === beat ? 18 : 6,
+                                backgroundColor: palette.primary,
+                                opacity: isPending ? 0.6 : 1,
+                                transform: [{ scale: pressed ? 0.96 : 1 }],
                             },
                         ]}
-                    />
-                ))}
+                    >
+                        {isPending ? (
+                            <ActivityIndicator color={palette.textInverse} />
+                        ) : (
+                            <>
+                                <Text style={styles.doneText}>{doneLabel}</Text>
+                                <Ionicons name="arrow-forward" size={18} color={palette.textInverse} />
+                            </>
+                        )}
+                    </Pressable>
+                </Animated.View>
             </View>
-        </Pressable>
+        </View>
+    );
+}
+
+function CopyBlock({
+    eyebrow,
+    title,
+    body,
+    palette,
+}: {
+    eyebrow?: string;
+    title: string;
+    body: string;
+    palette: Palette;
+}) {
+    return (
+        <View style={styles.copyBlock}>
+            {eyebrow ? <Text style={[styles.eyebrow, { color: palette.primary }]}>{eyebrow}</Text> : null}
+            <Text style={[styles.title, { color: palette.text }]}>{title}</Text>
+            <Text style={[styles.body, { color: palette.textSecondary }]}>{body}</Text>
+        </View>
+    );
+}
+
+function ReelPhone({
+    palette,
+    compact = false,
+    highlightShare = false,
+    pulseStyle,
+}: {
+    palette: Palette;
+    compact?: boolean;
+    highlightShare?: boolean;
+    pulseStyle?: object;
+}) {
+    return (
+        <View style={[styles.reelPhone, compact && styles.reelPhoneCompact]}>
+            <LinearGradient
+                colors={['#33231f', '#86513d', '#221c1a']}
+                locations={[0, 0.54, 1]}
+                style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.reelGlowOne} />
+            <View style={styles.reelGlowTwo} />
+            <View style={styles.plate}>
+                <View style={styles.plateInner}>
+                    <View style={[styles.foodDot, { top: 22, left: 29, backgroundColor: '#e7a342' }]} />
+                    <View style={[styles.foodDot, { top: 37, left: 51, backgroundColor: '#7c9b55' }]} />
+                    <View style={[styles.foodDot, { top: 48, left: 27, backgroundColor: '#c75c47' }]} />
+                    <View style={[styles.foodDot, { top: 24, left: 52, backgroundColor: '#f3d39a' }]} />
+                </View>
+            </View>
+            <View style={styles.reelTopBar}>
+                <Text style={styles.reelTopTitle}>Reels</Text>
+                <Ionicons name="camera-outline" size={18} color="#fff" />
+            </View>
+            <View style={styles.reelCaptionCard}>
+                <Text style={styles.reelHook}>3 London spots worth saving</Text>
+                <Text style={styles.reelHandle}>@smallplates.london</Text>
+            </View>
+            <View style={styles.reelActions}>
+                <ReelAction icon="heart" label="12.4K" />
+                <ReelAction icon="chatbubble" label="184" />
+                <View style={styles.shareActionWrap}>
+                    {highlightShare && pulseStyle ? (
+                        <Animated.View style={[styles.shareActionPulse, pulseStyle]} />
+                    ) : null}
+                    <View style={[styles.shareAction, highlightShare && { backgroundColor: palette.primary }]}>
+                        <Ionicons name="paper-plane" size={compact ? 16 : 20} color="#fff" />
+                    </View>
+                    {highlightShare ? <Text style={styles.tapLabel}>TAP</Text> : null}
+                </View>
+            </View>
+            <View style={styles.reelNav}>
+                <Ionicons name="home" size={compact ? 13 : 16} color="#fff" />
+                <Ionicons name="search" size={compact ? 13 : 16} color="#fff" />
+                <Ionicons name="add-circle-outline" size={compact ? 13 : 16} color="#fff" />
+                <Ionicons name="play-circle" size={compact ? 13 : 16} color="#fff" />
+                <View style={styles.avatarDot} />
+            </View>
+        </View>
+    );
+}
+
+function ReelAction({ icon, label }: { icon: 'heart' | 'chatbubble'; label: string }) {
+    return (
+        <View style={styles.reelActionItem}>
+            <Ionicons name={icon} size={18} color="#fff" />
+            <Text style={styles.reelActionLabel}>{label}</Text>
+        </View>
+    );
+}
+
+function ShareApp({
+    label,
+    icon,
+    color,
+    palette,
+}: {
+    label: string;
+    icon: 'wifi' | 'chatbubble' | 'mail' | 'document-text';
+    color: string;
+    palette: Palette;
+}) {
+    return (
+        <View style={styles.shareAppCol}>
+            <View style={[styles.shareAppIcon, { backgroundColor: color }]}>
+                <Ionicons name={icon} size={20} color="#fff" />
+            </View>
+            <Text style={[styles.appLabel, { color: palette.text }]}>{label}</Text>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
+    root: {
+        flex: 1,
+        paddingHorizontal: 20,
+    },
+    progressRow: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    topRail: {
+        height: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    topRailWithClose: {
+        height: 40,
+        gap: 12,
+    },
+    closeButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    progressTrack: {
+        flex: 1,
+        height: 3,
+        borderRadius: 2,
+    },
     stage: {
-        height: STAGE_H,
-        borderRadius: Radius.xl,
-        overflow: 'hidden',
+        flex: 1,
+        minHeight: 0,
     },
-    layer: {
+    scene: {
         ...StyleSheet.absoluteFillObject,
         alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 26,
+        paddingTop: 16,
     },
-    // Beat 0
-    videoTile: {
-        width: 128,
-        height: 128,
-        borderRadius: Radius.lg,
+    copyBlock: {
         alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-        alignSelf: 'center',
+        maxWidth: 340,
+        paddingHorizontal: 8,
+        zIndex: 4,
     },
-    scanline: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: 2,
-        opacity: 0.85,
+    eyebrow: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10.5,
+        lineHeight: 14,
+        letterSpacing: 1.65,
+        marginBottom: 9,
     },
-    benefit: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 15,
-        lineHeight: 21,
+    title: {
+        fontFamily: 'Newsreader_700Bold',
+        fontSize: 31,
+        lineHeight: 34,
+        letterSpacing: -0.7,
         textAlign: 'center',
-        marginTop: 18,
     },
-    // Beat 1
-    scrim: {
-        ...StyleSheet.absoluteFillObject,
-        opacity: 0.5,
+    body: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13.5,
+        lineHeight: 19,
+        textAlign: 'center',
+        marginTop: 9,
+        maxWidth: 300,
     },
-    sheet: {
+    reelWrap: {
+        flex: 1,
+        minHeight: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: 12,
+        paddingBottom: 4,
+    },
+    backCard: {
+        position: 'absolute',
+        width: 190,
+        height: 288,
+        borderRadius: 27,
+        opacity: 0.9,
+    },
+    backCardLeft: {
+        transform: [{ rotate: '-8deg' }, { translateX: -20 }],
+    },
+    backCardRight: {
+        transform: [{ rotate: '7deg' }, { translateX: 22 }],
+    },
+    reelPhone: {
+        width: 226,
+        height: 356,
+        maxHeight: '100%',
+        borderRadius: 29,
+        overflow: 'hidden',
+        backgroundColor: '#231d1b',
+        outlineColor: 'rgba(0, 0, 0, 0.1)',
+        outlineWidth: 1,
+        ...Shadow.ambient,
+    },
+    reelPhoneCompact: {
+        width: 196,
+        height: 306,
+        borderRadius: 25,
+    },
+    reelGlowOne: {
+        position: 'absolute',
+        width: 170,
+        height: 170,
+        borderRadius: 85,
+        top: 72,
+        left: -44,
+        backgroundColor: 'rgba(231, 163, 66, 0.28)',
+    },
+    reelGlowTwo: {
+        position: 'absolute',
+        width: 130,
+        height: 180,
+        borderRadius: 65,
+        right: -34,
+        bottom: 36,
+        backgroundColor: 'rgba(124, 155, 85, 0.25)',
+    },
+    plate: {
+        position: 'absolute',
+        width: 124,
+        height: 124,
+        borderRadius: 62,
+        left: 36,
+        top: 100,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f5ead8',
+        transform: [{ rotate: '-9deg' }],
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.22,
+        shadowRadius: 18,
+    },
+    plateInner: {
+        width: 86,
+        height: 86,
+        borderRadius: 43,
+        backgroundColor: '#e9d6b9',
+    },
+    foodDot: {
+        position: 'absolute',
+        width: 19,
+        height: 19,
+        borderRadius: 10,
+    },
+    reelTopBar: {
+        position: 'absolute',
+        top: 17,
+        left: 16,
+        right: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    reelTopTitle: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 15,
+    },
+    reelCaptionCard: {
         position: 'absolute',
         left: 14,
-        right: 14,
-        bottom: 14,
-        borderRadius: Radius.lg,
+        right: 48,
+        bottom: 44,
+    },
+    reelHook: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13.5,
+        lineHeight: 17,
+        textShadowColor: 'rgba(0,0,0,0.45)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 5,
+    },
+    reelHandle: {
+        color: 'rgba(255,255,255,0.84)',
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9.5,
+        marginTop: 5,
+    },
+    reelActions: {
+        position: 'absolute',
+        right: 9,
+        bottom: 51,
+        alignItems: 'center',
+        gap: 12,
+    },
+    reelActionItem: {
+        alignItems: 'center',
+        gap: 2,
+    },
+    reelActionLabel: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 7.5,
+        fontVariant: ['tabular-nums'],
+    },
+    shareActionWrap: {
+        width: 42,
+        height: 53,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+    },
+    shareAction: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    shareActionPulse: {
+        position: 'absolute',
+        top: -4,
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        backgroundColor: 'rgba(255,255,255,0.42)',
+    },
+    tapLabel: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 8,
+        letterSpacing: 1.2,
+        marginTop: 3,
+    },
+    reelNav: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 36,
+        paddingHorizontal: 18,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: 'rgba(10,8,8,0.72)',
+    },
+    avatarDot: {
+        width: 15,
+        height: 15,
+        borderRadius: 5,
+        backgroundColor: '#c96f4d',
+        borderWidth: 1,
+        borderColor: '#fff',
+    },
+    shareDemo: {
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        paddingTop: 12,
+    },
+    shareReelBackdrop: {
+        position: 'absolute',
+        top: 12,
+        alignItems: 'center',
+        opacity: 0.68,
+    },
+    shareScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(22, 18, 16, 0.48)',
+        borderRadius: 25,
+    },
+    shareSheet: {
+        width: '100%',
+        maxWidth: 390,
+        borderRadius: 30,
         paddingTop: 10,
-        paddingBottom: 16,
         paddingHorizontal: 16,
+        paddingBottom: 19,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.16,
+        shadowRadius: 30,
+        elevation: 6,
     },
     sheetGrip: {
-        width: 34,
+        width: 38,
         height: 4,
         borderRadius: 2,
         alignSelf: 'center',
-        marginBottom: 14,
+        marginBottom: 12,
     },
-    tileRow: {
+    shareMeta: {
         flexDirection: 'row',
-        justifyContent: 'center',
-        gap: 18,
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 2,
+        marginBottom: 15,
     },
-    tileCol: {
+    shareThumb: {
+        width: 42,
+        height: 42,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    shareMetaTitle: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
+    },
+    shareMetaUrl: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        marginTop: 2,
+    },
+    appRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+    },
+    shareAppCol: {
+        width: 54,
         alignItems: 'center',
         gap: 5,
     },
-    appTile: {
-        width: 46,
-        height: 46,
+    shareAppIcon: {
+        width: 44,
+        height: 44,
         borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
+        outlineColor: 'rgba(0, 0, 0, 0.1)',
+        outlineWidth: 1,
     },
-    tileLabel: {
-        fontFamily: 'Manrope_600SemiBold',
+    napkinTarget: {
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    napkinPulse: {
+        position: 'absolute',
+        width: 54,
+        height: 54,
+        borderRadius: 16,
+        borderWidth: 2,
+    },
+    napkinIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        outlineColor: 'rgba(0, 0, 0, 0.1)',
+        outlineWidth: 1,
+    },
+    appLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 8.5,
+    },
+    coachPill: {
+        height: 30,
+        borderRadius: 15,
+        paddingLeft: 13,
+        paddingRight: 11,
+        marginTop: 14,
+        alignSelf: 'flex-end',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    coachText: {
+        fontFamily: 'Manrope_700Bold',
         fontSize: 10.5,
     },
-    tileLabelGap: {
-        height: 13,
+    resultCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: 26,
+        marginTop: 27,
+        padding: 14,
+        outlineColor: 'rgba(0, 0, 0, 0.06)',
+        outlineWidth: 1,
+        ...Shadow.ambient,
     },
-    coachRow: {
+    resultHeader: {
         flexDirection: 'row',
+        alignItems: 'center',
+        gap: 11,
+        padding: 4,
+    },
+    resultCheck: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 18,
-        marginTop: 16,
     },
-    coachItem: {
+    resultHeaderTitle: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+    },
+    resultHeaderMeta: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10.5,
+        marginTop: 2,
+    },
+    resultRule: {
+        height: StyleSheet.hairlineWidth,
+        marginVertical: 10,
+        marginHorizontal: 4,
+    },
+    resultRow: {
+        minHeight: 57,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 5,
+        gap: 11,
+        paddingHorizontal: 4,
     },
-    coachLabel: {
+    resultThumb: {
+        width: 42,
+        height: 42,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        outlineColor: 'rgba(0, 0, 0, 0.1)',
+        outlineWidth: 1,
+    },
+    resultName: {
+        fontFamily: 'Newsreader_600SemiBold',
+        fontSize: 16,
+        lineHeight: 18,
+    },
+    resultArea: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 9.5,
+        marginTop: 2,
+    },
+    savedBadge: {
+        height: 27,
+        borderRadius: 14,
+        paddingHorizontal: 9,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    savedText: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9,
+    },
+    footer: {
+        height: 66,
+        position: 'relative',
+        justifyContent: 'center',
+    },
+    footerLayer: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+    },
+    continueHint: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
+        fontSize: 11,
         letterSpacing: 0.2,
+        textAlign: 'center',
     },
-    // Beat 2
-    napkinFavTile: {
-        width: 92,
-        height: 92,
-        borderRadius: Radius.lg,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    starBadge: {
-        position: 'absolute',
-        top: -8,
-        right: -8,
-        width: 26,
-        height: 26,
-        borderRadius: 13,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    // Dots
-    dots: {
+    doneButton: {
+        height: 52,
+        borderRadius: 26,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
-        marginTop: 18,
+        gap: 8,
     },
-    dot: {
-        height: 6,
-        borderRadius: 3,
+    doneText: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 14.5,
+        letterSpacing: 0.15,
     },
 });
 

@@ -3,22 +3,24 @@
  * JSX-free so the beat state machine + copy are unit-testable without the demo's
  * Reanimated import (mirrors the feed *Gate.ts convention).
  *
- * One onboarding step, three auto-advancing beats:
- *   0 — benefit ("we watch the whole video…")
- *   1 — animated in-app share-sheet replica (tap share → tap napkin)
- *   2 — pro-tip (add napkin to share favourites) — terminal, holds until Done
+ * One onboarding step, four auto-advancing beats:
+ *   0 — promise + an unmistakable short-form-video frame
+ *   1 — coach the share action on the fake reel
+ *   2 — coach Napkin in an in-app iOS share-sheet replica
+ *   3 — show the extracted restaurants in the wishlist — terminal until CTA
  *
  * All beat copy is Manrope (benefit / instruction) per copy doctrine; the single
  * serif moment is teach.tsx's brandLine, NOT anything here.
  */
 
-export const BEAT_COUNT = 3;
+export const BEAT_COUNT = 4;
 export const LAST_BEAT = BEAT_COUNT - 1;
 
 /** Absolute offsets from t0 (ms) at which the stage crossfades to the next beat. */
 export const BEAT_TIMINGS_MS = {
-    beat1To2: 2400, // hold Beat 1 ~2.4s
-    beat2To3: 5400, // hold Beat 2 ~3s
+    promiseToShare: 2200,
+    shareToSheet: 4700,
+    sheetToResult: 7400,
 } as const;
 
 /** Advance one beat, clamped at the terminal beat (a tap past the end is a no-op). */
@@ -28,10 +30,16 @@ export function advanceBeat(beat: number): number {
 
 /** Exact demo strings (cut hard). Assert these verbatim in tests. */
 export const TEACH_COPY = {
-    kicker: 'the good part',
-    brandLine: 'save from anywhere', // the ONE serif moment on the screen
-    benefit: 'we watch the whole video — not just the caption.',
-    tapShare: 'tap share',
-    tapNapkin: 'tap napkin',
-    proTip: 'add napkin to your share favourites — one tap next time.',
+    promiseEyebrow: 'SAVE FROM YOUR FEED',
+    promiseTitle: 'See a restaurant you love?',
+    promiseBody: 'Send the video to Napkin. We find every place for you.',
+    shareTitle: 'Tap share on the video',
+    shareBody: 'It works from Instagram, TikTok and more.',
+    sheetTitle: 'Then choose Napkin',
+    sheetBody: 'Add Napkin to your favourites and it is always one tap away.',
+    resultEyebrow: 'DONE IN SECONDS',
+    resultTitle: 'Three places, already saved.',
+    resultBody: 'We watch the whole video — not just the caption.',
+    continueHint: 'Tap to continue',
+    doneCta: 'Start saving',
 } as const;
