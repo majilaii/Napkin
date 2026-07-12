@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Animated, {
+    cancelAnimation,
     Easing,
     SharedValue,
     useAnimatedStyle,
@@ -114,7 +115,13 @@ export function TeachShareSheetDemo({
     }, [beat, beatValue, reduced]);
 
     useEffect(() => {
-        if (reduced) return;
+        if (reduced) {
+            cancelAnimation(reelFloat);
+            cancelAnimation(tapPulse);
+            reelFloat.value = 0;
+            tapPulse.value = 0;
+            return;
+        }
 
         reelFloat.value = withRepeat(
             withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.quad) }),
@@ -127,6 +134,10 @@ export function TeachShareSheetDemo({
             false,
         );
 
+        return () => {
+            cancelAnimation(reelFloat);
+            cancelAnimation(tapPulse);
+        };
     }, [reduced, reelFloat, tapPulse]);
 
     useEffect(() => {
@@ -375,6 +386,7 @@ export function TeachShareSheetDemo({
                         <Pressable
                             onPress={() => completeTarget('start')}
                             accessibilityRole="button"
+                            accessibilityLabel={TEACH_COPY.startCta}
                             style={({ pressed }) => [
                                 styles.practiceButton,
                                 { backgroundColor: palette.text },
