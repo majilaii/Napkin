@@ -36,6 +36,7 @@ import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/
 import { ImportSourceCard } from '@/components/wishlist/ImportSourceCard';
 import { ImportListPickerSheet } from '@/components/lists/ImportListPickerSheet';
 import { importSourceLabel, manifestDisplaySource } from '@/components/wishlist/importSourceLabel';
+import { createManualImportSpot } from '@/lib/importReview';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -63,6 +64,7 @@ export default function ImportReviewScreen() {
             ),
     );
     const [fixTarget, setFixTarget] = useState<PersistedImportSpot | null>(null);
+    const [addingSpot, setAddingSpot] = useState(false);
 
     // TICKET-181: editable destinations. The wishlist pin defaults to the manifest's
     // pinWishlist (?? true — the base destination); lists are chosen here (the share
@@ -166,6 +168,26 @@ export default function ImportReviewScreen() {
         [fixTarget, toast],
     );
 
+    const handleAddPick = useCallback(
+        (r: PlacePickerResult) => {
+            setAddingSpot(false);
+            const duplicate = spots.find(
+                (s) => s.restaurant_id === r.id || s.external_id === r.id,
+            );
+            if (duplicate) {
+                setTicked((prev) => new Set(prev).add(duplicate.candidate_id));
+                toast.show(`${r.name} is already here`);
+                return;
+            }
+
+            const added = createManualImportSpot(r, manifest?.destinations.tableIds ?? []);
+            setSpots((prev) => [...prev, added]);
+            setTicked((prev) => new Set(prev).add(added.candidate_id));
+            toast.show(`added ${r.name}`);
+        },
+        [manifest?.destinations.tableIds, spots, toast],
+    );
+
     const keptCount = ticked.size;
 
     // TICKET-151: honesty line when a Maps list was capped (list_count > kept).
@@ -189,10 +211,13 @@ export default function ImportReviewScreen() {
             const o = originalById.get(s.candidate_id);
             return o && (o.restaurant_id !== s.restaurant_id || o.external_id !== s.external_id);
         }).length;
+        const addedN = kept.filter((s) => !originalById.has(s.candidate_id)).length;
+        const removedN = (manifest.spots ?? []).filter((s) => !ticked.has(s.candidate_id)).length;
         track('import_review_edits', {
             kept_n: kept.length,
-            removed_n: spots.length - kept.length,
+            removed_n: removedN,
             fixed_n: fixedN,
+            added_n: addedN,
         });
         setImportSpots(manifest.jobId, kept); // prune to confirmed (incl. fixes)
         // TICKET-181: persist the edited destinations BEFORE the mode flip. The
@@ -304,6 +329,18 @@ export default function ImportReviewScreen() {
                         {truncationLine}
                     </Text>
                 ) : null}
+                <Pressable
+                    onPress={() => setAddingSpot(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="add a missing spot"
+                    style={({ pressed }) => [
+                        styles.addSpot,
+                        { opacity: pressed ? 0.72 : 1, transform: [{ scale: pressed ? 0.96 : 1 }] },
+                    ]}
+                >
+                    <Ionicons name="add" size={18} color={palette.primary} />
+                    <Text style={[styles.addSpotLabel, { color: palette.primary }]}>add a spot</Text>
+                </Pressable>
             </View>
 
             <ScrollView
@@ -476,12 +513,19 @@ export default function ImportReviewScreen() {
             </View>
 
             <PlacePickerModal
-                visible={fixTarget !== null}
-                title="fix this spot"
-                subtitle={`replace ${fixTarget?.restaurant_name ?? 'this spot'}`}
+                visible={fixTarget !== null || addingSpot}
+                title={fixTarget ? 'fix this spot' : 'add a spot'}
+                subtitle={
+                    fixTarget
+                        ? `replace ${fixTarget.restaurant_name ?? 'this spot'}`
+                        : 'search for the missing spot'
+                }
                 initialQuery={fixTarget?.restaurant_name ?? ''}
-                onSelect={handleFixPick}
-                onDismiss={() => setFixTarget(null)}
+                onSelect={fixTarget ? handleFixPick : handleAddPick}
+                onDismiss={() => {
+                    setFixTarget(null);
+                    setAddingSpot(false);
+                }}
                 palette={palette}
             />
 
@@ -522,6 +566,15 @@ const styles = StyleSheet.create({
     },
     subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 13 },
     tickAll: { fontFamily: 'Manrope_700Bold', fontSize: 12.5, letterSpacing: 0.2 },
+    addSpot: {
+        minHeight: 40,
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: Spacing.sm,
+    },
+    addSpotLabel: { fontFamily: 'Manrope_700Bold', fontSize: 13, letterSpacing: 0.3 },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
