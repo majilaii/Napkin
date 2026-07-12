@@ -778,7 +778,21 @@ export function WishlistMapView({
     }, [sources, items, userCoords]);
 
     const initialRegion: Region | undefined = useMemo(() => {
-        if (items.length === 0) return undefined;
+        if (items.length === 0) {
+            // TICKET-179: an empty layer still shows a REAL map ("the map simply
+            // refuses to show" — founder, 2026-07-12). Centre on the user when we
+            // have them; else undefined = the platform's default region. The
+            // empty murmur rides as an overlay below.
+            if (userCoords) {
+                return {
+                    latitude: userCoords.latitude,
+                    longitude: userCoords.longitude,
+                    latitudeDelta: 0.08,
+                    longitudeDelta: 0.08,
+                };
+            }
+            return undefined;
+        }
         const first = items[0];
         return {
             latitude: first.lat,
@@ -786,7 +800,7 @@ export function WishlistMapView({
             latitudeDelta: 0.08,
             longitudeDelta: 0.08,
         };
-    }, [items]);
+    }, [items, userCoords]);
 
     // TICKET-153: cluster the pin set for the CURRENT region. Before the first
     // settle event `region` is null, so fall back to `initialRegion` — clustering
@@ -998,33 +1012,23 @@ export function WishlistMapView({
         </>
     );
 
-    // ── Empty (per-source copy; pills/chip/List stay so you can always leave) ──
-    if (items.length === 0) {
-        // TICKET-134: wishlist keys are your/discover; dining-map still passes
-        // mine/network — keep both grammars so its empty copy is unchanged.
-        const emptyCopy =
-            sources?.value === 'discover' || sources?.value === 'network'
-                ? 'no spots from people you follow yet.'
-                : sources?.value === 'mine'
-                  ? 'no logged spots with a map location yet.'
-                  : sources?.value === 'been'
-                    ? 'no group meals with a map location yet.'
-                    : sources?.value === 'saved'
-                      ? "the table hasn't saved a mappable spot yet."
-                      : 'none of your spots have a map location yet.';
-        return (
-            <View style={[styles.fill, { backgroundColor: CREAM }]}>
-                <View style={[styles.fill, styles.emptyWrap]}>
-                    <Ionicons name="map-outline" size={28} color={palette.textMuted} />
-                    <Text style={[styles.emptyText, { color: palette.textMuted }]}>{emptyCopy}</Text>
-                </View>
-                {renderSourcePills(true)}
-                {renderFilterChip()}
-                {renderImportChips()}
-                {renderListPill(true)}
-            </View>
-        );
-    }
+    // ── Empty copy (per-source; TICKET-134 grammar kept). TICKET-179: an empty
+    // layer NO LONGER replaces the map with a flat card — the real map renders
+    // (user-centred / platform default) and the murmur floats over it, so an
+    // empty Table's territory map still reads as a map, not a refusal. Pills /
+    // chip / import chips / List keep rendering via the main branch.
+    const emptyCopy =
+        items.length > 0
+            ? null
+            : sources?.value === 'discover' || sources?.value === 'network'
+              ? 'no spots from people you follow yet.'
+              : sources?.value === 'mine'
+                ? 'no logged spots with a map location yet.'
+                : sources?.value === 'been'
+                  ? 'no group meals with a map location yet.'
+                  : sources?.value === 'saved'
+                    ? "the table hasn't saved a mappable spot yet."
+                    : 'none of your spots have a map location yet.';
 
     return (
         <View style={[styles.fill, { backgroundColor: CREAM }]}>
@@ -1120,6 +1124,17 @@ export function WishlistMapView({
                 style={[styles.topRule, { backgroundColor: palette.ruleInkSoft }]}
                 pointerEvents="none"
             />
+
+            {/* TICKET-179: empty-layer murmur floats over the LIVE map — the map
+                itself never disappears. pointerEvents none: pan/zoom stay free. */}
+            {emptyCopy ? (
+                <View pointerEvents="none" style={[styles.fill, styles.emptyWrap]}>
+                    <Ionicons name="map-outline" size={28} color={palette.textMuted} />
+                    <Text style={[styles.emptyText, { color: palette.textMuted }]}>
+                        {emptyCopy}
+                    </Text>
+                </View>
+            ) : null}
 
             {/* Source pills — top-left, frosted. Hidden while a peek is up. */}
             {renderSourcePills(!selected)}
