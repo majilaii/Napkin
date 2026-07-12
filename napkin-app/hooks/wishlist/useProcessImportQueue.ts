@@ -1264,9 +1264,14 @@ export function useProcessImportQueue() {
 
             const saved = result?.summary?.saved ?? 0;
             const already = result?.summary?.already_pinned ?? 0;
+            // TICKET-181: a list-only save (wishlist toggled off) comes back all
+            // `ghost` — filed into the chosen list(s) by the routing above,
+            // deliberately NOT pinned. A success, not a failure.
+            const ghost = result?.summary?.ghost ?? 0;
+            const listOnly = saved === 0 && ghost > 0;
             // On a retry/re-drain the save may have landed on the prior pass and now
-            // come back as already_pinned — still a success, count both.
-            const done = saved + already;
+            // come back as already_pinned — still a success, count all three.
+            const done = saved + already + ghost;
             // TICKET-164 [R9 + review-1 FAIL-1]: a FRESH pass reads the hoisted local
             // (setImportDiagnostics writes the manifest FILE, never this in-memory
             // `m`, so `m.diag` is stale until a re-drain re-parses it); a RE-DRAIN
@@ -1306,6 +1311,12 @@ export function useProcessImportQueue() {
                 fastPathDiag && saved === 1 && spots.length === 1
                     ? (spots[0].restaurant_name ?? null)
                     : null;
+            // TICKET-181: "pinned" stays the wishlist verb — a list-only save says
+            // where the spots actually went.
+            const listNoun =
+                m.destinations.listIds.length + m.destinations.newListTitles.length === 1
+                    ? 'your list'
+                    : 'your lists';
             toast.show(
                 saved > 0
                     ? fastPathName
@@ -1313,19 +1324,25 @@ export function useProcessImportQueue() {
                         : note
                           ? `pinned ${saved} · ${note}`
                           : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
-                    : done > 0
-                      ? note
-                          ? `already in your wishlist · ${note}`
-                          : 'already in your wishlist'
-                      : "couldn't import that",
+                    : listOnly
+                      ? ghost === 1 && spots.length === 1 && spots[0].restaurant_name
+                          ? `saved ${spots[0].restaurant_name} to ${listNoun}`
+                          : `saved ${ghost} to ${listNoun}`
+                      : done > 0
+                        ? note
+                            ? `already in your wishlist · ${note}`
+                            : 'already in your wishlist'
+                        : "couldn't import that",
                 reviewAction,
             );
-            // TICKET-120: mirror the "pinned N" success to a local notification when
-            // backgrounded (only on a fresh save — an already-pinned re-drain stays
-            // silent). Foreground = toast-only.
-            if (saved > 0 && AppState.currentState !== 'active') {
+            // TICKET-120: mirror the success to a local notification when backgrounded
+            // (only on a fresh save — an already-pinned re-drain stays silent).
+            // Foreground = toast-only.
+            if ((saved > 0 || listOnly) && AppState.currentState !== 'active') {
                 presentImportNotification({
-                    title: `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`,
+                    title: listOnly
+                        ? `saved ${ghost} to ${listNoun}`
+                        : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`,
                     body: 'tap to fix anything',
                 });
             }

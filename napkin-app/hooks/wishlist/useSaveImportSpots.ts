@@ -77,7 +77,9 @@ export interface SaveImportSpotsInput {
 export interface SpotSaveResult {
     candidate_id: string;
     client_nonce: string;
-    status: 'saved' | 'already_pinned' | 'failed';
+    /** 'ghost' = list-only save (pin_wishlist=false): restaurant upserted +
+     * restaurant_id returned for list routing, deliberately NOT wishlisted. */
+    status: 'saved' | 'already_pinned' | 'ghost' | 'failed';
     wishlist_id?: string | null;
     restaurant_id?: string | null;
     error?: string;
@@ -89,6 +91,8 @@ export interface SaveImportSpotsResult {
         saved: number;
         already_pinned: number;
         failed: number;
+        /** Only non-zero on pin_wishlist=false (list-only) saves. */
+        ghost?: number;
     };
     /** Server batch id (minted on import_nonce) — deep-link target for
      * /imports/[jobId] review/fix. Optional: older deploys omit it. */

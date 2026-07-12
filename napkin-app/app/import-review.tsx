@@ -405,6 +405,9 @@ export default function ImportReviewScreen() {
                             pinWishlist
                                 ? { backgroundColor: palette.primaryMuted }
                                 : { backgroundColor: 'transparent' },
+                            // Locked (table share rides this import): still checked,
+                            // dimmed so the dead tap reads as non-interactive.
+                            hasTableDestination ? { opacity: 0.6 } : null,
                         ]}
                         accessibilityRole="checkbox"
                         accessibilityState={{ checked: pinWishlist, disabled: hasTableDestination }}
