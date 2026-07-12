@@ -49,6 +49,8 @@ import {
     setImportSpots,
     setImportListCount,
     setImportDiagnostics,
+    setImportSource,
+    setImportStage,
     setImportMode,
     setDefaultImportMode,
     setLargeJob,
@@ -571,6 +573,12 @@ export function useProcessImportQueue() {
             // the first pass). A re-drain losing the handle is accepted (no manifest
             // persistence needed).
             let igAuthorHandle: string | null = null;
+            // TICKET-180: the tiktok @handle from the RESOLVED page URL (perception
+            // captures it alongside isPhotoPost). Hoisted like igAuthorHandle — read
+            // at the setImportSource checkpoint below, which is outside the provider
+            // block where `provider`/`perception` are scoped. Stays null on a re-drain
+            // (source already persisted on the first pass).
+            let tkHandle: string | null = null;
             let clipThumbUrl: string | null = null;
             let clipProvider: ClipThumbSourceType | null = null;
             // TICKET-164 [review-1 FAIL-1]: hoisted like the TICKET-156 locals above
@@ -624,6 +632,8 @@ export function useProcessImportQueue() {
                           ? 'instagram'
                           : null;
                     if (provider) {
+                        // TICKET-180 stage 1/6: on-device page fetch (caption + ASR).
+                        setImportStage(m.jobId, 'fetching page');
                         // deadlineAt (epoch ms) caps the perception fetches' internal
                         // timeouts — only the escalation RETRY passes one (R8).
                         const fetchPerception = (deadlineAt?: number) =>
@@ -662,6 +672,8 @@ export function useProcessImportQueue() {
                         const transcript = (perception as { transcript?: string })?.transcript ?? '';
                         if (!isPhotoPost && (desc || transcript)) {
                             cheapTierRan = true;
+                            // TICKET-180 stage 5/6: resolving candidates against text.
+                            setImportStage(m.jobId, 'matching spots');
                             // [review-1 Codex-4] The cheap tier is an OPTIMIZATION and
                             // must never fail an import the ladder would have handled.
                             // Session/transient rethrow (same drain semantics as every
@@ -731,6 +743,8 @@ export function useProcessImportQueue() {
                                 latestPageText = desc || null;
                                 const slideUrls =
                                     (perception as { slideUrls?: string[] }).slideUrls ?? [];
+                                // TICKET-180 stage 2/6: photo branch — on-device slide OCR.
+                                if (slideUrls.length > 0) setImportStage(m.jobId, 'reading slides');
                                 const slideFiles: string[] = [];
                                 for (const slideUrl of slideUrls) {
                                     // Shared budget across all slides — the signed CDN
@@ -761,6 +775,9 @@ export function useProcessImportQueue() {
                                     for (const f of slideFiles) deleteCachedSlide(f);
                                 }
                             }
+                            // TICKET-180 stage 3/6: video branch — pull the mp4 (only
+                            // when there's a playAddr; a photo post skips the loop below).
+                            if (perception?.playAddr) setImportStage(m.jobId, 'downloading video');
                             for (let attempt = 0; attempt < 2; attempt++) {
                                 if (!perception?.playAddr) break;
                                 const fileUri = await downloadTikTokVideo(
@@ -807,6 +824,8 @@ export function useProcessImportQueue() {
                                     continue;
                                 }
                                 downloadOk = true;
+                                // TICKET-180 stage 4/6: on-device OCR + STT of the mp4.
+                                setImportStage(m.jobId, 'reading the video');
                                 try {
                                     const { ocr, transcript: spoken } = await extractFromVideo(
                                         fileUri,
@@ -892,13 +911,22 @@ export function useProcessImportQueue() {
                         clipProvider = provider;
                         clipThumbUrl =
                             (perception as { thumbnailUrl?: string | null })?.thumbnailUrl ?? null;
+                        // TICKET-156 + TICKET-180: capture the creator handle from the
+                        // LAST perception (the retry loop may have re-fetched it). IG
+                        // reads its embed anchor; tiktok reads the resolved-URL @handle.
                         if (provider === 'instagram') {
                             igAuthorHandle =
+                                (perception as { authorHandle?: string | null })?.authorHandle ?? null;
+                        } else if (provider === 'tiktok') {
+                            tkHandle =
                                 (perception as { authorHandle?: string | null })?.authorHandle ?? null;
                         }
                     }
                     // ── Shared resolve — SKIPPED on the fast path (candidates set). ──
                     if (!fastPath) {
+                        // TICKET-180 stage 5/6: resolving candidates (covers the fallback
+                        // re-resolve just below — same matching phase, no re-write).
+                        setImportStage(m.jobId, 'matching spots');
                         // Same proven contract as the video path: extracted_text
                         // rides alone (never alongside url).
                         // TICKET-152: advertise supports_large_lists on the url tier so a
@@ -977,6 +1005,8 @@ export function useProcessImportQueue() {
                         toast.show("couldn't read that video");
                         return;
                     }
+                    // TICKET-180 stage 4/6: shared-file video → on-device OCR + STT.
+                    setImportStage(m.jobId, 'reading the video');
                     const { ocr, transcript } = await extractFromVideo(m.videoPath as string);
                     const extractedText = [...(ocr ?? []), transcript ?? '']
                         .filter(Boolean)
@@ -988,6 +1018,8 @@ export function useProcessImportQueue() {
                         toast.show("couldn't read spots from that video");
                         return;
                     }
+                    // TICKET-180 stage 5/6: resolving candidates against the OCR text.
+                    setImportStage(m.jobId, 'matching spots');
                     const resolved = await callEdgeFn<ResolveUrlData>('resolve-url', {
                         body: { extracted_text: extractedText },
                     });
@@ -1062,6 +1094,18 @@ export function useProcessImportQueue() {
                 // TICKET-151: checkpoint the list size alongside the spots so it
                 // survives the review hold + any re-drain (readAll parses it back).
                 if (listCount != null) setImportListCount(m.jobId, listCount);
+                // TICKET-180: checkpoint the clip's source identity (fresh cover URL +
+                // creator handle) at the SAME boundary as the spots — replay-invariant,
+                // review-time-only. tiktok/instagram carry a handle; other sources
+                // (video/web/maps) leave it null. clipThumbUrl is the fresh (unexpired)
+                // provider cover captured above; the review card degrades it to the
+                // platform-logo plate on load failure. A re-drain skips this block, so
+                // the first pass's values stand (identical reasoning to why spots are
+                // checkpointed once).
+                setImportSource(m.jobId, {
+                    thumbUrl: clipThumbUrl,
+                    handle: clipProvider === 'tiktok' ? tkHandle : igAuthorHandle,
+                });
             }
 
             // Review mode: resolved → HOLD for in-app confirmation. The review
@@ -1147,6 +1191,9 @@ export function useProcessImportQueue() {
             // writes the durable `import_done` row (outcome 'saved') off its own
             // savedCount — set on the single no-tables call AND the i===0 fan-out
             // call ONLY. Never on tables 2..N, which would double-emit the row.
+            // TICKET-180 stage 6/6: the final save (auto mode only — a review hold
+            // returned above; a review-confirm re-drain re-enters here and saves).
+            setImportStage(m.jobId, 'saving');
             let result: SaveImportSpotsResult | undefined;
             if (tableIds.length === 0) {
                 result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
