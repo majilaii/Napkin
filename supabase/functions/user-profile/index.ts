@@ -32,6 +32,7 @@ import { reportError } from '../_shared/report.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { buildPage, decodeCursor, type Page } from '../_shared/pagination.ts';
 import { projectRound } from '../_shared/round_projection.ts';
+import { hydrateProfileTakes, type QuickTake } from './profileTakes.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -769,6 +770,32 @@ async function fetchTopFour(
 }
 
 /**
+ * Fetch the target's authored Quick takes. This intentionally reads only the
+ * dedicated profile table plus the restaurant identity/public Places-photo
+ * columns. It never touches entries, ratings, entry_photos, saves, or Tables.
+ */
+async function fetchQuickTakes(supabase: any, userId: string): Promise<QuickTake[]> {
+    const { data: takes, error: takesError } = await supabase
+        .from('user_profile_takes')
+        .select('prompt_key, position, restaurant_id, note')
+        .eq('user_id', userId)
+        .order('position', { ascending: true });
+    if (takesError) throw takesError;
+    if (!takes || takes.length === 0) return [];
+
+    const restaurantIds = [...new Set(
+        (takes as Array<{ restaurant_id: string }>).map((take) => take.restaurant_id),
+    )];
+    const { data: restaurants, error: restaurantsError } = await supabase
+        .from('restaurants')
+        .select('id, name, city, cuisine, photo_url, photo_source')
+        .in('id', restaurantIds);
+    if (restaurantsError) throw restaurantsError;
+
+    return hydrateProfileTakes(takes as any[], (restaurants ?? []) as any[]);
+}
+
+/**
  * Fetch regulars — restaurants with >= 3 logged visits.
  */
 async function fetchRegulars(
@@ -1121,12 +1148,13 @@ serve(async (req) => {
 
             if (isSelf) {
                 // Self: return everything, even if private
-                const [stats, publicLists, recentlyLogged, topFour, regularsPreview, allTableIds] =
+                const [stats, publicLists, recentlyLogged, topFour, quickTakes, regularsPreview, allTableIds] =
                     await Promise.all([
                         fetchStats(supabase, targetId, true), // self: full ledger incl. private/unrated
                         fetchPublicLists(supabase, targetId),
                         fetchRecentlyLogged(supabase, targetId),
                         fetchTopFour(supabase, targetId, true),
+                        fetchQuickTakes(supabase, targetId),
                         fetchRegulars(supabase, targetId, true, 8),
                         fetchAllCallerTableIds(supabase, callerId),
                     ]);
@@ -1141,6 +1169,7 @@ serve(async (req) => {
                         recently_logged: recentlyLogged,
                         tables_in_common: tablePreviews,
                         top_four: topFour,
+                        quick_takes: quickTakes,
                         regulars_preview: regularsPreview,
                         is_self: true,
                         is_following_viewer: false, // self never follows self
@@ -1164,6 +1193,7 @@ serve(async (req) => {
                         recently_logged: null,
                         tables_in_common: [],
                         top_four: [],
+                        quick_takes: [],
                         regulars_preview: [],
                         is_self: false,
                         is_following_viewer: false,
@@ -1274,6 +1304,7 @@ serve(async (req) => {
                         recently_logged: null,
                         tables_in_common: tablePreviews,
                         top_four: [],
+                        quick_takes: [],
                         regulars_preview: [],
                         is_self: false,
                         is_following_viewer: isFollowingViewer,
@@ -1284,11 +1315,12 @@ serve(async (req) => {
             }
 
             // 6. public_only or public_and_tables — fetch palate
-            const [stats, publicLists, recentlyLogged, topFour, regularsPreview] = await Promise.all([
+            const [stats, publicLists, recentlyLogged, topFour, quickTakes, regularsPreview] = await Promise.all([
                 fetchStats(supabase, targetId),
                 fetchPublicLists(supabase, targetId),
                 fetchRecentlyLogged(supabase, targetId),
                 fetchTopFour(supabase, targetId, false),
+                fetchQuickTakes(supabase, targetId),
                 fetchRegulars(supabase, targetId, false, 8),
             ]);
 
@@ -1328,6 +1360,7 @@ serve(async (req) => {
                     recently_logged: recentlyLogged,
                     tables_in_common: tablePreviews,
                     top_four: topFour,
+                    quick_takes: quickTakes,
                     regulars_preview: regularsPreview,
                     is_self: false,
                     is_following_viewer: isFollowingViewer,

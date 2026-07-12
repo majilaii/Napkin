@@ -14,6 +14,7 @@ import { useQuery } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { HistogramBucket } from './useUserTaste';
+import type { ProfileQuickTake } from '@/lib/profileQuickTakes';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -193,6 +194,8 @@ export type UserProfileData = {
     recently_logged: RestaurantTile[] | null;
     tables_in_common: TablePreview[];
     top_four: TopPick[];
+    /** Prompt-led, owner-curated profile opinions. Public-safe Places photos only. */
+    quick_takes?: ProfileQuickTake[];
     /**
      * @deprecated TICKET-165 — the Regulars rail was replaced by the profile
      * rating histogram (see RatingHistogram). The server still populates this

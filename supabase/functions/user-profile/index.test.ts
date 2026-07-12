@@ -79,6 +79,7 @@ Deno.test('user-profile edge function', async (t) => {
         assertEquals(stub.recently_logged, null);
         assertEquals(stub.tables_in_common, []);
         assertEquals(stub.top_four, []);
+        assertEquals(stub.quick_takes, []);
         assertEquals(stub.regulars_preview, []);
 
         // No palate/calibration keys leak onto the payload (exact top-level key set).
@@ -89,6 +90,7 @@ Deno.test('user-profile edge function', async (t) => {
             'private_stub',
             'profile',
             'public_lists',
+            'quick_takes',
             'recently_logged',
             'regulars_preview',
             'social',

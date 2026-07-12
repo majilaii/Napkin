@@ -24,10 +24,14 @@ on:
   pull_request:
     paths:
       - 'supabase/migrations/**'
+      - 'supabase/tests/**'
+      - '.github/workflows/migration-replay.yml'
   push:
     branches: [main]
     paths:
       - 'supabase/migrations/**'
+      - 'supabase/tests/**'
+      - '.github/workflows/migration-replay.yml'
 
 concurrency:
   group: migration-replay-${{ github.ref }}
@@ -72,7 +76,7 @@ jobs:
           # a fresh machine. Any failing migration fails this step.
           supabase db start
 
-      - name: Assert saves-visible predicate (TICKET-155)
+      - name: Assert SQL contract specs
         # Runs from $GITHUB_WORKSPACE (ARCH-REVIEW N3) — the prior step's
         # `cd /tmp/replay` does NOT persist across steps, and supabase/tests/
         # was never copied there, so the spec file is referenced at its real
@@ -84,3 +88,6 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/saves_visible_predicate.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/profile_quick_takes.spec.sql

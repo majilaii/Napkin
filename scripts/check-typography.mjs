@@ -4,7 +4,7 @@
  * Typography policy guard.
  *
  * Hard gates:
- *   - Profile typography is upright except for the named rating slots below.
+ *   - Profile typography is upright except for named rating and direct-quote slots.
  *   - Profile has no literal font size below 11.
  *   - Central semantic tokens keep their legibility floors.
  *   - Muted text keeps WCAG AA contrast on every Profile paper surface in both schemes.
@@ -277,6 +277,12 @@ function headlineItalicTokens(source) {
     }));
 }
 
+function quoteTokens(source) {
+    return [...source.matchAll(/\bType\s*\.\s*quote\b/g)].map((match) => ({
+        index: match.index,
+    }));
+}
+
 function ratingTokens(source) {
     return [...source.matchAll(/\bType\s*\.\s*rating(?:Compact|Large)?\b/g)].map((match) => ({
         index: match.index,
@@ -332,6 +338,13 @@ function isAllowedProfileItalic(filePath, source, occurrence, occurrenceIndex) {
     return slots?.has(styleSlotAt(source, occurrence.index)) ?? false;
 }
 
+function isAllowedProfileQuote(filePath, source, occurrence) {
+    return (
+        toRepoPath(filePath) === 'napkin-app/components/profile/QuickTakes.tsx' &&
+        styleSlotAt(source, occurrence.index) === 'note'
+    );
+}
+
 function textElementAt(source, occurrence) {
     const textStart = source.lastIndexOf('<Text', occurrence.index);
     const openingEnd = source.indexOf('>', occurrence.index);
@@ -379,6 +392,17 @@ function isAllowedProfileRatingToken(filePath, source, occurrence, occurrenceInd
                 source,
                 occurrence,
                 "preview.avg != null ? preview.avg.toFixed(1) : '—'",
+            )
+        );
+    }
+    if (relativePath === 'napkin-app/components/profile/TasteSignature.tsx') {
+        return (
+            occurrenceIndex === 0 &&
+            occurrence.token === 'Type.rating' &&
+            tokenStylesOnlyExpression(
+                source,
+                occurrence,
+                "averageRating != null ? averageRating.toFixed(1) : '—'",
             )
         );
     }
@@ -520,6 +544,17 @@ function checkProfile() {
             ));
         }
 
+        for (const occurrence of quoteTokens(source)) {
+            if (isAllowedProfileQuote(filePath, source, occurrence)) continue;
+            diagnostics.push(diagnostic(
+                'profile/quote-token-allowlist',
+                filePath,
+                rawSource,
+                occurrence.index,
+                'Type.quote is allowed only on a named direct-quote render. Names, labels, and structural copy stay upright.',
+            ));
+        }
+
         const semanticRatings = ratingTokens(source);
         semanticRatings.forEach((occurrence, index) => {
             if (!isAllowedProfileRatingToken(filePath, source, occurrence, index)) {
@@ -573,6 +608,7 @@ const TYPE_FLOORS = {
     screenTitle: 20,
     editorialTitle: 20,
     editorialBody: 17,
+    quote: 16,
     body: 16,
     bodySmall: 14,
     caption: 13,
@@ -587,6 +623,7 @@ const TYPE_FLOORS = {
 };
 const ALLOWED_ITALIC_TYPE_TOKENS = new Set([
     'headlineItalic', // Legacy: app-wide per-file debt prevents new callers.
+    'quote',
     'ratingCompact',
     'rating',
     'ratingLarge',

@@ -1,5 +1,7 @@
 export { SearchInput } from './SearchInput';
 export { SearchResultRow } from './SearchResultRow';
+export { RestaurantPickerScreen } from './RestaurantPickerScreen';
+export type { RestaurantPickerPick } from './RestaurantPickerScreen';
 export { RecentSearchesList } from './RecentSearchesList';
 export { TierHeader } from './TierHeader';
 export { SearchModeTabs } from './SearchModeTabs';

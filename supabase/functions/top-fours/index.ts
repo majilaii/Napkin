@@ -10,6 +10,7 @@
  * Actions (POST body { action, ... }):
  *   claim           — first-claim a city with picks (calls claim_city_with_picks RPC)
  *   update_picks    — update picks for an already-claimed city
+ *   set_profile_takes — atomically replace/clear the profile's Quick takes
  *   unclaim         — remove a claimed city (calls unclaim_city RPC)
  *   set_home        — set a city as HOME (calls set_user_home_city RPC)
  *   dismiss_nudge   — snooze the claim nudge for a city for 30 days
@@ -22,6 +23,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
+import { replaceProfileTakes } from './profileTakes.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -82,7 +84,7 @@ function errResponse(code: string, message: string, status = 400) {
 // Single source of truth — used for both the populated-state "n places" sub-line
 // and the nudge candidate eligibility check.
 async function computeUserCityStats(
-    supabase: ReturnType<typeof createClient>,
+    supabase: ReturnType<typeof createClient<any>>,
     userId: string,
 ): Promise<Map<string, { distinct_n: number; log_n: number }>> {
     const { data: entriesData, error: entriesErr } = await supabase
@@ -132,7 +134,7 @@ async function computeUserCityStats(
 // ── get helper — builds the full TopFoursPayload ───────────────────────────
 
 async function buildGetPayload(
-    supabase: ReturnType<typeof createClient>,
+    supabase: ReturnType<typeof createClient<any>>,
     targetUserId: string,
     isOwner: boolean,
 ): Promise<TopFoursPayload> {
@@ -225,7 +227,7 @@ async function buildGetPayload(
 // ≥10 logs across ≥3 distinct restaurants in an unclaimed canonical city,
 // not dismissed within 30 days, not 'Elsewhere', city is not null/empty.
 async function computeNudge(
-    supabase: ReturnType<typeof createClient>,
+    supabase: ReturnType<typeof createClient<any>>,
     userId: string,
     precomputedStats: Map<string, { distinct_n: number; log_n: number }> | null,
 ): Promise<NudgePayload | null> {
@@ -686,6 +688,20 @@ serve(async (req) => {
                     return errResponse('RPC_ERROR', msg);
                 }
 
+                return jsonResponse({ data: { ok: true } });
+            }
+
+            // ── set_profile_takes (profile Quick takes) ────────────────
+            // Full-set replacement, including clear via []. The SQL RPC repeats
+            // validation and serializes writes with a per-user transaction lock;
+            // this edge validation only supplies stable, friendly error envelopes.
+            if (postAction === 'set_profile_takes') {
+                const result = await replaceProfileTakes(
+                    (name, args) => supabase.rpc(name, args),
+                    user.id,
+                    body.takes,
+                );
+                if (result.ok === false) return errResponse(result.code, result.message);
                 return jsonResponse({ data: { ok: true } });
             }
 

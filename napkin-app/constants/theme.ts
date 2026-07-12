@@ -338,6 +338,14 @@ export const Type = {
     fontFamily: 'Newsreader_400Regular',
     lineHeight: 24,
   } as TextStyle,
+  // Exact first-person words shown as authored quotes. Keep this scarce: it is
+  // not a substitute for the upright editorial body style.
+  quote: {
+    fontSize: 16,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    lineHeight: 21,
+  } as TextStyle,
 
   // Section structure — deliberately sans, upright, and large enough to make
   // the beginning of each module obvious while scanning.
