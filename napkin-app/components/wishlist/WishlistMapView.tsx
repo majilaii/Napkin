@@ -169,6 +169,9 @@ interface Props {
     /** Count of saved spots that lack coordinates — surfaced as a quiet murmur.
      * Saved layer only: parents pass 0 for the been/network layers. */
     unmappableCount: number;
+    /** Tap-through on the unmappable murmur (lists which spots + fix flow).
+     * Optional — without it the murmur stays informational (dining-map). */
+    onUnmappablePress?: () => void;
     /** User location for the "you are here" dot + recenter + distance labels. */
     userCoords: GeoLatLng | null;
     locationStatus: LocationStatus;
@@ -604,6 +607,7 @@ function WishlistMarker({ item, selected, palette, onPress }: WishlistMarkerProp
 export function WishlistMapView({
     items,
     unmappableCount,
+    onUnmappablePress,
     userCoords,
     locationStatus,
     onRequestLocation,
@@ -1099,17 +1103,30 @@ export function WishlistMapView({
             {renderImportChips()}
 
             {/* Unmappable murmur — saved layer only (parents pass 0 otherwise),
-                frost family, tucked below the source pills. */}
+                frost family, tucked below the source pills. With a handler the
+                pill taps through to the which-spots + fix sheet (chevron cue);
+                without one it stays informational. */}
             {unmappableCount > 0 ? (
                 <View
                     style={[styles.murmurWrap, { top: sources ? chromeTop + 46 : chromeTop }]}
-                    pointerEvents="none"
+                    pointerEvents={onUnmappablePress ? 'box-none' : 'none'}
                 >
-                    <View style={[styles.murmurPill, { backgroundColor: frostBg }, Shadow.ambient]}>
+                    <Pressable
+                        onPress={onUnmappablePress}
+                        disabled={!onUnmappablePress}
+                        style={[styles.murmurPill, { backgroundColor: frostBg }, Shadow.ambient]}
+                        accessibilityRole={onUnmappablePress ? 'button' : undefined}
+                        accessibilityLabel={
+                            onUnmappablePress ? 'show spots with no map location' : undefined
+                        }
+                    >
                         <Text style={[styles.murmurText, { color: palette.textMuted }]}>
                             {`${unmappableCount} saved ${unmappableCount === 1 ? 'spot has' : 'spots have'} no map location`}
                         </Text>
-                    </View>
+                        {onUnmappablePress ? (
+                            <Ionicons name="chevron-forward" size={12} color={palette.textMuted} />
+                        ) : null}
+                    </Pressable>
                 </View>
             ) : null}
 
@@ -1826,6 +1843,9 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
     },
     murmurPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
         paddingHorizontal: 12,
         paddingVertical: 6,
         borderRadius: 999,
