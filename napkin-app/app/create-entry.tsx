@@ -43,7 +43,7 @@ import {
     SheetHeader,
     FieldUnderline,
 } from '@/components/ui';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
 import { collectOrphanedBlobUrls } from '@/lib/photoCleanup';
 import { CompanionChipsRow, CompanionPickerSheet } from '@/components/logging';
@@ -258,16 +258,19 @@ export default function CreateEntryScreen() {
         if (!restaurantIdParam || prefillPlace) return;
         (async () => {
             try {
-                const { data: { session } } = await supabase.auth.getSession();
-                const { data, error } = await supabase.functions.invoke(
-                    `restaurant-history?action=page&restaurant_id=${encodeURIComponent(restaurantIdParam)}`,
-                    {
-                        headers: session?.access_token
-                            ? { Authorization: `Bearer ${session.access_token}` }
-                            : undefined,
-                    },
-                );
-                const r = (!error && data?.data?.restaurant) ? data.data.restaurant : null;
+                const page = await callEdgeFn<{
+                    restaurant?: {
+                        external_id?: string | null;
+                        name?: string | null;
+                        address?: string | null;
+                        cuisine?: string | null;
+                    } | null;
+                }>('restaurant-history', {
+                    method: 'GET',
+                    action: 'page',
+                    params: { restaurant_id: restaurantIdParam },
+                });
+                const r = page?.restaurant ?? null;
                 const place: PlaceResult = {
                     id: r?.external_id ?? restaurantIdParam,
                     name: r?.name ?? '',
@@ -419,8 +422,7 @@ export default function CreateEntryScreen() {
     const searchPlaces = async (q: string) => {
         setSearching(true);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            const { data, error } = await supabase.functions.invoke('places-search', {
+            const data = await callEdgeFn<PlaceResult[]>('places-search', {
                 body: {
                     query: q,
                     limit: 5,
@@ -430,12 +432,8 @@ export default function CreateEntryScreen() {
                         radius: 10000,
                     }),
                 },
-                headers: session?.access_token
-                    ? { Authorization: `Bearer ${session.access_token}` }
-                    : undefined,
             });
-            if (error) throw error;
-            setResults(data?.data ?? []);
+            setResults(data ?? []);
         } catch (e) {
             console.warn('Places search failed:', e);
         } finally {
