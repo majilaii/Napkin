@@ -14,7 +14,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { Colors, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Shadow, Spacing, Type } from '@/constants/theme';
 import { PulseDot } from '@/components/feed/PulseDot';
 
 type Palette = typeof Colors.light;
@@ -69,7 +69,7 @@ export function ActiveGatherBanner({
             <Text style={[styles.sub, { color: palette.textSecondary }]}>
                 {leaderBy ? (
                     <>
-                        <Text style={styles.subItalic}>{leaderBy}</Text>
+                        <Text>{leaderBy}</Text>
                         {` \u00B7 `}
                     </>
                 ) : null}
@@ -79,6 +79,21 @@ export function ActiveGatherBanner({
             <View style={styles.bars}>
                 {candidates.slice(0, 3).map((c, i) => (
                     <View key={i} style={styles.barRow}>
+                        <Text
+                            style={[
+                                styles.barLabel,
+                                {
+                                    color: c.leading
+                                        ? palette.text
+                                        : palette.textSecondary,
+                                    fontFamily: c.leading
+                                        ? 'Newsreader_600SemiBold'
+                                        : 'Newsreader_400Regular',
+                                },
+                            ]}
+                        >
+                            {c.name}
+                        </Text>
                         <View
                             style={[
                                 styles.barTrack,
@@ -97,22 +112,6 @@ export function ActiveGatherBanner({
                                 ]}
                             />
                         </View>
-                        <Text
-                            style={[
-                                styles.barLabel,
-                                {
-                                    color: c.leading
-                                        ? palette.text
-                                        : palette.textSecondary,
-                                    fontFamily: c.leading
-                                        ? 'Newsreader_600SemiBold_Italic'
-                                        : 'Newsreader_400Regular_Italic',
-                                },
-                            ]}
-                            numberOfLines={1}
-                        >
-                            {c.name}
-                        </Text>
                     </View>
                 ))}
             </View>
@@ -126,6 +125,8 @@ export function ActiveGatherBanner({
                         opacity: pressed ? 0.88 : 1,
                     },
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel="Cast your vote"
             >
                 <Text style={[styles.ctaText, { color: palette.background }]}>
                     CAST YOUR VOTE
@@ -150,37 +151,26 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     kicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.2,
+        ...Type.sectionKicker,
     },
     headline: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 19,
-        lineHeight: 23,
-        letterSpacing: -0.2,
+        ...Type.sectionTitle,
         marginBottom: 3,
     },
     sub: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
+        ...Type.metadata,
         marginBottom: 12,
-    },
-    subItalic: {
-        fontFamily: 'Newsreader_400Regular_Italic',
     },
     bars: {
         gap: 7,
         marginBottom: 12,
     },
     barRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
+        gap: 4,
     },
     barTrack: {
-        flex: 1,
-        height: 3,
+        width: '100%',
+        height: 4,
         borderRadius: 99,
         overflow: 'hidden',
     },
@@ -188,18 +178,17 @@ const styles = StyleSheet.create({
         height: '100%',
     },
     barLabel: {
-        minWidth: 72,
-        textAlign: 'right',
-        fontSize: 12,
+        ...Type.editorialBody,
     },
     cta: {
-        paddingVertical: 10,
+        minHeight: 44,
+        paddingVertical: Spacing.sm,
+        paddingHorizontal: Spacing.md,
         borderRadius: 999,
         alignItems: 'center',
+        justifyContent: 'center',
     },
     ctaText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
-        letterSpacing: 0.8,
+        ...Type.label,
     },
 });

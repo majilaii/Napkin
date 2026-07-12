@@ -5,10 +5,11 @@
  * identically here and on the map. Public profile reuses this component.
  *
  * Two variants, one family:
- *   • typographic (default) — tinted cream ground + engraved mark, name in
- *     italic serif, city in letterspaced caps, rating terracotta italic.
+ *   • typographic (default) — tinted cream ground + engraved mark, upright
+ *     editorial name, city in letterspaced caps, rating terracotta italic.
  *   • photo (TICKET-144 pt2) — the owner's own chosen entry photo fills the
- *     plate, warm scrim at the foot, name + rating + rank overlaid. Same border,
+ *     plate, warm scrim at the foot, name overlaid, and rank + rating in a
+ *     guaranteed-contrast metadata rail. Same border,
  *     so a photo plate and a typographic plate sit as one row.
  *
  * The mark chain lives in engraving.ts (never per-item); this component only
@@ -30,7 +31,7 @@ interface MarqueePlateProps {
     cuisine?: string | null;
     listEmoji?: string | null;
     city?: string | null;
-    rating?: number | null; // terracotta italic, bottom-right; hidden when null
+    rating?: number | null; // italic numeric accent; hidden when null
     rank: number; // ghosted top-left "1"
     photoUrl?: string | null; // truthy → photo variant; undefined → typographic
     /**
@@ -39,16 +40,26 @@ interface MarqueePlateProps {
      * a chosen-memory photo is always `false` (never washed).
      */
     placesWash?: boolean;
+    /** Compact Profile summary: prioritize the name over decorative mark/city. */
+    compact?: boolean;
     onPress?: () => void;
     style?: StyleProp<ViewStyle>;
 }
 
 const PLATE_CREAM = '#fef6e6';
+// These labels are embedded inside a fixed-ratio artwork. Keep modest scaling
+// so the plate remains legible; the Pressable accessibility label carries the
+// full restaurant name and rating at every Dynamic Type size.
+const PLATE_MAX_FONT_SCALE = 1.2;
 
 function MarkGlyph({ mark, palette, onPhoto }: { mark: Mark; palette: typeof Colors.light; onPhoto?: boolean }) {
     switch (mark.kind) {
         case 'emoji':
-            return <Text style={styles.markEmoji}>{mark.emoji}</Text>;
+            return (
+                <Text style={styles.markEmoji} maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}>
+                    {mark.emoji}
+                </Text>
+            );
         case 'glyph':
             return (
                 <Ionicons
@@ -60,7 +71,10 @@ function MarkGlyph({ mark, palette, onPhoto }: { mark: Mark; palette: typeof Col
             );
         case 'monogram':
             return (
-                <Text style={[styles.markMonogram, { color: onPhoto ? PLATE_CREAM : palette.primary }]}>
+                <Text
+                    style={[styles.markMonogram, { color: onPhoto ? PLATE_CREAM : palette.primary }]}
+                    maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
+                >
                     {mark.letter}
                 </Text>
             );
@@ -77,6 +91,7 @@ export function MarqueePlate({
     rank,
     photoUrl,
     placesWash,
+    compact = false,
     onPress,
     style,
 }: MarqueePlateProps) {
@@ -100,7 +115,11 @@ export function MarqueePlate({
                 style,
             ]}
             accessibilityRole={onPress ? 'button' : undefined}
-            accessibilityLabel={onPress ? `View ${name}` : undefined}
+            accessibilityLabel={
+                onPress
+                    ? `${rank}. ${name}${rating != null ? `, rated ${rating.toFixed(1)}` : ''}`
+                    : undefined
+            }
         >
             {isPhoto ? (
                 <>
@@ -133,36 +152,76 @@ export function MarqueePlate({
                         style={styles.scrim}
                         pointerEvents="none"
                     />
-                    <Text style={[styles.rankPhoto]} numberOfLines={1}>
-                        {rank}
-                    </Text>
+                    <View style={styles.photoTopMeta} pointerEvents="none">
+                        <Text
+                            style={styles.rankPhoto}
+                            numberOfLines={1}
+                            maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
+                        >
+                            {rank}
+                        </Text>
+                        {rating != null ? (
+                            <Text
+                                style={styles.ratingPhoto}
+                                maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
+                            >
+                                {rating.toFixed(1)}
+                            </Text>
+                        ) : null}
+                    </View>
                     <View style={styles.photoFooter} pointerEvents="none">
-                        <Text style={styles.namePhoto} numberOfLines={2}>
+                        <Text
+                            style={styles.namePhoto}
+                            numberOfLines={2}
+                            maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
+                        >
                             {name}
                         </Text>
-                        {rating != null ? <Text style={styles.ratingPhoto}>{rating.toFixed(1)}</Text> : null}
                     </View>
                 </>
             ) : (
                 <>
-                    <Text style={[styles.rank, { color: palette.textMuted }]} numberOfLines={1}>
+                    <Text
+                        style={[styles.rank, { color: palette.textMuted }]}
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
+                    >
                         {rank}
                     </Text>
-                    <View style={styles.typoBody}>
-                        <View style={styles.markWrap}>
-                            <MarkGlyph mark={mark} palette={palette} />
-                        </View>
-                        <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
+                    <View style={[styles.typoBody, compact ? styles.typoBodyCompact : null]}>
+                        {!compact ? (
+                            <View style={styles.markWrap}>
+                                <MarkGlyph mark={mark} palette={palette} />
+                            </View>
+                        ) : null}
+                        <Text
+                            style={[styles.name, { color: palette.text }]}
+                            numberOfLines={compact ? 3 : 2}
+                            maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
+                        >
                             {name}
                         </Text>
-                        {city ? (
-                            <Text style={[styles.city, { color: palette.textMuted }]} numberOfLines={1}>
+                        {city && !compact ? (
+                            <Text
+                                style={[styles.city, { color: palette.textMuted }]}
+                                numberOfLines={1}
+                                maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
+                            >
                                 {city.toUpperCase()}
                             </Text>
                         ) : null}
                     </View>
                     {rating != null ? (
-                        <Text style={[styles.rating, { color: palette.primary }]}>{rating.toFixed(1)}</Text>
+                        <Text
+                            style={[
+                                styles.rating,
+                                compact ? styles.ratingCompactPosition : null,
+                                { color: palette.primary },
+                            ]}
+                            maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
+                        >
+                            {rating.toFixed(1)}
+                        </Text>
                     ) : null}
                 </>
             )}
@@ -190,6 +249,11 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-start',
         paddingTop: '16%',
     },
+    typoBodyCompact: {
+        justifyContent: 'center',
+        paddingTop: 22,
+        paddingBottom: 8,
+    },
     markWrap: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -203,20 +267,20 @@ const styles = StyleSheet.create({
         includeFontPadding: false,
     },
     markMonogram: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_600SemiBold',
         fontSize: 30,
         includeFontPadding: false,
     },
     name: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13.5,
-        lineHeight: 16,
+        fontFamily: 'Newsreader_600SemiBold',
+        fontSize: 14.5,
+        lineHeight: 17.5,
         textAlign: 'center',
     },
     city: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 6.8,
-        letterSpacing: 1.4,
+        fontSize: 11,
+        letterSpacing: 0.8,
         marginTop: 4,
         textAlign: 'center',
     },
@@ -224,9 +288,8 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 7,
         left: 9,
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Manrope_700Bold',
         fontSize: 13,
-        opacity: 0.7,
         zIndex: 2,
     },
     rating: {
@@ -234,8 +297,13 @@ const styles = StyleSheet.create({
         bottom: 8,
         right: 9,
         fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 13,
+        fontSize: 14,
+        fontVariant: ['tabular-nums'],
         zIndex: 2,
+    },
+    ratingCompactPosition: {
+        top: 7,
+        bottom: undefined,
     },
     // ── photo variant ────────────────────────────────────────────────────
     scrim: {
@@ -250,35 +318,38 @@ const styles = StyleSheet.create({
         left: 9,
         right: 9,
         bottom: 8,
-        flexDirection: 'row',
-        alignItems: 'flex-end',
-        justifyContent: 'space-between',
-        gap: 6,
     },
     namePhoto: {
-        flex: 1,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13.5,
-        lineHeight: 16,
+        fontFamily: 'Newsreader_600SemiBold',
+        fontSize: 14.5,
+        lineHeight: 17.5,
         color: PLATE_CREAM,
+    },
+    photoTopMeta: {
+        position: 'absolute',
+        top: 7,
+        left: 8,
+        right: 8,
+        minHeight: 24,
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+        borderRadius: 12,
+        backgroundColor: 'rgba(28,28,25,0.82)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        zIndex: 2,
     },
     ratingPhoto: {
         fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 13,
+        fontSize: 14,
         color: PLATE_CREAM,
+        fontVariant: ['tabular-nums'],
     },
     rankPhoto: {
-        position: 'absolute',
-        top: 7,
-        left: 9,
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Manrope_700Bold',
         fontSize: 13,
         color: PLATE_CREAM,
-        opacity: 0.9,
-        textShadowColor: 'rgba(28,28,25,0.5)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 2,
-        zIndex: 2,
     },
     // ── double hairline (both variants) ──────────────────────────────────
     hairlineOuter: {

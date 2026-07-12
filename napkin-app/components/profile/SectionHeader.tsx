@@ -1,9 +1,9 @@
 /**
- * SectionHeader — editorial italic serif section header.
+ * SectionHeader — the single structural heading used across Profile.
  * TICKET-025
  *
- * Matches the canvas: Newsreader italic at 17pt, with optional
- * uppercase right-label in terracotta (e.g. "SEE ALL", "EDIT").
+ * Upright Manrope makes module boundaries obvious at a glance. The optional
+ * action uses the same functional voice and keeps a 40pt hit target.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -26,25 +26,36 @@ export function SectionHeader({ title, rightLabel, onRightLabelPress, small = fa
         <View style={[styles.container, small ? styles.small : styles.normal]}>
             <Text
                 style={[
-                    Type.headlineItalic,
+                    small ? Type.titleMedium : Type.sectionTitle,
                     {
-                        fontSize: small ? 15 : 17,
                         color: palette.text,
-                        fontFamily: 'Newsreader_400Regular_Italic',
                     },
                 ]}
+                accessibilityRole="header"
+                maxFontSizeMultiplier={1.8}
             >
                 {title}
             </Text>
             {rightLabel && (
                 onRightLabelPress ? (
-                    <Pressable onPress={onRightLabelPress} hitSlop={8}>
-                        <Text style={[Type.labelSmall, { color: palette.primary }]}>
+                    <Pressable
+                        onPress={onRightLabelPress}
+                        style={styles.action}
+                        accessibilityRole="button"
+                        accessibilityLabel={rightLabel}
+                    >
+                        <Text
+                            style={[Type.label, { color: palette.primary }]}
+                            maxFontSizeMultiplier={1.6}
+                        >
                             {rightLabel}
                         </Text>
                     </Pressable>
                 ) : (
-                    <Text style={[Type.labelSmall, { color: palette.primary }]}>
+                    <Text
+                        style={[Type.label, { color: palette.primary }]}
+                        maxFontSizeMultiplier={1.6}
+                    >
                         {rightLabel}
                     </Text>
                 )
@@ -61,11 +72,18 @@ const styles = StyleSheet.create({
         paddingHorizontal: 22,
     },
     normal: {
-        paddingTop: Spacing.lg,
-        paddingBottom: Spacing.sm,
+        paddingTop: Spacing.xl,
+        paddingBottom: 12,
     },
     small: {
-        paddingTop: Spacing.md,
-        paddingBottom: Spacing.sm,
+        paddingTop: Spacing.lg,
+        paddingBottom: 12,
+    },
+    action: {
+        minWidth: 40,
+        minHeight: 40,
+        marginVertical: -8,
+        alignItems: 'flex-end',
+        justifyContent: 'center',
     },
 });

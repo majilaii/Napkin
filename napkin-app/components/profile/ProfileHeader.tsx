@@ -4,8 +4,7 @@
  *
  * Layout (from profile-canvas.jsx ProfileHero — bio/counts order restored 2026-07-11):
  *   Row: Avatar (72x72 rounded square, radius 10) | Identity block | Gear (self)
- *   Identity block: display name (serif italic 24) + @handle + bio (italic serif 13,
- *   tight under the handle — canvas mt 8 / lh 1.45)
+ *   Identity block: display name (upright editorial 26) + @handle + readable bio.
  *   Counts line BELOW the row, full width (canvas mt 14): meals · following ·
  *   follower(s) — bold counts, muted labels; TICKET-144 language kept. The line
  *   spent a while INSIDE the identity column between handle and bio, which pushed
@@ -17,11 +16,11 @@
  * initials with no state to track. Gear renders inline, not floating.
  */
 import React from 'react';
-import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Image, StyleSheet, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type {
     Calibration,
@@ -87,6 +86,8 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
+    const { fontScale } = useWindowDimensions();
+    const stacksIdentity = fontScale >= 1.5;
     const { user } = useAuth();
     const unreadCount = useUnreadCount(isSelf ? user?.id : null);
     const hasUnread = unreadCount > 0;
@@ -151,9 +152,9 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
 
     return (
         <View style={styles.container}>
-            <View style={styles.row}>
+            <View style={[styles.row, stacksIdentity ? styles.rowAccessible : null]}>
                 <View style={[styles.avatar, { backgroundColor: palette.primaryContainer }]}>
-                    <Text style={styles.avatarInitials}>
+                    <Text style={styles.avatarInitials} maxFontSizeMultiplier={1.4}>
                         {initials(profile.display_name)}
                     </Text>
                     {profile.avatar_url ? (
@@ -166,27 +167,33 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                     ) : null}
                 </View>
 
-                <View style={styles.identity}>
+                <View style={[styles.identity, stacksIdentity ? styles.identityAccessible : null]}>
                     <Text
                         style={[styles.displayName, { color: palette.text }]}
-                        numberOfLines={1}
+                        accessibilityRole="header"
                     >
                         {profile.display_name}
                     </Text>
                     {showUsername && profile.username && (
-                        <Text style={[styles.handle, { color: palette.textMuted }]}>
+                        <Text
+                            style={[styles.handle, { color: palette.textMuted }]}
+                            maxFontSizeMultiplier={1.8}
+                        >
                             @{profile.username}
                         </Text>
                     )}
                     {profile.bio ? (
-                        <Text style={[styles.bio, { color: palette.textSecondary }]}>
+                        <Text
+                            style={[styles.bio, { color: palette.textSecondary }]}
+                            maxFontSizeMultiplier={2}
+                        >
                             {profile.bio}
                         </Text>
                     ) : null}
                 </View>
 
                 {isSelf ? (
-                    <View style={styles.selfActions}>
+                    <View style={[styles.selfActions, stacksIdentity ? styles.selfActionsAccessible : null]}>
                         <NotifBell
                             unread={hasUnread}
                             onPress={() => router.push('/notifications')}
@@ -205,7 +212,7 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                         </Pressable>
                     </View>
                 ) : (
-                    <View style={styles.selfActions}>
+                    <View style={[styles.selfActions, stacksIdentity ? styles.selfActionsAccessible : null]}>
                         <FollowButton
                             targetUserId={profile.user_id}
                             initialIsFollowing={isFollowingViewer}
@@ -232,7 +239,10 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                 row, full width — bold counts, muted labels. Follow segments tap →
                 /follows (correct tab); meals never does. */}
             {statSegments.length > 0 ? (
-                <Text style={[styles.statsLine, { color: palette.textSecondary }]}>
+                <Text
+                    style={[styles.statsLine, { color: palette.textSecondary }]}
+                    maxFontSizeMultiplier={1.8}
+                >
                     {statSegments.map((seg, i) => (
                         <React.Fragment key={seg.key}>
                             {i > 0 ? <Text>{' · '}</Text> : null}
@@ -254,7 +264,10 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                 </Text>
             ) : null}
             {relationshipNote ? (
-                <Text style={[styles.relationshipNote, { color: palette.textMuted }]}>
+                <Text
+                    style={[styles.relationshipNote, { color: palette.textMuted }]}
+                    maxFontSizeMultiplier={2}
+                >
                     {relationshipNote}
                 </Text>
             ) : null}
@@ -292,6 +305,10 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         gap: Spacing.md,
     },
+    rowAccessible: {
+        position: 'relative',
+        flexWrap: 'wrap',
+    },
     avatar: {
         width: 72,
         height: 72,
@@ -301,7 +318,7 @@ const styles = StyleSheet.create({
         flexShrink: 0,
     },
     avatarInitials: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_600SemiBold',
         color: 'rgba(255,255,255,0.92)',
         fontSize: 22,
         letterSpacing: 0.5,
@@ -319,24 +336,29 @@ const styles = StyleSheet.create({
         paddingTop: 4,
         minWidth: 0,
     },
+    identityAccessible: {
+        flexBasis: '100%',
+        flexGrow: 0,
+        paddingTop: Spacing.sm,
+    },
     displayName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 24,
-        fontWeight: '500',
-        lineHeight: 28,
+        ...Type.editorialTitle,
+        fontSize: 26,
+        lineHeight: 30,
     },
     handle: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
-        marginTop: 2,
-        letterSpacing: 0.2,
+        ...Type.metadata,
+        fontSize: 14,
+        lineHeight: 20,
+        marginTop: 3,
     },
     // TICKET-144 counts at the canvas position: full-width line below the row
     // (ProfileHero mt 14). Low-key Manrope; counts bold via statCount; follow
     // segments are tappable (no underline).
     statsLine: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        fontSize: 14,
+        lineHeight: 20,
         marginTop: 14,
         letterSpacing: 0.2,
     },
@@ -344,16 +366,12 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
     },
     bio: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
+        ...Type.body,
         marginTop: 8,
-        lineHeight: 19,
     },
     relationshipNote: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
+        ...Type.metadata,
         marginTop: 6,
-        letterSpacing: 0.2,
     },
     gear: {
         width: 32,
@@ -367,6 +385,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 4,
         marginTop: -4,
+    },
+    selfActionsAccessible: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        marginTop: 0,
     },
     calibrationRow: {
         marginTop: Spacing.sm,

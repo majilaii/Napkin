@@ -1,36 +1,30 @@
 /**
- * Rating — inline serif italic N.N + muted /5.
+ * Rating — compact inline rating number + upright muted / 5 suffix.
  * TICKET-025
  *
- * Matches the canvas: serif italic value + muted " / 5" suffix.
- * Used inside TopFour badges, DiaryRow.
+ * Italic is deliberate here: ratings are one of the design language's scarce
+ * accent roles. Used by DiaryRow.
  */
 import React from 'react';
 import { Text } from 'react-native';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface Props {
     value: number;
-    size?: number;
 }
 
-export function Rating({ value, size = 11 }: Props) {
+export function Rating({ value }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
     return (
-        <Text
-            style={{
-                fontFamily: 'Newsreader_400Regular_Italic',
-                fontSize: size,
-                lineHeight: size * 1.3,
-                color: palette.text,
-            }}
-        >
-            {value.toFixed(1)}
-            <Text style={{ color: palette.textMuted }}>{' / 5'}</Text>
+        <Text style={[Type.metadata, { color: palette.textMuted }]}>
+            <Text style={[Type.ratingCompact, { color: palette.text }]}>
+                {value.toFixed(1)}
+            </Text>
+            {' / 5'}
         </Text>
     );
 }

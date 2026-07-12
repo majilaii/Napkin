@@ -45,7 +45,7 @@ export interface MarkInput {
  * Priority chain, identical on every surface:
  *   emoji (list) → cuisine glyph (fires whenever cuisine present) → monogram.
  * The monogram is the true no-data fallback — it fires ONLY when cuisine is
- * null/blank, matching the app's existing no-image italic-serif letter grammar.
+ * null/blank, matching the app's upright editorial monogram grammar.
  */
 export function markFor(item: MarkInput): Mark {
     const emoji = item.listEmoji?.trim();
@@ -88,7 +88,7 @@ export const LORE_NOUN_BY_GLYPH: Record<CuisineGlyph, string> = {
 };
 
 /**
- * The Taste Relic, direction A — the epithet. A two-part italic-serif title
+ * The Taste Relic, direction A — the epithet. A two-part upright serif title
  * generated from already-fetched profile data, set like a book dedication.
  * Deterministic (same input → same title, forever — it reads as identity, not a
  * slot machine; it drifts only because your eating changed). Never gamified.
@@ -134,7 +134,7 @@ function qualifierFor(input: EpithetInput): string {
 }
 
 /**
- * Two-part italic-serif epithet, book-dedication voice. Lowercase (Heirloom),
+ * Two-part upright-serif epithet, book-dedication voice. Lowercase (Heirloom),
  * no title-case. Returns null below the meal floor (band stays as-is).
  * e.g. "a devoted regular of the smokehouse" ·
  *      "a roving regular of the raw bar, across borders".

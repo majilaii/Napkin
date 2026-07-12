@@ -1,5 +1,5 @@
 /**
- * TasteSummary — one-line taste summary string rendered in Newsreader italic.
+ * TasteSummary — concise taste summary in Napkin's upright editorial voice.
  * Pre-built via buildTasteSummary(); this component is purely presentational.
  */
 import React from 'react';
@@ -18,13 +18,10 @@ export function TasteSummary({ summary }: TasteSummaryProps) {
     return (
         <Text
             style={[
-                Type.bodySmall,
-                {
-                    color: palette.textSecondary,
-                    fontStyle: 'italic',
-                    fontFamily: 'Manrope_400Regular',
-                },
+                Type.editorialBody,
+                { color: palette.textSecondary },
             ]}
+            maxFontSizeMultiplier={2}
         >
             {summary}
         </Text>

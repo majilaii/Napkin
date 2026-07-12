@@ -103,9 +103,11 @@ function SectionLabel({ palette, children }: { palette: Palette; children: strin
     return (
         <Text
             style={[
-                Type.label,
-                { color: palette.textSecondary, marginBottom: Spacing.md },
+                Type.sectionTitle,
+                { color: palette.text, marginBottom: Spacing.md },
             ]}
+            accessibilityRole="header"
+            maxFontSizeMultiplier={1.8}
         >
             {children}
         </Text>
@@ -199,7 +201,12 @@ export default function MemberProfileScreen() {
                 >
                     {/* Back button */}
                     <View style={styles.topBar}>
-                        <Pressable onPress={() => router.back()}>
+                        <Pressable
+                            onPress={() => router.back()}
+                            style={styles.backButton}
+                            accessibilityRole="button"
+                            accessibilityLabel="Back"
+                        >
                             <Text style={[Type.body, { color: palette.primary }]}>← Back</Text>
                         </Pressable>
                     </View>
@@ -215,7 +222,10 @@ export default function MemberProfileScreen() {
 
                         <View style={{ marginTop: Spacing.md }}>
                             {/* Display name */}
-                            <Text style={[Type.displaySmall, { color: palette.text }]}>
+                            <Text
+                                style={[Type.displaySmall, { color: palette.text }]}
+                                accessibilityRole="header"
+                            >
                                 {profile.display_name}
                             </Text>
 
@@ -223,27 +233,26 @@ export default function MemberProfileScreen() {
                             {is_current_member && memberSince ? (
                                 <Text
                                     style={[
-                                        Type.headlineItalic,
+                                        Type.metadata,
                                         {
                                             color: palette.textMuted,
-                                            fontSize: 15,
                                             marginTop: Spacing.xs,
                                         },
                                     ]}
+                                    maxFontSizeMultiplier={1.8}
                                 >
                                     Member since {memberSince}
                                 </Text>
                             ) : !is_current_member ? (
                                 <Text
                                     style={[
-                                        Type.headlineItalic,
+                                        Type.metadata,
                                         {
                                             color: palette.textMuted,
-                                            fontSize: 15,
-                                            fontStyle: 'italic',
                                             marginTop: Spacing.xs,
                                         },
                                     ]}
+                                    maxFontSizeMultiplier={1.8}
                                 >
                                     no longer at this table
                                 </Text>
@@ -258,6 +267,7 @@ export default function MemberProfileScreen() {
 
                     {/* Stats strip */}
                     <View style={styles.section}>
+                        <SectionLabel palette={palette}>At a Glance</SectionLabel>
                         <MemberStatsStrip stats={stats} />
                     </View>
 
@@ -285,6 +295,12 @@ export default function MemberProfileScreen() {
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     topBar: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
+    backButton: {
+        minWidth: 40,
+        minHeight: 40,
+        alignSelf: 'flex-start',
+        justifyContent: 'center',
+    },
     headerSection: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
     section: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.xl },
 });

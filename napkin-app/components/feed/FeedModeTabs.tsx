@@ -2,13 +2,12 @@
  * FeedModeTabs — two-wide underline toggle for the Feed tab (TICKET-125).
  *
  * For You | Following. Adapted from SearchModeTabs (the locked toggle idiom,
- * decision 2): warm-paper background, italic Newsreader labels sitting in the
- * feed masthead's editorial register, terracotta underline + text on the active
- * tab, 44pt tap targets. Static two tabs — no gate helper.
+ * decision 2): warm-paper background, upright functional labels, terracotta
+ * underline + text on the active tab, and 44pt tap targets.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export type FeedMode = 'for-you' | 'following';
@@ -79,8 +78,7 @@ const styles = StyleSheet.create({
         opacity: 0.7,
     },
     label: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16,
+        ...Type.titleMedium,
         lineHeight: 22,
     },
     underline: {

@@ -1,6 +1,6 @@
 /**
  * TopEntriesList — up to 5 highest-rated entries.
- * Each row: restaurant name (Newsreader italic), rating (amber), relative date.
+ * Each row: rank, upright restaurant name, relative date, and rating accent.
  * Tapping navigates to /entry-detail.
  */
 import React from 'react';
@@ -36,51 +36,68 @@ export function TopEntriesList({ entries }: TopEntriesListProps) {
 
     return (
         <View style={styles.container}>
-            {entries.map((entry, index) => (
-                <Pressable
-                    key={entry.id}
-                    onPress={() =>
-                        router.push({
-                            pathname: '/entry-detail',
-                            params: { entryId: entry.id },
-                        })
-                    }
-                    style={({ pressed }) => [
-                        styles.row,
-                        {
-                            borderBottomColor: palette.divider,
-                            borderBottomWidth: index < entries.length - 1 ? StyleSheet.hairlineWidth : 0,
-                            opacity: pressed ? 0.75 : 1,
-                        },
-                    ]}
-                >
-                    {/* Rank number */}
-                    <Text style={[Type.caption, { color: palette.textMuted, width: 20, textAlign: 'center' }]}>
-                        {index + 1}
-                    </Text>
-
-                    {/* Restaurant name */}
-                    <Text
-                        style={[
-                            Type.headlineItalic,
-                            { flex: 1, color: palette.text, fontSize: 16, lineHeight: 22 },
+            {entries.map((entry, index) => {
+                const dateLabel = relativeDate(entry.visited_at);
+                return (
+                    <Pressable
+                        key={entry.id}
+                        onPress={() =>
+                            router.push({
+                                pathname: '/entry-detail',
+                                params: { entryId: entry.id },
+                            })
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel={`${index + 1}. ${entry.restaurant_name}, rated ${entry.rating.toFixed(1)}, ${dateLabel}`}
+                        style={({ pressed }) => [
+                            styles.row,
+                            {
+                                borderBottomColor: palette.divider,
+                                borderBottomWidth:
+                                    index < entries.length - 1
+                                        ? StyleSheet.hairlineWidth
+                                        : 0,
+                                opacity: pressed ? 0.75 : 1,
+                            },
                         ]}
-                        numberOfLines={1}
                     >
-                        {entry.restaurant_name}
-                    </Text>
+                        {/* Rank number */}
+                        <Text
+                            style={[Type.metadata, { color: palette.textMuted, width: 24, textAlign: 'center' }]}
+                            maxFontSizeMultiplier={1.6}
+                        >
+                            {index + 1}
+                        </Text>
 
-                    {/* Date */}
-                    <Text style={[Type.caption, { color: palette.textMuted, marginRight: Spacing.sm }]}>
-                        {relativeDate(entry.visited_at)}
-                    </Text>
+                        <View style={styles.details}>
+                            {/* Restaurant name */}
+                            <Text
+                                style={[Type.editorialBody, { color: palette.text }]}
+                                numberOfLines={2}
+                                maxFontSizeMultiplier={1.8}
+                            >
+                                {entry.restaurant_name}
+                            </Text>
 
-                    {/* Rating */}
-                    <Text style={[Type.rating, { color: palette.tertiary, fontSize: 18 }]}>
-                        {entry.rating.toFixed(1)}
-                    </Text>
-                </Pressable>
-            ))}
+                            {/* Date */}
+                            <Text
+                                style={[Type.metadata, { color: palette.textMuted }]}
+                                maxFontSizeMultiplier={1.6}
+                            >
+                                {dateLabel}
+                            </Text>
+                        </View>
+
+                        {/* Rating */}
+                        <Text
+                            style={[Type.rating, { color: palette.tertiary }]}
+                            maxFontSizeMultiplier={1.4}
+                        >
+                            {entry.rating.toFixed(1)}
+                        </Text>
+                    </Pressable>
+                );
+            })}
         </View>
     );
 }
@@ -92,7 +109,12 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: Spacing.sm + 2,
+        minHeight: 56,
+        paddingVertical: Spacing.sm,
         gap: Spacing.sm,
+    },
+    details: {
+        flex: 1,
+        gap: 2,
     },
 });

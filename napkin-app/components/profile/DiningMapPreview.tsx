@@ -7,7 +7,8 @@ import React, { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import MapView, { Marker, PROVIDER_DEFAULT, PROVIDER_GOOGLE } from 'react-native-maps';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
+import { SectionHeader } from './SectionHeader';
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
 
 interface Props {
@@ -46,58 +47,61 @@ export function DiningMapPreview({ spots, onPress, palette }: Props) {
     if (!region) return null;
 
     return (
-        <Pressable
-            onPress={onPress}
-            style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}
-            accessibilityRole="button"
-            accessibilityLabel={`dining map, ${pins.length} places`}
-        >
-            <View style={styles.mapWrap} pointerEvents="none">
-                <MapView
-                    style={StyleSheet.absoluteFill}
-                    provider={Platform.OS === 'ios' ? PROVIDER_DEFAULT : PROVIDER_GOOGLE}
-                    // Maps never go dark — Apple tiles follow the SYSTEM
-                    // appearance, not the light-forced palette (2026-07-08).
-                    userInterfaceStyle="light"
-                    initialRegion={region}
-                    scrollEnabled={false}
-                    zoomEnabled={false}
-                    rotateEnabled={false}
-                    pitchEnabled={false}
-                    showsPointsOfInterest={false}
-                    showsCompass={false}
-                >
-                    {pins.map((p) => (
-                        <Marker
-                            key={p.restaurant_id}
-                            coordinate={{ latitude: p.lat!, longitude: p.lng! }}
-                            anchor={{ x: 0.5, y: 0.5 }}
-                            tracksViewChanges={false}
-                        >
-                            <View style={[styles.dot, { backgroundColor: palette.primary }]} />
-                        </Marker>
-                    ))}
-                </MapView>
-                {/* Warm wash so the map sits inside the paper world */}
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: CREAM, opacity: 0.28 }]} />
-            </View>
-            <View style={styles.metaRow}>
-                <Text style={[styles.kicker, { color: palette.textMuted }]}>DINING MAP</Text>
-                <Text style={[styles.count, { color: palette.textMuted }]}>
-                    {`${pins.length} ${pins.length === 1 ? 'place' : 'places'} ›`}
-                </Text>
-            </View>
-        </Pressable>
+        <View>
+            <SectionHeader title="Dining map" />
+            <Pressable
+                onPress={onPress}
+                style={({ pressed }) => [
+                    styles.card,
+                    { backgroundColor: palette.card, opacity: pressed ? 0.9 : 1 },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={`Dining map, ${pins.length} places`}
+            >
+                <View style={styles.mapWrap} pointerEvents="none">
+                    <MapView
+                        style={StyleSheet.absoluteFill}
+                        provider={Platform.OS === 'ios' ? PROVIDER_DEFAULT : PROVIDER_GOOGLE}
+                        // Maps never go dark — Apple tiles follow the SYSTEM
+                        // appearance, not the light-forced palette (2026-07-08).
+                        userInterfaceStyle="light"
+                        initialRegion={region}
+                        scrollEnabled={false}
+                        zoomEnabled={false}
+                        rotateEnabled={false}
+                        pitchEnabled={false}
+                        showsPointsOfInterest={false}
+                        showsCompass={false}
+                    >
+                        {pins.map((p) => (
+                            <Marker
+                                key={p.restaurant_id}
+                                coordinate={{ latitude: p.lat!, longitude: p.lng! }}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                                tracksViewChanges={false}
+                            >
+                                <View style={[styles.dot, { backgroundColor: palette.primary }]} />
+                            </Marker>
+                        ))}
+                    </MapView>
+                    {/* Warm wash so the map sits inside the paper world */}
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: CREAM, opacity: 0.28 }]} />
+                </View>
+                <View style={styles.metaRow}>
+                    <Text style={[styles.count, { color: palette.textMuted }]}>
+                        {`${pins.length} ${pins.length === 1 ? 'place' : 'places'}  ›`}
+                    </Text>
+                </View>
+            </Pressable>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     card: {
         marginHorizontal: Spacing.lg,
-        marginTop: Spacing.md,
         borderRadius: 16,
         overflow: 'hidden',
-        backgroundColor: '#fffdf8',
     },
     mapWrap: {
         height: 120,
@@ -114,15 +118,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: Spacing.md,
-        paddingVertical: 9,
-    },
-    kicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.5,
+        minHeight: 44,
     },
     count: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
+        ...Type.metadata,
+        marginLeft: 'auto',
     },
 });

@@ -60,7 +60,8 @@ export function ChooseMemorySheet({
                     </Pressable>
                     <Text
                         style={[
-                            { fontFamily: 'Newsreader_400Regular_Italic', fontStyle: 'italic', fontSize: 18, color: palette.text },
+                            Type.screenTitle,
+                            { color: palette.text },
                         ]}
                         numberOfLines={1}
                     >
@@ -148,8 +149,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.sm,
     },
     consent: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        ...Type.metadata,
         marginHorizontal: 22,
         marginBottom: Spacing.lg,
     },
@@ -160,11 +160,8 @@ const styles = StyleSheet.create({
         paddingHorizontal: 40,
     },
     empty: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontStyle: 'italic',
-        fontSize: 15,
+        ...Type.bodySmall,
         textAlign: 'center',
-        lineHeight: 21,
     },
     grid: {
         flexDirection: 'row',
@@ -191,9 +188,10 @@ const styles = StyleSheet.create({
         gap: 4,
     },
     noneLabel: {
+        ...Type.metadata,
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 10,
-        letterSpacing: 0.5,
+        fontWeight: '600',
+        letterSpacing: 0.2,
         textTransform: 'lowercase',
     },
     check: {
