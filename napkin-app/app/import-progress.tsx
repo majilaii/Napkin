@@ -205,7 +205,12 @@ export default function ImportProgressScreen() {
                         const sourceGlyph = importSourceIcon(displaySource);
                         const sourceLabel = importSourceLabel(displaySource);
                         const sourceHandle = m.manifest.sourceHandle ?? null;
-                        const failedStage = m.phase === 'failed' ? m.manifest.stage : undefined;
+                        // [review WARN-1] large-Maps jobs never advance `stage`
+                        // (their cursor is the progress) — a poisoned one would
+                        // show a stale "stopped while matching spots". Single-shot
+                        // imports only.
+                        const failedStage =
+                            m.phase === 'failed' && !m.large ? m.manifest.stage : undefined;
                         return (
                             <Pressable
                                 key={m.jobId}
