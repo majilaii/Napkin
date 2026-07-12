@@ -30,6 +30,7 @@ import {
     relativeTime,
 } from '@/components/wishlist/importSourceLabel';
 import { WatchAgainLink } from '@/components/wishlist/ImportSourceCard';
+import { ClipThumb } from '@/components/wishlist/ClipThumb';
 import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue } from '@/lib/importQueue';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 
@@ -54,6 +55,10 @@ export default function ImportProgressScreen() {
     const recentBatches = recent ?? [];
     // Full activation hub until a first import lands, then the compact standing row.
     const hasImported = useHasImported(user?.id);
+    // TICKET-181 decision ④: the share-tip banner shows ONLY on an EMPTY hub. Once
+    // there's anything to see (in-flight or recently imported), thumbnail-first rows
+    // lead and the banner steps aside.
+    const hasRows = active.length > 0 || recentBatches.length > 0;
 
     const toast = useToast();
 
@@ -128,25 +133,21 @@ export default function ImportProgressScreen() {
                 contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: insets.bottom + 40, paddingTop: Spacing.sm }}
                 showsVerticalScrollIndicator={false}
             >
-                {/* Standing activation hub — the durable way to learn/repeat saving.
-                    Full teaches the gesture (subsumes the old empty-state copy);
-                    compact is a quiet standing row once the user has imported. */}
-                <View style={styles.hubWrap}>
-                    <ImportActivationHub
-                        variant={hasImported ? 'compact' : 'full'}
-                        showHubLink={false}
-                        palette={palette}
-                    />
-                </View>
-
-                {active.length === 0 && recentBatches.length === 0 ? (
-                    <View style={styles.emptyWrap}>
-                        <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                            — nothing importing right now.
-                        </Text>
+                {/* TICKET-181: share-tip banner ONLY on an empty hub — it teaches the
+                    gesture (subsumes the old "nothing importing" empty copy) when there's
+                    nothing to show, then steps aside once rows exist. */}
+                {!hasRows ? (
+                    <View style={styles.hubWrap}>
+                        <ImportActivationHub
+                            variant={hasImported ? 'compact' : 'full'}
+                            showHubLink={false}
+                            palette={palette}
+                        />
                     </View>
-                ) : (
-                    // One row grammar for everything — same as EARLIER below.
+                ) : null}
+
+                {
+                    // One row grammar for everything — thumbnail-first, same as EARLIER below.
                     active.map((m) => {
                         const large = m.large; // TICKET-152 large Maps-list job (if any)
                         const isWorking = m.phase === 'reading' || m.phase === 'saving';
@@ -223,26 +224,25 @@ export default function ImportProgressScreen() {
                                 accessibilityRole={pressTo ? 'button' : undefined}
                                 accessibilityLabel={title}
                             >
-                                {isWorking ? (
-                                    <ActivityIndicator size="small" color={palette.primary} />
-                                ) : (
-                                    <Ionicons
-                                        name={
-                                            isKickoff
-                                                ? 'download-outline'
-                                                : isReview || isLargeDone
-                                                  ? 'sparkles-outline'
-                                                  : 'alert-circle-outline'
-                                        }
-                                        size={16}
-                                        color={pressTo ? palette.primary : palette.textMuted}
-                                    />
-                                )}
+                                {/* TICKET-181: thumbnail-first — the clip cover, or the
+                                    platform-logo plate when absent (a "reading" row has no
+                                    cover yet) / rotted. */}
+                                <ClipThumb
+                                    thumbUrl={m.manifest.sourceThumbUrl}
+                                    glyph={sourceGlyph}
+                                    palette={palette}
+                                />
                                 <View style={styles.recentBody}>
                                     <Text style={[styles.recentTitle, { color: palette.text }]} numberOfLines={1}>
                                         {title}
                                     </Text>
-                                    {/* TICKET-180: source identity — logo · from X · @handle */}
+                                    {/* serif names line — a hint of what's inside */}
+                                    {previewNames.length > 0 ? (
+                                        <Text style={[styles.recentNames, { color: palette.textMuted }]} numberOfLines={1}>
+                                            {previewNames.join(' · ')}
+                                        </Text>
+                                    ) : null}
+                                    {/* meta: logo · from X · @handle */}
                                     <View style={styles.sourceLine}>
                                         <Ionicons name={sourceGlyph} size={12} color={palette.textMuted} />
                                         <Text
@@ -258,11 +258,6 @@ export default function ImportProgressScreen() {
                                             numberOfLines={1}
                                         >
                                             {`stopped while ${failedStage}`}
-                                        </Text>
-                                    ) : null}
-                                    {previewNames.length > 0 ? (
-                                        <Text style={[styles.recentNames, { color: palette.textMuted }]} numberOfLines={1}>
-                                            {previewNames.join(' · ')}
                                         </Text>
                                     ) : null}
                                     {/* TICKET-180: tap-out to the original clip on review
@@ -288,13 +283,17 @@ export default function ImportProgressScreen() {
                                         </View>
                                     ) : null}
                                 </View>
-                                {pressTo ? (
+                                {/* right slot: a working row keeps a live spinner; a
+                                    pressable row gets the chevron. */}
+                                {isWorking ? (
+                                    <ActivityIndicator size="small" color={palette.primary} />
+                                ) : pressTo ? (
                                     <Ionicons name="chevron-forward" size={14} color={palette.textMuted} />
                                 ) : null}
                             </Pressable>
                         );
                     })
-                )}
+                }
 
                 {/* Bulk actions — only when several batches await review */}
                 {reviewBatches.length >= 2 ? (
@@ -328,11 +327,9 @@ export default function ImportProgressScreen() {
                                 accessibilityRole="button"
                                 accessibilityLabel={`open import of ${b.item_count} spots`}
                             >
-                                <Ionicons
-                                    name={importSourceIcon(b.source)}
-                                    size={16}
-                                    color={palette.textSecondary}
-                                />
+                                {/* TICKET-181: thumbnail-first — completed batches carry no
+                                    manifest cover (server rows), so this is the logo plate. */}
+                                <ClipThumb thumbUrl={null} glyph={importSourceIcon(b.source)} palette={palette} />
                                 <View style={styles.recentBody}>
                                     <Text style={[styles.recentTitle, { color: palette.text }]} numberOfLines={1}>
                                         {`${b.item_count} ${b.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(b.source)}`}
@@ -369,8 +366,6 @@ const styles = StyleSheet.create({
     headerBack: { width: 32, alignItems: 'flex-start' },
     headerTitle: { ...Type.screenTitle },
     hubWrap: { paddingTop: Spacing.sm, paddingBottom: Spacing.md },
-    emptyWrap: { paddingTop: 56, alignItems: 'center', gap: 8 },
-    emptyText: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 18 },
     failRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
     failAction: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
     failDot: { fontFamily: 'Manrope_400Regular', fontSize: 12 },

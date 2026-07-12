@@ -39,3 +39,5 @@ export { DiscoverPeopleSheet } from './DiscoverPeopleSheet';
 export { ImportInboxCard } from './ImportInboxCard';
 // TICKET-180: source-context card for the review header + shared "watch again ↗" link.
 export { ImportSourceCard, WatchAgainLink, type ImportSourceManifestLike } from './ImportSourceCard';
+// TICKET-181: thumbnail-first clip cover (logo-plate fallback) for the imports-hub rows.
+export { ClipThumb } from './ClipThumb';
