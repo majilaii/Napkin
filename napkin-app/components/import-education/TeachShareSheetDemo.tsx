@@ -798,7 +798,7 @@ const styles = StyleSheet.create({
     audioText: {
         color: '#fff',
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9.5,
+        fontSize: 11,
     },
     reelBottomNav: {
         position: 'absolute',
