@@ -11,6 +11,7 @@
  *   privacy     — Blocked
  *   permissions — Notifications · Location: real OS state (On/Off pill) →
  *                 Linking.openSettings()
+ *   help        — Replay the import tutorial without mutating onboarding state
  *   about       — Support · Terms · Privacy (legal links)
  * Footer: SIGN OUT (terracotta) + quiet delete account.
  *
@@ -285,6 +286,16 @@ export default function SettingsScreen() {
                         pill={permissionPill(locStatus)}
                         palette={palette}
                         onPress={openSystemSettings}
+                        last
+                    />
+                </Section>
+
+                <Section title="help" palette={palette}>
+                    <Row
+                        label="How to save from videos"
+                        value="Replay"
+                        palette={palette}
+                        onPress={() => router.push('/settings/import-tutorial' as any)}
                         last
                     />
                 </Section>
