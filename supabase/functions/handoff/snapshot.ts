@@ -33,6 +33,12 @@
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+import {
+    canViewerSavePublicList,
+    isBlockedEitherDirection,
+} from '../lists/savedLists.ts';
+import { resolveShareLiveSource } from './shareSource.ts';
+
 export interface SnapshotSpot {
     restaurant_id: string;
     name: string;
@@ -107,6 +113,11 @@ export interface LiveSpotsClient {
     from: (table: string) => any;
 }
 
+export interface LiveSpotsAccess {
+    /** Creator of a relayed link whose source must remain publicly eligible. */
+    publicViewerId?: string | null;
+}
+
 /**
  * Result of the write-boundary handoff authorization (TICKET-077 fix-pass).
  *
@@ -172,24 +183,57 @@ export async function loadLiveSpots(
     supabase: LiveSpotsClient,
     ownerId: string,
     listId: string | null,
+    access: LiveSpotsAccess = {},
 ): Promise<LiveSpots | null> {
     let joinedRows: JoinedSpotRow[];
     let listName: string | null = null;
+    let ownerProfile: {
+        display_name?: string | null;
+        account_privacy?: 'public' | 'private';
+    } | null = null;
+    let ownerProfileLoaded = false;
+
+    const loadOwnerProfile = async () => {
+        if (ownerProfileLoaded) return ownerProfile;
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('display_name, account_privacy')
+            .eq('user_id', ownerId)
+            .maybeSingle();
+        if (error) throw error;
+        ownerProfile = data as typeof ownerProfile;
+        ownerProfileLoaded = true;
+        return ownerProfile;
+    };
 
     if (listId !== null) {
-        // Per-list share: confirm the list still exists AND is still owned by the
-        // share owner. A deleted list, or one whose ownership changed, → null
-        // (tombstone). No existence oracle is needed here (service-role read,
-        // already gated behind a valid token).
+        // Per-list share: confirm the list still exists, is still owned by the
+        // share owner, and is personal. Table lists are forced-private group
+        // artifacts and must never become unauthenticated handoff pages.
         const { data: list, error: listErr } = await supabase
             .from('lists')
-            .select('id, title, ranked')
+            .select('id, owner_id, title, ranked, privacy, table_id')
             .eq('id', listId)
             .eq('owner_id', ownerId)
             .maybeSingle();
 
         if (listErr) throw listErr;
-        if (!list) return null;
+        if (!list || (list as any).table_id) return null;
+
+        if (access.publicViewerId) {
+            const profile = await loadOwnerProfile();
+            if (!canViewerSavePublicList(
+                access.publicViewerId,
+                list as any,
+                profile as any,
+                false,
+            )) return null;
+            if (await isBlockedEitherDirection(
+                supabase as any,
+                access.publicViewerId,
+                ownerId,
+            )) return null;
+        }
 
         listName = (list as any).title as string;
 
@@ -264,14 +308,9 @@ export async function loadLiveSpots(
         }
     }
 
-    // Owner's CURRENT display_name → sharer_name (first token).
-    const { data: profile } = await supabase
-        .from('profiles')
-        .select('display_name')
-        .eq('user_id', ownerId)
-        .maybeSingle();
-
-    const displayName = (profile as any)?.display_name as string ?? '';
+    // Source author's CURRENT display_name → sharer_name (first token).
+    const profile = await loadOwnerProfile();
+    const displayName = profile?.display_name ?? '';
     const sharerName = displayName.split(' ')[0]?.trim() || displayName || 'someone';
 
     // Shared enrichment (verified-only re-check + owner-rating). Produces the
@@ -315,7 +354,7 @@ export async function loadHandoffWriteAuthorization(
     //    since any earlier existence check — close that window here).
     const { data: shareRow, error: shareErr } = await (supabase as any)
         .from('wishlist_shares')
-        .select('owner_id, list_id, revoked_at')
+        .select('owner_id, list_id, snapshot, revoked_at')
         .eq('token', handoffToken)
         .maybeSingle();
 
@@ -326,9 +365,12 @@ export async function loadHandoffWriteAuthorization(
 
     // 2. The ONE authoritative live read — CURRENT verified spot set + sharer_name.
     //    null ⇒ the list/owner is gone ⇒ treat as revoked (points at nothing).
-    const ownerId = (shareRow as any).owner_id as string;
+    const tokenOwnerId = (shareRow as any).owner_id as string;
     const listId = ((shareRow as any).list_id as string | null) ?? null;
-    const live = await loadLiveSpots(supabase, ownerId, listId);
+    const source = resolveShareLiveSource(tokenOwnerId, (shareRow as any).snapshot);
+    const live = await loadLiveSpots(supabase, source.sourceOwnerId, listId, {
+        publicViewerId: source.publicViewerId,
+    });
     if (!live) {
         return { revoked: true };
     }

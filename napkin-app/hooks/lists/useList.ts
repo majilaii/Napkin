@@ -69,6 +69,12 @@ export interface ListDetailData {
     list: ListDetail;
     entries: ListEntry[];
     owner_profile: OwnerProfile;
+    /** Aggregate saves of this list. Public signal; exact for the current read. */
+    save_count: number;
+    /** Whether the authenticated viewer has saved this list. */
+    viewer_has_saved: boolean;
+    /** False for the owner, private/Table lists, or otherwise ineligible views. */
+    can_save: boolean;
 }
 
 export interface FetchResult {

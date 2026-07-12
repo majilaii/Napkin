@@ -1,23 +1,13 @@
-/**
- * ListDetailHeader — shown at the top of the list detail screen.
- *
- * Renders: title, optional description, author name/avatar row,
- * entry count + ranked/privacy badges, quiet share · edit affordances
- * (owner only).
- *
- * TICKET-074: share opens the HandoffSheet (frozen-snapshot handoff link via
- * onShare) — replacing the old copy-napkin://-to-clipboard share, which led
- * nowhere for non-users. Handoff shares are snapshots, so they work for
- * private lists too (same doctrine as the private wishlist being shareable).
- */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Radius, Spacing, Type } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { ListDetail, OwnerProfile } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
@@ -25,170 +15,336 @@ type Palette = typeof Colors.light;
 interface Props {
     list: ListDetail;
     entryCount: number;
+    saveCount: number;
     ownerProfile: OwnerProfile;
     isOwner: boolean;
+    canEditEntries: boolean;
+    isSaved: boolean;
+    canSave: boolean;
+    isSavePending?: boolean;
+    isSharePending?: boolean;
     onEdit: () => void;
-    /** TICKET-074: open the HandoffSheet for this list. Hidden when the list is empty. */
     onShare?: () => void;
-    /** Open the import-spots sheet (owner only). The fast add-from-saved path. */
     onAddSpots?: () => void;
+    onToggleSaved?: () => void;
 }
 
-export function ListDetailHeader({ list, entryCount, ownerProfile, isOwner, onEdit, onShare, onAddSpots }: Props) {
-    const scheme = useColorScheme();
-    const palette = Colors[scheme ?? 'light'] as Palette;
+export function ListDetailHeader({
+    list,
+    entryCount,
+    saveCount,
+    ownerProfile,
+    isOwner,
+    canEditEntries,
+    isSaved,
+    canSave,
+    isSavePending,
+    isSharePending,
+    onEdit,
+    onShare,
+    onAddSpots,
+    onToggleSaved,
+}: Props) {
+    const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
+    const palette = Colors[scheme] as Palette;
     const router = useRouter();
     const { user } = useAuth();
 
-    // Quiet middle-dot meta line — replaces the old chip badges (Heirloom voice).
-    const metaParts: string[] = [`${entryCount} ${entryCount === 1 ? 'spot' : 'spots'}`];
-    if (list.ranked) metaParts.push('ranked');
-    if (isOwner && list.privacy === 'private') metaParts.push('only you');
-    const metaLine = metaParts.join(' · ');
+    const authorName = ownerProfile.display_name ?? ownerProfile.username ?? 'Unknown';
+    const authorIdentifier = isOwner
+        ? user?.id
+        : ownerProfile.account_privacy === 'public' && ownerProfile.username
+            ? ownerProfile.username
+            : null;
+
+    const primaryAction = canEditEntries && onAddSpots
+        ? { label: 'Add spots', icon: 'add' as const, onPress: onAddSpots, saved: false }
+        : canSave && onToggleSaved
+            ? {
+                label: isSaved ? 'Saved' : 'Save list',
+                icon: isSaved ? 'checkmark' as const : 'add' as const,
+                onPress: onToggleSaved,
+                saved: isSaved,
+            }
+            : null;
 
     return (
-        <View style={styles.container}>
-            {/* Title */}
-            <Text style={[Type.headlineLarge, { color: palette.text, fontFamily: 'Newsreader_400Regular_Italic' }]}>
-                {list.title}
-            </Text>
+        <View style={[styles.sheet, { backgroundColor: palette.background }]}>
+            <View style={[styles.grabber, { backgroundColor: palette.dividerSoft }]} />
 
-            {/* Description */}
-            {list.description ? (
-                <Text style={[Type.body, { color: palette.textSecondary, marginTop: Spacing.xs }]}>
-                    {list.description}
-                </Text>
-            ) : null}
+            <View style={styles.titleRow}>
+                {list.emoji ? (
+                    <View style={[styles.emojiTile, { backgroundColor: palette.secondaryContainer }]}>
+                        <Text style={styles.emoji}>{list.emoji}</Text>
+                    </View>
+                ) : null}
+                <Text style={[styles.title, { color: palette.text }]}>{list.title}</Text>
+            </View>
 
-            {/* Author row — tappable when public or self (TICKET-020) */}
-            {(() => {
-                // When viewer is the owner, always route to /u/[currentUserId] (uuid)
-                // When target is public, route to /u/[username]
-                // Otherwise: plain text
-                const authorIdentifier = isOwner
-                    ? user?.id
-                    : ownerProfile.account_privacy === 'public' && ownerProfile.username
-                        ? ownerProfile.username
-                        : null;
-                const isTappable = !!authorIdentifier;
-
-                const content = (
-                    <View style={[styles.authorRow, { marginTop: Spacing.md }]}>
-                        <View style={[styles.avatar, { backgroundColor: palette.surfaceContainerHigh }]}>
-                            <Ionicons name="person" size={14} color={palette.textMuted} />
-                        </View>
-                        <Text style={[Type.bodySmall, { color: isTappable ? palette.primary : palette.textMuted }]}>
-                            {ownerProfile.display_name ?? 'Unknown'}
+            <PressableScale
+                onPress={authorIdentifier ? () => router.push(`/u/${authorIdentifier}`) : undefined}
+                disabled={!authorIdentifier}
+                style={styles.authorRow}
+                accessibilityRole={authorIdentifier ? 'button' : undefined}
+                accessibilityLabel={authorIdentifier ? `Open ${authorName}'s profile` : undefined}
+            >
+                {ownerProfile.avatar_url ? (
+                    <Image
+                        source={{ uri: ownerProfile.avatar_url }}
+                        style={[
+                            styles.avatar,
+                            {
+                                borderColor: scheme === 'dark'
+                                    ? 'rgba(255, 255, 255, 0.1)'
+                                    : 'rgba(0, 0, 0, 0.1)',
+                            },
+                        ]}
+                        contentFit="cover"
+                        transition={160}
+                    />
+                ) : (
+                    <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: palette.primaryMuted }]}>
+                        <Text style={[styles.avatarInitial, { color: palette.primary }]}>
+                            {authorName.trim().charAt(0).toUpperCase() || '?'}
                         </Text>
                     </View>
-                );
+                )}
+                <Text style={[styles.author, { color: authorIdentifier ? palette.textSecondary : palette.textMuted }]} numberOfLines={1}>
+                    by {authorName}
+                </Text>
+                {authorIdentifier ? <Ionicons name="chevron-forward" size={13} color={palette.textMuted} /> : null}
+            </PressableScale>
 
-                if (isTappable) {
-                    return (
-                        <Pressable
-                            onPress={() => router.push(`/u/${authorIdentifier}`)}
-                            hitSlop={8}
-                        >
-                            {content}
-                        </Pressable>
-                    );
-                }
-                return content;
-            })()}
-
-            {/* Meta line — quiet middle-dot text, no chip badges (Heirloom voice) */}
-            <Text style={[styles.metaLine, { color: palette.textMuted, marginTop: Spacing.sm }]}>
-                {metaLine}
-            </Text>
-
-            {/* Add spots — the fast import-from-saved affordance (owner only) */}
-            {isOwner && onAddSpots ? (
-                <Pressable
-                    onPress={onAddSpots}
-                    style={({ pressed }) => [
-                        styles.addSpotsBtn,
-                        { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 },
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="add spots to this list"
-                >
-                    <Ionicons name="add" size={18} color="#fffdf8" />
-                    <Text style={[Type.titleSmall, { color: '#fffdf8' }]}>add spots</Text>
-                </Pressable>
+            {list.description ? (
+                <Text style={[styles.description, { color: palette.textSecondary }]}>{list.description}</Text>
             ) : null}
 
-            {/* Quiet owner affordances: share · edit (canvas idiom — TICKET-074) */}
-            {isOwner && (
-                <View style={[styles.actionsRow, { marginTop: Spacing.md }]}>
-                    {onShare ? (
-                        <>
-                            <Pressable
-                                onPress={onShare}
-                                hitSlop={10}
-                                accessibilityLabel={`share ${list.title}`}
-                            >
-                                <Text style={[styles.quietAction, { color: palette.primary }]}>
-                                    share
-                                </Text>
-                            </Pressable>
-                            <Text style={[styles.quietDot, { color: palette.textMuted }]}>·</Text>
-                        </>
-                    ) : null}
-                    <Pressable onPress={onEdit} hitSlop={10} accessibilityLabel="edit list">
-                        <Text style={[styles.quietAction, { color: palette.textMuted }]}>
-                            edit
-                        </Text>
-                    </Pressable>
+            <View style={styles.statsRow}>
+                <View style={styles.stat}>
+                    <Text style={[styles.statNumber, { color: palette.text }]}>{entryCount}</Text>
+                    <Text style={[styles.statLabel, { color: palette.textMuted }]}>
+                        {entryCount === 1 ? 'Place' : 'Places'}
+                    </Text>
                 </View>
-            )}
+                <View style={[styles.statRule, { backgroundColor: palette.dividerSoft }]} />
+                <View style={styles.stat}>
+                    <Text style={[styles.statNumber, { color: palette.text }]}>{saveCount}</Text>
+                    <Text style={[styles.statLabel, { color: palette.textMuted }]}>Saves</Text>
+                </View>
+            </View>
+
+            {primaryAction || onShare || isOwner ? (
+                <View style={styles.actionsRow}>
+                    {primaryAction ? (
+                        <View style={styles.primaryWrap}>
+                            <PressableScale
+                                onPress={primaryAction.onPress}
+                                disabled={isSavePending}
+                                haptic="medium"
+                                style={[
+                                    styles.primaryButton,
+                                    Shadow.subtle,
+                                    {
+                                        backgroundColor: primaryAction.saved
+                                            ? palette.secondaryContainer
+                                            : palette.primary,
+                                    },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={primaryAction.label}
+                            >
+                                {isSavePending ? (
+                                    <ActivityIndicator
+                                        size="small"
+                                        color={primaryAction.saved ? palette.text : palette.textInverse}
+                                    />
+                                ) : (
+                                    <Ionicons
+                                        name={primaryAction.icon}
+                                        size={21}
+                                        color={primaryAction.saved ? palette.text : palette.textInverse}
+                                    />
+                                )}
+                                <Text
+                                    style={[
+                                        styles.primaryLabel,
+                                        { color: primaryAction.saved ? palette.text : palette.textInverse },
+                                    ]}
+                                >
+                                    {primaryAction.label}
+                                </Text>
+                            </PressableScale>
+                        </View>
+                    ) : null}
+
+                    {onShare ? (
+                        <PressableScale
+                            onPress={onShare}
+                            disabled={isSharePending}
+                            haptic="light"
+                            style={[styles.squareButton, { backgroundColor: palette.surfaceContainerHigh }]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Share ${list.title}`}
+                        >
+                            {isSharePending ? (
+                                <ActivityIndicator size="small" color={palette.text} />
+                            ) : (
+                                <Ionicons name="share-outline" size={22} color={palette.text} />
+                            )}
+                        </PressableScale>
+                    ) : null}
+
+                    {isOwner ? (
+                        <PressableScale
+                            onPress={onEdit}
+                            haptic="selection"
+                            style={[styles.squareButton, { backgroundColor: palette.surfaceContainerHigh }]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Edit list"
+                        >
+                            <Ionicons name="ellipsis-horizontal" size={22} color={palette.text} />
+                        </PressableScale>
+                    ) : null}
+                </View>
+            ) : null}
+
+            {isOwner && list.privacy === 'private' ? (
+                <View style={styles.privateLine}>
+                    <Ionicons name="lock-closed-outline" size={13} color={palette.textMuted} />
+                    <Text style={[styles.privateText, { color: palette.textMuted }]}>Only you can find this list</Text>
+                </View>
+            ) : null}
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
+    sheet: {
+        marginTop: -28,
+        borderTopLeftRadius: Radius.xxxl,
+        borderTopRightRadius: Radius.xxxl,
+        paddingTop: 10,
         paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.lg,
-        paddingBottom: Spacing.md,
+        paddingBottom: Spacing.lg,
+    },
+    grabber: {
+        width: 48,
+        height: 5,
+        borderRadius: Radius.full,
+        alignSelf: 'center',
+        marginBottom: Spacing.md,
+    },
+    titleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    emojiTile: {
+        width: 40,
+        height: 40,
+        borderRadius: Radius.md,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
+    emoji: { fontSize: 21 },
+    title: {
+        flex: 1,
+        fontFamily: 'Newsreader_700Bold',
+        fontSize: 32,
+        lineHeight: 36,
+        letterSpacing: -0.7,
     },
     authorRow: {
+        minHeight: 44,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: Spacing.xs,
+        alignSelf: 'flex-start',
+        gap: 8,
+        marginTop: Spacing.sm,
     },
     avatar: {
-        width: 24,
-        height: 24,
-        borderRadius: Radius.full,
-        justifyContent: 'center',
-        alignItems: 'center',
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        borderWidth: StyleSheet.hairlineWidth,
     },
-    metaLine: {
-        fontFamily: 'Manrope_500Medium',
+    avatarFallback: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 0,
+    },
+    avatarInitial: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 12,
+    },
+    author: {
+        fontFamily: 'Manrope_600SemiBold',
         fontSize: 13,
     },
-    addSpotsBtn: {
+    description: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 17,
+        lineHeight: 23,
+        marginTop: Spacing.sm,
+    },
+    statsRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        paddingVertical: 12,
-        borderRadius: Radius.md,
-        marginTop: Spacing.md,
+        marginTop: Spacing.lg,
+        paddingHorizontal: Spacing.md,
+    },
+    stat: { flex: 1, alignItems: 'center' },
+    statRule: { width: StyleSheet.hairlineWidth, height: 42 },
+    statNumber: {
+        fontFamily: 'Newsreader_700Bold',
+        fontSize: 25,
+        fontVariant: ['tabular-nums'],
+    },
+    statLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        marginTop: 1,
     },
     actionsRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        gap: Spacing.sm,
+        marginTop: Spacing.lg,
     },
-    quietAction: {
+    primaryButton: {
+        width: '100%',
+        minHeight: 56,
+        borderRadius: Radius.lg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingHorizontal: Spacing.md,
+    },
+    primaryWrap: {
+        flex: 1,
+    },
+    primaryLabel: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        letterSpacing: 1.0,
-        textTransform: 'lowercase',
-        paddingVertical: Spacing.xs,
+        fontSize: 15,
     },
-    quietDot: {
+    squareButton: {
+        width: 56,
+        height: 56,
+        borderRadius: Radius.lg,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    privateLine: {
+        minHeight: 40,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+        marginTop: Spacing.xs,
+    },
+    privateText: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 11,
     },

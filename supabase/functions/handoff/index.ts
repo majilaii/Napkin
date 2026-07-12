@@ -5,15 +5,16 @@
  * Returns { data } | { error } envelope with corsHeaders.
  *
  * TICKET-077: shares are LIVE. A token references (owner_id, list_id?) and is
- * resolved at view time off the owner's CURRENT verified spots + ratings — no
- * frozen snapshot. The display payload is built by loadLiveSpots (the single
- * source of truth, shared with share-page and the pin path).
+ * resolved at view time off the source author's CURRENT verified spots + ratings.
+ * Public-list relays keep a strict source-owner marker; no spots are frozen. The
+ * display payload is built by loadLiveSpots (the single source of truth, shared
+ * with share-page and the pin path).
  *
  * Actions (POST body: { action, ...fields }):
  *
  *   create      — mint a token for the caller's wishlist (no snapshot built).
  *                 → { token, share_url }
- *                 list_id (optional, must be caller-owned via lists.owner_id)
+ *                 list_id (optional, caller-owned or currently visible public)
  *                 mints a per-list share instead. Validation only: a non-empty,
  *                 verified-spot live read is required at create time so the
  *                 affordance stays honest (empty → 400), but NOTHING is frozen.
@@ -42,6 +43,14 @@ import {
     buildResolveCandidates,
 } from './snapshot.ts';
 import { deriveClientNonce } from './nonce.ts';
+import {
+    canViewerSavePublicList,
+    isBlockedEitherDirection,
+} from '../lists/savedLists.ts';
+import {
+    buildPublicListRelayMarker,
+    resolveShareLiveSource,
+} from './shareSource.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,10 +102,10 @@ serve(async (req) => {
         if (action === 'create') {
             const { list_id: listIdInput } = body as { list_id?: unknown };
 
-            // TICKET-077: NOTHING is frozen. We only (a) validate list ownership
-            // and (b) run the live read once to keep the affordance honest — an
-            // empty/all-unverified source → 400 rather than a dead link. The token
-            // stores only (owner_id, list_id); every view re-reads live.
+            // TICKET-077: NOTHING is frozen. Author-created shares retain the
+            // original owner path. A non-owner may relay only a currently visible
+            // public personal list; the token stays owned/revocable by that viewer
+            // and carries a strict source-author marker for live re-authorization.
             let listId: string | null = null;
             if (listIdInput !== undefined && listIdInput !== null) {
                 if (typeof listIdInput !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(listIdInput)) {
@@ -105,12 +114,55 @@ serve(async (req) => {
                 listId = listIdInput;
             }
 
-            // Live read (also validates list ownership: null → not yours / missing).
-            const live = await loadLiveSpots(supabase, user.id, listId);
+            let sourceOwnerId = user.id;
+            let publicViewerId: string | null = null;
+
+            if (listId !== null) {
+                const { data: sourceList, error: sourceListErr } = await supabase
+                    .from('lists')
+                    .select('id, owner_id, privacy, table_id')
+                    .eq('id', listId)
+                    .maybeSingle();
+                if (sourceListErr) throw sourceListErr;
+                if (!sourceList) {
+                    return errorResponse('LIST_NOT_FOUND', 'List not found', 404);
+                }
+
+                sourceOwnerId = (sourceList as any).owner_id as string;
+                if (sourceOwnerId !== user.id) {
+                    const { data: ownerProfile, error: ownerProfileErr } = await supabase
+                        .from('profiles')
+                        .select('account_privacy')
+                        .eq('user_id', sourceOwnerId)
+                        .maybeSingle();
+                    if (ownerProfileErr) throw ownerProfileErr;
+
+                    const passesStaticGate = canViewerSavePublicList(
+                        user.id,
+                        sourceList as any,
+                        ownerProfile as any,
+                        false,
+                    );
+                    if (!passesStaticGate || await isBlockedEitherDirection(
+                        supabase as any,
+                        user.id,
+                        sourceOwnerId,
+                    )) {
+                        return errorResponse('LIST_NOT_FOUND', 'List not found', 404);
+                    }
+                    publicViewerId = user.id;
+                }
+            }
+
+            // Live read keeps the affordance honest (empty/all-unverified → 400)
+            // and re-runs the public gate for relayed links.
+            const live = await loadLiveSpots(supabase, sourceOwnerId, listId, {
+                publicViewerId,
+            });
 
             if (listId !== null && live === null) {
-                // List not found or not owned by the caller. Uniform 404 — no
-                // existence oracle ("not yours" and "missing" are identical).
+                // Missing, no longer owned by the source author, or no longer
+                // public to a relay viewer. Keep every failure uniform.
                 return errorResponse('LIST_NOT_FOUND', 'List not found', 404);
             }
 
@@ -124,7 +176,8 @@ serve(async (req) => {
             }
 
             // Mint token with ≤3 retry on unique violation (ARCH-REVIEW-2 #9).
-            // snapshot is left NULL — vestigial column, never read (TICKET-077).
+            // Owned shares leave snapshot NULL. Relays use only a strict source
+            // marker; spots and display data are always read live.
             let shareToken: string | null = null;
 
             for (let attempt = 0; attempt < 3; attempt++) {
@@ -135,7 +188,9 @@ serve(async (req) => {
                         owner_id: user.id,
                         list_id: listId,
                         token: candidate,
-                        snapshot: null,
+                        snapshot: publicViewerId
+                            ? buildPublicListRelayMarker(sourceOwnerId)
+                            : null,
                     })
                     .select('id')
                     .single();
@@ -195,10 +250,10 @@ serve(async (req) => {
             }
 
             // Exact-token service-role lookup (no client ever queries by token — Codex #9).
-            // TICKET-077: read (owner_id, list_id) — the live read keys, not a snapshot.
+            // Read the live keys plus the optional strict relay-source marker.
             const { data: share, error: shareErr } = await supabase
                 .from('wishlist_shares')
-                .select('owner_id, list_id, revoked_at')
+                .select('owner_id, list_id, snapshot, revoked_at')
                 .eq('token', resolveToken)
                 .maybeSingle();
 
@@ -209,12 +264,15 @@ serve(async (req) => {
                 return jsonResponse({ data: { status: 'revoked' } });
             }
 
-            const ownerId = (share as any).owner_id as string;
+            const tokenOwnerId = (share as any).owner_id as string;
             const listId = ((share as any).list_id as string | null) ?? null;
+            const source = resolveShareLiveSource(tokenOwnerId, (share as any).snapshot);
 
-            // TICKET-077: read the owner's CURRENT verified spots + ratings.
+            // TICKET-077: read the source author's CURRENT verified spots + ratings.
             // A deleted/unowned list → null → tombstone (uniform, no leak).
-            const live = await loadLiveSpots(supabase, ownerId, listId);
+            const live = await loadLiveSpots(supabase, source.sourceOwnerId, listId, {
+                publicViewerId: source.publicViewerId,
+            });
             if (!live) {
                 return jsonResponse({ data: { status: 'revoked' } });
             }

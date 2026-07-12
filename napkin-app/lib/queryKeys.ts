@@ -80,6 +80,8 @@ export const queryKeys = {
     // Lists (curated, themed, shareable — TICKET-018)
     lists: {
         mine: (userId: string) => ['lists', 'mine', userId] as const,
+        /** Public lists the caller has explicitly saved, newest save first. */
+        saved: (userId: string) => ['lists', 'saved', userId] as const,
         detail: (listId: string) => ['lists', 'detail', listId] as const,
         containing: (userId: string, restaurantId: string) =>
             ['lists', 'containing', userId, restaurantId] as const,
@@ -285,4 +287,3 @@ export const queryKeys = {
     },
 
 } as const;
-

@@ -3,27 +3,27 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Shadow } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
-import type { MyList } from '@/hooks/lists/useMyLists';
+import type { SavedList } from '@/hooks/lists/useSavedLists';
 
 interface Props {
-    list: MyList;
+    list: SavedList;
     palette: typeof Colors.light;
+    scheme: 'light' | 'dark';
     onPress: () => void;
 }
 
-function formatUpdated(iso: string): string {
+function relativeSavedAt(iso: string): string {
     const days = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
-    if (days === 0) return 'updated today';
-    if (days === 1) return 'updated yesterday';
-    if (days < 7) return `updated ${days}d ago`;
-    return `updated ${Math.floor(days / 7)}w ago`;
+    if (days === 0) return 'saved today';
+    if (days === 1) return 'saved yesterday';
+    if (days < 7) return `saved ${days}d ago`;
+    return `saved ${Math.floor(days / 7)}w ago`;
 }
 
-export function WishlistListCardFull({ list, palette, onPress }: Props) {
-    const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
+export function SavedListCardFull({ list, palette, scheme, onPress }: Props) {
+    const owner = list.owner_display_name ?? list.owner_username ?? 'someone';
 
     return (
         <PressableScale
@@ -31,12 +31,12 @@ export function WishlistListCardFull({ list, palette, onPress }: Props) {
             haptic="light"
             style={[styles.card, Shadow.note, { backgroundColor: palette.surfaceNote }]}
             accessibilityRole="button"
-            accessibilityLabel={`Open list ${list.title}`}
+            accessibilityLabel={`Open saved list ${list.title}`}
         >
             <View
                 style={[
                     styles.cover,
-                    { backgroundColor: palette.primaryMuted },
+                    { backgroundColor: palette.secondaryContainer },
                     list.cover_photo_url && {
                         borderWidth: StyleSheet.hairlineWidth,
                         borderColor: scheme === 'dark'
@@ -61,21 +61,19 @@ export function WishlistListCardFull({ list, palette, onPress }: Props) {
 
             <View style={styles.copy}>
                 <View style={styles.eyebrowRow}>
-                    <Text style={[styles.eyebrow, { color: palette.primary }]}>
-                        {list.table_name ? `Shared · ${list.table_name}` : list.privacy === 'private' ? 'Private list' : 'Your list'}
+                    <Text style={[styles.eyebrow, { color: palette.primary }]} numberOfLines={1}>
+                        by {owner}
                     </Text>
-                    <Ionicons name="chevron-forward" size={15} color={palette.textMuted} />
+                    <Ionicons name="bookmark" size={14} color={palette.primary} />
                 </View>
-                <Text style={[styles.title, { color: palette.text }]} numberOfLines={2}>
-                    {list.title}
-                </Text>
+                <Text style={[styles.title, { color: palette.text }]} numberOfLines={2}>{list.title}</Text>
                 {list.description ? (
                     <Text style={[styles.description, { color: palette.textSecondary }]} numberOfLines={2}>
                         {list.description}
                     </Text>
                 ) : null}
-                <Text style={[styles.meta, { color: palette.textMuted }]}>
-                    {list.entry_count} {list.entry_count === 1 ? 'place' : 'places'} · {formatUpdated(list.updated_at)}
+                <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
+                    {list.entry_count} {list.entry_count === 1 ? 'place' : 'places'} · {list.save_count} saves · {relativeSavedAt(list.saved_at)}
                 </Text>
             </View>
         </PressableScale>
@@ -111,14 +109,13 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: 8,
+        gap: Spacing.sm,
     },
     eyebrow: {
         flex: 1,
         fontFamily: 'Manrope_700Bold',
         fontSize: 10,
-        letterSpacing: 0.5,
-        textTransform: 'uppercase',
+        letterSpacing: 0.3,
     },
     title: {
         fontFamily: 'Newsreader_700Bold',
