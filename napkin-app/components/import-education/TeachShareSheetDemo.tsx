@@ -1,10 +1,10 @@
 /**
- * TeachShareSheetDemo — a code-native, Rodeo-style interaction simulator.
+ * A native interaction simulator for the real share workflow.
  *
- * Nothing here invokes Instagram or the system share sheet. It deliberately
- * recreates the useful parts in native views so the sequence is deterministic,
- * offline-friendly, accessible, theme-aware, and easy to update when Napkin's
- * import flow changes.
+ * The photographic Reel, platform share drawer and iOS share sheet are replicas:
+ * they never open another app, but their required controls are real Pressables.
+ * This gives onboarding the muscle-memory benefit of a live walkthrough while
+ * keeping it deterministic, offline and replayable from Settings.
  */
 import React, { useEffect, useState } from 'react';
 import {
@@ -18,14 +18,13 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import { StatusBar } from 'expo-status-bar';
 import Animated, {
     cancelAnimation,
     Easing,
-    SharedValue,
     useAnimatedStyle,
     useReducedMotion,
     useSharedValue,
-    withDelay,
     withRepeat,
     withTiming,
 } from 'react-native-reanimated';
@@ -51,36 +50,21 @@ export interface TeachShareSheetDemoProps {
     isPending?: boolean;
 }
 
-const RESULT_ROWS = [
-    { name: 'Mountain', area: 'Soho', tint: '#c96f4d' },
-    { name: 'Kiln', area: 'Soho', tint: '#7d8a62' },
-    { name: 'Berenjak', area: 'Borough', tint: '#d1a155' },
+const REEL_IMAGE = require('../../assets/onboarding/reel-kitchen.png');
+const NAPKIN_ICON = require('../../assets/images/icon.png');
+
+const RECIPIENTS = [
+    { name: 'Your story', initials: '+', colors: ['#ffbd47', '#d62976'] as const },
+    { name: 'Sam', initials: 'S', colors: ['#6b8cff', '#4158d0'] as const },
+    { name: 'Maya', initials: 'M', colors: ['#f7a8b8', '#df5d7d'] as const },
+    { name: 'Alex', initials: 'A', colors: ['#79d7c8', '#3d968b'] as const },
 ] as const;
 
-const SHARE_APPS = [
-    { label: 'AirDrop', icon: 'wifi' as const, color: '#1684f8' },
-    { label: 'Messages', icon: 'chatbubble' as const, color: '#35c759' },
-    { label: 'Mail', icon: 'mail' as const, color: '#1487f8' },
-    { label: 'Notes', icon: 'document-text' as const, color: '#f5c542' },
+const SAVED_PLACES = [
+    { name: 'Mountain', detail: 'Soho · Spanish', score: '4.8' },
+    { name: 'Kiln', detail: 'Soho · Thai', score: '4.7' },
+    { name: 'Berenjak', detail: 'Borough · Persian', score: '4.6' },
 ] as const;
-
-function useSceneStyle(index: number, beatValue: SharedValue<number>) {
-    return useAnimatedStyle(() => {
-        const distance = Math.min(Math.abs(beatValue.value - index), 1);
-        const direction = beatValue.value > index ? -1 : 1;
-        return {
-            opacity: 1 - distance,
-            transform: [{ translateY: distance * direction * 12 }],
-        };
-    });
-}
-
-function useRevealStyle(value: SharedValue<number>) {
-    return useAnimatedStyle(() => ({
-        opacity: value.value,
-        transform: [{ translateY: (1 - value.value) * 12 }],
-    }));
-}
 
 export function TeachShareSheetDemo({
     palette,
@@ -93,475 +77,588 @@ export function TeachShareSheetDemo({
 }: TeachShareSheetDemoProps) {
     const reduced = useReducedMotion();
     const [beat, setBeat] = useState(0);
-
-    const beatValue = useSharedValue(0);
-    const reelFloat = useSharedValue(0);
-    const tapPulse = useSharedValue(0);
-    const sheetY = useSharedValue(reduced ? 0 : 52);
-    const resultOne = useSharedValue(reduced ? 1 : 0);
-    const resultTwo = useSharedValue(reduced ? 1 : 0);
-    const resultThree = useSharedValue(reduced ? 1 : 0);
-
-    const scene0 = useSceneStyle(0, beatValue);
-    const scene1 = useSceneStyle(1, beatValue);
-    const scene2 = useSceneStyle(2, beatValue);
-    const scene3 = useSceneStyle(3, beatValue);
+    const pulse = useSharedValue(0);
+    const drawerProgress = useSharedValue(0);
+    const systemProgress = useSharedValue(0);
 
     useEffect(() => {
-        beatValue.value = withTiming(beat, {
-            duration: reduced ? 0 : 320,
-            easing: Easing.out(Easing.cubic),
-        });
-    }, [beat, beatValue, reduced]);
-
-    useEffect(() => {
-        if (reduced) {
-            cancelAnimation(reelFloat);
-            cancelAnimation(tapPulse);
-            reelFloat.value = 0;
-            tapPulse.value = 0;
+        if (reduced || beat === LAST_BEAT) {
+            cancelAnimation(pulse);
+            pulse.value = 0;
             return;
         }
-
-        reelFloat.value = withRepeat(
-            withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.quad) }),
-            -1,
-            true,
-        );
-        tapPulse.value = withRepeat(
-            withTiming(1, { duration: 900, easing: Easing.out(Easing.cubic) }),
+        pulse.value = withRepeat(
+            withTiming(1, { duration: 1050, easing: Easing.out(Easing.cubic) }),
             -1,
             false,
         );
-
-        return () => {
-            cancelAnimation(reelFloat);
-            cancelAnimation(tapPulse);
-        };
-    }, [reduced, reelFloat, tapPulse]);
+        return () => cancelAnimation(pulse);
+    }, [beat, pulse, reduced]);
 
     useEffect(() => {
-        if (beat >= 2) {
-            sheetY.value = reduced
-                ? 0
-                : withTiming(0, { duration: 360, easing: Easing.out(Easing.cubic) });
-        }
-        if (beat >= LAST_BEAT) {
-            if (reduced) {
-                resultOne.value = 1;
-                resultTwo.value = 1;
-                resultThree.value = 1;
-            } else {
-                resultOne.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
-                resultTwo.value = withDelay(110, withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) }));
-                resultThree.value = withDelay(220, withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) }));
-            }
-        }
-    }, [beat, reduced, resultOne, resultThree, resultTwo, sheetY]);
+        const duration = reduced ? 0 : 330;
+        drawerProgress.value = withTiming(beat >= 2 && beat < LAST_BEAT ? 1 : 0, {
+            duration,
+            easing: Easing.out(Easing.cubic),
+        });
+        systemProgress.value = withTiming(beat >= 3 && beat < LAST_BEAT ? 1 : 0, {
+            duration,
+            easing: Easing.out(Easing.cubic),
+        });
+    }, [beat, drawerProgress, reduced, systemProgress]);
 
-    const reelFloatStyle = useAnimatedStyle(() => ({
-        transform: [
-            { translateY: reelFloat.value * -5 },
-            { rotate: `${-1.2 + reelFloat.value * 1.2}deg` },
-        ],
-    }));
     const pulseStyle = useAnimatedStyle(() => ({
-        opacity: 0.72 * (1 - tapPulse.value),
-        transform: [{ scale: 0.78 + tapPulse.value * 0.72 }],
+        opacity: 0.75 * (1 - pulse.value),
+        transform: [{ scale: 0.8 + pulse.value * 0.65 }],
     }));
-    const sheetStyle = useAnimatedStyle(() => ({
-        opacity: 1 - sheetY.value / 80,
-        transform: [{ translateY: sheetY.value }],
+    const drawerStyle = useAnimatedStyle(() => ({
+        opacity: drawerProgress.value,
+        transform: [{ translateY: (1 - drawerProgress.value) * 44 }],
     }));
-    const resultStyles = [
-        useRevealStyle(resultOne),
-        useRevealStyle(resultTwo),
-        useRevealStyle(resultThree),
-    ];
-    const terminalFooter = useAnimatedStyle(() => ({
-        opacity: Math.max(0, beatValue.value - 2),
-        transform: [{ translateY: Math.max(0, 3 - beatValue.value) * 8 }],
-    }));
-    const continueFooter = useAnimatedStyle(() => ({
-        opacity: Math.min(1, Math.max(0, 3 - beatValue.value)),
+    const systemStyle = useAnimatedStyle(() => ({
+        opacity: systemProgress.value,
+        transform: [{ translateY: (1 - systemProgress.value) * 56 }],
     }));
 
     const completeTarget = (target: TeachTarget) => {
-        setBeat((value) => advanceOnTarget(value, target));
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+        setBeat((current) => {
+            const next = advanceOnTarget(current, target);
+            if (next !== current) {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+            }
+            return next;
+        });
     };
 
+    if (beat === LAST_BEAT) {
+        return (
+            <View style={styles.root}>
+                <StatusBar style="auto" />
+                <ResultScreen
+                    palette={palette}
+                    topInset={topInset}
+                    bottomInset={bottomInset}
+                    doneLabel={doneLabel}
+                    isPending={isPending}
+                    onDone={onDone}
+                />
+            </View>
+        );
+    }
+
     return (
-        <View
-            style={[
-                styles.root,
-                {
-                    paddingTop: topInset + 12,
-                    paddingBottom: Math.max(bottomInset, 12),
-                },
-            ]}
-        >
-            <View style={[styles.topRail, onClose ? styles.topRailWithClose : null]}>
-                <View style={styles.progressRow} accessibilityLabel={`Step ${beat + 1} of ${BEAT_COUNT}`}>
-                    {Array.from({ length: BEAT_COUNT }).map((_, index) => (
+        <View style={styles.root}>
+            <StatusBar style={beat === LAST_BEAT ? 'auto' : 'light'} />
+
+            <ReelScreen
+                topInset={topInset}
+                bottomInset={bottomInset}
+                shareEnabled={beat === 1}
+                pulseStyle={pulseStyle}
+                onShare={() => completeTarget('share')}
+            />
+
+            {beat === 0 ? (
+                <IntroOverlay
+                    topInset={topInset}
+                    bottomInset={bottomInset}
+                    onStart={() => completeTarget('start')}
+                />
+            ) : null}
+
+            <Animated.View
+                pointerEvents={beat === 2 ? 'auto' : 'none'}
+                style={[styles.overlay, drawerStyle]}
+            >
+                <PlatformShareDrawer
+                    bottomInset={bottomInset}
+                    pulseStyle={pulseStyle}
+                    onShareTo={() => completeTarget('shareTo')}
+                />
+            </Animated.View>
+
+            <Animated.View
+                pointerEvents={beat === 3 ? 'auto' : 'none'}
+                style={[styles.overlay, systemStyle]}
+            >
+                <SystemShareSheet
+                    bottomInset={bottomInset}
+                    pulseStyle={pulseStyle}
+                    onNapkin={() => completeTarget('napkin')}
+                />
+            </Animated.View>
+
+            {beat > 0 && beat < LAST_BEAT ? (
+                <View
+                    style={[styles.progressRail, { top: topInset + 8 }]}
+                    accessibilityLabel={`Step ${beat + 1} of ${BEAT_COUNT}`}
+                >
+                    {Array.from({ length: BEAT_COUNT - 1 }).map((_, index) => (
                         <View
                             key={index}
                             style={[
-                                styles.progressTrack,
-                                {
-                                    backgroundColor:
-                                        index <= beat ? palette.primary : palette.outlineVariant,
-                                    opacity: index <= beat ? 1 : 0.42,
-                                },
+                                styles.progressSegment,
+                                { opacity: index < beat ? 0.95 : 0.28 },
                             ]}
                         />
                     ))}
                 </View>
-                {onClose ? (
+            ) : null}
+
+            {onClose ? (
+                <Pressable
+                    onPress={onClose}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close import tutorial"
+                    style={({ pressed }) => [
+                        styles.closeButton,
+                        { top: topInset + 20, transform: [{ scale: pressed ? 0.96 : 1 }] },
+                    ]}
+                >
+                    <Ionicons
+                        name="close"
+                        size={20}
+                        color={beat === LAST_BEAT ? palette.text : '#fff'}
+                    />
+                </Pressable>
+            ) : null}
+        </View>
+    );
+}
+
+function IntroOverlay({
+    topInset,
+    bottomInset,
+    onStart,
+}: {
+    topInset: number;
+    bottomInset: number;
+    onStart: () => void;
+}) {
+    return (
+        <View style={styles.introOverlay}>
+            <Image source={REEL_IMAGE} resizeMode="cover" blurRadius={24} style={StyleSheet.absoluteFill} />
+            <View style={styles.introScrim} />
+            <View
+                style={[
+                    styles.introContent,
+                    { paddingTop: topInset + 28, paddingBottom: bottomInset + 24 },
+                ]}
+            >
+                <View style={styles.introBadge}>
+                    <Ionicons name="paper-plane" size={17} color="#fff" />
+                </View>
+                <Text style={styles.introTitle}>{TEACH_COPY.introTitle}</Text>
+                <Text style={styles.introBody}>{TEACH_COPY.introBody}</Text>
+                <Pressable
+                    onPress={onStart}
+                    accessibilityRole="button"
+                    accessibilityLabel={TEACH_COPY.startCta}
+                    style={({ pressed }) => [
+                        styles.introButton,
+                        pressed ? { transform: [{ scale: 0.96 }] } : null,
+                    ]}
+                >
+                    <Text style={styles.introButtonText}>{TEACH_COPY.startCta}</Text>
+                    <Ionicons name="arrow-forward" size={18} color="#111" />
+                </Pressable>
+            </View>
+        </View>
+    );
+}
+
+function ReelScreen({
+    topInset,
+    bottomInset,
+    shareEnabled,
+    pulseStyle,
+    onShare,
+}: {
+    topInset: number;
+    bottomInset: number;
+    shareEnabled: boolean;
+    pulseStyle: object;
+    onShare: () => void;
+}) {
+    return (
+        <View style={styles.reelScreen}>
+            <Image source={REEL_IMAGE} resizeMode="cover" style={StyleSheet.absoluteFill} />
+            <LinearGradient
+                colors={['rgba(0,0,0,0.56)', 'transparent', 'rgba(0,0,0,0.82)']}
+                locations={[0, 0.38, 1]}
+                style={StyleSheet.absoluteFill}
+            />
+
+            <View style={[styles.reelHeader, { top: topInset + 30 }]}>
+                <Ionicons name="chevron-down" size={23} color="#fff" />
+                <View style={styles.reelTabs}>
+                    <Text style={styles.reelTabMuted}>Following</Text>
+                    <View>
+                        <Text style={styles.reelTabActive}>Reels</Text>
+                        <View style={styles.reelTabUnderline} />
+                    </View>
+                </View>
+                <Ionicons name="camera-outline" size={25} color="#fff" />
+            </View>
+
+            <View style={[styles.reelActions, { bottom: bottomInset + 104 }]}>
+                <ReelAction icon="heart-outline" label="24.8K" />
+                <ReelAction icon="chatbubble-outline" label="326" />
+                <Pressable
+                    onPress={onShare}
+                    disabled={!shareEnabled}
+                    accessibilityRole="button"
+                    accessibilityLabel="Share video"
+                    style={({ pressed }) => [
+                        styles.reelActionButton,
+                        pressed && shareEnabled ? { transform: [{ scale: 0.96 }] } : null,
+                    ]}
+                >
+                    {shareEnabled ? <Animated.View style={[styles.reelPulse, pulseStyle]} /> : null}
+                    <Ionicons name="paper-plane-outline" size={29} color="#fff" />
+                    <Text style={styles.reelActionCount}>Share</Text>
+                </Pressable>
+                <ReelAction icon="bookmark-outline" label="8,214" />
+                <View style={styles.reelMore}>
+                    <Ionicons name="ellipsis-horizontal" size={23} color="#fff" />
+                </View>
+            </View>
+
+            <View style={[styles.reelCaption, { bottom: bottomInset + 68 }]}>
+                <View style={styles.handleRow}>
+                    <Image source={REEL_IMAGE} style={styles.handleAvatar} />
+                    <Text style={styles.handle}>platesoflondon</Text>
+                    <Text style={styles.followButton}>Follow</Text>
+                </View>
+                <Text style={styles.captionText} numberOfLines={2}>
+                    The small plates worth crossing London for. Save these for your next dinner.
+                </Text>
+                <View style={styles.audioRow}>
+                    <Ionicons name="musical-notes" size={12} color="#fff" />
+                    <Text style={styles.audioText}>Original audio · platesoflondon</Text>
+                </View>
+            </View>
+
+            <View style={[styles.reelBottomNav, { height: bottomInset + 58 }]}>
+                <Ionicons name="home" size={24} color="#fff" />
+                <Ionicons name="search" size={24} color="#fff" />
+                <View style={styles.createIcon}>
+                    <Ionicons name="add" size={19} color="#111" />
+                </View>
+                <Ionicons name="play-circle" size={25} color="#fff" />
+                <Image source={REEL_IMAGE} style={styles.navAvatar} />
+            </View>
+
+            {shareEnabled ? (
+                <CoachMark text={TEACH_COPY.shareHint} style={styles.shareCoach} arrow="forward" />
+            ) : null}
+        </View>
+    );
+}
+
+function ReelAction({
+    icon,
+    label,
+}: {
+    icon: 'heart-outline' | 'chatbubble-outline' | 'bookmark-outline';
+    label: string;
+}) {
+    return (
+        <View style={styles.reelActionButton}>
+            <Ionicons name={icon} size={29} color="#fff" />
+            <Text style={styles.reelActionCount}>{label}</Text>
+        </View>
+    );
+}
+
+function PlatformShareDrawer({
+    bottomInset,
+    pulseStyle,
+    onShareTo,
+}: {
+    bottomInset: number;
+    pulseStyle: object;
+    onShareTo: () => void;
+}) {
+    return (
+        <View style={styles.platformLayer}>
+            <View style={styles.platformScrim} />
+            <View style={[styles.platformDrawer, { paddingBottom: bottomInset + 16 }]}>
+                <View style={styles.drawerGrip} />
+                <View style={styles.searchField}>
+                    <Ionicons name="search" size={16} color="#a7a7ab" />
+                    <Text style={styles.searchText}>Search</Text>
+                </View>
+
+                <View style={styles.recipientRow}>
+                    {RECIPIENTS.map((person) => (
+                        <View key={person.name} style={styles.recipient}>
+                            <LinearGradient colors={person.colors} style={styles.recipientAvatar}>
+                                <Text style={styles.recipientInitials}>{person.initials}</Text>
+                            </LinearGradient>
+                            <Text style={styles.recipientName}>{person.name}</Text>
+                        </View>
+                    ))}
+                </View>
+
+                <View style={styles.platformRule} />
+                <View style={styles.platformActionRow}>
+                    <PlatformAction icon="images-outline" label="Add to story" />
+                    <PlatformAction icon="link-outline" label="Copy link" />
+                    <PlatformAction icon="logo-whatsapp" label="WhatsApp" />
                     <Pressable
-                        onPress={onClose}
+                        onPress={onShareTo}
                         accessibilityRole="button"
-                        accessibilityLabel="Close import tutorial"
+                        accessibilityLabel="Share to another app"
                         style={({ pressed }) => [
-                            styles.closeButton,
-                            { backgroundColor: palette.surfaceJournalLow },
-                            pressed ? { transform: [{ scale: 0.96 }] } : null,
+                            styles.platformAction,
+                            pressed ? { transform: [{ scale: 0.97 }] } : null,
                         ]}
                     >
-                        <Ionicons name="close" size={19} color={palette.textMuted} />
+                        <View style={styles.platformActionIcon}>
+                            <Animated.View style={[styles.platformPulse, pulseStyle]} />
+                            <Ionicons name="share-outline" size={25} color="#fff" />
+                        </View>
+                        <Text style={styles.platformActionLabel}>Share to...</Text>
                     </Pressable>
-                ) : null}
+                </View>
+                <CoachMark text={TEACH_COPY.shareToHint} style={styles.shareToCoach} arrow="down" />
             </View>
+        </View>
+    );
+}
 
-            <View style={styles.stage}>
-                <Animated.View style={[styles.scene, scene0]} pointerEvents="none">
-                    <CopyBlock
-                        eyebrow={TEACH_COPY.promiseEyebrow}
-                        title={TEACH_COPY.promiseTitle}
-                        body={TEACH_COPY.promiseBody}
-                        palette={palette}
-                    />
-                    <Animated.View style={[styles.reelWrap, reelFloatStyle]}>
-                        <View style={[styles.backCard, styles.backCardLeft, { backgroundColor: palette.secondaryContainer }]} />
-                        <View style={[styles.backCard, styles.backCardRight, { backgroundColor: palette.surfaceJournalHi }]} />
-                        <ReelPhone compact palette={palette} />
-                    </Animated.View>
-                </Animated.View>
-
-                <Animated.View
-                    style={[styles.scene, scene1]}
-                    pointerEvents={beat === 1 ? 'auto' : 'none'}
-                >
-                    <CopyBlock
-                        title={TEACH_COPY.shareTitle}
-                        body={TEACH_COPY.shareBody}
-                        palette={palette}
-                    />
-                    <View style={styles.reelWrap}>
-                        <ReelPhone
-                            palette={palette}
-                            highlightShare
-                            pulseStyle={pulseStyle}
-                            onSharePress={() => completeTarget('share')}
-                        />
-                    </View>
-                </Animated.View>
-
-                <Animated.View
-                    style={[styles.scene, scene2]}
-                    pointerEvents={beat === 2 ? 'auto' : 'none'}
-                >
-                    <CopyBlock
-                        title={TEACH_COPY.sheetTitle}
-                        body={TEACH_COPY.sheetBody}
-                        palette={palette}
-                    />
-                    <View style={styles.shareDemo}>
-                        <View style={styles.shareReelBackdrop}>
-                            <ReelPhone palette={palette} compact />
-                            <View style={styles.shareScrim} />
-                        </View>
-                        <Animated.View
-                            style={[
-                                styles.shareSheet,
-                                { backgroundColor: palette.surfaceNote },
-                                sheetStyle,
-                            ]}
-                        >
-                            <View style={[styles.sheetGrip, { backgroundColor: palette.outlineVariant }]} />
-                            <View style={styles.shareMeta}>
-                                <View style={[styles.shareThumb, { backgroundColor: palette.surfaceJournalHi }]}>
-                                    <Ionicons name="restaurant" size={15} color={palette.primary} />
-                                </View>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.shareMetaTitle, { color: palette.text }]}>3 London restaurants</Text>
-                                    <Text style={[styles.shareMetaUrl, { color: palette.textMuted }]}>instagram.com</Text>
-                                </View>
-                            </View>
-                            <View style={styles.appRow}>
-                                {SHARE_APPS.map((app) => (
-                                    <ShareApp key={app.label} {...app} palette={palette} />
-                                ))}
-                                <View style={styles.shareAppCol}>
-                                    <Pressable
-                                        onPress={() => completeTarget('napkin')}
-                                        accessibilityRole="button"
-                                        accessibilityLabel="Share to Napkin"
-                                        style={({ pressed }) => [
-                                            styles.napkinTarget,
-                                            pressed ? { transform: [{ scale: 0.96 }] } : null,
-                                        ]}
-                                    >
-                                        <Animated.View
-                                            style={[
-                                                styles.napkinPulse,
-                                                { borderColor: palette.primary },
-                                                pulseStyle,
-                                            ]}
-                                        />
-                                        <Image
-                                            source={require('../../assets/images/icon.png')}
-                                            style={styles.napkinIcon}
-                                        />
-                                    </Pressable>
-                                    <Text style={[styles.appLabel, { color: palette.text }]}>Napkin</Text>
-                                </View>
-                            </View>
-                            <View style={[styles.coachPill, { backgroundColor: palette.text }]}>
-                                <Text style={[styles.coachText, { color: palette.background }]}>Tap Napkin</Text>
-                                <Ionicons name="arrow-forward" size={13} color={palette.background} />
-                            </View>
-                        </Animated.View>
-                    </View>
-                </Animated.View>
-
-                <Animated.View style={[styles.scene, scene3]} pointerEvents="none">
-                    <CopyBlock
-                        eyebrow={TEACH_COPY.resultEyebrow}
-                        title={TEACH_COPY.resultTitle}
-                        body={TEACH_COPY.resultBody}
-                        palette={palette}
-                    />
-                    <View
-                        style={[
-                            styles.resultCard,
-                            { backgroundColor: palette.surfaceNote },
-                        ]}
-                    >
-                        <View style={styles.resultHeader}>
-                            <View style={[styles.resultCheck, { backgroundColor: palette.secondaryContainer }]}>
-                                <Ionicons name="checkmark" size={17} color={palette.secondary} />
-                            </View>
-                            <View style={{ flex: 1 }}>
-                                <Text style={[styles.resultHeaderTitle, { color: palette.text }]}>Saved to your wishlist</Text>
-                                <Text style={[styles.resultHeaderMeta, { color: palette.textMuted }]}>From one shared video</Text>
-                            </View>
-                        </View>
-                        <View style={[styles.resultRule, { backgroundColor: palette.dividerSoft }]} />
-                        {RESULT_ROWS.map((row, index) => (
-                            <Animated.View key={row.name} style={[styles.resultRow, resultStyles[index]]}>
-                                <View style={[styles.resultThumb, { backgroundColor: row.tint }]}>
-                                    <Ionicons name="restaurant" size={15} color="#fffdf8" />
-                                </View>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.resultName, { color: palette.text }]}>{row.name}</Text>
-                                    <Text style={[styles.resultArea, { color: palette.textMuted }]}>{row.area}</Text>
-                                </View>
-                                <View style={[styles.savedBadge, { backgroundColor: palette.primaryMuted }]}>
-                                    <Ionicons name="bookmark" size={13} color={palette.primary} />
-                                    <Text style={[styles.savedText, { color: palette.primary }]}>Saved</Text>
-                                </View>
-                            </Animated.View>
-                        ))}
-                    </View>
-                </Animated.View>
+function PlatformAction({
+    icon,
+    label,
+}: {
+    icon: 'images-outline' | 'link-outline' | 'logo-whatsapp';
+    label: string;
+}) {
+    return (
+        <View style={styles.platformAction}>
+            <View style={styles.platformActionIcon}>
+                <Ionicons name={icon} size={24} color="#fff" />
             </View>
+            <Text style={styles.platformActionLabel}>{label}</Text>
+        </View>
+    );
+}
 
-            <View style={styles.footer}>
-                <Animated.View
-                    style={[styles.footerLayer, continueFooter]}
-                    pointerEvents={beat === 0 ? 'auto' : 'none'}
-                >
-                    {beat === 0 ? (
+function SystemShareSheet({
+    bottomInset,
+    pulseStyle,
+    onNapkin,
+}: {
+    bottomInset: number;
+    pulseStyle: object;
+    onNapkin: () => void;
+}) {
+    return (
+        <View style={styles.systemLayer}>
+            <View style={styles.systemScrim} />
+            <View style={[styles.systemSheet, { bottom: bottomInset + 72 }]}>
+                <View style={styles.systemGrip} />
+                <View style={styles.systemMeta}>
+                    <Image source={REEL_IMAGE} style={styles.systemThumb} />
+                    <View style={styles.systemMetaCopy}>
+                        <Text style={styles.systemMetaTitle}>platesoflondon</Text>
+                        <Text style={styles.systemMetaUrl}>instagram.com</Text>
+                    </View>
+                    <View style={styles.systemClose}>
+                        <Ionicons name="close" size={16} color="#55565a" />
+                    </View>
+                </View>
+                <View style={styles.systemRule} />
+
+                <View style={styles.systemApps}>
+                    <SystemApp label="AirDrop" color="#1677ff" icon="wifi" />
+                    <SystemApp label="Messages" color="#31c958" icon="chatbubble-ellipses" />
+                    <SystemApp label="Mail" color="#1b83f6" icon="mail" />
+                    <SystemApp label="Notes" color="#fff" icon="document-text" darkIcon />
+                    <View style={styles.systemApp}>
                         <Pressable
-                            onPress={() => completeTarget('start')}
+                            onPress={onNapkin}
                             accessibilityRole="button"
-                            accessibilityLabel={TEACH_COPY.startCta}
+                            accessibilityLabel="Share to Napkin"
                             style={({ pressed }) => [
-                                styles.practiceButton,
-                                { backgroundColor: palette.text },
+                                styles.napkinHitTarget,
                                 pressed ? { transform: [{ scale: 0.96 }] } : null,
                             ]}
                         >
-                            <Text style={[styles.practiceButtonText, { color: palette.background }]}>
-                                {TEACH_COPY.startCta}
-                            </Text>
-                            <Ionicons name="arrow-forward" size={17} color={palette.background} />
+                            <Animated.View style={[styles.napkinPulse, pulseStyle]} />
+                            <Image source={NAPKIN_ICON} style={styles.systemAppIcon} />
                         </Pressable>
-                    ) : (
-                        <Text style={[styles.continueHint, { color: palette.textMuted }]}>
-                            {beat === 1 ? TEACH_COPY.shareHint : TEACH_COPY.napkinHint}
-                        </Text>
-                    )}
-                </Animated.View>
-                <Animated.View
-                    style={[styles.footerLayer, terminalFooter]}
-                    pointerEvents={beat === LAST_BEAT ? 'auto' : 'none'}
-                >
-                    <Pressable
-                        onPress={onDone}
-                        disabled={isPending}
-                        accessibilityRole="button"
-                        style={({ pressed }) => [
-                            styles.doneButton,
-                            {
-                                backgroundColor: palette.primary,
-                                opacity: isPending ? 0.6 : 1,
-                                transform: [{ scale: pressed ? 0.96 : 1 }],
-                            },
-                        ]}
-                    >
-                        {isPending ? (
-                            <ActivityIndicator color={palette.textInverse} />
-                        ) : (
-                            <>
-                                <Text style={styles.doneText}>{doneLabel}</Text>
-                                <Ionicons name="arrow-forward" size={18} color={palette.textInverse} />
-                            </>
-                        )}
-                    </Pressable>
-                </Animated.View>
-            </View>
-        </View>
-    );
-}
-
-function CopyBlock({
-    eyebrow,
-    title,
-    body,
-    palette,
-}: {
-    eyebrow?: string;
-    title: string;
-    body: string;
-    palette: Palette;
-}) {
-    return (
-        <View style={styles.copyBlock}>
-            {eyebrow ? <Text style={[styles.eyebrow, { color: palette.primary }]}>{eyebrow}</Text> : null}
-            <Text style={[styles.title, { color: palette.text }]}>{title}</Text>
-            <Text style={[styles.body, { color: palette.textSecondary }]}>{body}</Text>
-        </View>
-    );
-}
-
-function ReelPhone({
-    palette,
-    compact = false,
-    highlightShare = false,
-    pulseStyle,
-    onSharePress,
-}: {
-    palette: Palette;
-    compact?: boolean;
-    highlightShare?: boolean;
-    pulseStyle?: object;
-    onSharePress?: () => void;
-}) {
-    const shareControl = (
-        <>
-            {highlightShare && pulseStyle ? (
-                <Animated.View style={[styles.shareActionPulse, pulseStyle]} />
-            ) : null}
-            <View style={[styles.shareAction, highlightShare && { backgroundColor: palette.primary }]}>
-                <Ionicons name="paper-plane" size={compact ? 16 : 20} color="#fff" />
-            </View>
-            {highlightShare ? <Text style={styles.tapLabel}>TAP</Text> : null}
-        </>
-    );
-
-    return (
-        <View style={[styles.reelPhone, compact && styles.reelPhoneCompact]}>
-            <LinearGradient
-                colors={['#33231f', '#86513d', '#221c1a']}
-                locations={[0, 0.54, 1]}
-                style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.reelGlowOne} />
-            <View style={styles.reelGlowTwo} />
-            <View style={styles.plate}>
-                <View style={styles.plateInner}>
-                    <View style={[styles.foodDot, { top: 22, left: 29, backgroundColor: '#e7a342' }]} />
-                    <View style={[styles.foodDot, { top: 37, left: 51, backgroundColor: '#7c9b55' }]} />
-                    <View style={[styles.foodDot, { top: 48, left: 27, backgroundColor: '#c75c47' }]} />
-                    <View style={[styles.foodDot, { top: 24, left: 52, backgroundColor: '#f3d39a' }]} />
+                        <Text style={styles.systemAppLabel}>Napkin</Text>
+                    </View>
                 </View>
+
+                <View style={styles.systemRule} />
+                <View style={styles.systemActions}>
+                    <SystemAction label="Copy" icon="copy-outline" />
+                    <SystemAction label="Add to Reading List" icon="book-outline" />
+                    <SystemAction label="Add Bookmark" icon="bookmark-outline" />
+                </View>
+                <CoachMark text={TEACH_COPY.napkinHint} style={styles.napkinCoach} arrow="down" />
             </View>
-            <View style={styles.reelTopBar}>
-                <Text style={styles.reelTopTitle}>Reels</Text>
-                <Ionicons name="camera-outline" size={18} color="#fff" />
-            </View>
-            <View style={styles.reelCaptionCard}>
-                <Text style={styles.reelHook}>3 London spots worth saving</Text>
-                <Text style={styles.reelHandle}>@smallplates.london</Text>
-            </View>
-            <View style={styles.reelActions}>
-                <ReelAction icon="heart" label="12.4K" />
-                <ReelAction icon="chatbubble" label="184" />
-                {onSharePress ? (
-                    <Pressable
-                        onPress={onSharePress}
-                        accessibilityRole="button"
-                        accessibilityLabel="Share video"
-                        style={({ pressed }) => [
-                            styles.shareActionWrap,
-                            pressed ? { transform: [{ scale: 0.96 }] } : null,
-                        ]}
-                    >
-                        {shareControl}
-                    </Pressable>
-                ) : (
-                    <View style={styles.shareActionWrap}>{shareControl}</View>
-                )}
-            </View>
-            <View style={styles.reelNav}>
-                <Ionicons name="home" size={compact ? 13 : 16} color="#fff" />
-                <Ionicons name="search" size={compact ? 13 : 16} color="#fff" />
-                <Ionicons name="add-circle-outline" size={compact ? 13 : 16} color="#fff" />
-                <Ionicons name="play-circle" size={compact ? 13 : 16} color="#fff" />
-                <View style={styles.avatarDot} />
+            <View style={[styles.cancelSheet, { bottom: bottomInset + 8 }]}>
+                <Text style={styles.cancelText}>Cancel</Text>
             </View>
         </View>
     );
 }
 
-function ReelAction({ icon, label }: { icon: 'heart' | 'chatbubble'; label: string }) {
-    return (
-        <View style={styles.reelActionItem}>
-            <Ionicons name={icon} size={18} color="#fff" />
-            <Text style={styles.reelActionLabel}>{label}</Text>
-        </View>
-    );
-}
-
-function ShareApp({
+function SystemApp({
     label,
-    icon,
     color,
-    palette,
+    icon,
+    darkIcon = false,
 }: {
     label: string;
-    icon: 'wifi' | 'chatbubble' | 'mail' | 'document-text';
     color: string;
-    palette: Palette;
+    icon: 'wifi' | 'chatbubble-ellipses' | 'mail' | 'document-text';
+    darkIcon?: boolean;
 }) {
     return (
-        <View style={styles.shareAppCol}>
-            <View style={[styles.shareAppIcon, { backgroundColor: color }]}>
-                <Ionicons name={icon} size={20} color="#fff" />
+        <View style={styles.systemApp}>
+            <View style={[styles.systemAppIcon, styles.systemAppIconCenter, { backgroundColor: color }]}>
+                <Ionicons name={icon} size={27} color={darkIcon ? '#f0bd29' : '#fff'} />
             </View>
-            <Text style={[styles.appLabel, { color: palette.text }]}>{label}</Text>
+            <Text style={styles.systemAppLabel}>{label}</Text>
+        </View>
+    );
+}
+
+function SystemAction({
+    label,
+    icon,
+}: {
+    label: string;
+    icon: 'copy-outline' | 'book-outline' | 'bookmark-outline';
+}) {
+    return (
+        <View style={styles.systemAction}>
+            <Ionicons name={icon} size={20} color="#18181a" />
+            <Text style={styles.systemActionLabel}>{label}</Text>
+            <Ionicons name="chevron-forward" size={17} color="#9a9a9e" />
+        </View>
+    );
+}
+
+function ResultScreen({
+    palette,
+    topInset,
+    bottomInset,
+    doneLabel,
+    isPending,
+    onDone,
+}: {
+    palette: Palette;
+    topInset: number;
+    bottomInset: number;
+    doneLabel: string;
+    isPending: boolean;
+    onDone?: () => void;
+}) {
+    return (
+        <View
+            style={[
+                styles.resultScreen,
+                {
+                    backgroundColor: palette.background,
+                    paddingTop: topInset + 20,
+                    paddingBottom: bottomInset + 16,
+                },
+            ]}
+        >
+            <View style={styles.resultHeader}>
+                <View>
+                    <Text style={[styles.resultKicker, { color: palette.primary }]}>NAPKIN</Text>
+                    <Text style={[styles.resultPageTitle, { color: palette.text }]}>Wishlist</Text>
+                </View>
+                <View style={[styles.resultProfile, { backgroundColor: palette.surfaceJournalHi }]}>
+                    <Ionicons name="person" size={19} color={palette.textMuted} />
+                </View>
+            </View>
+
+            <View style={[styles.importSuccess, { backgroundColor: palette.surfaceNote }]}>
+                <View style={[styles.successIcon, { backgroundColor: palette.secondaryContainer }]}>
+                    <Ionicons name="checkmark" size={21} color={palette.secondary} />
+                </View>
+                <View style={styles.successCopy}>
+                    <Text style={[styles.successTitle, { color: palette.text }]}>{TEACH_COPY.resultTitle}</Text>
+                    <Text style={[styles.successBody, { color: palette.textSecondary }]}>{TEACH_COPY.resultBody}</Text>
+                </View>
+            </View>
+
+            <View style={styles.savedList}>
+                {SAVED_PLACES.map((place, index) => (
+                    <View
+                        key={place.name}
+                        style={[
+                            styles.savedRow,
+                            index < SAVED_PLACES.length - 1
+                                ? { borderBottomColor: palette.dividerSoft, borderBottomWidth: StyleSheet.hairlineWidth }
+                                : null,
+                        ]}
+                    >
+                        <Image source={REEL_IMAGE} style={styles.savedThumb} />
+                        <View style={styles.savedCopy}>
+                            <Text style={[styles.savedName, { color: palette.text }]}>{place.name}</Text>
+                            <Text style={[styles.savedDetail, { color: palette.textMuted }]}>{place.detail}</Text>
+                            <View style={styles.ratingRow}>
+                                <Ionicons name="star" size={11} color="#d99522" />
+                                <Text style={[styles.rating, { color: palette.textSecondary }]}>{place.score}</Text>
+                            </View>
+                        </View>
+                        <View style={[styles.savedBookmark, { backgroundColor: palette.primaryMuted }]}>
+                            <Ionicons name="bookmark" size={17} color={palette.primary} />
+                        </View>
+                    </View>
+                ))}
+            </View>
+
+            <View style={styles.resultSpacer} />
+            <Pressable
+                onPress={onDone}
+                disabled={isPending}
+                accessibilityRole="button"
+                accessibilityLabel={doneLabel}
+                style={({ pressed }) => [
+                    styles.doneButton,
+                    {
+                        backgroundColor: palette.primary,
+                        opacity: isPending ? 0.6 : 1,
+                        transform: [{ scale: pressed ? 0.96 : 1 }],
+                    },
+                ]}
+            >
+                {isPending ? (
+                    <ActivityIndicator color={palette.textInverse} />
+                ) : (
+                    <>
+                        <Text style={[styles.doneText, { color: palette.textInverse }]}>{doneLabel}</Text>
+                        <Ionicons name="arrow-forward" size={18} color={palette.textInverse} />
+                    </>
+                )}
+            </Pressable>
+        </View>
+    );
+}
+
+function CoachMark({
+    text,
+    style,
+    arrow,
+}: {
+    text: string;
+    style: object;
+    arrow: 'forward' | 'down';
+}) {
+    return (
+        <View style={[styles.coachMark, style]} pointerEvents="none">
+            <Text style={styles.coachText}>{text}</Text>
+            <Ionicons name={arrow === 'forward' ? 'arrow-forward' : 'arrow-down'} size={16} color="#111" />
         </View>
     );
 }
@@ -569,477 +666,657 @@ function ShareApp({
 const styles = StyleSheet.create({
     root: {
         flex: 1,
-        paddingHorizontal: 20,
+        backgroundColor: '#000',
+        overflow: 'hidden',
     },
-    progressRow: {
+    overlay: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    reelScreen: {
         flex: 1,
+        backgroundColor: '#17120f',
+    },
+    reelHeader: {
+        position: 'absolute',
+        left: 16,
+        right: 16,
+        height: 34,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        justifyContent: 'space-between',
     },
-    topRail: {
-        height: 14,
+    reelTabs: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 18,
     },
-    topRailWithClose: {
-        height: 40,
-        gap: 12,
+    reelTabMuted: {
+        color: 'rgba(255,255,255,0.68)',
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 14,
+    },
+    reelTabActive: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 14,
+    },
+    reelTabUnderline: {
+        height: 2,
+        borderRadius: 1,
+        backgroundColor: '#fff',
+        marginTop: 5,
+    },
+    reelActions: {
+        position: 'absolute',
+        right: 8,
+        alignItems: 'center',
+        gap: 17,
+        zIndex: 5,
+    },
+    reelActionButton: {
+        width: 52,
+        minHeight: 48,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 3,
+    },
+    reelActionCount: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10,
+        fontVariant: ['tabular-nums'],
+        textShadowColor: 'rgba(0,0,0,0.65)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 4,
+    },
+    reelPulse: {
+        position: 'absolute',
+        top: 2,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.72)',
+    },
+    reelMore: {
+        width: 40,
+        height: 26,
+        borderRadius: 14,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    reelCaption: {
+        position: 'absolute',
+        left: 14,
+        right: 67,
+        zIndex: 3,
+    },
+    handleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        marginBottom: 8,
+    },
+    handleAvatar: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        borderWidth: 1.5,
+        borderColor: '#fff',
+    },
+    handle: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 12.5,
+    },
+    followButton: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.8)',
+        borderRadius: 5,
+        paddingHorizontal: 9,
+        paddingVertical: 4,
+        overflow: 'hidden',
+    },
+    captionText: {
+        color: '#fff',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11.5,
+        lineHeight: 16,
+        textShadowColor: 'rgba(0,0,0,0.75)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 5,
+    },
+    audioRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        marginTop: 7,
+    },
+    audioText: {
+        color: '#fff',
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9.5,
+    },
+    reelBottomNav: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        paddingTop: 13,
+        paddingHorizontal: 25,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        backgroundColor: 'rgba(0,0,0,0.82)',
+    },
+    createIcon: {
+        width: 28,
+        height: 21,
+        borderRadius: 7,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    navAvatar: {
+        width: 24,
+        height: 24,
+        borderRadius: 7,
+        borderWidth: 1,
+        borderColor: '#fff',
+    },
+    shareCoach: {
+        position: 'absolute',
+        right: 68,
+        bottom: 188,
+    },
+    introOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 12,
+        backgroundColor: '#211d1b',
+    },
+    introScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,8,8,0.62)',
+    },
+    introContent: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 30,
+    },
+    introBadge: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: 'rgba(255,255,255,0.16)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.24)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 20,
+    },
+    introTitle: {
+        color: '#fff',
+        fontFamily: 'Manrope_800ExtraBold',
+        fontSize: 31,
+        lineHeight: 35,
+        letterSpacing: -0.8,
+        textAlign: 'center',
+    },
+    introBody: {
+        color: 'rgba(255,255,255,0.76)',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 14,
+        lineHeight: 20,
+        textAlign: 'center',
+        maxWidth: 310,
+        marginTop: 11,
+    },
+    introButton: {
+        height: 52,
+        minWidth: 178,
+        borderRadius: 26,
+        marginTop: 30,
+        paddingLeft: 22,
+        paddingRight: 20,
+        backgroundColor: '#fff',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        ...Shadow.ambient,
+    },
+    introButtonText: {
+        color: '#111',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 14,
+    },
+    platformLayer: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    platformScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.38)',
+    },
+    platformDrawer: {
+        minHeight: 376,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        backgroundColor: '#202124',
+        paddingTop: 9,
+        paddingHorizontal: 14,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -8 },
+        shadowOpacity: 0.28,
+        shadowRadius: 24,
+    },
+    drawerGrip: {
+        width: 38,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#64666a',
+        alignSelf: 'center',
+        marginBottom: 13,
+    },
+    searchField: {
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: '#303136',
+        paddingHorizontal: 13,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    searchText: {
+        color: '#a7a7ab',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+    },
+    recipientRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 18,
+        paddingHorizontal: 7,
+    },
+    recipient: {
+        width: 70,
+        alignItems: 'center',
+    },
+    recipientAvatar: {
+        width: 55,
+        height: 55,
+        borderRadius: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: '#202124',
+        outlineColor: 'rgba(255,255,255,0.16)',
+        outlineWidth: 1,
+    },
+    recipientInitials: {
+        color: '#fff',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 16,
+    },
+    recipientName: {
+        color: '#ececef',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 9.5,
+        marginTop: 6,
+    },
+    platformRule: {
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: '#3b3c40',
+        marginVertical: 17,
+    },
+    platformActionRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingHorizontal: 3,
+    },
+    platformAction: {
+        width: 76,
+        alignItems: 'center',
+    },
+    platformActionIcon: {
+        width: 54,
+        height: 54,
+        borderRadius: 27,
+        backgroundColor: '#34353a',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    platformActionLabel: {
+        color: '#f1f1f3',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 9,
+        marginTop: 7,
+        textAlign: 'center',
+    },
+    platformPulse: {
+        position: 'absolute',
+        width: 62,
+        height: 62,
+        borderRadius: 31,
+        borderWidth: 2,
+        borderColor: '#fff',
+    },
+    shareToCoach: {
+        alignSelf: 'flex-end',
+        marginTop: 14,
+        marginRight: 6,
+    },
+    systemLayer: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    systemScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.56)',
+    },
+    systemSheet: {
+        position: 'absolute',
+        left: 8,
+        right: 8,
+        minHeight: 465,
+        maxHeight: '68%',
+        borderRadius: 20,
+        backgroundColor: 'rgba(247,247,249,0.98)',
+        paddingTop: 8,
+        paddingHorizontal: 14,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.3,
+        shadowRadius: 32,
+    },
+    systemGrip: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#b7b7ba',
+        alignSelf: 'center',
+        marginBottom: 10,
+    },
+    systemMeta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingBottom: 12,
+    },
+    systemThumb: {
+        width: 45,
+        height: 45,
+        borderRadius: 8,
+        outlineColor: 'rgba(0,0,0,0.1)',
+        outlineWidth: 1,
+    },
+    systemMetaCopy: {
+        flex: 1,
+    },
+    systemMetaTitle: {
+        color: '#171719',
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12.5,
+    },
+    systemMetaUrl: {
+        color: '#77777b',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        marginTop: 2,
+    },
+    systemClose: {
+        width: 29,
+        height: 29,
+        borderRadius: 15,
+        backgroundColor: '#e2e2e5',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    systemRule: {
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: 'rgba(60,60,67,0.22)',
+    },
+    systemApps: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingVertical: 17,
+    },
+    systemApp: {
+        width: 61,
+        alignItems: 'center',
+    },
+    systemAppIcon: {
+        width: 51,
+        height: 51,
+        borderRadius: 12,
+        outlineColor: 'rgba(0,0,0,0.1)',
+        outlineWidth: 1,
+    },
+    systemAppIconCenter: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    systemAppLabel: {
+        color: '#242426',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 8.5,
+        marginTop: 6,
+        textAlign: 'center',
+    },
+    napkinHitTarget: {
+        width: 51,
+        height: 51,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    napkinPulse: {
+        position: 'absolute',
+        width: 61,
+        height: 61,
+        borderRadius: 17,
+        borderWidth: 2,
+        borderColor: '#111',
+    },
+    systemActions: {
+        marginTop: 12,
+        borderRadius: 13,
+        backgroundColor: '#fff',
+        overflow: 'hidden',
+    },
+    systemAction: {
+        height: 49,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 11,
+        paddingHorizontal: 14,
+        borderBottomColor: 'rgba(60,60,67,0.16)',
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    systemActionLabel: {
+        flex: 1,
+        color: '#18181a',
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+    },
+    napkinCoach: {
+        position: 'absolute',
+        top: 131,
+        right: 10,
+    },
+    cancelSheet: {
+        position: 'absolute',
+        left: 8,
+        right: 8,
+        height: 55,
+        borderRadius: 16,
+        backgroundColor: 'rgba(247,247,249,0.98)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cancelText: {
+        color: '#1677ff',
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 16,
+    },
+    coachMark: {
+        minHeight: 38,
+        borderRadius: 20,
+        paddingLeft: 15,
+        paddingRight: 12,
+        backgroundColor: '#fff',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 5 },
+        shadowOpacity: 0.24,
+        shadowRadius: 12,
+        elevation: 5,
+    },
+    coachText: {
+        color: '#111',
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11.5,
+    },
+    progressRail: {
+        position: 'absolute',
+        left: 14,
+        right: 14,
+        height: 3,
+        flexDirection: 'row',
+        gap: 4,
+        zIndex: 30,
+    },
+    progressSegment: {
+        flex: 1,
+        height: 3,
+        borderRadius: 2,
+        backgroundColor: '#fff',
     },
     closeButton: {
+        position: 'absolute',
+        right: 14,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'rgba(20,20,20,0.5)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 40,
+    },
+    resultScreen: {
+        flex: 1,
+        paddingHorizontal: 20,
+    },
+    resultHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 20,
+    },
+    resultKicker: {
+        fontFamily: 'Manrope_800ExtraBold',
+        fontSize: 9,
+        letterSpacing: 1.8,
+        marginBottom: 2,
+    },
+    resultPageTitle: {
+        fontFamily: 'Newsreader_700Bold',
+        fontSize: 34,
+        lineHeight: 38,
+        letterSpacing: -0.8,
+    },
+    resultProfile: {
         width: 40,
         height: 40,
         borderRadius: 20,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    progressTrack: {
-        flex: 1,
-        height: 3,
-        borderRadius: 2,
-    },
-    stage: {
-        flex: 1,
-        minHeight: 0,
-    },
-    scene: {
-        ...StyleSheet.absoluteFillObject,
+    importSuccess: {
+        borderRadius: 22,
+        padding: 16,
+        flexDirection: 'row',
         alignItems: 'center',
-        paddingTop: 16,
-    },
-    copyBlock: {
-        alignItems: 'center',
-        maxWidth: 340,
-        paddingHorizontal: 8,
-        zIndex: 4,
-    },
-    eyebrow: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10.5,
-        lineHeight: 14,
-        letterSpacing: 1.65,
-        marginBottom: 9,
-    },
-    title: {
-        fontFamily: 'Newsreader_700Bold',
-        fontSize: 31,
-        lineHeight: 34,
-        letterSpacing: -0.7,
-        textAlign: 'center',
-    },
-    body: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 13.5,
-        lineHeight: 19,
-        textAlign: 'center',
-        marginTop: 9,
-        maxWidth: 300,
-    },
-    reelWrap: {
-        flex: 1,
-        minHeight: 0,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingTop: 12,
-        paddingBottom: 4,
-    },
-    backCard: {
-        position: 'absolute',
-        width: 190,
-        height: 288,
-        borderRadius: 27,
-        opacity: 0.9,
-    },
-    backCardLeft: {
-        transform: [{ rotate: '-8deg' }, { translateX: -20 }],
-    },
-    backCardRight: {
-        transform: [{ rotate: '7deg' }, { translateX: 22 }],
-    },
-    reelPhone: {
-        width: 226,
-        height: 356,
-        maxHeight: '100%',
-        borderRadius: 29,
-        overflow: 'hidden',
-        backgroundColor: '#231d1b',
-        outlineColor: 'rgba(0, 0, 0, 0.1)',
+        gap: 13,
+        outlineColor: 'rgba(0,0,0,0.06)',
         outlineWidth: 1,
         ...Shadow.ambient,
     },
-    reelPhoneCompact: {
-        width: 196,
-        height: 306,
-        borderRadius: 25,
-    },
-    reelGlowOne: {
-        position: 'absolute',
-        width: 170,
-        height: 170,
-        borderRadius: 85,
-        top: 72,
-        left: -44,
-        backgroundColor: 'rgba(231, 163, 66, 0.28)',
-    },
-    reelGlowTwo: {
-        position: 'absolute',
-        width: 130,
-        height: 180,
-        borderRadius: 65,
-        right: -34,
-        bottom: 36,
-        backgroundColor: 'rgba(124, 155, 85, 0.25)',
-    },
-    plate: {
-        position: 'absolute',
-        width: 124,
-        height: 124,
-        borderRadius: 62,
-        left: 36,
-        top: 100,
+    successIcon: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#f5ead8',
-        transform: [{ rotate: '-9deg' }],
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.22,
-        shadowRadius: 18,
     },
-    plateInner: {
-        width: 86,
-        height: 86,
-        borderRadius: 43,
-        backgroundColor: '#e9d6b9',
+    successCopy: {
+        flex: 1,
     },
-    foodDot: {
-        position: 'absolute',
-        width: 19,
-        height: 19,
-        borderRadius: 10,
+    successTitle: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
     },
-    reelTopBar: {
-        position: 'absolute',
-        top: 17,
-        left: 16,
-        right: 16,
+    successBody: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10.5,
+        lineHeight: 15,
+        marginTop: 3,
+    },
+    savedList: {
+        marginTop: 20,
+    },
+    savedRow: {
+        minHeight: 82,
         flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    reelTopTitle: {
-        color: '#fff',
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 15,
-    },
-    reelCaptionCard: {
-        position: 'absolute',
-        left: 14,
-        right: 48,
-        bottom: 44,
-    },
-    reelHook: {
-        color: '#fff',
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13.5,
-        lineHeight: 17,
-        textShadowColor: 'rgba(0,0,0,0.45)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 5,
-    },
-    reelHandle: {
-        color: 'rgba(255,255,255,0.84)',
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9.5,
-        marginTop: 5,
-    },
-    reelActions: {
-        position: 'absolute',
-        right: 9,
-        bottom: 51,
         alignItems: 'center',
         gap: 12,
     },
-    reelActionItem: {
-        alignItems: 'center',
-        gap: 2,
+    savedThumb: {
+        width: 58,
+        height: 58,
+        borderRadius: 14,
+        outlineColor: 'rgba(0,0,0,0.1)',
+        outlineWidth: 1,
     },
-    reelActionLabel: {
-        color: '#fff',
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 7.5,
+    savedCopy: {
+        flex: 1,
+    },
+    savedName: {
+        fontFamily: 'Newsreader_600SemiBold',
+        fontSize: 18,
+        lineHeight: 20,
+    },
+    savedDetail: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 10,
+        marginTop: 3,
+    },
+    ratingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
+        marginTop: 5,
+    },
+    rating: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9.5,
         fontVariant: ['tabular-nums'],
     },
-    shareActionWrap: {
-        width: 42,
-        height: 53,
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-    },
-    shareAction: {
+    savedBookmark: {
         width: 34,
         height: 34,
         borderRadius: 17,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    shareActionPulse: {
-        position: 'absolute',
-        top: -4,
-        width: 42,
-        height: 42,
-        borderRadius: 21,
-        backgroundColor: 'rgba(255,255,255,0.42)',
-    },
-    tapLabel: {
-        color: '#fff',
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 8,
-        letterSpacing: 1.2,
-        marginTop: 3,
-    },
-    reelNav: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        height: 36,
-        paddingHorizontal: 18,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: 'rgba(10,8,8,0.72)',
-    },
-    avatarDot: {
-        width: 15,
-        height: 15,
-        borderRadius: 5,
-        backgroundColor: '#c96f4d',
-        borderWidth: 1,
-        borderColor: '#fff',
-    },
-    shareDemo: {
+    resultSpacer: {
         flex: 1,
-        minHeight: 0,
-        width: '100%',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        paddingTop: 12,
-    },
-    shareReelBackdrop: {
-        position: 'absolute',
-        top: 12,
-        alignItems: 'center',
-        opacity: 0.68,
-    },
-    shareScrim: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(22, 18, 16, 0.48)',
-        borderRadius: 25,
-    },
-    shareSheet: {
-        width: '100%',
-        maxWidth: 390,
-        borderRadius: 30,
-        paddingTop: 10,
-        paddingHorizontal: 16,
-        paddingBottom: 19,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.16,
-        shadowRadius: 30,
-        elevation: 6,
-    },
-    sheetGrip: {
-        width: 38,
-        height: 4,
-        borderRadius: 2,
-        alignSelf: 'center',
-        marginBottom: 12,
-    },
-    shareMeta: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        paddingHorizontal: 2,
-        marginBottom: 15,
-    },
-    shareThumb: {
-        width: 42,
-        height: 42,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    shareMetaTitle: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
-    },
-    shareMetaUrl: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 10,
-        marginTop: 2,
-    },
-    appRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-    },
-    shareAppCol: {
-        width: 54,
-        alignItems: 'center',
-        gap: 5,
-    },
-    shareAppIcon: {
-        width: 44,
-        height: 44,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        outlineColor: 'rgba(0, 0, 0, 0.1)',
-        outlineWidth: 1,
-    },
-    napkinTarget: {
-        width: 44,
-        height: 44,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    napkinPulse: {
-        position: 'absolute',
-        width: 54,
-        height: 54,
-        borderRadius: 16,
-        borderWidth: 2,
-    },
-    napkinIcon: {
-        width: 44,
-        height: 44,
-        borderRadius: 12,
-        outlineColor: 'rgba(0, 0, 0, 0.1)',
-        outlineWidth: 1,
-    },
-    appLabel: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 8.5,
-    },
-    coachPill: {
-        height: 30,
-        borderRadius: 15,
-        paddingLeft: 13,
-        paddingRight: 11,
-        marginTop: 14,
-        alignSelf: 'flex-end',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    coachText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10.5,
-    },
-    resultCard: {
-        width: '100%',
-        maxWidth: 360,
-        borderRadius: 26,
-        marginTop: 27,
-        padding: 14,
-        outlineColor: 'rgba(0, 0, 0, 0.06)',
-        outlineWidth: 1,
-        ...Shadow.ambient,
-    },
-    resultHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 11,
-        padding: 4,
-    },
-    resultCheck: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    resultHeaderTitle: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
-    },
-    resultHeaderMeta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 10.5,
-        marginTop: 2,
-    },
-    resultRule: {
-        height: StyleSheet.hairlineWidth,
-        marginVertical: 10,
-        marginHorizontal: 4,
-    },
-    resultRow: {
-        minHeight: 57,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 11,
-        paddingHorizontal: 4,
-    },
-    resultThumb: {
-        width: 42,
-        height: 42,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        outlineColor: 'rgba(0, 0, 0, 0.1)',
-        outlineWidth: 1,
-    },
-    resultName: {
-        fontFamily: 'Newsreader_600SemiBold',
-        fontSize: 16,
-        lineHeight: 18,
-    },
-    resultArea: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 9.5,
-        marginTop: 2,
-    },
-    savedBadge: {
-        height: 27,
-        borderRadius: 14,
-        paddingHorizontal: 9,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-    },
-    savedText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-    },
-    footer: {
-        height: 66,
-        position: 'relative',
-        justifyContent: 'center',
-    },
-    footerLayer: {
-        ...StyleSheet.absoluteFillObject,
-        justifyContent: 'center',
-    },
-    continueHint: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
-        letterSpacing: 0.2,
-        textAlign: 'center',
-    },
-    practiceButton: {
-        height: 48,
-        borderRadius: 24,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 7,
-    },
-    practiceButtonText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13.5,
-        letterSpacing: 0.15,
     },
     doneButton: {
         height: 52,
@@ -1050,11 +1327,7 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     doneText: {
-        color: '#fff',
         fontFamily: 'Manrope_700Bold',
-        fontSize: 14.5,
-        letterSpacing: 0.15,
+        fontSize: 14,
     },
 });
-
-export default TeachShareSheetDemo;
