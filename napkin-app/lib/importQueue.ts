@@ -211,6 +211,16 @@ export interface ImportManifest {
     sourceHandle?: string | null;
     /** TICKET-180: live drain stage (see ImportStage). Fire-and-forget per boundary. */
     stage?: ImportStage;
+    /**
+     * TICKET-181: whether the single-shot save pins each spot to the personal
+     * wishlist. Default TRUE (wishlist is the base destination) — the review editor
+     * sets it FALSE for a list-only save (spots land only in the chosen list(s), not
+     * the wishlist). Top-level (NOT inside `destinations`) so it maps 1:1 to
+     * save_spots' `pin_wishlist` param and rides the same readAll explicit-parse
+     * survival law as listCount/stage: an un-parsed field is DROPPED the instant a
+     * setter rewrites the file via `{...m}`. RN-authored only (the iOS share
+     * extension never writes it → absent → the `?? true` default). */
+    pinWishlist?: boolean;
 }
 
 const DEFAULT_DESTINATIONS: ImportDestinations = {
@@ -295,6 +305,12 @@ function readAll(): ImportManifest[] {
                     sourceThumbUrl: typeof p.sourceThumbUrl === 'string' ? p.sourceThumbUrl : null,
                     sourceHandle: typeof p.sourceHandle === 'string' ? p.sourceHandle : null,
                     stage: typeof p.stage === 'string' ? (p.stage as ImportStage) : undefined,
+                    // TICKET-181: parse pinWishlist back EXPLICITLY (same survival law
+                    // as sourceThumbUrl/stage above). The review editor's list-only
+                    // toggle MUST persist through the setImportMode('auto') rewrite at
+                    // save-confirm — without this line a re-drain would pin the
+                    // wishlist anyway, silently defeating a list-only save.
+                    pinWishlist: typeof p.pinWishlist === 'boolean' ? p.pinWishlist : undefined,
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -425,6 +441,42 @@ export function setImportSpots(jobId: string, spots: PersistedImportSpot[]): voi
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     writeManifest({ ...m, spots });
+}
+
+/**
+ * TICKET-181: persist the review editor's destination edits — the chosen lists
+ * (existing ids + new titles) and whether to pin the personal wishlist — BEFORE the
+ * drain-release flips mode → 'auto'. Rewrites via the readAll→writeManifest path
+ * (the manifest-field survival law) so a crash-then-redrain saves to the EDITED
+ * destinations, never the stale ones. Only the keys present in `edits` are applied
+ * (partial merge). Table destinations (`tableIds`) are deliberately NOT touched —
+ * they pass through unchanged (v1 scope: tables aren't shown as editable chips).
+ */
+export function setImportDestinations(
+    jobId: string,
+    edits: { listIds?: string[]; newListTitles?: string[]; pinWishlist?: boolean },
+): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return;
+    writeManifest({
+        ...m,
+        destinations: {
+            ...m.destinations,
+            ...(edits.listIds !== undefined ? { listIds: edits.listIds } : {}),
+            ...(edits.newListTitles !== undefined ? { newListTitles: edits.newListTitles } : {}),
+        },
+        ...(edits.pinWishlist !== undefined ? { pinWishlist: edits.pinWishlist } : {}),
+    });
+}
+
+/**
+ * TICKET-181: the effective `pin_wishlist` flag the single-shot save_spots call
+ * sends. Default TRUE (wishlist is the base destination) — only the review editor's
+ * explicit list-only toggle sets it false. Pure + exported so the save-body wiring
+ * is unit-testable without mounting the drain hook.
+ */
+export function effectivePinWishlist(m: Pick<ImportManifest, 'pinWishlist'>): boolean {
+    return m.pinWishlist ?? true;
 }
 
 /**

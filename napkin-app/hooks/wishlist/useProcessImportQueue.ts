@@ -54,6 +54,7 @@ import {
     setImportMode,
     setDefaultImportMode,
     setLargeJob,
+    effectivePinWishlist,
     bumpImportAttempt,
     acquireDrainLock,
     releaseDrainLock,
@@ -1194,14 +1195,29 @@ export function useProcessImportQueue() {
             // TICKET-180 stage 6/6: the final save (auto mode only — a review hold
             // returned above; a review-confirm re-drain re-enters here and saves).
             setImportStage(m.jobId, 'saving');
+            // TICKET-181: the review editor's list-only toggle → pin_wishlist. Default
+            // true (base destination); false = the spots land only in the chosen
+            // list(s), not the personal wishlist. Set on the wishlist-BASE call only
+            // (no-tables + the i===0 fan-out); the server still returns restaurant_ids
+            // for list routing when false (large-job path precedent).
+            const pinWishlist = effectivePinWishlist(m);
             let result: SaveImportSpotsResult | undefined;
             if (tableIds.length === 0) {
                 result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                     action: 'save_spots',
-                    body: { import_nonce: m.importNonce, spots, source, notify_done: true },
+                    body: { import_nonce: m.importNonce, spots, source, notify_done: true, pin_wishlist: pinWishlist },
                 });
             } else {
                 for (let i = 0; i < tableIds.length; i++) {
+                    // ARCHITECT-REVIEW: the i===0 call carries pin_wishlist per the
+                    // ticket. When pin_wishlist=false, the server's list-only branch
+                    // skips fn_save_import_spot — which is also what mints table[0]'s
+                    // share — so a wishlist-off + list + table combo would drop the
+                    // FIRST table's share (tables 2..N still pin+share via the RPC).
+                    // The editor doesn't surface tables (v1), so this combo is only
+                    // reachable when a share pre-chose a table; flagged for the
+                    // architect (Builder Questions) — is the table-share drop
+                    // acceptable, or should pin_wishlist force true when tables exist?
                     const r = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                         action: 'save_spots',
                         body: {
@@ -1209,6 +1225,7 @@ export function useProcessImportQueue() {
                             spots: spotsForTable(tableIds[i]),
                             source,
                             notify_done: i === 0,
+                            ...(i === 0 ? { pin_wishlist: pinWishlist } : {}),
                         },
                     });
                     if (i === 0) result = r; // first call pinned the wishlist + did routing
