@@ -17,11 +17,13 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import { track } from '@/lib/track';
 import {
     getImport,
     setImportSpots,
+    setImportDestinations,
     setImportMode,
     removeImport,
     pokeImportQueue,
@@ -29,8 +31,10 @@ import {
 } from '@/lib/importQueue';
 import { truncationNote } from '@/lib/importTruncation';
 import { deleteAppGroupFile } from '@/modules/media-extract';
+import { useMyLists } from '@/hooks/lists/useMyLists';
 import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
 import { ImportSourceCard } from '@/components/wishlist/ImportSourceCard';
+import { ImportListPickerSheet } from '@/components/lists/ImportListPickerSheet';
 import { importSourceLabel, manifestDisplaySource } from '@/components/wishlist/importSourceLabel';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -59,6 +63,56 @@ export default function ImportReviewScreen() {
             ),
     );
     const [fixTarget, setFixTarget] = useState<PersistedImportSpot | null>(null);
+
+    // TICKET-181: editable destinations. The wishlist pin defaults to the manifest's
+    // pinWishlist (?? true — the base destination); lists are chosen here (the share
+    // flow never picks them). Table destinations are NOT surfaced (v1) — they ride
+    // untouched on the manifest and are never mutated by this editor.
+    const { user } = useAuth();
+    const { data: myLists = [] } = useMyLists(user?.id);
+    const [pinWishlist, setPinWishlist] = useState<boolean>(() => manifest?.pinWishlist ?? true);
+    const [listIds, setListIds] = useState<string[]>(() => manifest?.destinations?.listIds ?? []);
+    const [newListTitles, setNewListTitles] = useState<string[]>(
+        () => manifest?.destinations?.newListTitles ?? [],
+    );
+    const [listSheetOpen, setListSheetOpen] = useState(false);
+
+    const toggleList = useCallback(
+        (id: string) =>
+            setListIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])),
+        [],
+    );
+    const addNewTitle = useCallback(
+        (title: string) => setNewListTitles((prev) => [...prev, title]),
+        [],
+    );
+    const removeNewTitle = useCallback(
+        (title: string) => setNewListTitles((prev) => prev.filter((t) => t !== title)),
+        [],
+    );
+
+    // Chips for the "saving to" card: chosen existing lists (name resolved) + new
+    // titles. Tapping a list chip removes it. Serif italic — a list name is content.
+    const listChips = useMemo(
+        () => [
+            ...listIds.map((id) => ({
+                key: id,
+                name: myLists.find((l) => l.id === id)?.title ?? 'list',
+                onRemove: () => toggleList(id),
+            })),
+            ...newListTitles.map((t) => ({
+                key: `new:${t}`,
+                name: t,
+                onRemove: () => removeNewTitle(t),
+            })),
+        ],
+        [listIds, newListTitles, myLists, toggleList, removeNewTitle],
+    );
+
+    // Zero-destination guard: with the wishlist pin off AND no lists chosen, there's
+    // nowhere for the spots to go — the save disables (the greyed button IS the
+    // message; no murmur sentence). Tables aren't counted (not shown/editable here).
+    const hasDestination = pinWishlist || listChips.length > 0;
 
     const toggle = (id: string) =>
         setTicked((prev) => {
@@ -117,20 +171,8 @@ export default function ImportReviewScreen() {
         [manifest, spots.length],
     );
 
-    const destSummary = useMemo(() => {
-        const d = manifest?.destinations;
-        const parts: string[] = ['wishlist'];
-        if (d?.listIds?.length || d?.newListTitles?.length) {
-            const n = (d.listIds?.length ?? 0) + (d.newListTitles?.length ?? 0);
-            parts.push(`${n} ${n === 1 ? 'list' : 'lists'}`);
-        }
-        const tableCount = d?.tableIds?.length ?? 0;
-        if (tableCount > 0) parts.push(tableCount === 1 ? 'a table' : `${tableCount} tables`);
-        return parts.join(' · ');
-    }, [manifest]);
-
     const handleSave = () => {
-        if (!manifest || keptCount === 0) return;
+        if (!manifest || keptCount === 0 || !hasDestination) return;
         const kept = spots.filter((s) => ticked.has(s.candidate_id));
         // TICKET-088: how much human correction the extraction needed.
         const originalById = new Map(
@@ -146,6 +188,12 @@ export default function ImportReviewScreen() {
             fixed_n: fixedN,
         });
         setImportSpots(manifest.jobId, kept); // prune to confirmed (incl. fixes)
+        // TICKET-181: persist the edited destinations BEFORE the mode flip. The
+        // drain-release below flips mode → 'auto' and re-pokes; if a crash lands
+        // between the flip and this write, the re-drain must save to the EDITED
+        // destinations (list-only pin + chosen lists), never the stale ones. Tables
+        // ride untouched (setImportDestinations never writes tableIds).
+        setImportDestinations(manifest.jobId, { listIds, newListTitles, pinWishlist });
         setImportMode(manifest.jobId, 'auto'); // release for the normal save path
         pokeImportQueue(); // kick the drain now
         toast.show(`saving ${keptCount} ${keptCount === 1 ? 'spot' : 'spots'}…`);
@@ -289,12 +337,27 @@ export default function ImportReviewScreen() {
                             </Pressable>
 
                             <View style={styles.actions}>
+                                {/* TICKET-181: the ⇄ repoint icon → a quiet "wrong?"
+                                    text (same handler). Taupe at rest, terracotta while
+                                    this spot's fix panel is open. */}
                                 <Pressable
                                     onPress={() => setFixTarget(s)}
                                     hitSlop={8}
                                     accessibilityLabel={`fix ${s.restaurant_name ?? 'this spot'}`}
                                 >
-                                    <Ionicons name="swap-horizontal-outline" size={20} color={palette.textMuted} />
+                                    <Text
+                                        style={[
+                                            styles.wrong,
+                                            {
+                                                color:
+                                                    fixTarget?.candidate_id === s.candidate_id
+                                                        ? palette.primary
+                                                        : palette.textMuted,
+                                            },
+                                        ]}
+                                    >
+                                        wrong?
+                                    </Text>
                                 </Pressable>
                                 <Pressable
                                     onPress={() => toggle(s.candidate_id)}
@@ -318,14 +381,79 @@ export default function ImportReviewScreen() {
                         </View>
                     );
                 })}
+
+                {/* TICKET-181: "saving to" — the wishlist pin toggle + a chip per chosen
+                    list + a dashed "+ list". Replaces the old "→ wishlist · 1 list"
+                    murmur. Chips: outlineVariant border, terracotta-soft fill when on;
+                    list NAMES are serif italic (content), functional labels Manrope. */}
+                <Text style={[styles.savingKicker, { color: palette.textMuted }]}>SAVING TO</Text>
+                <View style={styles.chipRow}>
+                    {/* wishlist toggle */}
+                    <Pressable
+                        onPress={() => setPinWishlist((v) => !v)}
+                        style={[
+                            styles.chip,
+                            { borderColor: palette.outlineVariant },
+                            pinWishlist
+                                ? { backgroundColor: palette.primaryMuted }
+                                : { backgroundColor: 'transparent' },
+                        ]}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: pinWishlist }}
+                        accessibilityLabel="save to wishlist"
+                    >
+                        {pinWishlist ? (
+                            <Ionicons name="checkmark" size={14} color={palette.primary} />
+                        ) : null}
+                        <Text
+                            style={[
+                                styles.chipLabel,
+                                { color: pinWishlist ? palette.primary : palette.textMuted },
+                            ]}
+                        >
+                            wishlist
+                        </Text>
+                    </Pressable>
+
+                    {/* one chip per chosen list — tap to remove */}
+                    {listChips.map((c) => (
+                        <Pressable
+                            key={c.key}
+                            onPress={c.onRemove}
+                            style={[
+                                styles.chip,
+                                { backgroundColor: palette.primaryMuted, borderColor: palette.outlineVariant },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`remove ${c.name}`}
+                        >
+                            <Ionicons name="checkmark" size={14} color={palette.primary} />
+                            <Text style={[styles.chipName, { color: palette.primary }]} numberOfLines={1}>
+                                {c.name}
+                            </Text>
+                        </Pressable>
+                    ))}
+
+                    {/* dashed + list */}
+                    <Pressable
+                        onPress={() => setListSheetOpen(true)}
+                        style={[styles.chip, styles.addChip, { borderColor: palette.outlineVariant }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="add to a list"
+                    >
+                        <Text style={[styles.chipLabel, { color: palette.textSecondary }]}>+ list</Text>
+                    </Pressable>
+                </View>
             </ScrollView>
 
             <View style={[styles.footer, { paddingBottom: insets.bottom + 14, backgroundColor: palette.background }]}>
-                <Text style={[styles.dest, { color: palette.textMuted }]}>{`→ ${destSummary}`}</Text>
                 <Pressable
                     onPress={handleSave}
-                    disabled={keptCount === 0}
-                    style={[styles.cta, { backgroundColor: keptCount === 0 ? palette.outlineVariant : palette.primary }]}
+                    disabled={keptCount === 0 || !hasDestination}
+                    style={[
+                        styles.cta,
+                        { backgroundColor: keptCount === 0 || !hasDestination ? palette.outlineVariant : palette.primary },
+                    ]}
                 >
                     <Text style={[styles.ctaLabel, { color: '#fffdf8' }]}>
                         {keptCount === 0 ? 'keep at least one' : `save ${keptCount} ${keptCount === 1 ? 'spot' : 'spots'}`}
@@ -344,6 +472,20 @@ export default function ImportReviewScreen() {
                 onSelect={handleFixPick}
                 onDismiss={() => setFixTarget(null)}
                 palette={palette}
+            />
+
+            {/* TICKET-181: the "+ list" picker — deferred multi-select; selection is
+                committed onto the manifest at save (setImportDestinations). Plain
+                sibling Modal (this screen is a pushed card, not a Modal). */}
+            <ImportListPickerSheet
+                visible={listSheetOpen}
+                onClose={() => setListSheetOpen(false)}
+                userId={user?.id}
+                selectedListIds={listIds}
+                newListTitles={newListTitles}
+                onToggleList={toggleList}
+                onAddNewTitle={addNewTitle}
+                onRemoveNewTitle={removeNewTitle}
             />
         </View>
     );
@@ -382,6 +524,11 @@ const styles = StyleSheet.create({
     name: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 17, lineHeight: 21 },
     meta: { fontFamily: 'Manrope_500Medium', fontSize: 12 },
     actions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, flexShrink: 0 },
+    wrong: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12.5,
+        letterSpacing: 0.2,
+    },
     tick: {
         width: 26,
         height: 26,
@@ -389,6 +536,42 @@ const styles = StyleSheet.create({
         borderWidth: 2,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    savingKicker: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 9.5,
+        letterSpacing: 1.5,
+        marginTop: Spacing.md,
+        marginBottom: Spacing.sm,
+    },
+    chipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    chip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        borderWidth: 1,
+        borderRadius: Radius.full,
+        paddingVertical: 7,
+        paddingHorizontal: 13,
+        maxWidth: '100%',
+    },
+    addChip: {
+        borderStyle: 'dashed',
+    },
+    chipLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+        letterSpacing: 0.2,
+    },
+    chipName: {
+        fontFamily: 'Newsreader_500Medium_Italic',
+        fontSize: 14.5,
+        flexShrink: 1,
     },
     footer: {
         position: 'absolute',
@@ -398,11 +581,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 22,
         paddingTop: 12,
         gap: 10,
-    },
-    dest: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        textAlign: 'center',
     },
     cta: {
         height: 52,
