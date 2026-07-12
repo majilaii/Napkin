@@ -103,6 +103,23 @@ export function setDefaultImportMode(mode: ImportMode): void {
 
 export type ImportManifestStatus = 'pending' | 'failed';
 
+/**
+ * TICKET-180: the stage the single-shot drain is currently in, written
+ * fire-and-forget at each boundary (fetching page → downloading video / reading
+ * slides → reading the video → matching spots → saving). The imports hub renders
+ * it live as the in-flight subtitle so a slow import isn't an opaque spinner-less
+ * row. Lowercase, ≤3 words. NEVER set for the large-Maps-job path (its chunk cursor
+ * already carries an honest numerator). A failed manifest keeps its LAST stage so
+ * "died while downloading video" stays visible context.
+ */
+export type ImportStage =
+    | 'fetching page'
+    | 'downloading video'
+    | 'reading slides'
+    | 'reading the video'
+    | 'matching spots'
+    | 'saving';
+
 /** A resolved spot in the exact shape resolve-url `save_spots` expects. */
 export interface PersistedImportSpot {
     candidate_id: string;
@@ -179,6 +196,21 @@ export interface ImportManifest {
      * durable job (frozen nonces, chunk cursor, per-item outcomes) is the
      * dispatch-on-read work queue — survives app kill, resumes on next open. */
     largeJob?: LargeImportJob;
+    /**
+     * TICKET-180: the fresh (unexpired) provider cover URL + resolved creator
+     * handle, checkpointed ONCE at first resolve (alongside `spots`) so the review
+     * screen + imports hub can show WHERE an import came from before you approve it.
+     * Replay-invariant — a re-drain that skips resolve inherits the first pass's
+     * values. The thumb URL rots in hours–days; the review card degrades it to the
+     * platform-logo plate on load failure. RN-authored ONLY — the iOS share
+     * extension writes none of these (camelCase, like every other manifest field). */
+    sourceThumbUrl?: string | null;
+    /** TICKET-180: creator handle (tiktok @user off the resolved page URL / IG
+     * embed anchor). Manifest-only — the saved wishlist `source` shape is untouched
+     * (a tiktok author_handle would need the DB CHECK + validator). Null when unknown. */
+    sourceHandle?: string | null;
+    /** TICKET-180: live drain stage (see ImportStage). Fire-and-forget per boundary. */
+    stage?: ImportStage;
 }
 
 const DEFAULT_DESTINATIONS: ImportDestinations = {
@@ -254,6 +286,15 @@ function readAll(): ImportManifest[] {
                     // undefined → the single-shot path runs verbatim (old manifests).
                     // Without this the `{...m}` spreads in the setters would DROP it.
                     largeJob: normalizeLargeJob(p.largeJob),
+                    // TICKET-180: parse the source identity + live stage back
+                    // EXPLICITLY. readAll rebuilds each manifest field-by-field, so an
+                    // un-parsed field is silently DROPPED the instant a setter rewrites
+                    // the file from a re-read manifest — e.g. setImportMode('auto') at
+                    // review-confirm would wipe the thumb/handle/stage. This is the
+                    // load-bearing parse (same trap as listCount/largeJob above).
+                    sourceThumbUrl: typeof p.sourceThumbUrl === 'string' ? p.sourceThumbUrl : null,
+                    sourceHandle: typeof p.sourceHandle === 'string' ? p.sourceHandle : null,
+                    stage: typeof p.stage === 'string' ? (p.stage as ImportStage) : undefined,
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -427,6 +468,36 @@ export function setImportListCount(jobId: string, listCount: number): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     writeManifest({ ...m, listCount });
+}
+
+/**
+ * TICKET-180: checkpoint the clip's source identity (fresh provider cover URL +
+ * resolved creator handle) at first resolve, alongside setImportSpots. Replay-
+ * invariant — persisted once so the review screen / hub can show provenance even
+ * after the review hold or a re-drain. Writes the file only (never mutates the
+ * in-memory manifest), exactly like setImportSpots/setImportListCount.
+ */
+export function setImportSource(
+    jobId: string,
+    src: { thumbUrl: string | null; handle: string | null },
+): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return;
+    writeManifest({ ...m, sourceThumbUrl: src.thumbUrl, sourceHandle: src.handle });
+}
+
+/**
+ * TICKET-180: write the drain's current stage (one call per boundary, single-shot
+ * path only — the large-job path skips it). Fire-and-forget on the
+ * setImportDiagnostics pattern: readAll swallows (native-absent → []), writeManifest
+ * swallows (→ no-op), the call is synchronous `void` and NEVER awaited — so no stage
+ * write can throw into the drain. A failed manifest keeps its last stage
+ * (bumpImportAttempt spreads {...m} off a fresh readAll → the parsed stage survives).
+ */
+export function setImportStage(jobId: string, stage: ImportStage): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return;
+    writeManifest({ ...m, stage });
 }
 
 /**
