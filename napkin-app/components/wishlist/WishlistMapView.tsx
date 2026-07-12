@@ -1129,10 +1129,15 @@ export function WishlistMapView({
                 itself never disappears. pointerEvents none: pan/zoom stay free. */}
             {emptyCopy ? (
                 <View pointerEvents="none" style={[styles.fill, styles.emptyWrap]}>
-                    <Ionicons name="map-outline" size={28} color={palette.textMuted} />
-                    <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                        {emptyCopy}
-                    </Text>
+                    {/* [review NIT-2] frosted pill behind the murmur — muted text
+                        straight on Android's busier tiles reads thin; mirrors the
+                        sibling unmappable murmur's treatment. */}
+                    <View style={[styles.emptyPill, { backgroundColor: frostBg }, Shadow.ambient]}>
+                        <Ionicons name="map-outline" size={28} color={palette.textMuted} />
+                        <Text style={[styles.emptyText, { color: palette.textMuted }]}>
+                            {emptyCopy}
+                        </Text>
+                    </View>
                 </View>
             ) : null}
 
@@ -1815,6 +1820,15 @@ const styles = StyleSheet.create({
         fontSize: 13,
         textAlign: 'center',
         lineHeight: 18,
+    },
+    // TICKET-179: frost behind the floating empty murmur (legibility over tiles).
+    emptyPill: {
+        alignItems: 'center',
+        gap: 10,
+        paddingVertical: 18,
+        paddingHorizontal: 22,
+        borderRadius: 18,
+        maxWidth: 300,
     },
     // Source pills — frosted segmented control, top-left on the glass (⑨ h38·13/700).
     sourcePills: {
