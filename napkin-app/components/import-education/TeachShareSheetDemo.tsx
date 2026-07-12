@@ -6,7 +6,7 @@
  * This gives onboarding the muscle-memory benefit of a live walkthrough while
  * keeping it deterministic, offline and replayable from Settings.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Image,
@@ -77,6 +77,7 @@ export function TeachShareSheetDemo({
 }: TeachShareSheetDemoProps) {
     const reduced = useReducedMotion();
     const [beat, setBeat] = useState(0);
+    const lastHapticBeat = useRef(beat);
     const pulse = useSharedValue(0);
     const drawerProgress = useSharedValue(0);
     const systemProgress = useSharedValue(0);
@@ -107,6 +108,12 @@ export function TeachShareSheetDemo({
         });
     }, [beat, drawerProgress, reduced, systemProgress]);
 
+    useEffect(() => {
+        if (lastHapticBeat.current === beat) return;
+        lastHapticBeat.current = beat;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    }, [beat]);
+
     const pulseStyle = useAnimatedStyle(() => ({
         opacity: 0.75 * (1 - pulse.value),
         transform: [{ scale: 0.8 + pulse.value * 0.65 }],
@@ -121,13 +128,7 @@ export function TeachShareSheetDemo({
     }));
 
     const completeTarget = (target: TeachTarget) => {
-        setBeat((current) => {
-            const next = advanceOnTarget(current, target);
-            if (next !== current) {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-            }
-            return next;
-        });
+        setBeat((current) => advanceOnTarget(current, target));
     };
 
     if (beat === LAST_BEAT) {
@@ -148,7 +149,7 @@ export function TeachShareSheetDemo({
 
     return (
         <View style={styles.root}>
-            <StatusBar style={beat === LAST_BEAT ? 'auto' : 'light'} />
+            <StatusBar style="light" />
 
             <ReelScreen
                 topInset={topInset}
@@ -215,11 +216,7 @@ export function TeachShareSheetDemo({
                         { top: topInset + 20, transform: [{ scale: pressed ? 0.96 : 1 }] },
                     ]}
                 >
-                    <Ionicons
-                        name="close"
-                        size={20}
-                        color={beat === LAST_BEAT ? palette.text : '#fff'}
-                    />
+                    <Ionicons name="close" size={20} color="#fff" />
                 </Pressable>
             ) : null}
         </View>
