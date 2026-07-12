@@ -131,3 +131,49 @@ Deno.test('namesOverlap: CJK names (normalize to empty) stay lenient', () => {
 Deno.test('normalizeName strips punctuation and diacritics', () => {
     assertEquals(normalizeName("Juliet's  Café"), 'juliet s cafe');
 });
+
+// ── TICKET-177: localityConsistent ───────────────────────────────────────────
+import { localityConsistent } from './candidateDedupe.ts';
+
+Deno.test('localityConsistent: wrong-town exact-name match is rejected (Cartouche/Kartuli repro)', () => {
+    // Extraction said London; Places returned Cartouche in Hertford.
+    assertEquals(
+        localityConsistent(
+            { city: 'London', area: null },
+            { city: 'Hertford', formattedAddress: '2 Bull Plain, Hertford SG14 1DT, UK' },
+        ),
+        false,
+    );
+});
+
+Deno.test('localityConsistent: matching city passes; area token in address passes', () => {
+    assertEquals(
+        localityConsistent(
+            { city: 'London', area: null },
+            { city: 'London', formattedAddress: '20 Lordship Ln, London SE22, UK' },
+        ),
+        true,
+    );
+    assertEquals(
+        localityConsistent(
+            { city: null, area: 'East Dulwich' },
+            { city: 'London', formattedAddress: '20 Lordship Ln, East Dulwich, London SE22' },
+        ),
+        true,
+    );
+    // ANY extracted locality overlapping is enough (city wrong-ish, area right).
+    assertEquals(
+        localityConsistent(
+            { city: 'Bristol', area: 'East Dulwich' },
+            { city: 'London', formattedAddress: 'East Dulwich, London SE22' },
+        ),
+        true,
+    );
+});
+
+Deno.test('localityConsistent: lenient when either side has no locality signal', () => {
+    assertEquals(localityConsistent({ city: null, area: null }, { city: 'Hertford', formattedAddress: 'x' }), true);
+    assertEquals(localityConsistent({ city: 'London', area: null }, { city: null, formattedAddress: null }), true);
+    // CJK-only city normalizes to '' → no signal → lenient (mirrors namesOverlap).
+    assertEquals(localityConsistent({ city: '東京', area: null }, { city: 'Hertford', formattedAddress: 'x' }), true);
+});
