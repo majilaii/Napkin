@@ -268,7 +268,6 @@ const styles = StyleSheet.create({
     },
     list: {
         flexGrow: 0,
-        paddingHorizontal: 22,
     },
     row: {
         flexDirection: 'row',

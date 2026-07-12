@@ -1197,9 +1197,9 @@ export function useProcessImportQueue() {
             setImportStage(m.jobId, 'saving');
             // TICKET-181: the review editor's list-only toggle → pin_wishlist. Default
             // true (base destination); false = the spots land only in the chosen
-            // list(s), not the personal wishlist. Set on the wishlist-BASE call only
-            // (no-tables + the i===0 fan-out); the server still returns restaurant_ids
-            // for list routing when false (large-job path precedent).
+            // list(s), not the personal wishlist. No-tables path only — the table
+            // fan-out below forces true. The server still returns restaurant_ids for
+            // list routing when false (large-job path precedent).
             const pinWishlist = effectivePinWishlist(m);
             let result: SaveImportSpotsResult | undefined;
             if (tableIds.length === 0) {
@@ -1209,15 +1209,11 @@ export function useProcessImportQueue() {
                 });
             } else {
                 for (let i = 0; i < tableIds.length; i++) {
-                    // ARCHITECT-REVIEW: the i===0 call carries pin_wishlist per the
-                    // ticket. When pin_wishlist=false, the server's list-only branch
-                    // skips fn_save_import_spot — which is also what mints table[0]'s
-                    // share — so a wishlist-off + list + table combo would drop the
-                    // FIRST table's share (tables 2..N still pin+share via the RPC).
-                    // The editor doesn't surface tables (v1), so this combo is only
-                    // reachable when a share pre-chose a table; flagged for the
-                    // architect (Builder Questions) — is the table-share drop
-                    // acceptable, or should pin_wishlist force true when tables exist?
+                    // pin_wishlist is FORCED true when tables exist: a table share is a
+                    // share OF the save — fn_save_import_spot mints the pin and table[0]'s
+                    // post together, and the list-only branch skips it entirely. A false
+                    // here would silently drop the pre-chosen table's share (the review
+                    // editor locks the wishlist chip on for the same reason).
                     const r = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                         action: 'save_spots',
                         body: {
@@ -1225,7 +1221,7 @@ export function useProcessImportQueue() {
                             spots: spotsForTable(tableIds[i]),
                             source,
                             notify_done: i === 0,
-                            ...(i === 0 ? { pin_wishlist: pinWishlist } : {}),
+                            ...(i === 0 ? { pin_wishlist: true } : {}),
                         },
                     });
                     if (i === 0) result = r; // first call pinned the wishlist + did routing

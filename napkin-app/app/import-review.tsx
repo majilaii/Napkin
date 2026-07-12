@@ -70,7 +70,14 @@ export default function ImportReviewScreen() {
     // untouched on the manifest and are never mutated by this editor.
     const { user } = useAuth();
     const { data: myLists = [] } = useMyLists(user?.id);
-    const [pinWishlist, setPinWishlist] = useState<boolean>(() => manifest?.pinWishlist ?? true);
+    // When the share pre-chose a table, the wishlist pin is LOCKED on: a table share
+    // is a share OF the save (fn_save_import_spot mints both), so list-only + table
+    // is not a representable state. The drain forces pin_wishlist=true on the table
+    // fan-out for the same reason.
+    const hasTableDestination = (manifest?.destinations?.tableIds?.length ?? 0) > 0;
+    const [pinWishlist, setPinWishlist] = useState<boolean>(
+        () => hasTableDestination || (manifest?.pinWishlist ?? true),
+    );
     const [listIds, setListIds] = useState<string[]>(() => manifest?.destinations?.listIds ?? []);
     const [newListTitles, setNewListTitles] = useState<string[]>(
         () => manifest?.destinations?.newListTitles ?? [],
@@ -388,9 +395,10 @@ export default function ImportReviewScreen() {
                     list NAMES are serif italic (content), functional labels Manrope. */}
                 <Text style={[styles.savingKicker, { color: palette.textMuted }]}>SAVING TO</Text>
                 <View style={styles.chipRow}>
-                    {/* wishlist toggle */}
+                    {/* wishlist toggle — locked on when a table share rides this import */}
                     <Pressable
-                        onPress={() => setPinWishlist((v) => !v)}
+                        onPress={hasTableDestination ? undefined : () => setPinWishlist((v) => !v)}
+                        disabled={hasTableDestination}
                         style={[
                             styles.chip,
                             { borderColor: palette.outlineVariant },
@@ -399,7 +407,7 @@ export default function ImportReviewScreen() {
                                 : { backgroundColor: 'transparent' },
                         ]}
                         accessibilityRole="checkbox"
-                        accessibilityState={{ checked: pinWishlist }}
+                        accessibilityState={{ checked: pinWishlist, disabled: hasTableDestination }}
                         accessibilityLabel="save to wishlist"
                     >
                         {pinWishlist ? (
