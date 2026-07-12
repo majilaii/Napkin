@@ -177,3 +177,16 @@ Deno.test('localityConsistent: lenient when either side has no locality signal',
     // CJK-only city normalizes to '' → no signal → lenient (mirrors namesOverlap).
     assertEquals(localityConsistent({ city: '東京', area: null }, { city: 'Hertford', formattedAddress: 'x' }), true);
 });
+
+Deno.test('localityConsistent: documented outer-borough trade-off — pinned against drift', () => {
+    // Extracted city "London" vs an outer-borough postal-town address that omits
+    // "London" → false-ghost BY DESIGN (visible + fixable beats silently wrong).
+    // If this assertion ever needs flipping, re-read the TICKET-177 trade first.
+    assertEquals(
+        localityConsistent(
+            { city: 'London', area: null },
+            { city: 'Croydon', formattedAddress: '12 High St, Croydon CR0 1GT, UK' },
+        ),
+        false,
+    );
+});
