@@ -93,6 +93,14 @@ export interface TikTokPerception {
      */
     thumbnailUrl: string | null;
     /**
+     * TICKET-180: creator handle (@user) parsed from the RESOLVED page URL — the
+     * same Response.url foundation as isPhotoPost (see extractTikTokHandle). Powers
+     * the review card / hub @handle row so you know WHOSE clip you're approving.
+     * Null when the resolved URL carries no /@handle segment (unusual redirect
+     * shape) — the row simply doesn't render (parity with IG's null-handle path).
+     */
+    authorHandle: string | null;
+    /**
      * TICKET-176: photo-mode slide image URLs
      * (imagePost.images[].imageURL.urlList[0]), capped at PHOTO_SLIDE_CAP. The
      * spots on a caption-less photo list are rendered ON the slides, so the queue
@@ -116,6 +124,21 @@ export function isTikTokUrl(url: string | null | undefined): boolean {
  */
 export function isTikTokPhotoUrl(url: string | null | undefined): boolean {
     return !!url && /\/photo\//.test(url);
+}
+
+/**
+ * TICKET-180: creator handle from a RESOLVED TikTok page URL (`/@handle/…`).
+ * Runs on Response.url (final, post-redirect — same foundation as isTikTokPhotoUrl),
+ * NEVER the share link (vm.tiktok.com carries no handle → null). Pure + exported for
+ * tests: the @handle URL-shape assumption is load-bearing for the review card, so it
+ * gets pinned. TikTok handles are letters/digits/underscore/period; the match stops
+ * at the next '/' so `/@user/video/…` and `/@user/photo/…` both yield `user`. Returns
+ * null for a handle-less URL or null/empty input (degrade, never throw).
+ */
+export function extractTikTokHandle(url: string | null | undefined): string | null {
+    if (!url) return null;
+    const m = url.match(/\/@([A-Za-z0-9_.]+)/);
+    return m ? m[1] : null;
 }
 
 /**
@@ -182,6 +205,10 @@ export async function fetchTikTokPerception(
         // post must reach the queue as a marker (never null) so it routes to the
         // server url tier instead of dying in the video ladder.
         const isPhotoPost = isTikTokPhotoUrl(pageRes.url);
+        // TICKET-180: the creator handle rides the RESOLVED url for BOTH photo and
+        // video posts (same Response.url foundation as isPhotoPost). Captured once
+        // here and threaded onto every return below.
+        const authorHandle = extractTikTokHandle(pageRes.url);
         // TICKET-176: the base marker (no-blob / no-itemStruct sites) keeps EMPTY
         // desc + slideUrls — only the has-itemStruct site below can populate them
         // (that's where imagePost lives). All three keep isPhotoPost:true so the
@@ -194,6 +221,7 @@ export async function fetchTikTokPerception(
             isPhotoPost: true,
             playAddr: null,
             thumbnailUrl: null,
+            authorHandle,
             slideUrls: [],
         };
         const html = await pageRes.text();
@@ -279,6 +307,7 @@ export async function fetchTikTokPerception(
             hasTranscript: transcript.length > 0,
             playAddr,
             thumbnailUrl,
+            authorHandle,
         };
     } catch {
         return null;
