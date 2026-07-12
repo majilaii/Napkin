@@ -74,8 +74,6 @@ import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/
 import { cuisineGlyph, tintIndex } from '@/lib/engraving';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { describePeekWho } from './peekWho';
-import { useClusteredPins, pinVariant, type ClusterEntry } from './useClusteredPins';
-import { ClusterMarker } from './ClusterBubble';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -154,6 +152,15 @@ export interface WishlistMapItem {
     } | null;
 }
 
+/**
+ * The layer discriminant qualifying each marker key: `o` overlap · `n` network ·
+ * `b` been · `s` saved. A layer swap that reshapes a pin changes the key, so the
+ * native marker view legitimately remounts.
+ */
+function pinVariant(item: WishlistMapItem): 'o' | 'n' | 'b' | 's' {
+    return item.overlap != null ? 'o' : item.entryId != null ? 'n' : item.been ? 'b' : 's';
+}
+
 type LocationStatus = 'idle' | 'pending' | 'granted' | 'denied';
 
 interface Props {
@@ -162,6 +169,9 @@ interface Props {
     /** Count of saved spots that lack coordinates — surfaced as a quiet murmur.
      * Saved layer only: parents pass 0 for the been/network layers. */
     unmappableCount: number;
+    /** Tap-through on the unmappable murmur (lists which spots + fix flow).
+     * Optional — without it the murmur stays informational (dining-map). */
+    onUnmappablePress?: () => void;
     /** User location for the "you are here" dot + recenter + distance labels. */
     userCoords: GeoLatLng | null;
     locationStatus: LocationStatus;
@@ -597,6 +607,7 @@ function WishlistMarker({ item, selected, palette, onPress }: WishlistMarkerProp
 export function WishlistMapView({
     items,
     unmappableCount,
+    onUnmappablePress,
     userCoords,
     locationStatus,
     onRequestLocation,
@@ -617,25 +628,6 @@ export function WishlistMapView({
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapViewType>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
-
-    // TICKET-153: the live map region drives clustering. Tracked on gesture
-    // SETTLE (onRegionChangeComplete), debounced ~120ms so a burst of settle
-    // events (animateToRegion tails, repeated micro-pans) collapses to one
-    // recompute. Continuous onRegionChange is deliberately NOT used — clusters
-    // re-form a beat after the gesture ends, which is the right feel for a paper
-    // map and far cheaper than per-frame reclustering.
-    const [region, setRegion] = useState<Region | null>(null);
-    const regionDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const handleRegionChangeComplete = useCallback((next: Region) => {
-        if (regionDebounce.current) clearTimeout(regionDebounce.current);
-        regionDebounce.current = setTimeout(() => setRegion(next), 120);
-    }, []);
-    useEffect(
-        () => () => {
-            if (regionDebounce.current) clearTimeout(regionDebounce.current);
-        },
-        [],
-    );
 
     // Scheme follows the palette the parent passed (the app's use-color-scheme
     // hook is hard-forced to 'light', so a hook call here can't see dark; the
@@ -801,31 +793,6 @@ export function WishlistMapView({
             longitudeDelta: 0.08,
         };
     }, [items, userCoords]);
-
-    // TICKET-153: cluster the pin set for the CURRENT region. Before the first
-    // settle event `region` is null, so fall back to `initialRegion` — clustering
-    // engages from frame one (no burst of 500 unclustered markers on open). At
-    // friend-test densities (≤ CLUSTER_MIN) the hook passes items straight
-    // through, so the render below is byte-for-byte what it is today.
-    const activeRegion = region ?? initialRegion ?? null;
-    const clusterEntries = useClusteredPins(items, activeRegion);
-
-    // Cluster tap → zoom the camera to the cluster's expansion zoom. NO
-    // setSelectedId: a cluster never opens the peek (it only zooms). Uses the
-    // one-region camera API the file standardized on (latitudeDelta ≈ 360/2^z).
-    const handleClusterPress = useCallback((entry: Extract<ClusterEntry, { type: 'cluster' }>) => {
-        const z = entry.expansionZoom();
-        const delta = 360 / 2 ** z;
-        mapRef.current?.animateToRegion(
-            {
-                latitude: entry.lat,
-                longitude: entry.lng,
-                latitudeDelta: delta,
-                longitudeDelta: delta,
-            },
-            300,
-        );
-    }, []);
 
     // Locate FAB: center on the user AND zoom in to a walkable radius — the
     // founder's explicit ask (centering alone left the map at city zoom).
@@ -1064,10 +1031,6 @@ export function WishlistMapView({
                 rotateEnabled={false}
                 showsUserLocation={locationStatus === 'granted'}
                 onPress={() => setSelectedId(null)}
-                // TICKET-153: track region on gesture settle to drive clustering
-                // (debounced in the handler). Complete, not continuous — one
-                // recompute per settle, not per frame.
-                onRegionChangeComplete={handleRegionChangeComplete}
             >
                 {/* MapTiler cream raster — first child, beneath the markers. iOS
                     replaces the base (kills grey dark tiles ⑧); Android draws over
@@ -1081,30 +1044,19 @@ export function WishlistMapView({
                         maximumZ={20}
                     />
                 ) : null}
-                {/* TICKET-153: clustered entries. Individual pins render EXACTLY
-                    as before — same WishlistMarker, same layer-qualified key
-                    (`${variant}:${id}`) so an item that was clustered and
-                    re-emerges reattaches to a stable native view. Cluster bubbles
-                    key on `c:${cluster_id}` (stable within a zoom → pans reuse
-                    the native view; a zoom change legitimately remounts). */}
-                {clusterEntries.map((entry) =>
-                    entry.type === 'cluster' ? (
-                        <ClusterMarker
-                            key={`c:${entry.id}`}
-                            entry={entry}
-                            palette={palette}
-                            onPress={() => handleClusterPress(entry)}
-                        />
-                    ) : (
-                        <WishlistMarker
-                            key={`${pinVariant(entry.item)}:${entry.item.id}`}
-                            item={entry.item}
-                            selected={selectedId === entry.item.id}
-                            palette={palette}
-                            onPress={() => setSelectedId(entry.item.id)}
-                        />
-                    ),
-                )}
+                {/* Every pin renders individually — zoom-out count clustering was
+                    removed at founder order 2026-07-12 (the number bubbles read
+                    terribly). If a giant import ever janks the map, redesign with
+                    the founder — do NOT quietly re-add count bubbles. */}
+                {items.map((item) => (
+                    <WishlistMarker
+                        key={`${pinVariant(item)}:${item.id}`}
+                        item={item}
+                        selected={selectedId === item.id}
+                        palette={palette}
+                        onPress={() => setSelectedId(item.id)}
+                    />
+                ))}
             </MapView>
 
             {/* Cream tint — maptiler mode only (TICKET-137). It warms the residual
@@ -1151,17 +1103,30 @@ export function WishlistMapView({
             {renderImportChips()}
 
             {/* Unmappable murmur — saved layer only (parents pass 0 otherwise),
-                frost family, tucked below the source pills. */}
+                frost family, tucked below the source pills. With a handler the
+                pill taps through to the which-spots + fix sheet (chevron cue);
+                without one it stays informational. */}
             {unmappableCount > 0 ? (
                 <View
                     style={[styles.murmurWrap, { top: sources ? chromeTop + 46 : chromeTop }]}
-                    pointerEvents="none"
+                    pointerEvents={onUnmappablePress ? 'box-none' : 'none'}
                 >
-                    <View style={[styles.murmurPill, { backgroundColor: frostBg }, Shadow.ambient]}>
+                    <Pressable
+                        onPress={onUnmappablePress}
+                        disabled={!onUnmappablePress}
+                        style={[styles.murmurPill, { backgroundColor: frostBg }, Shadow.ambient]}
+                        accessibilityRole={onUnmappablePress ? 'button' : undefined}
+                        accessibilityLabel={
+                            onUnmappablePress ? 'show spots with no map location' : undefined
+                        }
+                    >
                         <Text style={[styles.murmurText, { color: palette.textMuted }]}>
                             {`${unmappableCount} saved ${unmappableCount === 1 ? 'spot has' : 'spots have'} no map location`}
                         </Text>
-                    </View>
+                        {onUnmappablePress ? (
+                            <Ionicons name="chevron-forward" size={12} color={palette.textMuted} />
+                        ) : null}
+                    </Pressable>
                 </View>
             ) : null}
 
@@ -1878,6 +1843,9 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
     },
     murmurPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
         paddingHorizontal: 12,
         paddingVertical: 6,
         borderRadius: 999,

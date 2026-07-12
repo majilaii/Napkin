@@ -12,6 +12,7 @@ import { useRouter } from 'expo-router';
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { TablePreviewCard } from './TablePreviewCard';
+import { SectionHeader } from './SectionHeader';
 import type { TablePreview } from '@/hooks/users/useUserProfile';
 
 interface Props {
@@ -32,16 +33,16 @@ export function TablesInCommonSection({ previews, targetUserId, isSelf }: Props)
     const sectionTitle = isSelf ? 'Your Tables' : 'Tables in common';
 
     return (
-        <View style={styles.container}>
-            <Text style={[Type.label, styles.sectionLabel, { color: palette.textSecondary }]}>
-                {sectionTitle}
-            </Text>
+        <View>
+            <SectionHeader title={sectionTitle} />
 
             {previews.length === 0 && isSelf ? (
                 // Self empty state
                 <Pressable
                     onPress={() => router.push('/tables')}
                     style={[styles.emptyCard, { backgroundColor: palette.surfaceContainerLow }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Go to Tables"
                 >
                     <Text style={[Type.body, { color: palette.textSecondary, textAlign: 'center' }]}>
                         Join or create a Table to get started
@@ -67,17 +68,12 @@ export function TablesInCommonSection({ previews, targetUserId, isSelf }: Props)
 }
 
 const styles = StyleSheet.create({
-    container: {
-        paddingHorizontal: Spacing.lg,
-        marginTop: Spacing.xl,
-    },
-    sectionLabel: {
-        marginBottom: Spacing.sm,
-    },
     cards: {
+        marginHorizontal: Spacing.lg,
         gap: Spacing.sm,
     },
     emptyCard: {
+        marginHorizontal: Spacing.lg,
         borderRadius: Radius.lg,
         padding: Spacing.lg,
         alignItems: 'center',

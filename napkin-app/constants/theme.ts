@@ -32,7 +32,9 @@ export const Colors = {
     // Text
     text: '#1c1c19',                 // on-surface (never pure black)
     textSecondary: '#5c614d',        // olive secondary
-    textMuted: '#8a726c',            // warm taupe metadata
+    // Warm taupe metadata. Dark enough to clear 4.5:1 on every paper layer and
+    // Top-4 plate tint used by normal-size text in light mode.
+    textMuted: '#765e58',
     textInverse: '#ffffff',
 
     // Brand — terracotta family
@@ -270,8 +272,12 @@ export const Shadow = {
 
 /**
  * Typography presets
- * Newsreader = editorial voice (restaurant names, ratings, dates)
- * Manrope = functional voice (body, labels, captions)
+ * Newsreader upright = editorial voice (names, authored content, dates)
+ * Manrope upright = functional voice (body, labels, captions, structure)
+ * Newsreader italic = scarce accent (ratings, direct quotes, wordmark)
+ *
+ * Legibility floor for functional text: 16 body, 13 metadata, 11 labels.
+ * Smaller type is only appropriate for non-essential text embedded in art.
  */
 export const Type = {
   // Display — Newsreader serif, editorial
@@ -317,84 +323,139 @@ export const Type = {
     lineHeight: 24,
   } as TextStyle,
 
+  // Editorial content — upright by default. Italics should communicate a
+  // specific accent, not merely "this is serif".
+  editorialTitle: {
+    fontSize: 20,
+    fontWeight: '600' as const,
+    fontFamily: 'Newsreader_600SemiBold',
+    letterSpacing: -0.2,
+    lineHeight: 26,
+  } as TextStyle,
+  editorialBody: {
+    fontSize: 17,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular',
+    lineHeight: 24,
+  } as TextStyle,
+
+  // Section structure — deliberately sans, upright, and large enough to make
+  // the beginning of each module obvious while scanning.
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: -0.2,
+    lineHeight: 24,
+  } as TextStyle,
+  sectionKicker: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1.2,
+    lineHeight: 15,
+    textTransform: 'uppercase' as const,
+  } as TextStyle,
+  metadata: {
+    fontSize: 13,
+    fontWeight: '500' as const,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 19,
+  } as TextStyle,
+
   // Titles — Manrope for functional
   /**
    * Screen/page masthead — Manrope, NOT italic serif (locked 2026-07-10).
-   * Newsreader italic is the CONTENT voice (restaurant names, Table names,
-   * rating numerals, quotes, the wordmark); navigation chrome is functional
-   * and reads in sans. Every screen title uses this one token.
+   * Upright Newsreader is the editorial voice for names and authored content;
+   * italic Newsreader is reserved for rating numerals, quotes, and the wordmark.
+   * Navigation chrome is functional and reads in sans.
    */
   screenTitle: {
-    fontSize: 19,
-    lineHeight: 24,
+    fontSize: 20,
+    lineHeight: 25,
     fontWeight: '700' as const,
     fontFamily: 'Manrope_700Bold',
     letterSpacing: -0.3,
   } as TextStyle,
   titleLarge: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: '600' as const,
     fontFamily: 'Manrope_600SemiBold',
     letterSpacing: -0.2,
   } as TextStyle,
   titleMedium: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600' as const,
     fontFamily: 'Manrope_600SemiBold',
   } as TextStyle,
   titleSmall: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600' as const,
     fontFamily: 'Manrope_600SemiBold',
   } as TextStyle,
 
   // Body — Manrope
   body: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '400' as const,
     fontFamily: 'Manrope_400Regular',
-    lineHeight: 22,
+    lineHeight: 24,
   } as TextStyle,
   bodySmall: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '400' as const,
     fontFamily: 'Manrope_400Regular',
-    lineHeight: 18,
+    lineHeight: 20,
   } as TextStyle,
 
   // Labels — Manrope uppercase
   label: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700' as const,
     fontFamily: 'Manrope_700Bold',
-    letterSpacing: 1.5,
+    letterSpacing: 1.3,
+    lineHeight: 16,
     textTransform: 'uppercase' as const,
   } as TextStyle,
   labelSmall: {
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: '600' as const,
     fontFamily: 'Manrope_600SemiBold',
-    letterSpacing: 1,
+    letterSpacing: 1.1,
+    lineHeight: 15,
     textTransform: 'uppercase' as const,
   } as TextStyle,
 
   // Caption
   caption: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500' as const,
     fontFamily: 'Manrope_500Medium',
+    lineHeight: 18,
   } as TextStyle,
 
-  // Rating numbers — Newsreader italic for artisanal feel
-  rating: {
-    fontSize: 24,
+  // Rating numbers — the only routine italic accent. Keep the compact token
+  // for inline diary metadata; use the larger tokens for standalone values.
+  ratingCompact: {
+    fontSize: 16,
+    lineHeight: 22,
     fontWeight: '400' as const,
     fontFamily: 'Newsreader_400Regular_Italic',
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+  rating: {
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    fontVariant: ['tabular-nums'],
   } as TextStyle,
   ratingLarge: {
     fontSize: 36,
+    lineHeight: 42,
     fontWeight: '400' as const,
     fontFamily: 'Newsreader_400Regular_Italic',
+    fontVariant: ['tabular-nums'],
   } as TextStyle,
 };
 

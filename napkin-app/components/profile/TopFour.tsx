@@ -2,16 +2,18 @@
  * TopFour — the profile's four favourite restaurants, as a Letterboxd-class
  * marquee row (TICKET-025 · TICKET-146 "the engraving system", B — the marquee).
  *
- * Four 2:3 plates in one horizontal row. Each plate draws its mark + tint from
+ * Four compact 2:3 plates sit in one Letterboxd-style row. The compact
+ * MarqueePlate treatment prioritizes the restaurant name and rating; decorative
+ * mark/city details stay on larger plate contexts. Each plate draws tint from
  * the shared engraving registries (MarqueePlate), so the same restaurant reads
- * identically here and on the map. Rank ghosted top-left, rating terracotta
- * italic bottom-right, name italic serif, city letterspaced caps.
+ * identically here and on the map. Rank ghosted top-left, rating terracotta,
+ * upright restaurant name, and city letterspaced caps.
  *
  * Auto-derived or curated from `top_four` in the profile payload. Empty slots
  * show a tappable '+' for the owner. Public profile reuses this component.
  */
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Radius } from '@/constants/theme';
@@ -33,6 +35,9 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
+    const { width: viewportWidth } = useWindowDimensions();
+    const plateWidth = (viewportWidth - (Spacing.lg * 2) - (Spacing.sm * 3)) / 4;
+    const plateDimensions = { width: plateWidth, height: plateWidth * 1.5 };
 
     const slots: (TopPick | null)[] = [
         picks[0] ?? null,
@@ -50,7 +55,7 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
             : router.push(`/restaurant/${pick.restaurant_id}` as any);
 
     return (
-        <View>
+        <View style={[styles.section, { backgroundColor: palette.surfaceContainerLow }]}>
             <SectionHeader
                 title="Top 4"
                 rightLabel={isOwner && onEdit ? 'edit' : undefined}
@@ -64,14 +69,20 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                                 key={i}
                                 style={[
                                     styles.plate,
+                                    plateDimensions,
                                     styles.emptyPlate,
-                                    { borderColor: palette.outlineVariant, backgroundColor: palette.surfaceContainerLow },
+                                    { borderColor: palette.outlineVariant, backgroundColor: palette.surfaceContainerHigh },
                                 ]}
                                 onPress={isOwner && onEdit ? onEdit : undefined}
                                 accessibilityRole={isOwner && onEdit ? 'button' : undefined}
                                 accessibilityLabel={isOwner && onEdit ? 'Add to your Top 4' : undefined}
                             >
-                                <Text style={[styles.plus, { color: palette.textMuted }]}>+</Text>
+                                <Text
+                                    style={[styles.plus, { color: palette.textMuted }]}
+                                    maxFontSizeMultiplier={1.2}
+                                >
+                                    +
+                                </Text>
                             </Pressable>
                         );
                     }
@@ -88,7 +99,7 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                     return (
                         <MarqueePlate
                             key={i}
-                            style={styles.plate}
+                            style={[styles.plate, plateDimensions]}
                             restaurantId={pick.restaurant_id}
                             name={pick.name}
                             cuisine={pick.cuisine}
@@ -96,6 +107,7 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                             city={pick.city}
                             rating={pick.max_rating}
                             rank={i + 1}
+                            compact
                             photoUrl={resolved.kind === 'url' ? resolved.url : null}
                             placesWash={resolved.kind === 'url' && resolved.isPlaces}
                             onPress={() => openPick(pick)}
@@ -108,13 +120,18 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
 }
 
 const styles = StyleSheet.create({
+    section: {
+        marginTop: Spacing.sm,
+        paddingBottom: Spacing.lg,
+    },
     row: {
         flexDirection: 'row',
         paddingHorizontal: Spacing.lg,
         gap: Spacing.sm,
     },
     plate: {
-        flex: 1,
+        flexGrow: 0,
+        flexShrink: 0,
     },
     emptyPlate: {
         aspectRatio: 2 / 3,

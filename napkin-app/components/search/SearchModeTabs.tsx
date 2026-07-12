@@ -2,13 +2,13 @@
  * SearchModeTabs — two-wide pill segmented control for Places | People.
  * TICKET-028
  *
- * Design: warm paper background, italic Newsreader labels,
+ * Design: warm paper background, upright functional labels,
  * selected = terracotta underline + text, unselected = textMuted.
  * 44pt tap target per HIG.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { visibleSearchTabs, type SearchMode } from './searchModeTabsGate';
 
@@ -86,8 +86,7 @@ const styles = StyleSheet.create({
         opacity: 0.7,
     },
     label: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16,
+        ...Type.titleMedium,
         lineHeight: 22,
     },
     underline: {

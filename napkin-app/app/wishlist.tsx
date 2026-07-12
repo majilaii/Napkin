@@ -50,6 +50,7 @@ import {
     ImportInboxCard,
     DiscoverPeopleSheet,
 } from '@/components/wishlist';
+import { UnmappedSpotsSheet } from '@/components/wishlist/UnmappedSpotsSheet';
 import { AddToListSheet } from '@/components/lists';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
@@ -286,6 +287,8 @@ export default function WishlistScreen() {
 
     const [importSheetVisible, setImportSheetVisible] = useState(false);
     const [correctItem, setCorrectItem] = useState<PersonalWishlistItem | null>(null);
+    // Map murmur tap-through: which saves lack coordinates + per-row fix.
+    const [unmappedSheetOpen, setUnmappedSheetOpen] = useState(false);
     // TICKET-111: long-press / swipe → remove-from-wishlist confirm sheet.
     const [removeItem, setRemoveItem] = useState<PersonalWishlistItem | null>(null);
     const wishlistRemove = useWishlistRemove(user?.id);
@@ -638,7 +641,7 @@ export default function WishlistScreen() {
     // saves (plain teardrop); then fold list pins ordered by list updated_at ASC
     // (newest written last, so it wins), and an emoji ALWAYS overwrites a plain save
     // (more specific). One pin per restaurant — matches Google Maps' one-icon rule.
-    const { mapItems, unmappableCount } = useMemo(() => {
+    const { mapItems, unmappableCount, unmappedItems } = useMemo(() => {
         const saves = pinnedRows
             .map((i) => i.restaurant)
             .filter((r): r is NonNullable<typeof r> => r != null)
@@ -648,12 +651,20 @@ export default function WishlistScreen() {
                 // lat/lng may be absent → buildMapPins counts them as unmappable.
                 lat: r.lat ?? null, lng: r.lng ?? null,
             }));
-        const { items, unmappableSaves } = buildMapPins(saves, listMapPins ?? [], {
+        const { items, unmappableSaves, unmappableSaveIds } = buildMapPins(saves, listMapPins ?? [], {
             city: cityFilter,
             cuisine: cuisineFilter,
             price: priceFilter,
         });
-        return { mapItems: items as WishlistMapItem[], unmappableCount: unmappableSaves };
+        // The murmur's tap-through lists the actual saves behind the count —
+        // restaurant ids back to their wishlist rows (repoint needs the ITEM id).
+        const idSet = new Set(unmappableSaveIds);
+        const unmapped = pinnedRows.filter((i) => i.restaurant && idSet.has(i.restaurant.id));
+        return {
+            mapItems: items as WishlistMapItem[],
+            unmappableCount: unmappableSaves,
+            unmappedItems: unmapped,
+        };
     }, [pinnedRows, listMapPins, cityFilter, cuisineFilter, priceFilter]);
 
     // Been / Network layers (TICKET-131): shared mappers + the active cuisine
@@ -785,8 +796,10 @@ export default function WishlistScreen() {
     const mapSurface = (
         <WishlistMapView
             items={activeMapItems}
-            // Unmappable murmur is a saved-layer concern only.
+            // Unmappable murmur is a saved-layer concern only. Tapping it opens
+            // the which-spots + fix sheet (founder ask 2026-07-12).
             unmappableCount={mapSource === 'your' && showSaved ? unmappableCount : 0}
+            onUnmappablePress={() => setUnmappedSheetOpen(true)}
             userCoords={coords}
             locationStatus={locationStatus}
             onRequestLocation={requestLocation}
@@ -1103,6 +1116,14 @@ export default function WishlistScreen() {
                     palette={palette}
                 />
             ) : null}
+
+            <UnmappedSpotsSheet
+                visible={unmappedSheetOpen}
+                onClose={() => setUnmappedSheetOpen(false)}
+                items={unmappedItems}
+                userId={user?.id}
+                palette={palette}
+            />
 
             <FilterTabsSheet
                 visible={filtersOpen}

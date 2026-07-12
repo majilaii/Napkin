@@ -3,7 +3,7 @@
  * TICKET-025
  *
  * Day/weekday left rail + optional photo thumb + restaurant name + rating.
- * Matches canvas Artboard 4.
+ * Dates and names use upright editorial type; italic is reserved for the rating.
  */
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
@@ -40,13 +40,7 @@ export function DiaryRow({ entry }: Props) {
             {/* Day rail */}
             <View style={styles.dayRail}>
                 <Text
-                    style={{
-                        fontFamily: 'Newsreader_400Regular_Italic',
-                        fontSize: 22,
-                        fontWeight: '500',
-                        color: palette.text,
-                        lineHeight: 24,
-                    }}
+                    style={[Type.editorialTitle, { color: palette.text }]}
                 >
                     {day}
                 </Text>
@@ -70,18 +64,13 @@ export function DiaryRow({ entry }: Props) {
             {/* Restaurant + metadata */}
             <View style={styles.content}>
                 <Text
-                    style={{
-                        fontFamily: 'Newsreader_400Regular_Italic',
-                        fontSize: 15,
-                        color: palette.text,
-                        lineHeight: 19,
-                    }}
+                    style={[Type.editorialBody, { color: palette.text }]}
                     numberOfLines={1}
                 >
                     {entry.restaurant_name}
                 </Text>
                 {entry.city && (
-                    <Text style={[Type.caption, { color: palette.textMuted, marginTop: 2, fontSize: 10 }]}>
+                    <Text style={[Type.metadata, { color: palette.textMuted, marginTop: 2 }]}>
                         {entry.city}
                     </Text>
                 )}
@@ -89,7 +78,7 @@ export function DiaryRow({ entry }: Props) {
 
             {/* Rating */}
             {entry.rating != null && (
-                <Rating value={entry.rating} size={12} />
+                <Rating value={entry.rating} />
             )}
         </Pressable>
     );

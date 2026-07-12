@@ -45,10 +45,19 @@ export function TablePreviewCard({ preview, targetUserId, isSelf }: Props) {
             params: { userId: targetUserId, tableId: preview.table_id },
         });
     };
+    const averageLabel = preview.avg != null
+        ? `${isSelf ? 'your average' : 'average'} ${preview.avg.toFixed(1)}`
+        : 'no average yet';
+    const visitsLabel = `${preview.visit_count} ${preview.visit_count === 1 ? 'visit' : 'visits'}`;
+    const latestLabel = preview.last_entry_restaurant_name
+        ? `Last entry: ${preview.last_entry_restaurant_name}${preview.last_entry_rating != null ? `, rated ${preview.last_entry_rating.toFixed(1)}` : ''}${preview.last_entry_at ? `, ${relativeDate(preview.last_entry_at)}` : ''}`
+        : 'No recent entry';
 
     return (
         <Pressable
             onPress={handlePress}
+            accessibilityRole="button"
+            accessibilityLabel={`${preview.table_name}. ${averageLabel}. ${visitsLabel}. ${latestLabel}. Open full activity.`}
             style={({ pressed }) => [
                 styles.card,
                 Shadow.subtle,
@@ -61,10 +70,9 @@ export function TablePreviewCard({ preview, targetUserId, isSelf }: Props) {
             <View style={styles.header}>
                 <Text
                     style={[
-                        Type.headlineItalic,
-                        { color: palette.text, fontFamily: 'Newsreader_400Regular_Italic', flex: 1 },
+                        Type.editorialTitle,
+                        { color: palette.text, flex: 1 },
                     ]}
-                    numberOfLines={1}
                 >
                     {preview.table_name}
                 </Text>
@@ -74,18 +82,18 @@ export function TablePreviewCard({ preview, targetUserId, isSelf }: Props) {
             {/* Stats row: avg + visit count */}
             <View style={styles.statsRow}>
                 <View style={styles.statItem}>
-                    <Text style={[Type.rating, { color: palette.tertiary, fontSize: 20 }]}>
+                    <Text style={[Type.rating, { color: palette.tertiary }]}>
                         {preview.avg != null ? preview.avg.toFixed(1) : '—'}
                     </Text>
-                    <Text style={[Type.caption, { color: palette.textMuted }]}>
+                    <Text style={[Type.metadata, { color: palette.textMuted }]}>
                         {isSelf ? 'Your avg' : 'Avg'}
                     </Text>
                 </View>
                 <View style={styles.statItem}>
-                    <Text style={[Type.headlineMedium, { color: palette.text, fontSize: 20 }]}>
+                    <Text style={[Type.editorialTitle, { color: palette.text }]}>
                         {preview.visit_count}
                     </Text>
-                    <Text style={[Type.caption, { color: palette.textMuted }]}>
+                    <Text style={[Type.metadata, { color: palette.textMuted }]}>
                         {preview.visit_count === 1 ? 'Visit' : 'Visits'}
                     </Text>
                 </View>
@@ -94,7 +102,7 @@ export function TablePreviewCard({ preview, targetUserId, isSelf }: Props) {
             {/* Most recent entry */}
             {preview.last_entry_restaurant_name && (
                 <View style={styles.lastEntry}>
-                    <Text style={[Type.bodySmall, { color: palette.textSecondary }]} numberOfLines={1}>
+                    <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
                         Last: {preview.last_entry_restaurant_name}
                         {preview.last_entry_rating != null && ` · ${preview.last_entry_rating.toFixed(1)}`}
                         {preview.last_entry_at && ` · ${relativeDate(preview.last_entry_at)}`}
@@ -103,7 +111,7 @@ export function TablePreviewCard({ preview, targetUserId, isSelf }: Props) {
             )}
 
             {/* Drill-down hint */}
-            <Text style={[Type.caption, styles.hint, { color: palette.textMuted }]}>
+            <Text style={[Type.metadata, styles.hint, { color: palette.textMuted }]}>
                 Tap for full activity
             </Text>
         </Pressable>
@@ -133,6 +141,5 @@ const styles = StyleSheet.create({
     },
     hint: {
         marginTop: Spacing.xs,
-        fontStyle: 'italic',
     },
 });

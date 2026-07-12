@@ -35,10 +35,8 @@ export function RecentActivityList({ items }: RecentActivityListProps) {
     if (items.length === 0) {
         return (
             <Text
-                style={[
-                    Type.headlineItalic,
-                    { color: palette.textMuted, fontSize: 16, fontStyle: 'italic' },
-                ]}
+                style={[Type.body, { color: palette.textMuted }]}
+                maxFontSizeMultiplier={2}
             >
                 Nothing here yet
             </Text>
@@ -49,6 +47,10 @@ export function RecentActivityList({ items }: RecentActivityListProps) {
         <View style={styles.container}>
             {items.map((item, index) => {
                 const isEntry = item.kind === 'entry';
+                const dateLabel = relativeDate(item.date);
+                const ratingLabel = item.rating != null
+                    ? `, rated ${item.rating.toFixed(1)}`
+                    : '';
                 const handlePress = () => {
                     if (isEntry) {
                         router.push({
@@ -67,6 +69,8 @@ export function RecentActivityList({ items }: RecentActivityListProps) {
                     <Pressable
                         key={`${item.kind}-${item.id}`}
                         onPress={handlePress}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${isEntry ? 'Entry' : 'Round'} at ${item.restaurant_name}, ${dateLabel}${ratingLabel}`}
                         style={({ pressed }) => [
                             styles.row,
                             {
@@ -90,42 +94,49 @@ export function RecentActivityList({ items }: RecentActivityListProps) {
                         >
                             <Text
                                 style={[
-                                    Type.labelSmall,
+                                    Type.sectionKicker,
                                     {
                                         color: isEntry ? palette.secondary : palette.primary,
-                                        fontSize: 8,
                                     },
                                 ]}
+                                maxFontSizeMultiplier={1.4}
                             >
                                 {isEntry ? 'ENTRY' : 'ROUND'}
                             </Text>
                         </View>
 
-                        {/* Restaurant name */}
-                        <Text
-                            style={[
-                                Type.headlineItalic,
-                                { flex: 1, color: palette.text, fontSize: 15, lineHeight: 20 },
-                            ]}
-                            numberOfLines={1}
-                        >
-                            {item.restaurant_name}
-                        </Text>
+                        <View style={styles.details}>
+                            {/* Restaurant name */}
+                            <Text
+                                style={[Type.editorialBody, { color: palette.text }]}
+                                numberOfLines={2}
+                                maxFontSizeMultiplier={1.8}
+                            >
+                                {item.restaurant_name}
+                            </Text>
 
-                        {/* Date */}
-                        <Text
-                            style={[Type.caption, { color: palette.textMuted, marginRight: Spacing.sm }]}
-                        >
-                            {relativeDate(item.date)}
-                        </Text>
+                            {/* Date */}
+                            <Text
+                                style={[Type.metadata, { color: palette.textMuted }]}
+                                maxFontSizeMultiplier={1.6}
+                            >
+                                {dateLabel}
+                            </Text>
+                        </View>
 
                         {/* Rating (if present) */}
                         {item.rating != null ? (
-                            <Text style={[Type.rating, { color: palette.tertiary, fontSize: 16 }]}>
+                            <Text
+                                style={[Type.ratingCompact, { color: palette.tertiary }]}
+                                maxFontSizeMultiplier={1.4}
+                            >
                                 {item.rating.toFixed(1)}
                             </Text>
                         ) : (
-                            <Text style={[Type.caption, { color: palette.textMuted, width: 28 }]}>
+                            <Text
+                                style={[Type.metadata, { color: palette.textMuted }]}
+                                maxFontSizeMultiplier={1.6}
+                            >
                                 —
                             </Text>
                         )}
@@ -143,10 +154,16 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: Spacing.sm + 2,
+        minHeight: 56,
+        paddingVertical: Spacing.sm,
         gap: Spacing.sm,
     },
+    details: {
+        flex: 1,
+        gap: 2,
+    },
     kindChip: {
+        minWidth: 60,
         paddingHorizontal: 6,
         paddingVertical: 3,
         borderRadius: Radius.sm,

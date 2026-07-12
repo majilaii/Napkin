@@ -1,13 +1,14 @@
 /**
  * TasteBand — Beli-style taste summary, Heirloom voice (TICKET-092).
- * One inset panel: top cuisines as the serif content line, coverage counts as
- * the quiet meta line. Renders nothing until there's real taste data.
+ * One clearly titled section: upright editorial summary in an inset panel,
+ * followed by readable coverage metadata.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
+import { SectionHeader } from './SectionHeader';
 
 interface Props {
     topCuisines: string[];
@@ -37,25 +38,20 @@ export function TasteBand({ topCuisines, cityCount, countryCount, palette, epith
     ]
         .filter(Boolean)
         .join(' · ');
+    const summary = epithet || topCuisines.join(' · ');
 
     const body = (
         <>
-            <View style={styles.headerRow}>
-                <Text style={[styles.kicker, { color: palette.textMuted }]}>TASTE</Text>
+            <View style={styles.summaryRow}>
+                {summary ? (
+                    <Text style={[styles.cuisines, { color: palette.text }]}>
+                        {summary}
+                    </Text>
+                ) : null}
                 {onPress ? (
-                    <Ionicons name="chevron-forward" size={14} color={palette.textMuted} />
+                    <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
                 ) : null}
             </View>
-            {epithet ? (
-                // The relic — an engraved title, not a data readout.
-                <Text style={[styles.cuisines, { color: palette.text }]} numberOfLines={2}>
-                    {epithet}
-                </Text>
-            ) : topCuisines.length > 0 ? (
-                <Text style={[styles.cuisines, { color: palette.text }]} numberOfLines={1}>
-                    {topCuisines.join(' · ')}
-                </Text>
-            ) : null}
             {coverage ? (
                 <Text style={[styles.coverage, { color: palette.textMuted }]}>{coverage}</Text>
             ) : null}
@@ -64,23 +60,29 @@ export function TasteBand({ topCuisines, cityCount, countryCount, palette, epith
 
     if (onPress) {
         return (
-            <Pressable
-                onPress={onPress}
-                accessibilityRole="button"
-                accessibilityLabel="view your taste breakdown"
-                style={({ pressed }) => [
-                    styles.panel,
-                    { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.85 : 1 },
-                ]}
-            >
-                {body}
-            </Pressable>
+            <View>
+                <SectionHeader title="Taste" />
+                <Pressable
+                    onPress={onPress}
+                    accessibilityRole="button"
+                    accessibilityLabel="View your taste breakdown"
+                    style={({ pressed }) => [
+                        styles.panel,
+                        { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.85 : 1 },
+                    ]}
+                >
+                    {body}
+                </Pressable>
+            </View>
         );
     }
 
     return (
-        <View style={[styles.panel, { backgroundColor: palette.surfaceJournalLow }]}>
-            {body}
+        <View>
+            <SectionHeader title="Taste" />
+            <View style={[styles.panel, { backgroundColor: palette.surfaceJournalLow }]}>
+                {body}
+            </View>
         </View>
     );
 }
@@ -88,29 +90,22 @@ export function TasteBand({ topCuisines, cityCount, countryCount, palette, epith
 const styles = StyleSheet.create({
     panel: {
         marginHorizontal: Spacing.lg,
-        marginTop: Spacing.md,
         borderRadius: 14,
         paddingHorizontal: Spacing.md + 2,
         paddingVertical: Spacing.md,
-        gap: 3,
+        gap: 6,
     },
-    headerRow: {
+    summaryRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-    },
-    kicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.5,
+        gap: Spacing.sm,
     },
     cuisines: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16,
-        lineHeight: 21,
+        ...Type.editorialBody,
+        flex: 1,
     },
     coverage: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11.5,
+        ...Type.metadata,
     },
 });
