@@ -16,7 +16,7 @@ import { View, Text, Modal, Pressable, ScrollView, StyleSheet, TouchableWithoutF
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import type { PersonalWishlistItem } from '@/hooks/wishlist';
 import { useRepointWishlistItem } from '@/hooks/wishlist/useRepointWishlistItem';
 import { usePersistPlace } from '@/hooks/search/usePersistPlace';
@@ -152,8 +152,7 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.md,
     },
     kicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9.5,
+        ...Type.sectionKicker,
         letterSpacing: 1.5,
         paddingHorizontal: 22,
         marginBottom: Spacing.xs,
@@ -168,9 +167,7 @@ const styles = StyleSheet.create({
     },
     rowBody: { flex: 1, gap: 2, minWidth: 0 },
     rowName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 20,
+        ...Type.editorialBody,
     },
     rowMeta: { fontFamily: 'Manrope_500Medium', fontSize: 12 },
     fixLabel: {
