@@ -73,12 +73,15 @@ interface Props {
      * results appear immediately instead of starting from a blank field. */
     initialQuery?: string;
     busy?: boolean;
+    /** Inline error under the input — pageSheets cover the root toast on iOS,
+     * so a failed pick must surface HERE (the CorrectModal precedent). */
+    errorText?: string | null;
     onSelect: (r: PlacePickerResult) => void;
     onDismiss: () => void;
     palette: typeof Colors.light;
 }
 
-export function PlacePickerModal({ visible, title, subtitle, initialQuery, busy, onSelect, onDismiss, palette }: Props) {
+export function PlacePickerModal({ visible, title, subtitle, initialQuery, busy, errorText, onSelect, onDismiss, palette }: Props) {
     const [query, setQuery] = useState('');
     const { results, isLoading } = usePlacesSearch(query);
 
@@ -125,6 +128,17 @@ export function PlacePickerModal({ visible, title, subtitle, initialQuery, busy,
                         style={[styles.input, { color: palette.text, borderBottomColor: palette.ruleInkSoft }]}
                     />
                 </View>
+
+                {errorText ? (
+                    <Text
+                        style={[
+                            Type.bodySmall,
+                            { color: palette.error, paddingHorizontal: 22, paddingTop: Spacing.sm },
+                        ]}
+                    >
+                        {errorText}
+                    </Text>
+                ) : null}
 
                 {busy || isLoading ? (
                     <ActivityIndicator color={palette.primary} style={{ marginTop: Spacing.lg }} />

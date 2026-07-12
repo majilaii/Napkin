@@ -56,6 +56,20 @@ describe('buildMapPins', () => {
         expect(unmappableSaves).toBe(1);
     });
 
+    it('returns WHICH saves are unmappable (murmur tap-through), respecting filters', () => {
+        const { unmappableSaves, unmappableSaveIds } = buildMapPins(
+            [
+                save({ id: 'a', lat: null, lng: null }),
+                save({ id: 'b', lat: null, lng: null, city: 'London' }),
+                save({ id: 'c' }), // mapped — not listed
+            ],
+            [],
+            { city: 'Tokyo', cuisine: null, price: null }, // filters out b
+        );
+        expect(unmappableSaveIds).toEqual(['a']);
+        expect(unmappableSaves).toBe(unmappableSaveIds.length);
+    });
+
     it('list pin emoji overwrites a plain save for the same restaurant', () => {
         const { items } = buildMapPins(
             [save({ id: 'r1' })],

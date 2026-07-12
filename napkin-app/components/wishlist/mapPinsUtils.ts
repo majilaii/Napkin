@@ -84,9 +84,11 @@ export function buildMapPins(
     saves: SaveInput[],
     listPins: ListPinInput[],
     filters: Filters,
-): { items: MapPinItem[]; unmappableSaves: number } {
+): { items: MapPinItem[]; unmappableSaves: number; unmappableSaveIds: string[] } {
     const byId = new Map<string, MapPinItem>();
-    let unmappableSaves = 0;
+    // Restaurant ids of filter-passing saves with no coords — the murmur's
+    // tap-through lists exactly these (count stays derived for old callers).
+    const unmappableSaveIds: string[] = [];
 
     // (A) wishlist saves — cuisine-glyph bubble, no emoji.
     for (const s of saves) {
@@ -98,7 +100,7 @@ export function buildMapPins(
                 priceLevel: s.price_level,
             });
         } else {
-            unmappableSaves += 1;
+            unmappableSaveIds.push(s.id);
         }
     }
 
@@ -123,5 +125,9 @@ export function buildMapPins(
         });
     }
 
-    return { items: [...byId.values()], unmappableSaves };
+    return {
+        items: [...byId.values()],
+        unmappableSaves: unmappableSaveIds.length,
+        unmappableSaveIds,
+    };
 }
