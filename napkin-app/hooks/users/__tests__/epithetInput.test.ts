@@ -3,7 +3,7 @@
  * sibling, not the supabase-pulling hook). Proves the client-side derivation of
  * meal sum, place count, price mode, and city/country coverage.
  */
-import { deriveEpithetInput } from '../epithetInput';
+import { deriveEpithetInput, deriveTasteEmblemInput } from '../epithetInput';
 import type { SpotSummary } from '../useUserSpots';
 
 function spot(over: Partial<SpotSummary> = {}): SpotSummary {
@@ -70,6 +70,33 @@ describe('deriveEpithetInput', () => {
             cityCount: 0,
             countryCount: 0,
             priceMode: null,
+        });
+    });
+});
+
+describe('deriveTasteEmblemInput', () => {
+    it('derives only journal size and normalized geographic coverage', () => {
+        expect(deriveTasteEmblemInput([
+            spot({ visit_count: 2, city: ' London ', country: 'UK', cuisine: 'indian', price_level: 2 }),
+            spot({ visit_count: 3, city: 'london', country: 'uk', cuisine: 'thai', price_level: 4 }),
+            spot({ visit_count: 1, city: 'Paris', country: 'France', cuisine: null, price_level: null }),
+        ])).toEqual({
+            totalMeals: 6,
+            totalPlaces: 3,
+            cityCount: 2,
+            countryCount: 2,
+        });
+    });
+
+    it('ignores blank geography so an emblem cannot be cast from placeholders', () => {
+        expect(deriveTasteEmblemInput([
+            spot({ city: '   ', country: '' }),
+            spot({ city: null, country: null }),
+        ])).toEqual({
+            totalMeals: 2,
+            totalPlaces: 2,
+            cityCount: 0,
+            countryCount: 0,
         });
     });
 });

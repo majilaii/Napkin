@@ -330,7 +330,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             )}
 
             {/* One quiet signature: cuisine + geography + overall rating use.
-                No generated House label and no secondary dimension spines. */}
+                The generated emblem stays inside the /taste drill-in. */}
             {hasPalateAccess && (
                 <TasteSignature
                     topCuisines={taste.topCuisines}
@@ -339,7 +339,12 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                     histogram={stats?.rating_histogram}
                     averageRating={stats?.average_rating}
                     isSelf={isSelf}
-                    onPress={isSelf ? () => router.push('/taste') : undefined}
+                    onPress={() =>
+                        router.push({
+                            pathname: '/taste',
+                            params: { userId: targetUserId },
+                        })
+                    }
                 />
             )}
             {hasPalateAccess && (

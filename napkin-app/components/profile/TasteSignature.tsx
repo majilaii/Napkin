@@ -1,11 +1,15 @@
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { HistogramBucket } from '@/hooks/users/useUserTaste';
-import { fillHistogram, HISTOGRAM_BINS } from './tasteUtils';
-import { ratingBandSummary } from './tasteSignatureUtils';
+import {
+    fillHistogram,
+    HISTOGRAM_BINS,
+    ratingDistributionAccessibilityLabel,
+} from './tasteUtils';
 
 const BAR_HEIGHT = 30;
 const MIN_BAR_HEIGHT = 3;
@@ -34,7 +38,10 @@ export function TasteSignature({
     const counts = useMemo(() => fillHistogram(histogram), [histogram]);
     const total = useMemo(() => counts.reduce((sum, count) => sum + count, 0), [counts]);
     const max = Math.max(...counts, 1);
-    const ratingLine = ratingBandSummary(counts);
+    const histogramAccessibilityLabel = useMemo(
+        () => ratingDistributionAccessibilityLabel(counts),
+        [counts],
+    );
     const cuisineLine = topCuisines.slice(0, 3).join(' · ');
     const coverageLine = [
         cityCount > 0 ? `${cityCount} ${cityCount === 1 ? 'city' : 'cities'}` : null,
@@ -49,8 +56,9 @@ export function TasteSignature({
         total >= 3
             ? `${averageRating != null ? averageRating.toFixed(1) : 'No average'}, ${total} ratings`
             : null,
-        ratingLine,
+        total >= 3 ? histogramAccessibilityLabel : null,
     ].filter(Boolean).join('. ');
+    const canOpenDetails = !!onPress;
 
     if (!cuisineLine && !coverageLine && total < 3) return null;
 
@@ -68,62 +76,74 @@ export function TasteSignature({
                         <Text style={[Type.metadata, { color: palette.textMuted }]}>{coverageLine}</Text>
                     ) : null}
                 </View>
-                {total >= 3 ? (
-                    <View style={styles.averageCol}>
-                        <Text style={[Type.rating, { color: palette.text }]}>
-                            {averageRating != null ? averageRating.toFixed(1) : '—'}
-                        </Text>
-                        <Text style={[Type.metadata, { color: palette.textMuted }]}>
-                            {`${total} ratings`}
-                        </Text>
-                    </View>
-                ) : null}
+                <View style={styles.trailing}>
+                    {total >= 3 ? (
+                        <View style={styles.averageCol}>
+                            <Text style={[Type.rating, { color: palette.text }]}>
+                                {averageRating != null ? averageRating.toFixed(1) : '—'}
+                            </Text>
+                            <Text style={[Type.metadata, { color: palette.textMuted }]}>
+                                {`${total} ratings`}
+                            </Text>
+                        </View>
+                    ) : null}
+                    {canOpenDetails ? (
+                        <Ionicons
+                            name="chevron-forward"
+                            size={17}
+                            color={palette.textMuted}
+                            accessibilityElementsHidden
+                            importantForAccessibility="no"
+                        />
+                    ) : null}
+                </View>
             </View>
 
             {total >= 3 ? (
-                <>
-                    <View style={styles.histogram} accessibilityLabel={`Rating distribution across ${total} ratings`}>
-                        <View style={[styles.baseline, { backgroundColor: palette.dividerSoft }]} />
-                        {HISTOGRAM_BINS.map((bin, index) => {
-                            const count = counts[index];
-                            const height = count > 0
-                                ? Math.max(MIN_BAR_HEIGHT, (count / max) * BAR_HEIGHT)
-                                : MIN_BAR_HEIGHT;
-                            return (
-                                <View key={bin} style={styles.barColumn}>
-                                    <View
-                                        style={[
-                                            styles.bar,
-                                            {
-                                                height,
-                                                backgroundColor: count > 0
-                                                    ? palette.tertiary
-                                                    : palette.surfaceJournalHi,
-                                            },
-                                        ]}
-                                    />
-                                </View>
-                            );
-                        })}
-                    </View>
-                    {ratingLine ? (
-                        <Text style={[Type.metadata, styles.ratingLine, { color: palette.textSecondary }]}>
-                            {ratingLine}
-                        </Text>
-                    ) : null}
-                </>
+                <View
+                    style={styles.histogram}
+                    accessible={!canOpenDetails}
+                    accessibilityLabel={canOpenDetails ? undefined : histogramAccessibilityLabel}
+                    accessibilityElementsHidden={canOpenDetails}
+                    importantForAccessibility={canOpenDetails ? 'no-hide-descendants' : 'auto'}
+                >
+                    <View style={[styles.baseline, { backgroundColor: palette.dividerSoft }]} />
+                    {HISTOGRAM_BINS.map((bin, index) => {
+                        const count = counts[index];
+                        const height = count > 0
+                            ? Math.max(MIN_BAR_HEIGHT, (count / max) * BAR_HEIGHT)
+                            : MIN_BAR_HEIGHT;
+                        return (
+                            <View key={bin} style={styles.barColumn}>
+                                <View
+                                    style={[
+                                        styles.bar,
+                                        {
+                                            height,
+                                            backgroundColor: count > 0
+                                                ? palette.tertiary
+                                                : palette.surfaceJournalHi,
+                                        },
+                                    ]}
+                                />
+                            </View>
+                        );
+                    })}
+                </View>
             ) : null}
         </View>
     );
 
-    if (isSelf && onPress) {
+    if (canOpenDetails) {
         return (
             <Pressable
                 onPress={onPress}
-                style={({ pressed }) => [styles.wrapper, pressed ? { opacity: 0.82 } : null]}
+                style={({ pressed }) => [styles.wrapper, pressed ? styles.wrapperPressed : null]}
                 accessibilityRole="button"
                 accessibilityLabel={accessibilitySummary}
-                accessibilityHint="Opens your detailed taste breakdown"
+                accessibilityHint={isSelf
+                    ? 'Opens your detailed taste breakdown'
+                    : 'Opens this person’s detailed taste breakdown'}
             >
                 {body}
             </Pressable>
@@ -134,6 +154,7 @@ export function TasteSignature({
 
 const styles = StyleSheet.create({
     wrapper: { marginTop: Spacing.md },
+    wrapperPressed: { transform: [{ scale: 0.96 }] },
     card: {
         marginHorizontal: Spacing.lg,
         paddingHorizontal: 18,
@@ -149,6 +170,7 @@ const styles = StyleSheet.create({
     },
     identity: { flex: 1, minWidth: 0 },
     cuisines: { marginTop: Spacing.xs },
+    trailing: { flexDirection: 'row', alignItems: 'center', gap: 9 },
     averageCol: { alignItems: 'flex-end' },
     histogram: {
         height: BAR_HEIGHT,
@@ -166,5 +188,4 @@ const styles = StyleSheet.create({
     },
     barColumn: { flex: 1, justifyContent: 'flex-end' },
     bar: { width: '100%', borderRadius: 2 },
-    ratingLine: { marginTop: 7 },
 });

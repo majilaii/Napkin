@@ -65,8 +65,8 @@ export async function fetchBlockState(
 
 /**
  * The single yes/no for a NON-self viewer reading a palate surface
- * (diary / regulars / spots / reviews). Self always reads; callers must not
- * reach this for isSelf.
+ * (diary / regulars / spots / reviews / taste). Self always reads; callers
+ * must not reach this for isSelf.
  *
  *   • any block, either direction → denied (reads as not-found)
  *   • public_only / public_and_tables → allowed (TICKET-093 decision a)
@@ -79,6 +79,42 @@ export function strangerCanReadPalate(
 ): boolean {
     if (blockState !== 'none') return false;
     return relationship === 'public_only' || relationship === 'public_and_tables';
+}
+
+/**
+ * Build the privacy-scoped Taste RPC arguments as one tested unit. Keeping the
+ * target id and include-private decision together makes the security boundary
+ * explicit: only exact owner equality can ever set p_include_private=true.
+ */
+export function buildTasteAggregateRpcArgs(
+    callerId: string,
+    targetId: string,
+): { p_user_id: string; p_include_private: boolean } {
+    return {
+        p_user_id: targetId,
+        p_include_private: callerId === targetId,
+    };
+}
+
+export type TasteAggregateAccessDecision =
+    | { allowed: false }
+    | {
+        allowed: true;
+        rpcArgs: { p_user_id: string; p_include_private: boolean };
+    };
+
+/** Compose the audience decision and privacy flag before the handler can call the RPC. */
+export function decideTasteAggregateAccess(
+    callerId: string,
+    targetId: string,
+    blockState: BlockState,
+    relationship: ViewerRelationship,
+): TasteAggregateAccessDecision {
+    if (callerId === targetId) {
+        return { allowed: true, rpcArgs: buildTasteAggregateRpcArgs(callerId, targetId) };
+    }
+    if (!strangerCanReadPalate(blockState, relationship)) return { allowed: false };
+    return { allowed: true, rpcArgs: buildTasteAggregateRpcArgs(callerId, targetId) };
 }
 
 /**

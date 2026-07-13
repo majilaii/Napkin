@@ -1,39 +1,11 @@
 /**
  * tasteUtils — pure client-side derivations for the taste drill-in (TICKET-112).
  *
- * Extracted so the editorial-line gate can be unit-tested without importing the
- * screen (no React / native). No I/O, no React, no native imports.
+ * Extracted so histogram, coverage, cuisine and repeat behaviour can be tested
+ * without importing the screen (no React / native). No I/O or native imports.
  */
-import type { TasteData, CategoryStat, HistogramBucket } from '@/hooks/users/useUserTaste';
+import type { HistogramBucket } from '@/hooks/users/useUserTaste';
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
-
-/** The four axes, in display order. "flavor" is the founder's "taste". */
-export const TASTE_AXES: { key: keyof TasteData['categories']; label: string }[] = [
-    { key: 'flavor', label: 'Taste' },
-    { key: 'service', label: 'Service' },
-    { key: 'value', label: 'Value' },
-    { key: 'vibe', label: 'Vibe' },
-];
-
-/**
- * "you rate {axis} the hardest" — the lowest-mean axis label, but ONLY when the
- * signal is real: spread (max − min mean) ≥ 0.4 AND every axis has n ≥ 5. Thin
- * or flat data → null (no editorial line). Returns the display label (e.g.
- * "Value"), or null.
- */
-export function deriveHardestAxis(cats: TasteData['categories']): string | null {
-    const scored = TASTE_AXES
-        .map((a) => ({ label: a.label, stat: cats[a.key] }))
-        .filter((x): x is { label: string; stat: CategoryStat & { avg: number } } => x.stat.avg != null);
-    if (scored.length < 2) return null;
-    // Every axis must be well-sampled — thin data never fires the line.
-    if (TASTE_AXES.some((a) => cats[a.key].n < 5)) return null;
-    const avgs = scored.map((s) => s.stat.avg);
-    const spread = Math.max(...avgs) - Math.min(...avgs);
-    if (spread < 0.4) return null;
-    const hardest = scored.reduce((lo, s) => (s.stat.avg < lo.stat.avg ? s : lo), scored[0]);
-    return hardest.label;
-}
 
 /**
  * Generic Google Places venue types that leak into `restaurants.cuisine`
@@ -105,6 +77,47 @@ export function fillHistogram(sparse: HistogramBucket[] | undefined): number[] {
         if (idx !== -1 && Number.isFinite(b.n) && b.n > 0) counts[idx] += b.n;
     }
     return counts;
+}
+
+/** A concise spoken equivalent of the chart; empty bins add no useful signal. */
+export function ratingDistributionAccessibilityLabel(counts: number[]): string {
+    const bins = HISTOGRAM_BINS.flatMap((bin, index) => {
+        const count = counts[index] ?? 0;
+        if (count <= 0) return [];
+        const stars = bin === 1 ? 'star' : 'stars';
+        const ratings = count === 1 ? 'rating' : 'ratings';
+        return [`${bin} ${stars}, ${count} ${ratings}`];
+    });
+    return `Rating distribution: ${bins.length > 0 ? bins.join('; ') : 'no ratings'}`;
+}
+
+/** Unrated logs still carry geography and repeat-pattern Taste information. */
+export function hasTasteDrillInContent(ratedMealCount: number, spotCount: number): boolean {
+    return ratedMealCount > 0 || spotCount > 0;
+}
+
+/** The Taste route accepts only a canonical user id; no param means self. */
+export function resolveTasteRouteTarget(
+    routeUserId: string | undefined,
+    viewerUserId: string | undefined,
+): { targetUserId: string | undefined; isSelf: boolean } {
+    const targetUserId = routeUserId ?? viewerUserId;
+    return {
+        targetUserId,
+        isSelf: !!viewerUserId && targetUserId === viewerUserId,
+    };
+}
+
+export function cuisineStatAccessibilityLabel(
+    cuisine: string,
+    average: number,
+    ratingCount: number,
+): string {
+    return `${cuisine}, ${average.toFixed(1)} average from ${ratingCount} ${ratingCount === 1 ? 'rating' : 'ratings'}`;
+}
+
+export function cityStatAccessibilityLabel(city: string, mealCount: number): string {
+    return `${city}, ${mealCount} ${mealCount === 1 ? 'meal' : 'meals'}`;
 }
 
 export interface CityStat {

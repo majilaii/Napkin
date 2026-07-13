@@ -10,6 +10,35 @@
  */
 import type { SpotSummary } from './useUserSpots';
 import type { EpithetInput } from '@/lib/engraving';
+import type { TasteEmblemInput } from '@/lib/tasteEmblem';
+
+/**
+ * The emblem only needs journal size, repeat behaviour, and geographic range.
+ * Keep this reducer deliberately narrower than the engraving reducer so the
+ * Taste screen does not derive cuisine or price data it never displays.
+ */
+export function deriveTasteEmblemInput(spots: SpotSummary[]): TasteEmblemInput {
+    let totalMeals = 0;
+    const cities = new Set<string>();
+    const countries = new Set<string>();
+
+    for (const spot of spots) {
+        totalMeals += spot.visit_count;
+
+        const city = spot.city?.trim().toLowerCase();
+        if (city) cities.add(city);
+
+        const country = spot.country?.trim().toLowerCase();
+        if (country) countries.add(country);
+    }
+
+    return {
+        totalMeals,
+        totalPlaces: spots.length,
+        cityCount: cities.size,
+        countryCount: countries.size,
+    };
+}
 
 export function deriveEpithetInput(spots: SpotSummary[], topCuisine: string | null): EpithetInput {
     let meals = 0;

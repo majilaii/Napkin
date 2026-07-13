@@ -52,6 +52,7 @@ import type { SoloShareActivity } from '@/hooks/tables/useTableActivity';
 import type { ActivityItem } from '@/hooks/tables/useTableActivity';
 import type { Page } from '@/lib/pagination';
 import type { InfiniteData } from '@tanstack/react-query';
+import { invalidateEntryTasteCaches } from '@/hooks/entries/invalidateEntryTaste';
 
 export interface CreateEntryInput {
     restaurant?: {
@@ -511,11 +512,9 @@ export function useCreateEntry(
                 qc.invalidateQueries({ queryKey: queryKeys.atlas.index(primaryTableId) });
             }
 
-            // ── Profile stats invalidate — server-derived aggregate (TICKET-165) ─
-            // The profile's rating histogram / averages / counts derive from
-            // entries server-side and can't be patched client-side. Same
-            // convention as useDeleteEntry / useEntryPhotoMutations.
-            qc.invalidateQueries({ queryKey: queryKeys.users.profile(userId) });
+            // Profile stats, Spots, and the earned Taste emblem are all
+            // server/spot-derived and cannot be patched from this response.
+            invalidateEntryTasteCaches(qc, userId);
         },
     });
 }

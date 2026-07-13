@@ -12,7 +12,7 @@ import { queryKeys } from '@/lib/queryKeys';
 
 // TICKET-145: the epithet input reducer lives in a pure sibling (test-safe —
 // this file pulls supabase). Re-exported so callers import it from here.
-export { deriveEpithetInput } from './epithetInput';
+export { deriveEpithetInput, deriveTasteEmblemInput } from './epithetInput';
 
 export interface SpotSummary {
     restaurant_id: string;

@@ -1,7 +1,7 @@
 /**
  * gates.test.ts — pins the TICKET-090 block matrix and the TICKET-093(a)
  * audience decision for every user-profile palate surface
- * (diary / regulars / spots / reviews).
+ * (diary / regulars / spots / reviews / taste).
  *
  * These are the semantics the founder locked 2026-07-04:
  *   • table-shared entries ARE public-eligible (only Table context is sacred)
@@ -10,7 +10,9 @@
  */
 import { assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
+    buildTasteAggregateRpcArgs,
     computeRelationship,
+    decideTasteAggregateAccess,
     fetchBlockState,
     strangerCanReadPalate,
     type BlockState,
@@ -66,12 +68,52 @@ Deno.test('strangerCanReadPalate: TICKET-093(a) — public profiles read, incl. 
     assertEquals(strangerCanReadPalate('none', 'public_and_tables'), true);
 });
 
+Deno.test('strangerCanReadPalate: public Taste drill-in uses the same audience matrix', () => {
+    assertEquals(strangerCanReadPalate('none', 'public_only'), true);
+    assertEquals(strangerCanReadPalate('none', 'public_and_tables'), true);
+    assertEquals(strangerCanReadPalate('none', 'tables_in_common'), false);
+    assertEquals(strangerCanReadPalate('none', 'none'), false);
+    assertEquals(strangerCanReadPalate('viewer_blocked_target', 'public_only'), false);
+    assertEquals(strangerCanReadPalate('target_blocked_viewer', 'public_only'), false);
+});
+
 Deno.test('strangerCanReadPalate: a shared Table alone grants NOTHING on profile surfaces', () => {
     assertEquals(strangerCanReadPalate('none', 'tables_in_common'), false);
 });
 
 Deno.test('strangerCanReadPalate: no relationship → not found', () => {
     assertEquals(strangerCanReadPalate('none', 'none'), false);
+});
+
+Deno.test('buildTasteAggregateRpcArgs: private entries are enabled only for exact self', () => {
+    assertEquals(buildTasteAggregateRpcArgs(VIEWER, VIEWER), {
+        p_user_id: VIEWER,
+        p_include_private: true,
+    });
+    assertEquals(buildTasteAggregateRpcArgs(VIEWER, TARGET), {
+        p_user_id: TARGET,
+        p_include_private: false,
+    });
+});
+
+Deno.test('decideTasteAggregateAccess: composes the audience gate before producing RPC args', () => {
+    assertEquals(decideTasteAggregateAccess(VIEWER, VIEWER, 'none', 'self'), {
+        allowed: true,
+        rpcArgs: { p_user_id: VIEWER, p_include_private: true },
+    });
+    assertEquals(decideTasteAggregateAccess(VIEWER, TARGET, 'none', 'public_only'), {
+        allowed: true,
+        rpcArgs: { p_user_id: TARGET, p_include_private: false },
+    });
+    assertEquals(decideTasteAggregateAccess(VIEWER, TARGET, 'none', 'none'), {
+        allowed: false,
+    });
+    assertEquals(decideTasteAggregateAccess(
+        VIEWER,
+        TARGET,
+        'target_blocked_viewer',
+        'public_only',
+    ), { allowed: false });
 });
 
 // ── fetchBlockState ──────────────────────────────────────────────────────────

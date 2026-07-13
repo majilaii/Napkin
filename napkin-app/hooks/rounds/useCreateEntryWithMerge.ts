@@ -40,6 +40,7 @@ import {
 import type { Page } from '@/lib/pagination';
 import type { ActivityItem, TableNightActivity } from '@/hooks/tables/useTableActivity';
 import type { DiaryEntryRow } from '@/hooks/users/useUserProfile';
+import { invalidateEntryTasteCaches } from '@/hooks/entries/invalidateEntryTaste';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -302,10 +303,9 @@ export function useCreateEntryWithMerge() {
         onSuccess: (result, input, context) => {
             if (!context || !user?.id) return;
 
-            // TICKET-165: profile stats (rating histogram, averages, counts)
-            // derive from entries server-side — B's entry exists regardless of
-            // merge outcome, so refetch on both branches below.
-            qc.invalidateQueries({ queryKey: queryKeys.users.profile(user.id) });
+            // Profile stats, Spots, and Taste all include B's new entry,
+            // regardless of whether the merge itself succeeds.
+            invalidateEntryTasteCaches(qc, user.id);
 
             const { nonce, entry_a_id, table_id, restaurant_id } = context;
             const { merge_outcome } = result;
