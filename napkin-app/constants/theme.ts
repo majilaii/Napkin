@@ -98,6 +98,7 @@ export const Colors = {
     outlineVariant: '#ddc0ba',
     divider: 'rgba(221, 192, 186, 0.15)', // warm rule (pale rose)
     dividerSoft: 'rgba(221, 192, 186, 0.30)', // softer variant (feed row dividers)
+    imageOutline: 'rgba(0, 0, 0, 0.10)', // neutral inset edge on photography
     ruleWarmNib: 'rgba(221, 192, 186, 1)',  // full pale-rose rule
     overlay: 'rgba(28, 28, 25, 0.4)',
     border: 'rgba(221, 192, 186, 0.15)',   // alias for compat
@@ -184,6 +185,7 @@ export const Colors = {
     outlineVariant: '#56423d',
     divider: 'rgba(86, 66, 61, 0.3)',
     dividerSoft: 'rgba(86, 66, 61, 0.45)',
+    imageOutline: 'rgba(255, 255, 255, 0.10)', // neutral inset edge on photography
     ruleWarmNib: 'rgba(86, 66, 61, 1)',
     overlay: 'rgba(0, 0, 0, 0.6)',
     border: 'rgba(86, 66, 61, 0.3)',
