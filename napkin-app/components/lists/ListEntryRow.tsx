@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,13 +15,17 @@ interface Props {
     entry: ListEntry;
     rank?: number;
     isOwner: boolean;
+    isEditing: boolean;
     isRanked: boolean;
     isDragDisabled?: boolean;
-    isPinned?: boolean;
+    isWishlisted?: boolean;
+    isWishlistPending?: boolean;
+    canShowOnMap?: boolean;
     onPress: () => void;
+    onShowOnMap: () => void;
     onRemove: () => void;
     onNoteChange: (note: string | null) => void;
-    onPinToWishlist?: () => void;
+    onToggleWishlist?: () => void;
     drag?: () => void;
 }
 
@@ -29,20 +33,30 @@ export function ListEntryRow({
     entry,
     rank,
     isOwner,
+    isEditing,
     isRanked,
     isDragDisabled,
-    isPinned,
+    isWishlisted,
+    isWishlistPending = false,
+    canShowOnMap = true,
     onPress,
+    onShowOnMap,
     onRemove,
     onNoteChange,
-    onPinToWishlist,
+    onToggleWishlist,
     drag,
 }: Props) {
     const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
     const palette = Colors[scheme] as Palette;
     const [editingNote, setEditingNote] = useState(false);
     const [noteText, setNoteText] = useState(entry.note ?? '');
+    const submittedDraftRef = useRef<string | null | undefined>(undefined);
     const restaurant = entry.restaurant;
+
+    useEffect(() => {
+        setNoteText(entry.note ?? '');
+        submittedDraftRef.current = undefined;
+    }, [entry.note]);
 
     const meta = [
         restaurant.cuisine,
@@ -50,27 +64,36 @@ export function ListEntryRow({
         restaurant.price_level ? '$'.repeat(Math.min(4, Math.max(1, restaurant.price_level))) : null,
     ].filter(Boolean).join(' · ');
 
-    const commitNote = () => {
+    const commitNote = useCallback(() => {
         setEditingNote(false);
         const next = noteText.trim() || null;
-        if (next !== entry.note) onNoteChange(next);
-    };
+        if (next !== entry.note && submittedDraftRef.current !== next) {
+            submittedDraftRef.current = next;
+            onNoteChange(next);
+        }
+    }, [entry.note, noteText, onNoteChange]);
+
+    useEffect(() => {
+        if (!isEditing && editingNote) commitNote();
+    }, [commitNote, editingNote, isEditing]);
 
     const row = (
         <View style={[styles.row, { borderBottomColor: palette.dividerSoft }]}>
             {isRanked && rank !== undefined ? (
                 <View style={styles.rankColumn}>
                     <Text style={[styles.rank, { color: palette.primary }]}>{String(rank).padStart(2, '0')}</Text>
-                    {isOwner && drag ? (
+                    {isEditing && isOwner && drag ? (
                         <PressableScale
                             onLongPress={drag}
                             disabled={isDragDisabled}
+                            hitSlop={8}
                             haptic="selection"
-                            style={[styles.iconTarget, { opacity: isDragDisabled ? 0.3 : 1 }]}
+                            style={[styles.editTarget, { opacity: isDragDisabled ? 0.3 : 1 }]}
                             accessibilityRole="button"
                             accessibilityLabel={`Move ${restaurant.name}`}
+                            accessibilityHint="Long press, then drag to change its position"
                         >
-                            <Ionicons name="reorder-three-outline" size={21} color={palette.textMuted} />
+                            <Ionicons name="reorder-three-outline" size={20} color={palette.textMuted} />
                         </PressableScale>
                     ) : null}
                 </View>
@@ -78,18 +101,7 @@ export function ListEntryRow({
 
             <View style={styles.content}>
                 <PressableScale onPress={onPress} haptic="light" style={styles.placeTap}>
-                    <View
-                        style={[
-                            styles.photo,
-                            { backgroundColor: palette.surfaceContainerHigh },
-                            restaurant.photo_url && {
-                                borderWidth: StyleSheet.hairlineWidth,
-                                borderColor: scheme === 'dark'
-                                    ? 'rgba(255, 255, 255, 0.1)'
-                                    : 'rgba(0, 0, 0, 0.1)',
-                            },
-                        ]}
-                    >
+                    <View style={[styles.photo, { backgroundColor: palette.surfaceContainerHigh }]}>
                         {restaurant.photo_url ? (
                             <Image
                                 source={{ uri: restaurant.photo_url }}
@@ -98,8 +110,12 @@ export function ListEntryRow({
                                 transition={180}
                             />
                         ) : (
-                            <Ionicons name="restaurant-outline" size={22} color={palette.textMuted} />
+                            <Ionicons name="restaurant-outline" size={21} color={palette.textMuted} />
                         )}
+                        <View
+                            pointerEvents="none"
+                            style={[StyleSheet.absoluteFillObject, styles.imageOutline, { borderColor: palette.imageOutline }]}
+                        />
                     </View>
 
                     <View style={styles.copy}>
@@ -114,7 +130,7 @@ export function ListEntryRow({
                     </View>
                 </PressableScale>
 
-                {isOwner ? (
+                {isEditing && isOwner ? (
                     editingNote ? (
                         <TextInput
                             value={noteText}
@@ -133,57 +149,78 @@ export function ListEntryRow({
                             onPress={() => setEditingNote(true)}
                             style={styles.noteTarget}
                             accessibilityRole="button"
-                            accessibilityLabel={entry.note ? 'Edit note' : 'Add a note'}
+                            accessibilityLabel={entry.note ? `Edit note for ${restaurant.name}` : `Add a note to ${restaurant.name}`}
                         >
+                            <Ionicons name="create-outline" size={14} color={palette.textMuted} />
                             <Text
-                                style={[styles.note, { color: entry.note ? palette.textSecondary : palette.textMuted }]}
-                                numberOfLines={3}
+                                style={[styles.noteText, styles.note, { color: entry.note ? palette.textSecondary : palette.textMuted }]}
+                                numberOfLines={2}
                             >
-                                {entry.note ? `— ${entry.note}` : 'add a note…'}
+                                {entry.note ?? 'Add note'}
                             </Text>
                         </PressableScale>
                     )
                 ) : entry.note ? (
-                    <Text style={[styles.note, { color: palette.textSecondary }]} numberOfLines={3}>
+                    <Text style={[styles.noteText, styles.readNote, { color: palette.textSecondary }]} numberOfLines={2}>
                         — {entry.note}
                     </Text>
                 ) : null}
             </View>
 
             <View style={styles.trailing}>
-                {onPinToWishlist ? (
+                <PressableScale
+                    onPress={canShowOnMap ? onShowOnMap : undefined}
+                    disabled={!canShowOnMap}
+                    haptic="selection"
+                    style={[
+                        styles.iconButton,
+                        {
+                            backgroundColor: palette.surfaceContainerLow,
+                            opacity: canShowOnMap ? 1 : 0.4,
+                        },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={canShowOnMap ? `Show ${restaurant.name} on map` : `${restaurant.name} has no map location`}
+                    accessibilityState={{ disabled: !canShowOnMap }}
+                >
+                    <Ionicons name="locate-outline" size={19} color={palette.primary} />
+                </PressableScale>
+
+                {isEditing && isOwner ? (
                     <PressableScale
-                        onPress={isPinned ? undefined : onPinToWishlist}
-                        disabled={isPinned}
+                        onPress={onRemove}
+                        haptic="medium"
+                        style={[styles.iconButton, { backgroundColor: palette.primaryMuted }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${restaurant.name} from this list`}
+                    >
+                        <Ionicons name="trash-outline" size={18} color={palette.error} />
+                    </PressableScale>
+                ) : onToggleWishlist ? (
+                    <PressableScale
+                        onPress={onToggleWishlist}
+                        disabled={isWishlistPending}
                         haptic="medium"
                         style={[
-                            styles.pinButton,
+                            styles.iconButton,
                             {
-                                backgroundColor: isPinned
+                                backgroundColor: isWishlisted
                                     ? palette.secondaryContainer
-                                    : palette.primaryMuted,
+                                    : palette.surfaceContainerLow,
+                                opacity: isWishlistPending ? 0.5 : 1,
                             },
                         ]}
                         accessibilityRole="button"
-                        accessibilityLabel={isPinned ? `${restaurant.name} is pinned` : `Pin ${restaurant.name} to wishlist`}
+                        accessibilityLabel={isWishlisted
+                            ? `Remove ${restaurant.name} from Wishlist`
+                            : `Save ${restaurant.name} to Wishlist`}
+                        accessibilityState={{ selected: isWishlisted, disabled: isWishlistPending }}
                     >
                         <Ionicons
-                            name={isPinned ? 'checkmark' : 'add'}
-                            size={21}
-                            color={isPinned ? palette.text : palette.primary}
+                            name={isWishlisted ? 'bookmark' : 'bookmark-outline'}
+                            size={18}
+                            color={isWishlisted ? palette.text : palette.textMuted}
                         />
-                    </PressableScale>
-                ) : null}
-
-                {isOwner ? (
-                    <PressableScale
-                        onPress={onRemove}
-                        haptic="light"
-                        style={[styles.iconTarget, { backgroundColor: palette.surfaceContainerLow }]}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove ${restaurant.name} from list`}
-                    >
-                        <Ionicons name="close" size={18} color={palette.textMuted} />
                     </PressableScale>
                 ) : null}
             </View>
@@ -191,7 +228,7 @@ export function ListEntryRow({
     );
 
     return (
-        <SwipeToDeleteRow enabled={isOwner && !isDragDisabled} onDelete={onRemove}>
+        <SwipeToDeleteRow enabled={isOwner && isEditing && !isDragDisabled} onDelete={onRemove}>
             {row}
         </SwipeToDeleteRow>
     );
@@ -199,96 +236,111 @@ export function ListEntryRow({
 
 const styles = StyleSheet.create({
     row: {
-        minHeight: 126,
+        minHeight: 104,
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 10,
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
+        gap: Spacing.sm,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: 8,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     rankColumn: {
-        width: 34,
+        width: 28,
         alignItems: 'center',
-        gap: 8,
+        gap: 4,
         paddingTop: 2,
     },
     rank: {
         fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
+        fontSize: 17,
         fontVariant: ['tabular-nums'],
+    },
+    editTarget: {
+        width: 44,
+        height: 44,
+        marginHorizontal: -8,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     content: {
         flex: 1,
         minWidth: 0,
     },
     placeTap: {
+        minHeight: 72,
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 12,
+        gap: 10,
     },
     photo: {
-        width: 78,
-        height: 92,
+        width: 64,
+        height: 72,
         borderRadius: Radius.md,
         overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
     },
+    imageOutline: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: Radius.md,
+    },
     copy: {
         flex: 1,
         minWidth: 0,
-        paddingTop: 3,
+        paddingTop: 2,
     },
     name: {
         fontFamily: 'Newsreader_700Bold',
-        fontSize: 19,
-        lineHeight: 23,
-        letterSpacing: -0.2,
+        fontSize: 18,
+        lineHeight: 21,
+        letterSpacing: -0.15,
     },
     meta: {
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
-        lineHeight: 17,
-        marginTop: 5,
+        lineHeight: 16,
+        marginTop: 4,
     },
     noteTarget: {
         minHeight: 40,
-        justifyContent: 'center',
-        marginLeft: 90,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        marginLeft: 74,
+    },
+    noteText: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13,
+        lineHeight: 17,
     },
     note: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13.5,
-        lineHeight: 18,
+        flex: 1,
+    },
+    readNote: {
+        marginLeft: 74,
+        marginTop: 4,
     },
     noteInput: {
         minHeight: 40,
-        borderRadius: Radius.sm,
+        borderRadius: Radius.md,
         paddingHorizontal: 10,
         paddingVertical: 8,
-        marginTop: 7,
-        marginLeft: 90,
+        marginTop: 6,
+        marginLeft: 74,
         fontFamily: 'Manrope_500Medium',
         fontSize: 12,
     },
     trailing: {
         width: 44,
         alignItems: 'center',
-        gap: 8,
+        gap: 0,
     },
-    pinButton: {
+    iconButton: {
         width: 44,
         height: 44,
         borderRadius: 22,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    iconTarget: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
         alignItems: 'center',
         justifyContent: 'center',
     },

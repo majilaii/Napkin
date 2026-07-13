@@ -21,8 +21,13 @@ interface Props {
     canEditEntries: boolean;
     isSaved: boolean;
     canSave: boolean;
+    isEditingPlaces: boolean;
+    topInset: number;
     isSavePending?: boolean;
     isSharePending?: boolean;
+    onBack: () => void;
+    onOpenMap: () => void;
+    onToggleEditingPlaces: () => void;
     onEdit: () => void;
     onShare?: () => void;
     onAddSpots?: () => void;
@@ -38,8 +43,13 @@ export function ListDetailHeader({
     canEditEntries,
     isSaved,
     canSave,
+    isEditingPlaces,
+    topInset,
     isSavePending,
     isSharePending,
+    onBack,
+    onOpenMap,
+    onToggleEditingPlaces,
     onEdit,
     onShare,
     onAddSpots,
@@ -62,15 +72,52 @@ export function ListDetailHeader({
         : canSave && onToggleSaved
             ? {
                 label: isSaved ? 'Saved' : 'Save list',
-                icon: isSaved ? 'checkmark' as const : 'add' as const,
+                icon: isSaved ? 'bookmark' as const : 'bookmark-outline' as const,
                 onPress: onToggleSaved,
                 saved: isSaved,
             }
             : null;
 
+    const metadata = [
+        `${entryCount} ${entryCount === 1 ? 'place' : 'places'}`,
+        saveCount > 0 ? `${saveCount} ${saveCount === 1 ? 'save' : 'saves'}` : null,
+    ].filter(Boolean).join(' · ');
+
     return (
-        <View style={[styles.sheet, { backgroundColor: palette.background }]}>
-            <View style={[styles.grabber, { backgroundColor: palette.dividerSoft }]} />
+        <View
+            style={[
+                styles.header,
+                {
+                    backgroundColor: palette.background,
+                    paddingTop: topInset + Spacing.sm,
+                },
+            ]}
+        >
+            <View style={styles.topBar}>
+                <PressableScale
+                    onPress={onBack}
+                    haptic="selection"
+                    style={[styles.topButton, { backgroundColor: palette.surfaceContainerLow }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Back"
+                >
+                    <Ionicons name="chevron-back" size={21} color={palette.text} style={styles.backIcon} />
+                </PressableScale>
+
+                <Text style={[styles.eyebrow, { color: palette.textMuted }]}>List</Text>
+
+                {isOwner ? (
+                    <PressableScale
+                        onPress={onEdit}
+                        haptic="selection"
+                        style={[styles.topButton, { backgroundColor: palette.surfaceContainerLow }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="List settings"
+                    >
+                        <Ionicons name="ellipsis-horizontal" size={21} color={palette.text} />
+                    </PressableScale>
+                ) : <View style={styles.topButton} />}
+            </View>
 
             <View style={styles.titleRow}>
                 {list.emoji ? (
@@ -78,62 +125,50 @@ export function ListDetailHeader({
                         <Text style={styles.emoji}>{list.emoji}</Text>
                     </View>
                 ) : null}
-                <Text style={[styles.title, { color: palette.text }]}>{list.title}</Text>
+                <Text style={[styles.title, { color: palette.text }]} numberOfLines={2}>
+                    {list.title}
+                </Text>
             </View>
 
-            <PressableScale
-                onPress={authorIdentifier ? () => router.push(`/u/${authorIdentifier}`) : undefined}
-                disabled={!authorIdentifier}
-                style={styles.authorRow}
-                accessibilityRole={authorIdentifier ? 'button' : undefined}
-                accessibilityLabel={authorIdentifier ? `Open ${authorName}'s profile` : undefined}
-            >
-                {ownerProfile.avatar_url ? (
-                    <Image
-                        source={{ uri: ownerProfile.avatar_url }}
-                        style={[
-                            styles.avatar,
-                            {
-                                borderColor: scheme === 'dark'
-                                    ? 'rgba(255, 255, 255, 0.1)'
-                                    : 'rgba(0, 0, 0, 0.1)',
-                            },
-                        ]}
-                        contentFit="cover"
-                        transition={160}
-                    />
-                ) : (
-                    <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: palette.primaryMuted }]}>
-                        <Text style={[styles.avatarInitial, { color: palette.primary }]}>
-                            {authorName.trim().charAt(0).toUpperCase() || '?'}
-                        </Text>
-                    </View>
-                )}
-                <Text style={[styles.author, { color: authorIdentifier ? palette.textSecondary : palette.textMuted }]} numberOfLines={1}>
-                    by {authorName}
+            <View style={styles.bylineRow}>
+                <PressableScale
+                    onPress={authorIdentifier ? () => router.push(`/u/${authorIdentifier}`) : undefined}
+                    disabled={!authorIdentifier}
+                    style={styles.authorTarget}
+                    accessibilityRole={authorIdentifier ? 'button' : undefined}
+                    accessibilityLabel={authorIdentifier ? `Open ${authorName}'s profile` : undefined}
+                >
+                    {ownerProfile.avatar_url ? (
+                        <Image
+                            source={{ uri: ownerProfile.avatar_url }}
+                            style={[styles.avatar, { borderColor: palette.imageOutline }]}
+                            contentFit="cover"
+                            transition={160}
+                        />
+                    ) : (
+                        <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: palette.primaryMuted }]}>
+                            <Text style={[styles.avatarInitial, { color: palette.primary }]}>
+                                {authorName.trim().charAt(0).toUpperCase() || '?'}
+                            </Text>
+                        </View>
+                    )}
+                    <Text style={[styles.author, { color: palette.textSecondary }]} numberOfLines={1}>
+                        by {authorName}
+                    </Text>
+                </PressableScale>
+
+                <Text style={[styles.metadata, { color: palette.textMuted }]} numberOfLines={1}>
+                    {metadata}
                 </Text>
-                {authorIdentifier ? <Ionicons name="chevron-forward" size={13} color={palette.textMuted} /> : null}
-            </PressableScale>
+            </View>
 
             {list.description ? (
-                <Text style={[styles.description, { color: palette.textSecondary }]}>{list.description}</Text>
+                <Text style={[styles.description, { color: palette.textSecondary }]} numberOfLines={2}>
+                    {list.description}
+                </Text>
             ) : null}
 
-            <View style={styles.statsRow}>
-                <View style={styles.stat}>
-                    <Text style={[styles.statNumber, { color: palette.text }]}>{entryCount}</Text>
-                    <Text style={[styles.statLabel, { color: palette.textMuted }]}>
-                        {entryCount === 1 ? 'Place' : 'Places'}
-                    </Text>
-                </View>
-                <View style={[styles.statRule, { backgroundColor: palette.dividerSoft }]} />
-                <View style={styles.stat}>
-                    <Text style={[styles.statNumber, { color: palette.text }]}>{saveCount}</Text>
-                    <Text style={[styles.statLabel, { color: palette.textMuted }]}>Saves</Text>
-                </View>
-            </View>
-
-            {primaryAction || onShare || isOwner ? (
+            {primaryAction || onShare ? (
                 <View style={styles.actionsRow}>
                     {primaryAction ? (
                         <View style={styles.primaryWrap}>
@@ -161,7 +196,7 @@ export function ListDetailHeader({
                                 ) : (
                                     <Ionicons
                                         name={primaryAction.icon}
-                                        size={21}
+                                        size={19}
                                         color={primaryAction.saved ? palette.text : palette.textInverse}
                                     />
                                 )}
@@ -182,33 +217,71 @@ export function ListDetailHeader({
                             onPress={onShare}
                             disabled={isSharePending}
                             haptic="light"
-                            style={[styles.squareButton, { backgroundColor: palette.surfaceContainerHigh }]}
+                            style={[styles.actionButton, { backgroundColor: palette.surfaceContainerHigh }]}
                             accessibilityRole="button"
                             accessibilityLabel={`Share ${list.title}`}
                         >
                             {isSharePending ? (
                                 <ActivityIndicator size="small" color={palette.text} />
                             ) : (
-                                <Ionicons name="share-outline" size={22} color={palette.text} />
+                                <Ionicons name="share-outline" size={20} color={palette.text} />
                             )}
-                        </PressableScale>
-                    ) : null}
-
-                    {isOwner ? (
-                        <PressableScale
-                            onPress={onEdit}
-                            haptic="selection"
-                            style={[styles.squareButton, { backgroundColor: palette.surfaceContainerHigh }]}
-                            accessibilityRole="button"
-                            accessibilityLabel="Edit list"
-                        >
-                            <Ionicons name="ellipsis-horizontal" size={22} color={palette.text} />
                         </PressableScale>
                     ) : null}
                 </View>
             ) : null}
 
-            {isOwner && list.privacy === 'private' ? (
+            <View style={styles.presentationRow}>
+                <View style={[styles.presentationControl, { backgroundColor: palette.surfaceContainerLow }]}>
+                    <View style={[styles.activePresentation, Shadow.subtle, { backgroundColor: palette.card }]}>
+                        <Ionicons name="list-outline" size={17} color={palette.primary} />
+                        <Text style={[styles.activePresentationLabel, { color: palette.text }]}>Places</Text>
+                    </View>
+                    <PressableScale
+                        onPress={onOpenMap}
+                        haptic="selection"
+                        style={styles.presentationButton}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Show ${list.title} on the map`}
+                    >
+                        <Ionicons name="map-outline" size={17} color={palette.textMuted} />
+                        <Text style={[styles.presentationLabel, { color: palette.textMuted }]}>Map</Text>
+                    </PressableScale>
+                </View>
+
+                {canEditEntries ? (
+                    <PressableScale
+                        onPress={onToggleEditingPlaces}
+                        haptic="selection"
+                        style={[
+                            styles.editPlacesButton,
+                            {
+                                backgroundColor: isEditingPlaces
+                                    ? palette.secondaryContainer
+                                    : palette.surfaceContainerLow,
+                            },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={isEditingPlaces ? 'Finish editing places' : 'Edit places'}
+                    >
+                        <Ionicons
+                            name={isEditingPlaces ? 'checkmark' : 'create-outline'}
+                            size={17}
+                            color={isEditingPlaces ? palette.text : palette.textMuted}
+                        />
+                        <Text style={[styles.editPlacesLabel, { color: isEditingPlaces ? palette.text : palette.textMuted }]}>
+                            {isEditingPlaces ? 'Done' : 'Edit'}
+                        </Text>
+                    </PressableScale>
+                ) : null}
+            </View>
+
+            {list.table_id ? (
+                <View style={styles.privateLine}>
+                    <Ionicons name="people-outline" size={14} color={palette.textMuted} />
+                    <Text style={[styles.privateText, { color: palette.textMuted }]}>Shared with everyone at this Table</Text>
+                </View>
+            ) : isOwner && list.privacy === 'private' ? (
                 <View style={styles.privateLine}>
                     <Ionicons name="lock-closed-outline" size={13} color={palette.textMuted} />
                     <Text style={[styles.privateText, { color: palette.textMuted }]}>Only you can find this list</Text>
@@ -219,54 +292,70 @@ export function ListDetailHeader({
 }
 
 const styles = StyleSheet.create({
-    sheet: {
-        marginTop: -28,
-        borderTopLeftRadius: Radius.xxxl,
-        borderTopRightRadius: Radius.xxxl,
-        paddingTop: 10,
-        paddingHorizontal: Spacing.lg,
-        paddingBottom: Spacing.lg,
+    header: {
+        paddingHorizontal: Spacing.md,
+        paddingBottom: Spacing.sm,
     },
-    grabber: {
-        width: 48,
-        height: 5,
-        borderRadius: Radius.full,
-        alignSelf: 'center',
-        marginBottom: Spacing.md,
+    topBar: {
+        minHeight: 44,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    topButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    backIcon: { marginLeft: -2 },
+    eyebrow: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 12,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
     },
     titleRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
+        marginTop: Spacing.md,
     },
     emojiTile: {
-        width: 40,
-        height: 40,
+        width: 42,
+        height: 42,
         borderRadius: Radius.md,
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
     },
-    emoji: { fontSize: 21 },
+    emoji: { fontSize: 22 },
     title: {
         flex: 1,
         fontFamily: 'Newsreader_700Bold',
-        fontSize: 32,
-        lineHeight: 36,
-        letterSpacing: -0.7,
+        fontSize: 30,
+        lineHeight: 34,
+        letterSpacing: -0.6,
     },
-    authorRow: {
-        minHeight: 44,
+    bylineRow: {
+        minHeight: 40,
         flexDirection: 'row',
         alignItems: 'center',
-        alignSelf: 'flex-start',
-        gap: 8,
+        gap: Spacing.sm,
         marginTop: Spacing.sm,
     },
+    authorTarget: {
+        minHeight: 40,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        flexShrink: 1,
+    },
     avatar: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         borderWidth: StyleSheet.hairlineWidth,
     },
     avatarFallback: {
@@ -276,45 +365,35 @@ const styles = StyleSheet.create({
     },
     avatarInitial: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
+        fontSize: 11,
     },
     author: {
+        flexShrink: 1,
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 13,
     },
-    description: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 23,
-        marginTop: Spacing.sm,
-    },
-    statsRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: Spacing.lg,
-        paddingHorizontal: Spacing.md,
-    },
-    stat: { flex: 1, alignItems: 'center' },
-    statRule: { width: StyleSheet.hairlineWidth, height: 42 },
-    statNumber: {
-        fontFamily: 'Newsreader_700Bold',
-        fontSize: 25,
+    metadata: {
+        flex: 1,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
         fontVariant: ['tabular-nums'],
     },
-    statLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
-        marginTop: 1,
+    description: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 16,
+        lineHeight: 21,
+        marginTop: Spacing.xs,
     },
     actionsRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.sm,
-        marginTop: Spacing.lg,
+        marginTop: Spacing.md,
     },
+    primaryWrap: { flex: 1 },
     primaryButton: {
         width: '100%',
-        minHeight: 56,
+        minHeight: 48,
         borderRadius: Radius.lg,
         flexDirection: 'row',
         alignItems: 'center',
@@ -322,26 +401,77 @@ const styles = StyleSheet.create({
         gap: 8,
         paddingHorizontal: Spacing.md,
     },
-    primaryWrap: {
-        flex: 1,
-    },
     primaryLabel: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 15,
+        fontSize: 14,
     },
-    squareButton: {
-        width: 56,
-        height: 56,
+    actionButton: {
+        width: 48,
+        height: 48,
         borderRadius: Radius.lg,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    privateLine: {
-        minHeight: 40,
+    presentationRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginTop: Spacing.md,
+    },
+    presentationControl: {
+        minHeight: 52,
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: Radius.lg,
+        padding: 4,
+    },
+    activePresentation: {
+        minHeight: 44,
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 6,
+        borderRadius: Radius.md,
+    },
+    presentationButton: {
+        minHeight: 44,
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        borderRadius: Radius.md,
+    },
+    activePresentationLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+    },
+    presentationLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+    },
+    editPlacesButton: {
+        minWidth: 82,
+        minHeight: 44,
+        borderRadius: Radius.lg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+    },
+    editPlacesLabel: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+    },
+    privateLine: {
+        minHeight: 32,
+        flexDirection: 'row',
+        alignItems: 'center',
         gap: 5,
+        paddingHorizontal: Spacing.xs,
         marginTop: Spacing.xs,
     },
     privateText: {

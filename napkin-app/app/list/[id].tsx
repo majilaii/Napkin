@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     FlatList,
@@ -24,6 +24,7 @@ import { useAddToList } from '@/hooks/lists/useAddToList';
 import { useUpdateListEntryNote } from '@/hooks/lists/useUpdateListEntryNote';
 import { useReorderListEntry } from '@/hooks/lists/useReorderListEntry';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
+import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { useCreateHandoff } from '@/hooks/wishlist/useCreateHandoff';
 import { useToast } from '@/providers/ToastProvider';
@@ -31,7 +32,6 @@ import {
     ImportToListSheet,
     ListDetailHeader,
     ListEntryRow,
-    ListMapHero,
 } from '@/components/lists';
 import { derivePinnedIds } from '@/components/lists/pinnedLookupUtils';
 import { HandoffSheet } from '@/components/wishlist';
@@ -51,6 +51,7 @@ export default function ListDetailScreen() {
     const updateNote = useUpdateListEntryNote();
     const reorderEntry = useReorderListEntry(id ?? '');
     const wishlistAdd = useWishlistAdd(user?.id);
+    const wishlistRemove = useWishlistRemove(user?.id);
     const toggleListSave = useToggleListSave(user?.id);
     const createPublicShare = useCreateHandoff();
     const toast = useToast();
@@ -58,7 +59,10 @@ export default function ListDetailScreen() {
     const [dragDisabled, setDragDisabled] = useState(false);
     const [shareVisible, setShareVisible] = useState(false);
     const [importVisible, setImportVisible] = useState(false);
-    const [locallyPinned, setLocallyPinned] = useState<Set<string>>(() => new Set());
+    const [isEditingPlaces, setIsEditingPlaces] = useState(false);
+    const [wishlistOverrides, setWishlistOverrides] = useState<Map<string, boolean>>(() => new Map());
+    const wishlistPendingRef = useRef<Set<string>>(new Set());
+    const [wishlistPendingIds, setWishlistPendingIds] = useState<Set<string>>(() => new Set());
 
     const detail = result?.data ?? null;
     const list = detail?.list ?? null;
@@ -79,9 +83,12 @@ export default function ListDetailScreen() {
     const { data: myWishlistPages } = useMyWishlist(user?.id);
     const pinnedIds = useMemo(() => {
         const ids = derivePinnedIds(myWishlistPages?.pages);
-        for (const restaurantId of locallyPinned) ids.add(restaurantId);
+        for (const [restaurantId, isWishlisted] of wishlistOverrides) {
+            if (isWishlisted) ids.add(restaurantId);
+            else ids.delete(restaurantId);
+        }
         return ids;
-    }, [myWishlistPages, locallyPinned]);
+    }, [myWishlistPages, wishlistOverrides]);
 
     const verifiedCount = useMemo(
         () => entries.filter((entry) => entry.restaurant?.verification === 'verified').length,
@@ -104,23 +111,35 @@ export default function ListDetailScreen() {
         updateNote.mutate({ list_id: entry.list_id, entry_id: entry.id, note });
     }, [updateNote]);
 
-    const handlePinToWishlist = useCallback((entry: ListEntry) => {
-        setLocallyPinned((previous) => new Set(previous).add(entry.restaurant_id));
-        wishlistAdd.mutate(
-            { restaurant_id: entry.restaurant_id },
-            {
-                onSuccess: () => toast.show('Pinned to wishlist'),
-                onError: () => {
-                    setLocallyPinned((previous) => {
-                        const next = new Set(previous);
-                        next.delete(entry.restaurant_id);
-                        return next;
-                    });
-                    toast.show('Could not pin that spot');
-                },
-            },
-        );
-    }, [wishlistAdd, toast]);
+    const handleToggleWishlist = useCallback(async (entry: ListEntry, isCurrentlyWishlisted: boolean) => {
+        if (wishlistPendingRef.current.has(entry.restaurant_id)) return;
+        wishlistPendingRef.current.add(entry.restaurant_id);
+        setWishlistPendingIds(new Set(wishlistPendingRef.current));
+        const nextWishlisted = !isCurrentlyWishlisted;
+        setWishlistOverrides((previous) => new Map(previous).set(entry.restaurant_id, nextWishlisted));
+
+        try {
+            if (nextWishlisted) {
+                await wishlistAdd.mutateAsync({ restaurant_id: entry.restaurant_id });
+                toast.show('Saved to Wishlist');
+            } else {
+                await wishlistRemove.mutateAsync(entry.restaurant_id);
+                toast.show('Removed from Wishlist');
+            }
+        } catch {
+            setWishlistOverrides((previous) => {
+                const next = new Map(previous);
+                next.delete(entry.restaurant_id);
+                return next;
+            });
+            toast.show(nextWishlisted
+                ? 'Could not save that spot to Wishlist'
+                : 'Could not remove that spot from Wishlist');
+        } finally {
+            wishlistPendingRef.current.delete(entry.restaurant_id);
+            setWishlistPendingIds(new Set(wishlistPendingRef.current));
+        }
+    }, [wishlistAdd, wishlistRemove, toast]);
 
     const handleToggleSaved = useCallback(() => {
         if (!list) return;
@@ -172,6 +191,19 @@ export default function ListDetailScreen() {
         router.push({ pathname: '/restaurant/[id]', params: { id: restaurantId } });
     }, [router]);
 
+    const openListMap = useCallback((restaurantId?: string) => {
+        if (!id) return;
+        router.push({
+            pathname: '/wishlist',
+            params: {
+                view: 'map',
+                listId: id,
+                fromList: '1',
+                ...(restaurantId ? { restaurantId } : {}),
+            },
+        });
+    }, [id, router]);
+
     const renderEntry = useCallback(
         (entry: ListEntry, index: number, drag?: () => void) => (
             <ListEntryRow
@@ -179,53 +211,62 @@ export default function ListDetailScreen() {
                 entry={entry}
                 rank={list?.ranked ? index + 1 : undefined}
                 isOwner={canEditEntries}
+                isEditing={isEditingPlaces}
                 isRanked={list?.ranked ?? false}
                 isDragDisabled={dragDisabled || reorderEntry.isPending}
-                isPinned={pinnedIds.has(entry.restaurant_id)}
+                isWishlisted={pinnedIds.has(entry.restaurant_id)}
+                isWishlistPending={wishlistPendingIds.has(entry.restaurant_id)}
+                canShowOnMap={
+                    typeof entry.restaurant.lat === 'number'
+                    && Number.isFinite(entry.restaurant.lat)
+                    && entry.restaurant.lat >= -90
+                    && entry.restaurant.lat <= 90
+                    && typeof entry.restaurant.lng === 'number'
+                    && Number.isFinite(entry.restaurant.lng)
+                    && entry.restaurant.lng >= -180
+                    && entry.restaurant.lng <= 180
+                }
                 onPress={() => openRestaurant(entry.restaurant_id)}
+                onShowOnMap={() => openListMap(entry.restaurant_id)}
                 onRemove={() => handleRemove(entry)}
                 onNoteChange={(note) => handleNoteChange(entry, note)}
-                onPinToWishlist={() => handlePinToWishlist(entry)}
+                onToggleWishlist={user
+                    ? () => handleToggleWishlist(entry, pinnedIds.has(entry.restaurant_id))
+                    : undefined}
                 drag={drag}
             />
         ),
-        [list, canEditEntries, dragDisabled, reorderEntry.isPending, pinnedIds, openRestaurant, handleRemove, handleNoteChange, handlePinToWishlist],
+        [list, canEditEntries, isEditingPlaces, dragDisabled, reorderEntry.isPending, pinnedIds, wishlistPendingIds, user, openRestaurant, openListMap, handleRemove, handleNoteChange, handleToggleWishlist],
     );
 
     const header = list && ownerProfile ? (
-        <>
-            <ListMapHero
-                entries={entries}
-                ranked={list.ranked}
-                topInset={insets.top}
-                palette={palette}
-                scheme={scheme}
-                onBack={() => router.back()}
-                onRestaurantPress={openRestaurant}
-            />
-            <ListDetailHeader
-                list={list}
-                entryCount={entries.length}
-                saveCount={saveCount}
-                ownerProfile={ownerProfile}
-                isOwner={isOwner}
-                canEditEntries={canEditEntries}
-                isSaved={isSaved}
-                canSave={canSave}
-                isSavePending={toggleListSave.isPending}
-                isSharePending={!isOwner && createPublicShare.isPending}
-                onEdit={() => router.push({ pathname: '/list/[id]/edit', params: { id: list.id } })}
-                onShare={
-                    !list.table_id
-                    && verifiedCount > 0
-                    && (isOwner || list.privacy === 'public')
-                        ? handleShare
-                        : undefined
-                }
-                onAddSpots={canEditEntries ? () => setImportVisible(true) : undefined}
-                onToggleSaved={canSave ? handleToggleSaved : undefined}
-            />
-        </>
+        <ListDetailHeader
+            list={list}
+            entryCount={entries.length}
+            saveCount={saveCount}
+            ownerProfile={ownerProfile}
+            isOwner={isOwner}
+            canEditEntries={canEditEntries}
+            isSaved={isSaved}
+            canSave={canSave}
+            isEditingPlaces={isEditingPlaces}
+            topInset={insets.top}
+            isSavePending={toggleListSave.isPending}
+            isSharePending={!isOwner && createPublicShare.isPending}
+            onBack={() => router.back()}
+            onOpenMap={() => openListMap()}
+            onToggleEditingPlaces={() => setIsEditingPlaces((current) => !current)}
+            onEdit={() => router.push({ pathname: '/list/[id]/edit', params: { id: list.id } })}
+            onShare={
+                !list.table_id
+                && verifiedCount > 0
+                && (isOwner || list.privacy === 'public')
+                    ? handleShare
+                    : undefined
+            }
+            onAddSpots={canEditEntries ? () => setImportVisible(true) : undefined}
+            onToggleSaved={canSave ? handleToggleSaved : undefined}
+        />
     ) : null;
 
     const empty = (

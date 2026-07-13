@@ -1,8 +1,8 @@
 /**
  * ListCard — row in the Lists tab.
  * Text-forward (no thumbnail): italic-serif title + quiet middle-dot meta line
- * (count · ranked · last-updated) + lock for private lists. Heirloom voice — no
- * chip badges.
+ * (count · ranked · last-updated) + relationship icon for private/Table lists.
+ * Heirloom voice — no chip badges.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -67,14 +67,23 @@ export function ListCard({ list, onPress, onLongPress }: Props) {
                     >
                         {list.title}
                     </Text>
-                    {list.privacy === 'private' && (
+                    {list.table_id ? (
+                        <Ionicons
+                            name="people-outline"
+                            size={13}
+                            color={palette.textMuted}
+                            style={{ marginLeft: Spacing.xs }}
+                            accessibilityLabel="Shared with Table"
+                        />
+                    ) : list.privacy === 'private' ? (
                         <Ionicons
                             name="lock-closed"
                             size={12}
                             color={palette.textMuted}
                             style={{ marginLeft: Spacing.xs }}
+                            accessibilityLabel="Private list"
                         />
-                    )}
+                    ) : null}
                 </View>
                 <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
                     {metaLine}

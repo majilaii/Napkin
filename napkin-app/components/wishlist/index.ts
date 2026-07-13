@@ -38,6 +38,7 @@ export { FilterActionSheet, type FilterOption } from './FilterActionSheet';
 export { FilterTabsSheet, type FilterTabConfig } from './FilterTabsSheet';
 // TICKET-137: Discover people picker (exclusive-include) — replaces the friend rail.
 export { DiscoverPeopleSheet } from './DiscoverPeopleSheet';
+export { WishlistListsSheet, type WishlistMapListOption } from './WishlistListsSheet';
 export { ImportInboxCard } from './ImportInboxCard';
 // TICKET-180: source-context card for the review header + shared "watch again ↗" link.
 export { ImportSourceCard, WatchAgainLink, type ImportSourceManifestLike } from './ImportSourceCard';
