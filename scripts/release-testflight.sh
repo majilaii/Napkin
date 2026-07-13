@@ -41,6 +41,8 @@ scratch_dir=""
 release_worktree=""
 child_pid=""
 eas_cli_version="20.5.1"
+lock_path="$tmp_root/napkin-eas-ios-local.lock"
+lock_held=0
 
 legacy_home_worktree() {
   local path
@@ -57,6 +59,43 @@ legacy_home_worktree() {
 worktree_is_registered() {
   git -C "$repo_root" worktree list --porcelain \
     | grep -Fqx "worktree $release_worktree"
+}
+
+temporary_release_residue() {
+  local line
+  local path
+
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree $tmp_root"/napkin-testflight.*/worktree)
+        printf '%s\n' "${line#worktree }"
+        return 0
+        ;;
+    esac
+  done < <(git -C "$repo_root" worktree list --porcelain)
+
+  for path in "$tmp_root"/napkin-testflight.*; do
+    [[ -e "$path" || -L "$path" ]] || continue
+    printf '%s\n' "$path"
+    return 0
+  done
+
+  return 1
+}
+
+acquire_release_lock() {
+  # macOS lockf locks the open file description inherited by every child.
+  # The lock therefore survives with EAS if the wrapper is killed, and the
+  # stable file avoids PID-reuse and unlink/reacquire races.
+  exec 9>"$lock_path"
+  if ! /usr/bin/lockf -s -t 0 9; then
+    exec 9>&-
+    echo "Another TestFlight release is already running." >&2
+    echo "Wait for it to submit and clean up before starting another release." >&2
+    return 75
+  fi
+
+  lock_held=1
 }
 
 run_child() {
@@ -120,8 +159,12 @@ cleanup() {
   local command_status=$?
   local cleanup_failed=0
   local legacy_path=""
+  local residue_path=""
 
-  trap - EXIT HUP INT TERM
+  trap - EXIT
+  # Cleanup is the release's final correctness gate. Ignore repeated signals
+  # until removal, pruning, and residue verification have all completed.
+  trap '' HUP INT TERM
   set +e
   cd /
 
@@ -156,9 +199,22 @@ cleanup() {
     cleanup_failed=1
   fi
 
+  if residue_path="$(temporary_release_residue)"; then
+    echo "Temporary TestFlight residue still exists: $residue_path" >&2
+    cleanup_failed=1
+  fi
+
   if [[ "$mode" == "release" ]] && legacy_path="$(legacy_home_worktree)"; then
     echo "Legacy release worktree still exists: $legacy_path" >&2
     cleanup_failed=1
+  fi
+
+  if [[ $lock_held -eq 1 ]]; then
+    if ! exec 9>&-; then
+      echo "Failed to release the TestFlight build lock: $lock_path" >&2
+      cleanup_failed=1
+    fi
+    lock_held=0
   fi
 
   if [[ $cleanup_failed -ne 0 ]]; then
@@ -194,6 +250,15 @@ trap cleanup EXIT
 trap 'handle_signal HUP 129' HUP
 trap 'handle_signal INT 130' INT
 trap 'handle_signal TERM 143' TERM
+
+acquire_release_lock
+
+existing_release_residue=""
+if existing_release_residue="$(temporary_release_residue)"; then
+  echo "Refusing to overlap existing temporary TestFlight residue: $existing_release_residue" >&2
+  echo "Wait for its release process to finish, or remove it if it is verified stale." >&2
+  exit 75
+fi
 
 scratch_dir="$(mktemp -d "$tmp_root/napkin-testflight.XXXXXX")"
 release_worktree="$scratch_dir/worktree"
