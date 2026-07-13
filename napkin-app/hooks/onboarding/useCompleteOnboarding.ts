@@ -2,11 +2,9 @@
  * useCompleteOnboarding — TICKET-107.
  *
  * Finishes the onboarding stack in one server call: writes display_name +
- * home_city and stamps onboarded_at (user-profile `complete_onboarding`). On
- * mutate it optimistically flips AuthProvider's `onboardedAt` so RootLayoutNav
- * stops routing to /onboarding instantly; on error it rolls the gate back to
- * null so the user stays in onboarding (snapshot → patch → rollback per
- * lib/mutations.md). onSuccess reconciles from the server's returned row.
+ * home_city and stamps onboarded_at (user-profile `complete_onboarding`). The
+ * local route gate changes only after the server confirms success, preventing
+ * a failed request from briefly releasing onboarding and racing navigation.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
@@ -34,7 +32,7 @@ interface OnboardingProfileRow {
 
 export function useCompleteOnboarding() {
     const qc = useQueryClient();
-    const { user, onboardedAt, setOnboardedAt } = useAuth();
+    const { user, setOnboardedAt } = useAuth();
 
     return useMutation({
         mutationFn: async (input: CompleteOnboardingInput) => {
@@ -46,19 +44,6 @@ export function useCompleteOnboarding() {
                     avatar_url: input.avatar_url ?? null,
                 },
             });
-        },
-
-        onMutate: (_input) => {
-            // Snapshot the tri-state gate, then release it optimistically so the
-            // redirect away from /onboarding is instant.
-            const previous = onboardedAt;
-            setOnboardedAt(new Date().toISOString());
-            return { previous };
-        },
-
-        onError: (_err, _input, ctx) => {
-            // Roll the gate back to whatever it was (null → stay in onboarding).
-            setOnboardedAt(ctx?.previous ?? null);
         },
 
         onSuccess: (row) => {

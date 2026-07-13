@@ -1,26 +1,23 @@
 /**
- * teachDemoUtils — pure beat logic + copy for TeachShareSheetDemo (TICKET-122).
- * JSX-free so the beat state machine + copy are unit-testable without the demo's
- * Reanimated import (mirrors the feed *Gate.ts convention).
+ * Pure state machine + copy for the full-screen TikTok import walkthrough.
  *
- * One onboarding step, five interaction-gated beats:
- *   0 — introduce the realistic practice flow
- *   1 — user MUST tap share on the fake reel
- *   2 — user MUST tap "Share to..." in the platform share drawer
- *   3 — user MUST tap Napkin in the iOS share-sheet replica
- *   4 — show the extracted restaurants in the wishlist — terminal until CTA
- *
- * All beat copy is Manrope (benefit / instruction) per copy doctrine; the single
- * serif moment is teach.tsx's brandLine, NOT anything here.
+ * Every transition is interaction-gated. Automated motion may reveal the next
+ * target, but it never advances the tutorial for the user.
  */
 
-export const BEAT_COUNT = 5;
+export const BEAT_COUNT = 6;
 export const LAST_BEAT = BEAT_COUNT - 1;
 
-export type TeachTarget = 'start' | 'share' | 'shareTo' | 'napkin';
+export type TeachTarget = 'start' | 'share' | 'tiktokMore' | 'iosMore' | 'napkin';
 
 /** The only accepted target at each non-terminal beat. */
-export const REQUIRED_TARGETS: readonly TeachTarget[] = ['start', 'share', 'shareTo', 'napkin'];
+export const REQUIRED_TARGETS: readonly TeachTarget[] = [
+    'start',
+    'share',
+    'tiktokMore',
+    'iosMore',
+    'napkin',
+];
 
 /** Advance only when the intended control was tapped; every other tap is ignored. */
 export function advanceOnTarget(beat: number, target: TeachTarget): number {
@@ -28,15 +25,15 @@ export function advanceOnTarget(beat: number, target: TeachTarget): number {
     return REQUIRED_TARGETS[beat] === target ? beat + 1 : beat;
 }
 
-/** Exact demo strings (cut hard). Assert these verbatim in tests. */
 export const TEACH_COPY = {
-    introTitle: 'Save this restaurant video',
-    introBody: 'Try the exact flow you will use from Reels or TikTok.',
+    introTitle: 'Save this TikTok',
+    introBody: 'Try the exact sharing flow once. Then every restaurant video is one tap from Napkin.',
     resultTitle: 'Saved from the whole video',
     resultBody: 'We watch the whole video — not just the caption.',
     startCta: 'Try it now',
     shareHint: 'Tap Share',
-    shareToHint: 'Tap Share to...',
+    tiktokMoreHint: 'Tap More',
+    iosMoreHint: 'Tap More',
     napkinHint: 'Tap Napkin',
     doneCta: 'Start saving',
 } as const;
