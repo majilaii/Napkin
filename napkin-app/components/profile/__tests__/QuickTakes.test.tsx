@@ -73,6 +73,11 @@ function pressableWith(renderer: any, prop: string, value: unknown) {
     return renderer.root.findAllByType('Pressable').find((node: any) => node.props[prop] === value);
 }
 
+function flattenStyle(style: any) {
+    const styles = Array.isArray(style) ? style.flat(Infinity) : [style];
+    return Object.assign({}, ...styles.filter(Boolean));
+}
+
 it('opens the restaurant from the expanded artwork without collapsing the take', () => {
     const { renderer, onOpenRestaurant, onEdit } = renderQuickTakes(PHOTO_TAKE);
     const artLink = pressableWith(
@@ -114,6 +119,48 @@ it('keeps collapse, owner edit, and restaurant navigation as separate actions', 
     act(() => edit.props.onPress());
     expect(onEdit).toHaveBeenCalledTimes(1);
     expect(onOpenRestaurant).not.toHaveBeenCalled();
+});
+
+it('places a full-size collapse control at the top-right above the artwork', () => {
+    const { renderer } = renderQuickTakes(PHOTO_TAKE);
+    const detail = renderer.root.findByProps({ testID: 'quick-take-detail' });
+    const aside = renderer.root.findByProps({ testID: 'quick-take-detail-aside' });
+    const collapse = pressableWith(renderer, 'testID', 'quick-take-collapse-control');
+    const artLink = pressableWith(
+        renderer,
+        'accessibilityLabel',
+        'Open Evelyn’s Table restaurant page',
+    );
+    const railPressables = aside.findAllByType('Pressable');
+    const collapseSurface = collapse.findAllByType('AnimatedView')[0];
+    const artSurface = artLink.findAllByType('AnimatedView')[0];
+
+    expect(
+        detail.children
+            .filter((node: any) => typeof node !== 'string')
+            .map((node: any) => node.props.testID),
+    ).toEqual(['quick-take-detail-copy', 'quick-take-detail-aside']);
+    expect(flattenStyle(detail.props.style)).toMatchObject({ flexDirection: 'row' });
+    expect(railPressables.map((node: any) => node.props.accessibilityLabel)).toEqual([
+        'Collapse Best value: Evelyn’s Table',
+        'Open Evelyn’s Table restaurant page',
+    ]);
+    expect(flattenStyle(aside.props.style)).toMatchObject({
+        width: 108,
+        alignItems: 'flex-end',
+    });
+    expect(flattenStyle(collapseSurface.props.style)).toMatchObject({
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+    });
+    expect(flattenStyle(artSurface.props.style)).toMatchObject({
+        width: 108,
+        height: 108,
+    });
+    expect(flattenStyle(collapseSurface.props.style).position).toBeUndefined();
+    expect(flattenStyle(artSurface.props.style).position).toBeUndefined();
 });
 
 it('uses the monogram fallback as the same restaurant link', () => {

@@ -136,18 +136,14 @@ function QuickTakeRow({
             style={!isLast ? [styles.rule, { borderBottomColor: palette.dividerSoft }] : undefined}
         >
             {open ? (
-                <View style={[styles.detail, { backgroundColor: palette.surfaceJournalLow }]}>
-                    <Pressable
-                        onPress={onToggle}
-                        style={({ pressed }) => [styles.detailCopy, pressed ? styles.copyPressed : null]}
-                        accessibilityRole="button"
-                        accessibilityState={{ expanded: true }}
-                        accessibilityLabel={accessibilityLabel}
-                        accessibilityHint="Collapses this take"
-                    >
+                <View
+                    style={[styles.detail, { backgroundColor: palette.surfaceJournalLow }]}
+                    testID="quick-take-detail"
+                >
+                    <View style={styles.detailCopy} testID="quick-take-detail-copy">
                         <View>
                             <Text
-                                style={[Type.sectionKicker, styles.detailPrompt, { color: palette.primary }]}
+                                style={[Type.sectionKicker, { color: palette.primary }]}
                             >
                                 {prompt}
                             </Text>
@@ -165,11 +161,24 @@ function QuickTakeRow({
                                 </Text>
                             ) : null}
                         </View>
-                        <Animated.View style={[styles.detailChevron, chevronStyle]}>
-                            <Ionicons name="chevron-down" size={18} color={palette.textMuted} />
-                        </Animated.View>
-                    </Pressable>
-                    <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
+                    </View>
+                    <View style={styles.detailAside} testID="quick-take-detail-aside">
+                        <PressableScale
+                            onPress={onToggle}
+                            scaleTo={0.96}
+                            style={styles.collapseButton}
+                            accessibilityRole="button"
+                            accessibilityState={{ expanded: true }}
+                            accessibilityLabel={`Collapse ${prompt}: ${take.name}`}
+                            accessibilityHint="Collapses this take"
+                            testID="quick-take-collapse-control"
+                        >
+                            <Animated.View style={chevronStyle}>
+                                <Ionicons name="chevron-down" size={18} color={palette.textMuted} />
+                            </Animated.View>
+                        </PressableScale>
+                        <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
+                    </View>
                 </View>
             ) : (
                 <Pressable
@@ -278,7 +287,7 @@ const styles = StyleSheet.create({
         margin: 4,
         paddingLeft: 14,
         paddingRight: 12,
-        paddingVertical: 14,
+        paddingVertical: 6,
         borderRadius: 12,
         flexDirection: 'row',
         alignItems: 'stretch',
@@ -286,7 +295,16 @@ const styles = StyleSheet.create({
     },
     detailCopy: { flex: 1, minWidth: 0, justifyContent: 'center' },
     copyPressed: { opacity: 0.78 },
-    detailPrompt: { paddingRight: Spacing.lg },
+    detailAside: {
+        width: 108,
+        alignItems: 'flex-end',
+    },
+    collapseButton: {
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     detailName: {
         ...Type.editorialTitle,
         marginTop: 7,
@@ -298,7 +316,7 @@ const styles = StyleSheet.create({
     },
     art: {
         width: 108,
-        minHeight: 136,
+        height: 108,
         borderRadius: 10,
         borderWidth: 1,
         overflow: 'hidden',
@@ -320,7 +338,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    detailChevron: { position: 'absolute', top: -4, right: -4 },
     empty: {
         minHeight: 52,
         marginHorizontal: Spacing.lg,
