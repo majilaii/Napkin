@@ -45,6 +45,7 @@ import { useColorScheme as useScheme } from '@/hooks/use-color-scheme';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { track, trackError, flushNow } from '@/lib/track';
 import { initSentry, captureError, wrapRootComponent } from '@/lib/sentry';
+import { ConnectivityProvider } from '@/providers/ConnectivityProvider';
 
 // TICKET-121: before any render. No-op until EXPO_PUBLIC_SENTRY_DSN exists.
 initSentry();
@@ -534,13 +535,15 @@ function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <ToastProvider>
-            <RootLayoutNav />
-          </ToastProvider>
-        </AuthProvider>
-      </QueryClientProvider>
+      <ConnectivityProvider>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <ToastProvider>
+              <RootLayoutNav />
+            </ToastProvider>
+          </AuthProvider>
+        </QueryClientProvider>
+      </ConnectivityProvider>
     </GestureHandlerRootView>
   );
 }

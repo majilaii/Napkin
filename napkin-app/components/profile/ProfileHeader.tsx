@@ -16,11 +16,19 @@
  * initials with no state to track. Gear renders inline, not floating.
  */
 import React from 'react';
-import { View, Text, Pressable, Image, StyleSheet, useWindowDimensions } from 'react-native';
+import {
+    ActivityIndicator,
+    View,
+    Text,
+    Pressable,
+    Image,
+    StyleSheet,
+    useWindowDimensions,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type {
     Calibration,
@@ -36,6 +44,7 @@ import { NotifBell } from '@/components/notifications/NotifBell';
 import { useUnreadCount } from '@/hooks/notifications';
 import { useAuth } from '@/providers/AuthProvider';
 import { profileStatSegments } from './statsLine';
+import { PressableScale } from '@/components/ui/napkin';
 
 interface Props {
     profile: UserProfileRow;
@@ -74,6 +83,10 @@ interface Props {
      * so a tappable count would dead-end. Defaults to true (every other tier).
      */
     countsInteractive?: boolean;
+    /** Own profile: add an avatar without navigating through Settings. */
+    onAddPhoto?: () => void;
+    /** Covers source picker presentation, compression, upload, and profile save. */
+    isAddingPhoto?: boolean;
 }
 
 function initials(displayName: string): string {
@@ -82,7 +95,21 @@ function initials(displayName: string): string {
     return displayName.slice(0, 1).toUpperCase();
 }
 
-export function ProfileHeader({ profile, isSelf, relationship, stats, social, isFollowingViewer = false, followsViewer = false, calibration, viewerRatedEntryCount, onSafetyMenu, countsInteractive = true }: Props) {
+export function ProfileHeader({
+    profile,
+    isSelf,
+    relationship,
+    stats,
+    social,
+    isFollowingViewer = false,
+    followsViewer = false,
+    calibration,
+    viewerRatedEntryCount,
+    onSafetyMenu,
+    countsInteractive = true,
+    onAddPhoto,
+    isAddingPhoto = false,
+}: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -164,6 +191,45 @@ export function ProfileHeader({ profile, isSelf, relationship, stats, social, is
                             source={{ uri: profile.avatar_url }}
                             style={styles.avatarPhoto}
                         />
+                    ) : null}
+                    {isSelf && !profile.avatar_url && onAddPhoto ? (
+                        <View style={styles.cameraHitTarget}>
+                            <PressableScale
+                                onPress={onAddPhoto}
+                                disabled={isAddingPhoto}
+                                haptic="selection"
+                                hitSlop={8}
+                                accessibilityRole="button"
+                                accessibilityLabel="Add a profile photo"
+                                accessibilityHint="Opens camera or photo library"
+                                accessibilityState={{
+                                    busy: isAddingPhoto,
+                                    disabled: isAddingPhoto,
+                                }}
+                                testID="profile-add-photo"
+                                style={[
+                                    styles.cameraBadge,
+                                    Shadow.clip,
+                                    {
+                                        backgroundColor: palette.primary,
+                                        borderColor: palette.background,
+                                    },
+                                ]}
+                            >
+                                {isAddingPhoto ? (
+                                    <ActivityIndicator
+                                        size="small"
+                                        color={palette.textInverse}
+                                    />
+                                ) : (
+                                    <Ionicons
+                                        name="camera-outline"
+                                        size={14}
+                                        color={palette.textInverse}
+                                    />
+                                )}
+                            </PressableScale>
+                        </View>
                     ) : null}
                 </View>
 
@@ -330,6 +396,23 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         borderWidth: 1,
         borderColor: 'rgba(0, 0, 0, 0.08)',
+    },
+    cameraHitTarget: {
+        position: 'absolute',
+        right: 0,
+        bottom: 0,
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cameraBadge: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        borderWidth: 2,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     identity: {
         flex: 1,
