@@ -9,7 +9,7 @@
  * manifest: prune to kept spots, flip mode → 'auto', poke the drain (the
  * normal save+route path — no duplicated save logic here).
  */
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -22,9 +22,7 @@ import { useToast } from '@/providers/ToastProvider';
 import { track } from '@/lib/track';
 import {
     getImport,
-    setImportSpots,
-    setImportDestinations,
-    setImportMode,
+    confirmImportReview,
     removeImport,
     pokeImportQueue,
     type PersistedImportSpot,
@@ -32,11 +30,13 @@ import {
 import { truncationNote } from '@/lib/importTruncation';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 import { useMyLists } from '@/hooks/lists/useMyLists';
+import { useTables } from '@/hooks/tables/useTables';
 import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
 import { ImportSourceCard } from '@/components/wishlist/ImportSourceCard';
 import { ImportListPickerSheet } from '@/components/lists/ImportListPickerSheet';
+import { TablePickerSheet } from '@/components/create-entry';
 import { importSourceLabel, manifestDisplaySource } from '@/components/wishlist/importSourceLabel';
-import { createManualImportSpot } from '@/lib/importReview';
+import { createManualImportSpot, reconcileImportSpotTables } from '@/lib/importReview';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -65,18 +65,31 @@ export default function ImportReviewScreen() {
     );
     const [fixTarget, setFixTarget] = useState<PersistedImportSpot | null>(null);
     const [addingSpot, setAddingSpot] = useState(false);
+    const confirmingRef = useRef(false);
+    const [confirming, setConfirming] = useState(false);
 
-    // TICKET-181: editable destinations. The wishlist pin defaults to the manifest's
-    // pinWishlist (?? true — the base destination); lists are chosen here (the share
-    // flow never picks them). Table destinations are NOT surfaced (v1) — they ride
-    // untouched on the manifest and are never mutated by this editor.
+    // Editable destinations live here, after extraction, instead of crowding the
+    // share extension before the user even knows what Napkin found.
     const { user } = useAuth();
     const { data: myLists = [] } = useMyLists(user?.id);
-    // When the share pre-chose a table, the wishlist pin is LOCKED on: a table share
+    const {
+        data: tableMemberships = [],
+        isLoading: tablesLoading,
+        error: tablesError,
+        refetch: refetchTables,
+    } = useTables(user?.id);
+    const tables = useMemo(
+        () => tableMemberships.map((membership) => membership.tables),
+        [tableMemberships],
+    );
+    const [tableIds, setTableIds] = useState<string[]>(
+        () => manifest?.destinations?.tableIds ?? [],
+    );
+    // When a table is chosen, the wishlist pin is LOCKED on: a table share
     // is a share OF the save (fn_save_import_spot mints both), so list-only + table
     // is not a representable state. The drain forces pin_wishlist=true on the table
     // fan-out for the same reason.
-    const hasTableDestination = (manifest?.destinations?.tableIds?.length ?? 0) > 0;
+    const hasTableDestination = tableIds.length > 0;
     const [pinWishlist, setPinWishlist] = useState<boolean>(
         () => hasTableDestination || (manifest?.pinWishlist ?? true),
     );
@@ -85,6 +98,7 @@ export default function ImportReviewScreen() {
         () => manifest?.destinations?.newListTitles ?? [],
     );
     const [listSheetOpen, setListSheetOpen] = useState(false);
+    const [tableSheetOpen, setTableSheetOpen] = useState(false);
 
     const toggleList = useCallback(
         (id: string) =>
@@ -99,6 +113,12 @@ export default function ImportReviewScreen() {
         (title: string) => setNewListTitles((prev) => prev.filter((t) => t !== title)),
         [],
     );
+    const commitTables = useCallback((ids: string[]) => {
+        const uniqueIds = [...new Set(ids)];
+        setTableIds(uniqueIds);
+        if (uniqueIds.length > 0) setPinWishlist(true);
+        setTableSheetOpen(false);
+    }, []);
 
     // Chips for the "saving to" card: chosen existing lists (name resolved) + new
     // titles. Tapping a list chip removes it. Serif italic — a list name is content.
@@ -117,11 +137,31 @@ export default function ImportReviewScreen() {
         ],
         [listIds, newListTitles, myLists, toggleList, removeNewTitle],
     );
+    const tableChips = useMemo(
+        () =>
+            tableIds.map((id) => ({
+                id,
+                name: tables.find((table) => table.id === id)?.name ?? 'table',
+            })),
+        [tableIds, tables],
+    );
 
     // Zero-destination guard: with the wishlist pin off AND no lists chosen, there's
     // nowhere for the spots to go — the save disables (the greyed button IS the
-    // message; no murmur sentence). Tables aren't counted (not shown/editable here).
-    const hasDestination = pinWishlist || listChips.length > 0;
+    // message; no murmur sentence). A table also implies the wishlist pin.
+    const hasDestination = pinWishlist || listChips.length > 0 || tableIds.length > 0;
+    const unmatchedTableCount = useMemo(
+        () =>
+            tableIds.length === 0
+                ? 0
+                : spots.filter(
+                      (spot) =>
+                          ticked.has(spot.candidate_id) &&
+                          !spot.restaurant_id &&
+                          !spot.external_id,
+                  ).length,
+        [spots, tableIds.length, ticked],
+    );
 
     const toggle = (id: string) =>
         setTicked((prev) => {
@@ -180,12 +220,12 @@ export default function ImportReviewScreen() {
                 return;
             }
 
-            const added = createManualImportSpot(r, manifest?.destinations.tableIds ?? []);
+            const added = createManualImportSpot(r, tableIds);
             setSpots((prev) => [...prev, added]);
             setTicked((prev) => new Set(prev).add(added.candidate_id));
             toast.show(`added ${r.name}`);
         },
-        [manifest?.destinations.tableIds, spots, toast],
+        [spots, tableIds, toast],
     );
 
     const keptCount = ticked.size;
@@ -201,7 +241,9 @@ export default function ImportReviewScreen() {
     );
 
     const handleSave = () => {
-        if (!manifest || keptCount === 0 || !hasDestination) return;
+        if (!manifest || keptCount === 0 || !hasDestination || confirmingRef.current) return;
+        confirmingRef.current = true;
+        setConfirming(true);
         const kept = spots.filter((s) => ticked.has(s.candidate_id));
         // TICKET-088: how much human correction the extraction needed.
         const originalById = new Map(
@@ -213,20 +255,26 @@ export default function ImportReviewScreen() {
         }).length;
         const addedN = kept.filter((s) => !originalById.has(s.candidate_id)).length;
         const removedN = (manifest.spots ?? []).filter((s) => !ticked.has(s.candidate_id)).length;
+        const reconciledSpots = kept.map((spot) => reconcileImportSpotTables(spot, tableIds));
+        const confirmed = confirmImportReview(manifest.jobId, {
+            spots: reconciledSpots,
+            listIds,
+            newListTitles,
+            tableIds,
+            pinWishlist,
+        });
+        if (!confirmed) {
+            confirmingRef.current = false;
+            setConfirming(false);
+            toast.show("couldn't save your review — try again");
+            return;
+        }
         track('import_review_edits', {
             kept_n: kept.length,
             removed_n: removedN,
             fixed_n: fixedN,
             added_n: addedN,
         });
-        setImportSpots(manifest.jobId, kept); // prune to confirmed (incl. fixes)
-        // TICKET-181: persist the edited destinations BEFORE the mode flip. The
-        // drain-release below flips mode → 'auto' and re-pokes; if a crash lands
-        // between the flip and this write, the re-drain must save to the EDITED
-        // destinations (list-only pin + chosen lists), never the stale ones. Tables
-        // ride untouched (setImportDestinations never writes tableIds).
-        setImportDestinations(manifest.jobId, { listIds, newListTitles, pinWishlist });
-        setImportMode(manifest.jobId, 'auto'); // release for the normal save path
         pokeImportQueue(); // kick the drain now
         toast.show(`saving ${keptCount} ${keptCount === 1 ? 'spot' : 'spots'}…`);
         router.back();
@@ -426,10 +474,8 @@ export default function ImportReviewScreen() {
                     );
                 })}
 
-                {/* TICKET-181: "saving to" — the wishlist pin toggle + a chip per chosen
-                    list + a dashed "+ list". Replaces the old "→ wishlist · 1 list"
-                    murmur. Chips: outlineVariant border, terracotta-soft fill when on;
-                    list NAMES are serif italic (content), functional labels Manrope. */}
+                {/* "saving to" stays inside the informed review step: wishlist,
+                    lists, and tables are chosen only after the extraction is visible. */}
                 <Text style={[styles.savingKicker, { color: palette.textMuted }]}>SAVING TO</Text>
                 <View style={styles.chipRow}>
                     {/* wishlist toggle — locked on when a table share rides this import */}
@@ -482,7 +528,26 @@ export default function ImportReviewScreen() {
                         </Pressable>
                     ))}
 
-                    {/* dashed + list */}
+                    {/* one chip per chosen Table — tap to remove */}
+                    {tableChips.map((table) => (
+                        <Pressable
+                            key={`table:${table.id}`}
+                            onPress={() => setTableIds((prev) => prev.filter((id) => id !== table.id))}
+                            style={[
+                                styles.chip,
+                                { backgroundColor: palette.primaryMuted, borderColor: palette.outlineVariant },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`remove ${table.name} table destination`}
+                        >
+                            <Ionicons name="checkmark" size={14} color={palette.primary} />
+                            <Text style={[styles.chipName, { color: palette.primary }]} numberOfLines={1}>
+                                {table.name}
+                            </Text>
+                        </Pressable>
+                    ))}
+
+                    {/* deferred destination pickers */}
                     <Pressable
                         onPress={() => setListSheetOpen(true)}
                         style={[styles.chip, styles.addChip, { borderColor: palette.outlineVariant }]}
@@ -491,20 +556,42 @@ export default function ImportReviewScreen() {
                     >
                         <Text style={[styles.chipLabel, { color: palette.textSecondary }]}>+ list</Text>
                     </Pressable>
+                    <Pressable
+                        onPress={() => setTableSheetOpen(true)}
+                        style={[styles.chip, styles.addChip, { borderColor: palette.outlineVariant }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="share to tables"
+                    >
+                        <Text style={[styles.chipLabel, { color: palette.textSecondary }]}>+ table</Text>
+                    </Pressable>
                 </View>
+                {unmatchedTableCount > 0 ? (
+                    <Text style={[styles.destinationNote, { color: palette.textMuted }]}>
+                        {`${unmatchedTableCount} unmatched ${unmatchedTableCount === 1 ? 'spot' : 'spots'} won’t be shared to tables`}
+                    </Text>
+                ) : null}
             </ScrollView>
 
             <View style={[styles.footer, { paddingBottom: insets.bottom + 14, backgroundColor: palette.background }]}>
                 <Pressable
                     onPress={handleSave}
-                    disabled={keptCount === 0 || !hasDestination}
+                    disabled={keptCount === 0 || !hasDestination || confirming}
                     style={[
                         styles.cta,
-                        { backgroundColor: keptCount === 0 || !hasDestination ? palette.outlineVariant : palette.primary },
+                        {
+                            backgroundColor:
+                                keptCount === 0 || !hasDestination || confirming
+                                    ? palette.outlineVariant
+                                    : palette.primary,
+                        },
                     ]}
                 >
                     <Text style={[styles.ctaLabel, { color: '#fffdf8' }]}>
-                        {keptCount === 0 ? 'keep at least one' : `save ${keptCount} ${keptCount === 1 ? 'spot' : 'spots'}`}
+                        {confirming
+                            ? 'saving…'
+                            : keptCount === 0
+                                ? 'keep at least one'
+                                : `save ${keptCount} ${keptCount === 1 ? 'spot' : 'spots'}`}
                     </Text>
                 </Pressable>
                 <Pressable onPress={handleDiscard} hitSlop={8} style={styles.discard}>
@@ -542,6 +629,21 @@ export default function ImportReviewScreen() {
                 onAddNewTitle={addNewTitle}
                 onRemoveNewTitle={removeNewTitle}
             />
+
+            <TablePickerSheet
+                visible={tableSheetOpen}
+                tables={tables}
+                selectedIds={tableIds}
+                onCommit={commitTables}
+                palette={palette}
+                isLoading={tablesLoading}
+                loadError={tablesError?.message ?? null}
+                onRetryLoad={() => {
+                    void refetchTables();
+                }}
+                title="share to tables?"
+                clearLabel="don’t share to a table"
+            />
         </View>
     );
 }
@@ -575,6 +677,12 @@ const styles = StyleSheet.create({
         marginTop: Spacing.sm,
     },
     addSpotLabel: { fontFamily: 'Manrope_700Bold', fontSize: 13, letterSpacing: 0.3 },
+    destinationNote: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        lineHeight: 17,
+        marginTop: Spacing.sm,
+    },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -617,11 +725,13 @@ const styles = StyleSheet.create({
     chip: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 5,
         borderWidth: 1,
         borderRadius: Radius.full,
         paddingVertical: 7,
         paddingHorizontal: 13,
+        minHeight: 44,
         maxWidth: '100%',
     },
     addChip: {

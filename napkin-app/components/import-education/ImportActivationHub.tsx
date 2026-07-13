@@ -4,8 +4,8 @@
  *
  * Two variants:
  *   full    — empty Wishlist / empty imports hub. Source-app row (names + neutral
- *             share glyphs) + the gesture line + the auto-vs-review mode line
- *             (closes gap 8) + optional "your imports" link (closes gap 9).
+ *             share glyphs) + the gesture line + the review-first line (closes
+ *             gap 8) + optional "your imports" link (closes gap 9).
  *   compact — one standing row that persists post-first-import; taps through to the
  *             imports hub (closes gap 9). Non-interactive when no onOpenHub is given
  *             (e.g. rendered ON the hub itself).
@@ -20,7 +20,6 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors } from '@/constants/theme';
-import { getDefaultImportMode } from '@/lib/importQueue';
 import { ShareGlyph } from './ShareGlyph';
 import {
     SOURCE_APPS,
@@ -28,7 +27,6 @@ import {
     HUB_COPY,
     COMPACT_LINE,
     resolveHubVariant,
-    modeLine,
 } from './activationHubUtils';
 
 type Palette = typeof Colors.light;
@@ -78,7 +76,6 @@ export function ImportActivationHub({
     }
 
     // ── Full — the show-don't-tell activation block ───────────────────────────
-    const mode = getDefaultImportMode();
     return (
         <View style={styles.fullRoot}>
             <Text style={[styles.kicker, { color: palette.textMuted }]}>{HUB_COPY.kicker}</Text>
@@ -95,7 +92,7 @@ export function ImportActivationHub({
             </View>
 
             <Text style={[styles.gesture, { color: palette.textMuted }]}>{HUB_COPY.gesture}</Text>
-            <Text style={[styles.mode, { color: palette.textSecondary }]}>{modeLine(mode)}</Text>
+            <Text style={[styles.mode, { color: palette.textSecondary }]}>{HUB_COPY.modeReview}</Text>
 
             {showHubLink && onOpenHub ? (
                 <Pressable
