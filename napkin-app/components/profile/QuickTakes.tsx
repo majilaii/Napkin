@@ -23,24 +23,38 @@ type Props = {
     takes: ProfileQuickTake[];
     isOwner?: boolean;
     onEdit?: () => void;
+    onOpenRestaurant: (restaurantId: string) => void;
 };
 
 type Palette = typeof Colors.light;
 
-function RestaurantArt({ take, palette, isDark }: { take: ProfileQuickTake; palette: Palette; isDark: boolean }) {
+function RestaurantArt({
+    take,
+    palette,
+    onPress,
+}: {
+    take: ProfileQuickTake;
+    palette: Palette;
+    onPress: () => void;
+}) {
     const [failed, setFailed] = useState(false);
     useEffect(() => setFailed(false), [take.photo_url]);
     const showPhoto = !!take.photo_url && !failed;
 
     return (
-        <View
+        <PressableScale
+            onPress={onPress}
+            scaleTo={0.96}
             style={[
                 styles.art,
                 {
                     backgroundColor: tintFor(take.restaurant_id, palette),
-                    borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
+                    borderColor: palette.imageOutline,
                 },
             ]}
+            accessibilityRole="link"
+            accessibilityLabel={`Open ${take.name} restaurant page`}
+            accessibilityHint="Shows the restaurant’s details"
         >
             {showPhoto ? (
                 <>
@@ -50,6 +64,7 @@ function RestaurantArt({ take, palette, isDark }: { take: ProfileQuickTake; pale
                         contentFit="cover"
                         transition={160}
                         onError={() => setFailed(true)}
+                        accessible={false}
                     />
                     <View
                         style={[
@@ -63,11 +78,19 @@ function RestaurantArt({ take, palette, isDark }: { take: ProfileQuickTake; pale
                     />
                 </>
             ) : (
-                <Text style={[styles.monogram, { color: palette.primary }]}>
+                <Text style={[styles.monogram, { color: palette.primary }]} accessible={false}>
                     {(take.name.trim()[0] ?? '·').toUpperCase()}
                 </Text>
             )}
-        </View>
+            <View
+                style={[styles.openBadge, { backgroundColor: palette.scrimFrost }]}
+                pointerEvents="none"
+                accessible={false}
+                importantForAccessibility="no-hide-descendants"
+            >
+                <Ionicons name="chevron-forward" size={15} color={palette.text} />
+            </View>
+        </PressableScale>
     );
 }
 
@@ -75,15 +98,15 @@ function QuickTakeRow({
     take,
     open,
     onToggle,
+    onOpenRestaurant,
     palette,
-    isDark,
     isLast,
 }: {
     take: ProfileQuickTake;
     open: boolean;
     onToggle: () => void;
+    onOpenRestaurant: () => void;
     palette: Palette;
-    isDark: boolean;
     isLast: boolean;
 }) {
     const rotation = useSharedValue(open ? 1 : 0);
@@ -112,22 +135,20 @@ function QuickTakeRow({
             layout={LinearTransition.duration(230)}
             style={!isLast ? [styles.rule, { borderBottomColor: palette.dividerSoft }] : undefined}
         >
-            <Pressable
-                onPress={onToggle}
-                style={({ pressed }) => [
-                    open ? styles.detail : styles.summary,
-                    open ? { backgroundColor: palette.surfaceJournalLow } : null,
-                    pressed ? { opacity: 0.78 } : null,
-                ]}
-                accessibilityRole="button"
-                accessibilityState={{ expanded: open }}
-                accessibilityLabel={accessibilityLabel}
-                accessibilityHint={open ? 'Collapses this take' : 'Expands this take'}
-            >
-                {open ? (
-                    <>
-                        <View style={styles.detailCopy}>
-                            <Text style={[Type.sectionKicker, { color: palette.primary }]}>
+            {open ? (
+                <View style={[styles.detail, { backgroundColor: palette.surfaceJournalLow }]}>
+                    <Pressable
+                        onPress={onToggle}
+                        style={({ pressed }) => [styles.detailCopy, pressed ? styles.copyPressed : null]}
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded: true }}
+                        accessibilityLabel={accessibilityLabel}
+                        accessibilityHint="Collapses this take"
+                    >
+                        <View>
+                            <Text
+                                style={[Type.sectionKicker, styles.detailPrompt, { color: palette.primary }]}
+                            >
                                 {prompt}
                             </Text>
                             <Text style={[styles.detailName, { color: palette.text }]} numberOfLines={3}>
@@ -144,30 +165,37 @@ function QuickTakeRow({
                                 </Text>
                             ) : null}
                         </View>
-                        <RestaurantArt take={take} palette={palette} isDark={isDark} />
                         <Animated.View style={[styles.detailChevron, chevronStyle]}>
                             <Ionicons name="chevron-down" size={18} color={palette.textMuted} />
                         </Animated.View>
-                    </>
-                ) : (
-                    <>
-                        <Text style={[Type.sectionKicker, styles.prompt, { color: palette.primary }]} numberOfLines={2}>
-                            {prompt}
-                        </Text>
-                        <Text style={[Type.editorialBody, styles.answer, { color: palette.text }]} numberOfLines={1}>
-                            {take.name}
-                        </Text>
-                        <Animated.View style={chevronStyle}>
-                            <Ionicons name="chevron-down" size={18} color={palette.textMuted} />
-                        </Animated.View>
-                    </>
-                )}
-            </Pressable>
+                    </Pressable>
+                    <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
+                </View>
+            ) : (
+                <Pressable
+                    onPress={onToggle}
+                    style={({ pressed }) => [styles.summary, pressed ? styles.copyPressed : null]}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: false }}
+                    accessibilityLabel={accessibilityLabel}
+                    accessibilityHint="Expands this take"
+                >
+                    <Text style={[Type.sectionKicker, styles.prompt, { color: palette.primary }]} numberOfLines={2}>
+                        {prompt}
+                    </Text>
+                    <Text style={[Type.editorialBody, styles.answer, { color: palette.text }]} numberOfLines={1}>
+                        {take.name}
+                    </Text>
+                    <Animated.View style={chevronStyle}>
+                        <Ionicons name="chevron-down" size={18} color={palette.textMuted} />
+                    </Animated.View>
+                </Pressable>
+            )}
         </Animated.View>
     );
 }
 
-export function QuickTakes({ takes, isOwner = false, onEdit }: Props) {
+export function QuickTakes({ takes, isOwner = false, onEdit, onOpenRestaurant }: Props) {
     const scheme = (useColorScheme() ?? 'light') as keyof typeof Colors;
     const palette = Colors[scheme] as Palette;
     const [openKey, setOpenKey] = useState<string | null>(takes[0]?.prompt_key ?? null);
@@ -200,8 +228,8 @@ export function QuickTakes({ takes, isOwner = false, onEdit }: Props) {
                             onToggle={() =>
                                 setOpenKey((current) => (current === take.prompt_key ? null : take.prompt_key))
                             }
+                            onOpenRestaurant={() => onOpenRestaurant(take.restaurant_id)}
                             palette={palette}
-                            isDark={scheme === 'dark'}
                             isLast={index === takes.length - 1}
                         />
                     ))}
@@ -257,6 +285,8 @@ const styles = StyleSheet.create({
         gap: 14,
     },
     detailCopy: { flex: 1, minWidth: 0, justifyContent: 'center' },
+    copyPressed: { opacity: 0.78 },
+    detailPrompt: { paddingRight: Spacing.lg },
     detailName: {
         ...Type.editorialTitle,
         marginTop: 7,
@@ -270,7 +300,7 @@ const styles = StyleSheet.create({
         width: 108,
         minHeight: 136,
         borderRadius: 10,
-        borderWidth: StyleSheet.hairlineWidth,
+        borderWidth: 1,
         overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
@@ -280,7 +310,17 @@ const styles = StyleSheet.create({
         fontSize: 36,
         lineHeight: 42,
     },
-    detailChevron: { position: 'absolute', top: 10, right: 10 },
+    openBadge: {
+        position: 'absolute',
+        right: 8,
+        bottom: 8,
+        width: 32,
+        height: 32,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    detailChevron: { position: 'absolute', top: -4, right: -4 },
     empty: {
         minHeight: 52,
         marginHorizontal: Spacing.lg,

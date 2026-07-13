@@ -326,6 +326,9 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                     takes={profileData.quick_takes ?? []}
                     isOwner={isSelf}
                     onEdit={isSelf ? () => setEditQuickTakesOpen(true) : undefined}
+                    onOpenRestaurant={(restaurantId) =>
+                        router.push({ pathname: '/restaurant/[id]', params: { id: restaurantId } })
+                    }
                 />
             )}
 
