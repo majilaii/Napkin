@@ -69,6 +69,7 @@ import {
     effectiveCommentCount,
 } from '@/hooks/posts/usePostInteractions';
 import type { Comment, Scope, TargetType } from '@/hooks/posts/usePostInteractions';
+import { getEntryInteractionContext } from '@/lib/entryInteractions';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -405,21 +406,23 @@ function EntryDetailScreen() {
         supperEnabled ? entry?.supper_id ?? null : null,
     );
 
-    // Post interactions — scope determined by viewAs param
-    // Table scope = default (existing behavior); public scope = restaurant-page review view
-    const interactionScope = isPublicView ? 'public' : 'table' as const;
+    // Private solo journal entries have no Table interaction target. Gate both
+    // the query and realtime subscription on the same context used by the UI so
+    // opening a solo entry never calls post-interactions with scope=table.
+    const interactionContext = getEntryInteractionContext(entry, isPublicView);
+    const interactionScope = interactionContext.scope;
     const {
         data: interactions,
         isPending: interactionsPending,
         isError: interactionsError,
     } = usePostInteractions(
-        entry?.id ? 'entry' : null,
-        entry?.id ?? null,
+        interactionContext.targetType,
+        interactionContext.targetId,
         interactionScope,
     );
     usePostInteractionsRealtime({
-        targetType: entry?.id ? 'entry' : null,
-        targetId: entry?.id ?? null,
+        targetType: interactionContext.targetType,
+        targetId: interactionContext.targetId,
         scope: interactionScope,
     });
     // entry_photos for carousel (resolved after entry loads) — now returns full rows with id
@@ -1024,7 +1027,7 @@ function EntryDetailScreen() {
 
     // Engagement surface — only on table-scoped or public-viewed entries (a pure
     // solo feed-only entry has no reactions/replies). Mirrors the old pill gate.
-    const hasEngagement = !!entry.id && (isPublicView || !!entry.table_id);
+    const hasEngagement = interactionContext.enabled;
 
     // Add-a-photo is an EDIT affordance — only in edit mode (⋯ → edit review), never
     // on the read surface. Capped at MAX_PHOTOS; never in public view.
