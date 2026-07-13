@@ -121,17 +121,17 @@ it('keeps collapse, owner edit, and restaurant navigation as separate actions', 
     expect(onOpenRestaurant).not.toHaveBeenCalled();
 });
 
-it('places a full-size collapse control at the top-right above the artwork', () => {
+it('places the artwork beside the collapse control at the card top-right', () => {
     const { renderer } = renderQuickTakes(PHOTO_TAKE);
     const detail = renderer.root.findByProps({ testID: 'quick-take-detail' });
-    const aside = renderer.root.findByProps({ testID: 'quick-take-detail-aside' });
+    const actions = renderer.root.findByProps({ testID: 'quick-take-detail-actions' });
     const collapse = pressableWith(renderer, 'testID', 'quick-take-collapse-control');
     const artLink = pressableWith(
         renderer,
         'accessibilityLabel',
         'Open Evelyn’s Table restaurant page',
     );
-    const railPressables = aside.findAllByType('Pressable');
+    const actionPressables = actions.findAllByType('Pressable');
     const collapseSurface = collapse.findAllByType('AnimatedView')[0];
     const artSurface = artLink.findAllByType('AnimatedView')[0];
 
@@ -139,15 +139,21 @@ it('places a full-size collapse control at the top-right above the artwork', () 
         detail.children
             .filter((node: any) => typeof node !== 'string')
             .map((node: any) => node.props.testID),
-    ).toEqual(['quick-take-detail-copy', 'quick-take-detail-aside']);
-    expect(flattenStyle(detail.props.style)).toMatchObject({ flexDirection: 'row' });
-    expect(railPressables.map((node: any) => node.props.accessibilityLabel)).toEqual([
-        'Collapse Best value: Evelyn’s Table',
+    ).toEqual(['quick-take-detail-copy', 'quick-take-detail-actions']);
+    expect(flattenStyle(detail.props.style)).toMatchObject({
+        flexDirection: 'row',
+        paddingRight: 0,
+        paddingTop: 0,
+    });
+    expect(actionPressables.map((node: any) => node.props.accessibilityLabel)).toEqual([
         'Open Evelyn’s Table restaurant page',
+        'Collapse Best value: Evelyn’s Table',
     ]);
-    expect(flattenStyle(aside.props.style)).toMatchObject({
-        width: 108,
-        alignItems: 'flex-end',
+    expect(flattenStyle(actions.props.style)).toMatchObject({
+        width: 156,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 4,
     });
     expect(flattenStyle(collapseSurface.props.style)).toMatchObject({
         width: 44,
@@ -157,7 +163,7 @@ it('places a full-size collapse control at the top-right above the artwork', () 
     });
     expect(flattenStyle(artSurface.props.style)).toMatchObject({
         width: 108,
-        height: 108,
+        height: 136,
     });
     expect(flattenStyle(collapseSurface.props.style).position).toBeUndefined();
     expect(flattenStyle(artSurface.props.style).position).toBeUndefined();

@@ -162,7 +162,8 @@ function QuickTakeRow({
                             ) : null}
                         </View>
                     </View>
-                    <View style={styles.detailAside} testID="quick-take-detail-aside">
+                    <View style={styles.detailActions} testID="quick-take-detail-actions">
+                        <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
                         <PressableScale
                             onPress={onToggle}
                             scaleTo={0.96}
@@ -177,7 +178,6 @@ function QuickTakeRow({
                                 <Ionicons name="chevron-down" size={18} color={palette.textMuted} />
                             </Animated.View>
                         </PressableScale>
-                        <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
                     </View>
                 </View>
             ) : (
@@ -286,18 +286,21 @@ const styles = StyleSheet.create({
         minHeight: 164,
         margin: 4,
         paddingLeft: 14,
-        paddingRight: 12,
-        paddingVertical: 6,
+        paddingRight: 0,
+        paddingTop: 0,
+        paddingBottom: 14,
         borderRadius: 12,
         flexDirection: 'row',
         alignItems: 'stretch',
-        gap: 14,
+        gap: 12,
     },
     detailCopy: { flex: 1, minWidth: 0, justifyContent: 'center' },
     copyPressed: { opacity: 0.78 },
-    detailAside: {
-        width: 108,
-        alignItems: 'flex-end',
+    detailActions: {
+        width: 156,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 4,
     },
     collapseButton: {
         width: 44,
@@ -316,7 +319,7 @@ const styles = StyleSheet.create({
     },
     art: {
         width: 108,
-        height: 108,
+        height: 136,
         borderRadius: 10,
         borderWidth: 1,
         overflow: 'hidden',
