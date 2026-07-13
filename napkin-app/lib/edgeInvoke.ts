@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { addBreadcrumb, captureError } from '@/lib/sentry';
 import { trackError } from '@/lib/track';
+import { FunctionsFetchError, FunctionsRelayError } from '@supabase/supabase-js';
 
 export interface UnwrappedError {
     code: string;
@@ -76,8 +77,19 @@ export function isAuthFailure(err: unknown): boolean {
 function reportEdgeFailure(err: unknown, fn: string, action?: string): void {
     if (err instanceof SessionExpiredError) return;
     try {
-        const context = `edge:${fn}:${action ?? ''}`;
         const cause = (err as { cause?: UnwrappedError })?.cause;
+        // FunctionsFetchError means the request never reached Supabase (offline,
+        // DNS handoff, radio transition, or an intentional abort). It is a normal
+        // mobile connectivity condition, not an application exception. Mark it
+        // handled so the global query/mutation observers do not report it again;
+        // callers still receive the error and keep their existing retry/UI flow.
+        if (cause?.code === 'NETWORK') {
+            if (err && typeof err === 'object') {
+                (err as { __napkinReported?: boolean }).__napkinReported = true;
+            }
+            return;
+        }
+        const context = `edge:${fn}:${action ?? ''}`;
         trackError(err, context);
         captureError(err, {
             context,
@@ -367,6 +379,22 @@ async function postWithFetch<T>(name: string, opts: CallEdgeFnOptions): Promise<
  */
 export async function unwrapInvokeError(err: unknown): Promise<UnwrappedError> {
     const status = (err as { context?: { status?: number } })?.context?.status;
+    // supabase-js uses distinct transport errors. A fetch failure never reached
+    // the platform and should be handled as ordinary device connectivity; a
+    // relay failure did reach Supabase and remains observable as infrastructure.
+    if (err instanceof FunctionsFetchError) {
+        return {
+            code: 'NETWORK',
+            message: 'Couldn’t reach Napkin. Check your connection and try again.',
+        };
+    }
+    if (err instanceof FunctionsRelayError) {
+        return {
+            code: 'EDGE_RELAY',
+            message: 'Napkin is temporarily unavailable. Please try again.',
+            status,
+        };
+    }
     const ctx = (err as { context?: Response }).context;
     if (ctx && typeof ctx.json === 'function') {
         try {
