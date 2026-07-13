@@ -139,7 +139,7 @@ begin
             raise exception using errcode = '22023',
                 message = pg_catalog.format(
                     'invalid profile take prompt_key: %s',
-                    pg_catalog.coalesce(v_prompt, '<null>')
+                    coalesce(v_prompt, '<null>')
                 );
         end if;
 
@@ -168,7 +168,7 @@ begin
             raise exception using errcode = '22023',
                 message = pg_catalog.format(
                     'take restaurant does not exist: %s',
-                    pg_catalog.coalesce(v_elem->>'restaurant_id', '<null>')
+                    coalesce(v_elem->>'restaurant_id', '<null>')
                 );
         end if;
 
