@@ -58,7 +58,7 @@ export default function ImportScreen() {
         // A new import supersedes any stale sheet; the keyed sheet remounts fresh.
         setSheetVisible(false);
 
-        // ── Shared VIDEO → enqueue for async background OCR + auto-save
+        // ── Shared VIDEO → enqueue for async background OCR + in-app review
         // (TICKET-083 Part B). No blocking sheet; the processor mounted in
         // _layout drains it. Works signed-out — the manifest is durable and
         // drains on sign-in (single buffer; no pendingImport double-fire). ──
@@ -67,9 +67,11 @@ export default function ImportScreen() {
             enqueueVideoImport(rawVideoParam)
                 .then(() => {
                     // Only claim "importing…" once the manifest is actually queued.
-                    if (signedIn) toast.show('importing — your spots will appear in a moment');
+                    if (signedIn) toast.show("importing — we'll let you know when it's ready to review");
                 })
-                .catch(() => {/* enqueue failed — no false toast */});
+                .catch(() => {
+                    toast.show("couldn't add that video — try sharing again");
+                });
             router.replace(signedIn ? ('/wishlist' as any) : '/auth');
             return;
         }

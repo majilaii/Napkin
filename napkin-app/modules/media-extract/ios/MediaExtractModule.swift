@@ -126,20 +126,16 @@ public class MediaExtractModule: Module {
       return out
     }
 
-    // Write/overwrite a manifest atomically (.tmp → rename).
+    // Write/overwrite a manifest atomically. Data's atomic option writes a
+    // sibling temporary file and replaces the destination without deleting the
+    // last good manifest first.
     Function("writeImportManifest") { (jobId: String, json: String) -> Bool in
       guard let dir = Self.queueDir(), let data = json.data(using: .utf8) else { return false }
       let final = dir.appendingPathComponent(jobId + ".json")
-      let tmp = dir.appendingPathComponent(jobId + ".json.tmp")
       do {
-        try data.write(to: tmp)
-        if FileManager.default.fileExists(atPath: final.path) {
-          try? FileManager.default.removeItem(at: final)
-        }
-        try FileManager.default.moveItem(at: tmp, to: final)
+        try data.write(to: final, options: .atomic)
         return true
       } catch {
-        try? FileManager.default.removeItem(at: tmp)
         return false
       }
     }

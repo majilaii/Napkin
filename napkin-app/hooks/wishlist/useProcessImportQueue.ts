@@ -4,13 +4,12 @@
  *
  * The queue lives in the App-Group container (written by the iOS share EXTENSION
  * with no app-switch). This drains it on launch + every foreground + on enqueue —
- * OCR/caption resolve → auto-save ALL spots → route to the chosen destinations
- * (wishlist always; lists via add_entries; one Table via per-spot table_id) — with
- * a non-blocking toast.
+ * OCR/caption resolve → hold review-mode jobs for confirmation → save released
+ * jobs to the in-app destinations, with a non-blocking toast.
  *
  *   kind 'video' → on-device OCR;  kind 'url' → cheap caption+ASR fast path,
  *                 escalating into download+OCR when the gate rejects (TICKET-164).
- *   mode 'auto'  → save silently here. A content-reason gate reject that
+ *   mode 'auto'  → save here after confirmation (plus legacy jobs). A gate reject that
  *                 escalation adds no evidence to flips to 'review' instead (R3).
  *   mode 'review' → resolved + persisted, then HELD; surfaced via the imports
  *                 hub (import-progress → import-review) on next app-open.
@@ -52,7 +51,6 @@ import {
     setImportSource,
     setImportStage,
     setImportMode,
-    setDefaultImportMode,
     setLargeJob,
     effectivePinWishlist,
     bumpImportAttempt,
@@ -603,15 +601,6 @@ export function useProcessImportQueue() {
                 // TICKET-175: read by the R5 fallback refinement OUTSIDE the
                 // provider block — a no-video escalation may still fall back.
                 let downloadOk = false;
-
-                // TICKET-113: this is the first time the app sees this import's
-                // authored mode — the user's explicit per-share choice (the iOS
-                // extension "auto-save" toggle). Remember it so the NEXT import
-                // defaults the same way. Recorded ONCE per fresh manifest — a
-                // re-drain has `spots` set and skips this. Deliberately NOT the
-                // import-review drain-release (that flips to 'auto' as a mechanism,
-                // not a preference — decision 4).
-                setDefaultImportMode(m.mode);
 
                 if (m.kind === 'url') {
                     // TICKET-086/086b/086c extraction for TikTok links — FUSE

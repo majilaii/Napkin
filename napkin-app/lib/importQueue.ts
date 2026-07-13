@@ -19,87 +19,17 @@
  * Native calls throw when the module isn't linked; every accessor is wrapped so
  * the queue degrades to "empty / no-op" rather than crashing.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { safeRandomUUID } from './uuid';
 import { normalizeLargeJob, type LargeImportJob } from './largeImportJob';
 import {
     listImportManifests,
     writeImportManifest,
     removeImportManifest,
-    setSharedDefault,
 } from '@/modules/media-extract';
 
 export type { LargeImportJob, LargeImportJobItem } from './largeImportJob';
 
 const MAX_ATTEMPTS = 3;
-
-// ── Default import mode preference (TICKET-113) ────────────────────────────────
-// The founder always opts to review imports; that choice should stick so the NEXT
-// share defaults the same way — without a settings screen. We persist the mode the
-// user last explicitly chose and seed every new RN-created job (doEnqueue) from it.
-//
-// Cross-process note: the iOS share EXTENSION writes its own manifest directly (it
-// can't read AsyncStorage), carrying the mode from its in-extension "auto-save"
-// toggle. Those manifests keep their authored mode; the drain records that explicit
-// choice back into this preference so future jobs inherit it.
-export type ImportMode = 'auto' | 'review';
-const DEFAULT_MODE_KEY = 'napkin.import.defaultMode';
-// TICKET-113 Part B: the KEY for the App-Group shared default read by the iOS
-// share extension. It is the BARE string 'import.defaultMode' — deliberately
-// DISTINCT from the AsyncStorage key above (different stores). This literal MUST
-// stay byte-identical with ShareViewController.swift and MediaExtractModule.swift.
-const SHARED_DEFAULT_MODE_KEY = 'import.defaultMode';
-
-// In-memory mirror so job creation can read the preference synchronously. Primed
-// from AsyncStorage on module load; falls back to 'auto' (today's behavior) until
-// primed and whenever nothing was ever stored.
-let cachedDefaultMode: ImportMode = 'auto';
-
-// Prime the cache once at module load (best-effort; a miss leaves 'auto'). The
-// `primed` latch keeps a slow-resolving read from clobbering an explicit
-// setDefaultImportMode() that raced ahead of it.
-let defaultModePrimed = false;
-AsyncStorage.getItem(DEFAULT_MODE_KEY)
-    .then((raw) => {
-        if (!defaultModePrimed && (raw === 'review' || raw === 'auto')) {
-            cachedDefaultMode = raw;
-        }
-        defaultModePrimed = true;
-    })
-    .catch(() => {
-        /* storage unavailable — keep the 'auto' fallback */
-    });
-
-/** The mode new imports should default to. Synchronous (in-memory mirror). */
-export function getDefaultImportMode(): ImportMode {
-    return cachedDefaultMode;
-}
-
-/**
- * Remember the user's explicit mode choice so future imports default to it.
- * No-op write when the preference is unchanged. Fire-and-forget persist.
- */
-export function setDefaultImportMode(mode: ImportMode): void {
-    if (mode !== 'auto' && mode !== 'review') return;
-    defaultModePrimed = true; // an explicit choice outranks a late-resolving prime
-    // TICKET-113 Part B: mirror into the App-Group shared default so the iOS share
-    // extension (separate process, can't read AsyncStorage) seeds its auto-save
-    // toggle from it on next launch. This runs BEFORE the unchanged guard: a user
-    // upgrading from Part A already has this mode cached RN-side while the
-    // extension's UserDefaults is still empty — the unconditional write-through
-    // back-fills it. Guarded — a missing native module (Android / unlinked)
-    // degrades gracefully; the RN-side pref still holds.
-    try {
-        setSharedDefault(SHARED_DEFAULT_MODE_KEY, mode);
-    } catch {
-        /* native module absent — RN-side pref still holds */
-    }
-    if (cachedDefaultMode === mode) return; // unchanged — nothing to persist
-    cachedDefaultMode = mode;
-    AsyncStorage.setItem(DEFAULT_MODE_KEY, mode).catch(() => {
-        /* best-effort — the in-memory mirror still holds for this session */
-    });
-}
 
 export type ImportManifestStatus = 'pending' | 'failed';
 
@@ -173,7 +103,7 @@ export interface ImportManifest {
     userId?: string | null;
     /** 'review' (toggle off) holds the batch for the candidate picker on next open. */
     status: ImportManifestStatus;
-    /** 'auto' (default) saves silently; 'review' defers to the picker on app open. */
+    /** 'review' defers to the picker; 'auto' releases a confirmed/legacy job to save. */
     mode: 'auto' | 'review';
     destinations: ImportDestinations;
     /** Set after the FIRST successful resolve → re-drain skips OCR/resolve. */
@@ -271,7 +201,10 @@ function readAll(): ImportManifest[] {
                 if (kind === 'video' && !videoPath) continue;
                 if (kind === 'url' && !url) continue;
                 // Build explicitly — the extension-written JSON is untrusted input.
-                // Missing mode/destinations default to auto/wishlist (b43 manifests).
+                // Missing/invalid mode defaults to review. Explicit `auto` remains
+                // valid because confirmation uses it internally to release a held
+                // manifest; treating every `auto` as review would deadlock saves.
+                // Missing destinations still normalize to the wishlist inbox.
                 out.push({
                     jobId: p.jobId,
                     kind,
@@ -282,7 +215,7 @@ function readAll(): ImportManifest[] {
                     attempts: typeof p.attempts === 'number' ? p.attempts : 0,
                     userId: typeof p.userId === 'string' ? p.userId : null,
                     status: p.status === 'failed' ? 'failed' : 'pending',
-                    mode: p.mode === 'review' ? 'review' : 'auto',
+                    mode: p.mode === 'auto' ? 'auto' : 'review',
                     destinations: normalizeDestinations(p.destinations),
                     spots: Array.isArray(p.spots) ? (p.spots as PersistedImportSpot[]) : undefined,
                     diag: p.diag && typeof p.diag === 'object' && !Array.isArray(p.diag)
@@ -322,11 +255,11 @@ function readAll(): ImportManifest[] {
     }
 }
 
-function writeManifest(m: ImportManifest): void {
+function writeManifest(m: ImportManifest): boolean {
     try {
-        writeImportManifest(m.jobId, JSON.stringify(m));
+        return writeImportManifest(m.jobId, JSON.stringify(m));
     } catch {
-        /* native module absent — no-op */
+        return false;
     }
 }
 
@@ -363,11 +296,14 @@ async function doEnqueue(videoPath: string): Promise<ImportManifest> {
         createdAt: Date.now(),
         attempts: 0,
         status: 'pending',
-        // TICKET-113: seed from the remembered preference (fallback 'auto').
-        mode: getDefaultImportMode(),
+        // Review-first policy: fallback/deep-link video imports must never bypass
+        // the same confirmation gate as the native share extension.
+        mode: 'review',
         destinations: { ...DEFAULT_DESTINATIONS },
     };
-    writeManifest(manifest);
+    if (!writeManifest(manifest)) {
+        throw new Error('Failed to persist import manifest');
+    }
     enqueueListeners.forEach((l) => {
         try {
             l();
@@ -444,28 +380,67 @@ export function setImportSpots(jobId: string, spots: PersistedImportSpot[]): voi
 }
 
 /**
- * TICKET-181: persist the review editor's destination edits — the chosen lists
- * (existing ids + new titles) and whether to pin the personal wishlist — BEFORE the
- * drain-release flips mode → 'auto'. Rewrites via the readAll→writeManifest path
- * (the manifest-field survival law) so a crash-then-redrain saves to the EDITED
- * destinations, never the stale ones. Only the keys present in `edits` are applied
- * (partial merge). Table destinations (`tableIds`) are deliberately NOT touched —
- * they pass through unchanged (v1 scope: tables aren't shown as editable chips).
+ * Persist the review editor's destination edits BEFORE the drain-release flips
+ * mode → 'auto'. Only keys present in `edits` are applied. When tables change,
+ * update both the modern array and legacy first-table field so normalization can
+ * never resurrect a removed legacy destination.
  */
 export function setImportDestinations(
     jobId: string,
-    edits: { listIds?: string[]; newListTitles?: string[]; pinWishlist?: boolean },
+    edits: {
+        listIds?: string[];
+        newListTitles?: string[];
+        tableIds?: string[];
+        pinWishlist?: boolean;
+    },
 ): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
+    const tableIds = edits.tableIds === undefined ? undefined : [...new Set(edits.tableIds)];
     writeManifest({
         ...m,
         destinations: {
             ...m.destinations,
             ...(edits.listIds !== undefined ? { listIds: edits.listIds } : {}),
             ...(edits.newListTitles !== undefined ? { newListTitles: edits.newListTitles } : {}),
+            ...(tableIds !== undefined
+                ? { tableIds, tableId: tableIds[0] ?? null }
+                : {}),
         },
         ...(edits.pinWishlist !== undefined ? { pinWishlist: edits.pinWishlist } : {}),
+    });
+}
+
+/**
+ * Atomically commit the review editor's confirmed spots, destinations, and mode
+ * release. A single manifest rewrite prevents a partial native write from pairing
+ * new Table ids with missing nonces or silently dropping the user's filing choice.
+ */
+export function confirmImportReview(
+    jobId: string,
+    confirmation: {
+        spots: PersistedImportSpot[];
+        listIds: string[];
+        newListTitles: string[];
+        tableIds: string[];
+        pinWishlist: boolean;
+    },
+): boolean {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return false;
+    const tableIds = [...new Set(confirmation.tableIds)];
+    return writeManifest({
+        ...m,
+        mode: 'auto',
+        spots: confirmation.spots,
+        destinations: {
+            ...m.destinations,
+            listIds: confirmation.listIds,
+            newListTitles: confirmation.newListTitles,
+            tableIds,
+            tableId: tableIds[0] ?? null,
+        },
+        pinWishlist: tableIds.length > 0 ? true : confirmation.pinWishlist,
     });
 }
 

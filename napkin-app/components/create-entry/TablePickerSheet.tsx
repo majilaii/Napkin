@@ -25,7 +25,6 @@ import {
     PanResponder,
     TextInput,
     ScrollView,
-    ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -49,6 +48,9 @@ interface Props {
     /** Non-null when the table list failed to load — shows inline error + retry. */
     loadError?: string | null;
     onRetryLoad?: () => void;
+    /** Optional grammar for reuse outside the entry composer. */
+    title?: string;
+    clearLabel?: string;
 }
 
 const DRAG_DISMISS_THRESHOLD = 80;
@@ -64,6 +66,8 @@ export function TablePickerSheet({
     isLoading,
     loadError,
     onRetryLoad,
+    title = 'Post to a table?',
+    clearLabel = 'Clear all — keep it private',
 }: Props) {
     const insets = useSafeAreaInsets();
     const translateY = useRef(new Animated.Value(SHEET_HEIGHT)).current;
@@ -73,18 +77,29 @@ export function TablePickerSheet({
     const [query, setQuery] = useState('');
     // Local pending selection — committed on Done / dismiss.
     const [pendingIds, setPendingIds] = useState<string[]>(selectedIds);
+    const pendingIdsRef = useRef(selectedIds);
+    const onCommitRef = useRef(onCommit);
+
+    useEffect(() => {
+        pendingIdsRef.current = pendingIds;
+    }, [pendingIds]);
+
+    useEffect(() => {
+        onCommitRef.current = onCommit;
+    }, [onCommit]);
 
     // Sync pendingIds when sheet opens with a new external selectedIds.
     useEffect(() => {
         if (visible) {
             setPendingIds(selectedIds);
+            pendingIdsRef.current = selectedIds;
             setQuery('');
         }
     }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const commit = useCallback(() => {
-        onCommit(pendingIds);
-    }, [onCommit, pendingIds]);
+        onCommitRef.current(pendingIdsRef.current);
+    }, []);
 
     useEffect(() => {
         if (visible) {
@@ -150,14 +165,19 @@ export function TablePickerSheet({
     }, [query, tables]);
 
     const toggleTable = (id: string) => {
-        setPendingIds(prev =>
-            prev.includes(id)
+        setPendingIds(prev => {
+            const next = prev.includes(id)
                 ? prev.filter(x => x !== id)
-                : [...prev, id]
-        );
+                : [...prev, id];
+            pendingIdsRef.current = next;
+            return next;
+        });
     };
 
-    const clearAll = () => setPendingIds([]);
+    const clearAll = () => {
+        pendingIdsRef.current = [];
+        setPendingIds([]);
+    };
 
     // Accessibility label for unseen tables on overflow.
     const unseenNames = tables
@@ -197,7 +217,7 @@ export function TablePickerSheet({
 
                 <View style={styles.titleRow}>
                     <Text style={[styles.sheetTitle, { color: palette.text }]}>
-                        Post to a table?
+                        {title}
                     </Text>
                     <Pressable
                         onPress={commit}
@@ -263,7 +283,7 @@ export function TablePickerSheet({
                         <>
                             {/* "Clear all" row — clears selection (solo / private) */}
                             <TableRow
-                                label="Clear all — keep it private"
+                                label={clearLabel}
                                 italic
                                 selected={pendingIds.length === 0}
                                 onPress={clearAll}

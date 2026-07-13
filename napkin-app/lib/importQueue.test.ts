@@ -13,9 +13,16 @@
  */
 jest.mock('@/modules/media-extract', () => {
     const store = new Map<string, string>();
+    let failNextWrite = false;
+    let writeCount = 0;
     return {
         listImportManifests: () => Array.from(store.values()),
         writeImportManifest: (jobId: string, json: string) => {
+            writeCount += 1;
+            if (failNextWrite) {
+                failNextWrite = false;
+                return false;
+            }
             store.set(jobId, json);
             return true;
         },
@@ -25,22 +32,39 @@ jest.mock('@/modules/media-extract', () => {
         },
         setSharedDefault: () => true,
         __store: store,
+        __failNextWrite: () => {
+            failNextWrite = true;
+        },
+        __writeCount: () => writeCount,
+        __resetWrites: () => {
+            failNextWrite = false;
+            writeCount = 0;
+        },
     };
 });
 
 import * as mediaExtract from '@/modules/media-extract';
 import {
+    enqueueVideoImport,
     getImport,
     setImportMode,
     setImportSource,
     setImportSpots,
     setImportStage,
     setImportDestinations,
+    confirmImportReview,
     effectivePinWishlist,
     type ImportManifest,
+    type PersistedImportSpot,
 } from './importQueue';
 
-const store = (mediaExtract as unknown as { __store: Map<string, string> }).__store;
+const nativeMock = mediaExtract as unknown as {
+    __store: Map<string, string>;
+    __failNextWrite: () => void;
+    __writeCount: () => number;
+    __resetWrites: () => void;
+};
+const store = nativeMock.__store;
 
 function seedManifest(partial: Partial<ImportManifest> & { jobId: string }): void {
     const base: ImportManifest = {
@@ -57,7 +81,54 @@ function seedManifest(partial: Partial<ImportManifest> & { jobId: string }): voi
     store.set(base.jobId, JSON.stringify(base));
 }
 
-beforeEach(() => store.clear());
+beforeEach(() => {
+    store.clear();
+    nativeMock.__resetWrites();
+});
+
+describe('review-first import creation', () => {
+    it('queues fallback video shares for confirmation with no preselected collections', async () => {
+        const manifest = await enqueueVideoImport('/shared/video-review-first.mov');
+
+        expect(manifest.mode).toBe('review');
+        expect(manifest.destinations).toEqual({
+            wishlist: true,
+            listIds: [],
+            newListTitles: [],
+            tableId: null,
+            tableIds: [],
+        });
+        expect(getImport(manifest.jobId)?.mode).toBe('review');
+    });
+
+    it('defaults old manifests with no mode to review without changing explicit auto', () => {
+        const legacy = {
+            jobId: 'legacy-no-mode',
+            kind: 'video',
+            videoPath: '/shared/legacy.mov',
+            importNonce: 'legacy-nonce',
+            createdAt: 1,
+            attempts: 0,
+            status: 'pending',
+            destinations: { wishlist: true },
+        };
+        store.set(legacy.jobId, JSON.stringify(legacy));
+
+        expect(getImport(legacy.jobId)?.mode).toBe('review');
+
+        seedManifest({ jobId: 'confirmed-auto', mode: 'auto' });
+        expect(getImport('confirmed-auto')?.mode).toBe('auto');
+    });
+
+    it('rejects instead of reporting a queued video when native persistence fails', async () => {
+        nativeMock.__failNextWrite();
+
+        await expect(enqueueVideoImport('/shared/video-write-fails.mov')).rejects.toThrow(
+            'Failed to persist import manifest',
+        );
+        expect(store.size).toBe(0);
+    });
+});
 
 describe('readAll round-trips the TICKET-180 source/stage fields', () => {
     it('setImportSource + setImportStage persist through a setImportMode rewrite (the trap)', () => {
@@ -202,5 +273,87 @@ describe('TICKET-181 — destination edits persist; tables pass through untouche
         const m = getImport('de-3');
         expect(m?.destinations.listIds).toEqual(['only-lists']);
         expect(m?.pinWishlist).toBe(false); // not clobbered by an unspecified key
+    });
+
+    it('rewrites modern and legacy table fields together, including clear-all', () => {
+        seedManifest({
+            jobId: 'de-4',
+            destinations: {
+                wishlist: true,
+                listIds: [],
+                newListTitles: [],
+                tableId: 'legacy-table',
+                tableIds: ['legacy-table'],
+            },
+        });
+
+        setImportDestinations('de-4', { tableIds: ['table-b', 'table-b', 'table-c'] });
+        expect(getImport('de-4')?.destinations).toMatchObject({
+            tableIds: ['table-b', 'table-c'],
+            tableId: 'table-b',
+        });
+
+        setImportDestinations('de-4', { tableIds: [] });
+        expect(getImport('de-4')?.destinations).toMatchObject({ tableIds: [], tableId: null });
+    });
+});
+
+describe('atomic review confirmation', () => {
+    const spot: PersistedImportSpot = {
+        candidate_id: 'candidate-1',
+        client_nonce: 'save-nonce',
+        restaurant_id: 'restaurant-1',
+        external_id: null,
+        restaurant_name: 'Oranj',
+        restaurant_city: 'London',
+        table_id: 'table-b',
+        table_client_nonce: 'table-nonce',
+        table_shares: { 'table-b': 'table-nonce' },
+        place: null,
+    };
+
+    it('releases spots and all edited destinations in one manifest write', () => {
+        seedManifest({ jobId: 'confirm-1', mode: 'review' });
+
+        const ok = confirmImportReview('confirm-1', {
+            spots: [spot],
+            listIds: ['list-a'],
+            newListTitles: ['new list'],
+            tableIds: ['table-b'],
+            pinWishlist: false,
+        });
+
+        expect(ok).toBe(true);
+        expect(nativeMock.__writeCount()).toBe(1);
+        expect(getImport('confirm-1')).toMatchObject({
+            mode: 'auto',
+            spots: [spot],
+            destinations: {
+                listIds: ['list-a'],
+                newListTitles: ['new list'],
+                tableIds: ['table-b'],
+                tableId: 'table-b',
+            },
+            pinWishlist: true,
+        });
+    });
+
+    it('returns false and leaves the held manifest untouched when native persistence fails', () => {
+        seedManifest({ jobId: 'confirm-2', mode: 'review', pinWishlist: false });
+        const before = store.get('confirm-2');
+        nativeMock.__failNextWrite();
+
+        const ok = confirmImportReview('confirm-2', {
+            spots: [spot],
+            listIds: [],
+            newListTitles: [],
+            tableIds: ['table-b'],
+            pinWishlist: true,
+        });
+
+        expect(ok).toBe(false);
+        expect(nativeMock.__writeCount()).toBe(1);
+        expect(store.get('confirm-2')).toBe(before);
+        expect(getImport('confirm-2')?.mode).toBe('review');
     });
 });

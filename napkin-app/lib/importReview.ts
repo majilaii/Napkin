@@ -10,6 +10,36 @@ export interface ManualImportPlace {
     cuisine: string | null;
 }
 
+/**
+ * Reconcile a confirmed spot with the Tables chosen during in-app review.
+ * Existing per-(spot, table) nonces are preserved for replay safety; new
+ * destinations receive a nonce once, removed destinations are pruned, and the
+ * legacy single-table fields mirror the first current selection.
+ */
+export function reconcileImportSpotTables(
+    spot: PersistedImportSpot,
+    tableIds: string[],
+    uuid: () => string = safeRandomUUID,
+): PersistedImportSpot {
+    const uniqueTableIds = [...new Set(tableIds)];
+    const tableShares: Record<string, string> = {};
+
+    for (const tableId of uniqueTableIds) {
+        const existing =
+            spot.table_shares?.[tableId] ??
+            (spot.table_id === tableId ? spot.table_client_nonce : null);
+        tableShares[tableId] = existing || uuid();
+    }
+
+    const firstTableId = uniqueTableIds[0] ?? null;
+    return {
+        ...spot,
+        table_id: firstTableId,
+        table_client_nonce: firstTableId ? tableShares[firstTableId] : null,
+        table_shares: tableShares,
+    };
+}
+
 /** Build the frozen manifest row for a place the user adds during review. */
 export function createManualImportSpot(
     result: ManualImportPlace,

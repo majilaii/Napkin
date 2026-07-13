@@ -11,7 +11,6 @@ import {
     HUB_COPY,
     COMPACT_LINE,
     resolveHubVariant,
-    modeLine,
     type SourceApp,
 } from '../activationHubUtils';
 
@@ -27,18 +26,6 @@ describe('resolveHubVariant', () => {
     it('explicit variants pass through regardless of hasImported', () => {
         expect(resolveHubVariant('full', true)).toBe('full');
         expect(resolveHubVariant('compact', false)).toBe('compact');
-    });
-});
-
-describe('modeLine', () => {
-    it('auto pins for you; review waits for confirmation', () => {
-        expect(modeLine('auto')).toBe('we pin them for you.');
-        expect(modeLine('review')).toBe('you confirm them first.');
-    });
-
-    it('matches the HUB_COPY constants', () => {
-        expect(modeLine('auto')).toBe(HUB_COPY.modeAuto);
-        expect(modeLine('review')).toBe(HUB_COPY.modeReview);
     });
 });
 
@@ -66,6 +53,7 @@ describe('copy (exact, cut hard)', () => {
     it('full-variant strings are verbatim', () => {
         expect(HUB_COPY.kicker).toBe('SAVE SPOTS FROM');
         expect(HUB_COPY.gesture).toBe('tap share, then napkin');
+        expect(HUB_COPY.modeReview).toBe('you confirm them first.');
         expect(HUB_COPY.hubLink).toBe('your imports');
     });
 

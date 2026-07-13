@@ -25,13 +25,10 @@ export const GLYPH_FOR_SOURCE: Record<SourceApp, GlyphName> = {
     Safari: 'share-outline', // iOS square-and-arrow-up
 };
 
-export type ImportMode = 'auto' | 'review';
-
 /** Exact hub strings (cut hard). Assert these verbatim in tests. */
 export const HUB_COPY = {
     kicker: 'SAVE SPOTS FROM',
     gesture: 'tap share, then napkin',
-    modeAuto: 'we pin them for you.',
     modeReview: 'you confirm them first.',
     hubLink: 'your imports',
 } as const;
@@ -46,9 +43,4 @@ export function resolveHubVariant(
 ): 'full' | 'compact' {
     if (variant === 'auto') return hasImported ? 'compact' : 'full';
     return variant;
-}
-
-/** The contextual mode line — auto pins for you, review waits for confirmation. */
-export function modeLine(mode: ImportMode): string {
-    return mode === 'review' ? HUB_COPY.modeReview : HUB_COPY.modeAuto;
 }
