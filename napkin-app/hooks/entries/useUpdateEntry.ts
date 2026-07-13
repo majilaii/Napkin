@@ -35,6 +35,11 @@ export interface UpdateEntryInput {
      * Pass empty array [] to remove all companions.
      */
     companion_ids?: string[];
+    /**
+     * Client-only companion rows used to update the review immediately while the
+     * edge function persists `companion_ids`. Never sent to Supabase.
+     */
+    optimisticCompanions?: { user_id: string; display_name: string }[];
 }
 
 export function useUpdateEntry(entryId: string) {
@@ -42,7 +47,7 @@ export function useUpdateEntry(entryId: string) {
 
     return useMutation({
         mutationFn: async (input: UpdateEntryInput) => {
-            const { companion_ids, ...scalarInput } = input;
+            const { companion_ids, optimisticCompanions: _previews, ...scalarInput } = input;
 
             if (companion_ids !== undefined) {
                 // Companion edit path — edge function (service role)
@@ -86,12 +91,23 @@ export function useUpdateEntry(entryId: string) {
             // Snapshot current cache for rollback
             const previous = qc.getQueryData(queryKeys.entries.detail(entryId));
 
-            // Optimistically patch the detail cache — only scalar fields
-            const { companion_ids: _companions, ...scalarPatch } = input;
-            if (Object.keys(scalarPatch).length > 0) {
+            // Optimistically patch the detail cache. Companion names are supplied
+            // by the picker because the mutation only persists IDs.
+            const {
+                companion_ids: _companions,
+                optimisticCompanions,
+                ...scalarPatch
+            } = input;
+            if (Object.keys(scalarPatch).length > 0 || optimisticCompanions !== undefined) {
                 qc.setQueryData(queryKeys.entries.detail(entryId), (old: any) => {
                     if (!old) return old;
-                    return { ...old, ...scalarPatch };
+                    return {
+                        ...old,
+                        ...scalarPatch,
+                        ...(optimisticCompanions !== undefined
+                            ? { companions: optimisticCompanions }
+                            : {}),
+                    };
                 });
             }
 
@@ -113,7 +129,11 @@ export function useUpdateEntry(entryId: string) {
             // feed card and the table activity card. Without this patch the
             // user edits content/rating, navigates back, and sees the stale
             // value until the next staleTime expiry.
-            const { companion_ids: _ignored, ...scalarPatch } = input;
+            const {
+                companion_ids: _ignored,
+                optimisticCompanions: _ignoredPreviews,
+                ...scalarPatch
+            } = input;
             if (Object.keys(scalarPatch).length === 0) return;
 
             const patchEntry = (e: any) => (e?.id === entryId ? { ...e, ...scalarPatch } : e);

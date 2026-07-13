@@ -28,6 +28,7 @@ import {
     ActionSheetIOS,
     Platform,
     KeyboardAvoidingView,
+    Keyboard,
     Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -559,7 +560,6 @@ function EntryDetailScreen() {
     const [isEditingNote, setIsEditingNote] = useState(false);
     const [localNote, setLocalNote] = useState('');
     const [noteError, setNoteError] = useState<string | null>(null);
-    const noteSaving = updateEntry.isPending && !isEditingRating;
 
     // Dish
     const [isEditingDish, setIsEditingDish] = useState(false);
@@ -578,6 +578,7 @@ function EntryDetailScreen() {
 
     // Companion editing — owner-only
     const [companionEditMode, setCompanionEditMode] = useState(false);
+    const [companionSaving, setCompanionSaving] = useState(false);
     const [localCompanions, setLocalCompanions] = useState<UserSearchResult[]>([]);
 
     const toggleLocalCompanion = useCallback((u: UserSearchResult) => {
@@ -601,15 +602,27 @@ function EntryDetailScreen() {
         setCompanionEditMode(true);
     };
 
+    const handleCompanionCancel = () => {
+        if (companionSaving) return;
+        setCompanionEditMode(false);
+    };
+
     const handleCompanionSave = async () => {
-        if (!entry) return;
+        if (!entry || companionSaving) return;
+        setCompanionSaving(true);
         try {
             await updateEntry.mutateAsync({
                 companion_ids: localCompanions.map(c => c.user_id),
+                optimisticCompanions: localCompanions.map(c => ({
+                    user_id: c.user_id,
+                    display_name: c.display_name,
+                })),
             });
             setCompanionEditMode(false);
         } catch {
             Alert.alert('Error', "Couldn't update companions. Try again.");
+        } finally {
+            setCompanionSaving(false);
         }
     };
 
@@ -783,10 +796,12 @@ function EntryDetailScreen() {
 
     const handleNoteSave = async () => {
         if (!entry) return;
+        Keyboard.dismiss();
         setNoteError(null);
         try {
             await updateEntry.mutateAsync({ content: localNote.trim() || null });
             setIsEditingNote(false);
+            setEditMode(false);
         } catch {
             setLocalNote(entry.content ?? '');
             setNoteError("Couldn't save. Try again.");
@@ -794,7 +809,9 @@ function EntryDetailScreen() {
     };
 
     const handleNoteCancel = () => {
+        Keyboard.dismiss();
         setIsEditingNote(false);
+        setEditMode(false);
         setLocalNote('');
         setNoteError(null);
     };
@@ -1079,9 +1096,9 @@ function EntryDetailScreen() {
               .map((r) => r.emoji)
         : [];
 
-    // Keep an in-page destination for the persistent composer, including the
-    // empty state. Without this, sparse reviews look unfinished above the bar.
-    const showEngagementBlock = hasEngagement;
+    // Editing is a focused authoring surface: reactions, replies, and the
+    // keyboard-avoiding composer return when the owner leaves edit mode.
+    const showEngagementBlock = hasEngagement && !ownerEditing;
 
     const goToRestaurant = () => {
         if (!entry.restaurant_id) return;
@@ -1219,7 +1236,10 @@ function EntryDetailScreen() {
             {isEditingNote ? (
                 <View style={styles.noteEditor}>
                     <TextInput
-                        style={[styles.noteInput, { color: palette.text }]}
+                        style={[
+                            styles.noteInput,
+                            { color: palette.text, backgroundColor: palette.surfaceContainerLow },
+                        ]}
                         value={localNote}
                         onChangeText={setLocalNote}
                         placeholder="Say something about it."
@@ -1227,16 +1247,8 @@ function EntryDetailScreen() {
                         multiline
                         textAlignVertical="top"
                         autoFocus
+                        selectionColor={palette.primary}
                     />
-                    <View style={styles.editButtonRow}>
-                        {noteSaving && <ActivityIndicator size="small" color={palette.textMuted} />}
-                        <Pressable onPress={handleNoteCancel} hitSlop={8}>
-                            <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
-                        </Pressable>
-                        <Pressable onPress={handleNoteSave} disabled={updateEntry.isPending} hitSlop={8}>
-                            <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
-                        </Pressable>
-                    </View>
                     {noteError ? (
                         <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
                             {noteError}
@@ -1438,21 +1450,49 @@ function EntryDetailScreen() {
                 {/* ── Top nav — back · "Review" · ⋯ / done ──────────────────── */}
                 <View style={[styles.nav, { paddingTop: insets.top + Spacing.xs }]}>
                     <View style={styles.navSideL}>
-                        <Pressable
-                            onPress={() => router.back()}
-                            style={styles.navBack}
-                            hitSlop={12}
-                            accessibilityRole="button"
-                            accessibilityLabel="back"
-                        >
-                            <Ionicons name="chevron-back" size={18} color={palette.primary} />
-                            <Text style={[styles.navBackLabel, { color: palette.primary }]}>back</Text>
-                        </Pressable>
+                        {isEditingNote ? (
+                            <Pressable
+                                onPress={handleNoteCancel}
+                                style={styles.navTextButton}
+                                accessibilityRole="button"
+                                accessibilityLabel="Cancel editing review"
+                            >
+                                <Text style={[styles.navBackLabel, { color: palette.textSecondary }]}>cancel</Text>
+                            </Pressable>
+                        ) : (
+                            <Pressable
+                                onPress={() => router.back()}
+                                style={styles.navBack}
+                                hitSlop={12}
+                                accessibilityRole="button"
+                                accessibilityLabel="back"
+                            >
+                                <Ionicons name="chevron-back" size={18} color={palette.primary} />
+                                <Text style={[styles.navBackLabel, { color: palette.primary }]}>back</Text>
+                            </Pressable>
+                        )}
                     </View>
-                    <Text style={[styles.navTitle, { color: palette.textMuted }]}>Review</Text>
+                    <Text style={[styles.navTitle, { color: palette.textMuted }]}>
+                        {ownerEditing ? 'Edit review' : 'Review'}
+                    </Text>
                     <View style={styles.navSideR}>
                         {isOwnEntry ? (
-                            photoManageMode ? (
+                            isEditingNote ? (
+                                <Pressable
+                                    onPress={handleNoteSave}
+                                    disabled={updateEntry.isPending}
+                                    style={styles.navTextButton}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Save review"
+                                    accessibilityState={{ busy: updateEntry.isPending, disabled: updateEntry.isPending }}
+                                >
+                                    {updateEntry.isPending ? (
+                                        <ActivityIndicator size="small" color={palette.primary} />
+                                    ) : (
+                                        <Text style={[styles.navDone, { color: palette.primary }]}>save</Text>
+                                    )}
+                                </Pressable>
+                            ) : photoManageMode ? (
                                 <Pressable
                                     onPress={() => setPhotoManageMode(false)}
                                     hitSlop={12}
@@ -1492,10 +1532,12 @@ function EntryDetailScreen() {
 
                 <ScrollView
                     contentContainerStyle={{
-                        paddingBottom: insets.bottom + (hasEngagement ? 110 : Spacing.xl),
+                        paddingBottom: insets.bottom + (showEngagementBlock ? 110 : Spacing.xl),
                     }}
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="interactive"
+                    automaticallyAdjustKeyboardInsets
                 >
                     <View style={styles.body}>
                         {/* ── who · when ─────────────────────────────────────── */}
@@ -1778,7 +1820,7 @@ function EntryDetailScreen() {
                 </ScrollView>
 
                 {/* ── Persistent bottom composer — heart + reply ─────────────── */}
-                {hasEngagement ? (
+                {showEngagementBlock ? (
                     <PosterComposer
                         entryId={entry.id}
                         palette={palette}
@@ -1799,7 +1841,9 @@ function EntryDetailScreen() {
             {isOwnEntry ? (
                 <CompanionPickerSheet
                     visible={companionEditMode}
-                    onClose={handleCompanionSave}
+                    onClose={handleCompanionCancel}
+                    onConfirm={handleCompanionSave}
+                    saving={companionSaving}
                     selectedIds={new Set(localCompanions.map((c) => c.user_id))}
                     onToggle={toggleLocalCompanion}
                     currentUserId={viewer?.id}
@@ -2513,6 +2557,7 @@ const styles = StyleSheet.create({
     navSideL: { flex: 1, alignItems: 'flex-start' },
     navSideR: { flex: 1, alignItems: 'flex-end' },
     navBack: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    navTextButton: { minWidth: 52, minHeight: 44, justifyContent: 'center' },
     navBackLabel: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
     navTitle: {
         fontFamily: 'Manrope_700Bold',
@@ -2612,8 +2657,11 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_400Regular',
         fontSize: 20,
         lineHeight: 30,
-        minHeight: 120,
-        padding: 0,
+        minHeight: 88,
+        maxHeight: 220,
+        borderRadius: Radius.md,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
         textAlignVertical: 'top',
     },
 
