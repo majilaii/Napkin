@@ -58,6 +58,9 @@ scripts/release-testflight.sh <merged-sha>
   merged into `origin/main`, creates a unique worktree under the system temp
   directory, and installs dependencies fresh. Never create
   `/Users/jacky/napkin-build-*` again.
+- The wrapper holds an exclusive release lock until submission and cleanup are
+  finished. A concurrent task exits before EAS can consume another build number
+  or remove provisioning profiles that the active Xcode archive still needs.
 - The wrapper unsets `GOOGLE_MAPS_IOS_KEY`, runs the local production EAS build,
   submits the single generated IPA, and uses an exit trap to remove the
   worktree, `node_modules`, IPA, and scratch directory on success, failure, or
@@ -67,6 +70,9 @@ scripts/release-testflight.sh <merged-sha>
   `napkin-testflight.*` scratch directory, and the home directory contains no
   `napkin-build-*` directory. Cleanup is part of the release, not an optional
   follow-up.
+- Once the merged build is submitted, remove the task's now-clean, merged
+  implementation worktree and run `git worktree prune --expire now`. Do not
+  touch dirty, unmerged, primary-checkout, or still-active worktrees.
 - `--local` because EAS cloud quota runs out; local needs Xcode + the
   distribution cert EAS manages (`eas credentials` if it ever complains).
 - Export compliance never prompts: `ITSAppUsesNonExemptEncryption=false` is in
