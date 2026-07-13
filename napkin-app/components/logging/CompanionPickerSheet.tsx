@@ -24,10 +24,13 @@ import {
     TextInput,
     ScrollView,
     ActivityIndicator,
+    Platform,
+    useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { useUserSearch } from '@/hooks/users/useUserSearch';
 import { useRecentCompanions } from '@/hooks/users/useRecentCompanions';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
@@ -36,7 +39,11 @@ type Palette = typeof Colors.light;
 
 interface Props {
     visible: boolean;
+    /** Dismiss without committing staged changes. */
     onClose: () => void;
+    /** Explicit confirmation. Defaults to onClose for create flows that edit live. */
+    onConfirm?: () => void;
+    saving?: boolean;
     selectedIds: Set<string>;
     onToggle: (user: UserSearchResult) => void;
     currentUserId?: string;
@@ -50,22 +57,37 @@ const DEBOUNCE_MS = 300;
 export function CompanionPickerSheet({
     visible,
     onClose,
+    onConfirm,
+    saving = false,
     selectedIds,
     onToggle,
     currentUserId,
     palette,
 }: Props) {
     const insets = useSafeAreaInsets();
+    const { height: windowHeight } = useWindowDimensions();
+    const keyboardHeight = useKeyboardHeight();
     const translateY = useRef(new Animated.Value(SHEET_HEIGHT)).current;
     const dragY = useRef(new Animated.Value(0)).current;
     const backdropOpacity = useRef(new Animated.Value(0)).current;
+    const onCloseRef = useRef(onClose);
+    const savingRef = useRef(saving);
 
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const { data: recentCompanions, isLoading: loadingRecent } = useRecentCompanions(currentUserId);
-    const { data: searchResults, isLoading: loadingSearch } = useUserSearch(debouncedQuery);
+    const { data: searchResults, isLoading: loadingSearch } = useUserSearch(debouncedQuery, visible);
+
+    useEffect(() => {
+        onCloseRef.current = onClose;
+        savingRef.current = saving;
+    }, [onClose, saving]);
+
+    const requestClose = useCallback(() => {
+        if (!savingRef.current) onCloseRef.current();
+    }, []);
 
     // ── Debounce query ─────────────────────────────────────────────────────
     const handleQueryChange = useCallback((text: string) => {
@@ -134,7 +156,7 @@ export function CompanionPickerSheet({
             },
             onPanResponderRelease: (_, gs) => {
                 if (gs.dy > DRAG_DISMISS_THRESHOLD || gs.vy > 0.8) {
-                    onClose();
+                    requestClose();
                 } else {
                     Animated.spring(dragY, {
                         toValue: 0,
@@ -149,6 +171,14 @@ export function CompanionPickerSheet({
 
     const sheetTranslate = Animated.add(translateY, dragY);
 
+    // Pad the bottom-anchored sheet above the iOS keyboard so every search
+    // result remains visible and tappable. Android retains adjustResize.
+    const kbPad = Platform.OS === 'ios' ? keyboardHeight : 0;
+    const sheetHeight = Math.min(
+        SHEET_HEIGHT + kbPad,
+        windowHeight - insets.top - Spacing.xl,
+    );
+
     // ── Decide what to show in the list ───────────────────────────────────
     const showSearch = debouncedQuery.length > 0;
     const displayResults = showSearch ? (searchResults ?? []) : [];
@@ -161,14 +191,14 @@ export function CompanionPickerSheet({
             visible={visible}
             transparent
             animationType="none"
-            onRequestClose={onClose}
+            onRequestClose={requestClose}
             statusBarTranslucent
         >
             {/* Backdrop */}
             <Animated.View style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}>
                 <Pressable
                     style={[StyleSheet.absoluteFill, styles.backdrop]}
-                    onPress={onClose}
+                    onPress={requestClose}
                     accessibilityLabel="Close companion picker"
                 />
             </Animated.View>
@@ -179,7 +209,8 @@ export function CompanionPickerSheet({
                     styles.sheet,
                     {
                         backgroundColor: palette.surfaceContainerLow,
-                        paddingBottom: insets.bottom + Spacing.md,
+                        height: sheetHeight,
+                        paddingBottom: kbPad > 0 ? kbPad + Spacing.sm : insets.bottom + Spacing.md,
                         transform: [{ translateY: sheetTranslate }],
                     },
                 ]}
@@ -194,8 +225,19 @@ export function CompanionPickerSheet({
                     <Text style={[styles.sheetTitle, { color: palette.text }]}>
                         Who were you with?
                     </Text>
-                    <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Done">
-                        <Text style={[styles.doneLabel, { color: palette.primary }]}>Done</Text>
+                    <Pressable
+                        onPress={onConfirm ?? onClose}
+                        disabled={saving}
+                        style={styles.doneButton}
+                        accessibilityRole="button"
+                        accessibilityLabel="Save companions"
+                        accessibilityState={{ busy: saving, disabled: saving }}
+                    >
+                        {saving ? (
+                            <ActivityIndicator size="small" color={palette.primary} />
+                        ) : (
+                            <Text style={[styles.doneLabel, { color: palette.primary }]}>Done</Text>
+                        )}
                     </Pressable>
                 </View>
 
@@ -213,6 +255,7 @@ export function CompanionPickerSheet({
                         placeholderTextColor={palette.textMuted}
                         value={query}
                         onChangeText={handleQueryChange}
+                        editable={!saving}
                         autoCorrect={false}
                         autoCapitalize="none"
                         returnKeyType="search"
@@ -241,6 +284,7 @@ export function CompanionPickerSheet({
                                     user={user}
                                     selected={selectedIds.has(user.user_id)}
                                     onToggle={() => onToggle(user)}
+                                    disabled={saving}
                                     palette={palette}
                                 />
                             ))}
@@ -266,6 +310,7 @@ export function CompanionPickerSheet({
                                         user={user}
                                         selected={selectedIds.has(user.user_id)}
                                         onToggle={() => onToggle(user)}
+                                        disabled={saving}
                                         palette={palette}
                                     />
                                 ))}
@@ -295,10 +340,11 @@ interface UserRowProps {
     user: UserSearchResult;
     selected: boolean;
     onToggle: () => void;
+    disabled?: boolean;
     palette: Palette;
 }
 
-function UserRow({ user, selected, onToggle, palette }: UserRowProps) {
+function UserRow({ user, selected, onToggle, disabled = false, palette }: UserRowProps) {
     const initials = user.display_name
         .split(' ')
         .map((n) => n[0])
@@ -309,6 +355,7 @@ function UserRow({ user, selected, onToggle, palette }: UserRowProps) {
     return (
         <Pressable
             onPress={onToggle}
+            disabled={disabled}
             style={({ pressed }) => [
                 styles.row,
                 {
@@ -379,8 +426,6 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.08,
         shadowRadius: 24,
         elevation: 16,
-        minHeight: SHEET_HEIGHT,
-        maxHeight: '85%',
     },
     handleArea: {
         alignItems: 'center',
@@ -406,6 +451,12 @@ const styles = StyleSheet.create({
     doneLabel: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 14,
+    },
+    doneButton: {
+        minWidth: 52,
+        minHeight: 44,
+        alignItems: 'flex-end',
+        justifyContent: 'center',
     },
     searchRow: {
         flexDirection: 'row',
