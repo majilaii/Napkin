@@ -3,7 +3,7 @@
  * TICKET-025
  *
  * Upright Manrope makes module boundaries obvious at a glance. The optional
- * action uses the same functional voice and keeps a 40pt hit target.
+ * action uses the same functional voice and keeps a 44pt hit target.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -80,8 +80,8 @@ const styles = StyleSheet.create({
         paddingBottom: 12,
     },
     action: {
-        minWidth: 40,
-        minHeight: 40,
+        minWidth: 44,
+        minHeight: 44,
         marginVertical: -8,
         alignItems: 'flex-end',
         justifyContent: 'center',

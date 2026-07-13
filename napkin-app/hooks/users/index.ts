@@ -15,6 +15,12 @@ export { useUpdateProfile } from './useUpdateProfile';
 export { useUpdatePrivacy } from './useUpdatePrivacy';
 export { useUpdateUsername } from './useUpdateUsername';
 export { useUpdateReplyPermission } from './useUpdateReplyPermission';
+export { useSetProfileQuickTakes } from './useSetProfileQuickTakes';
+export type {
+    ProfileQuickTake,
+    ProfileQuickTakeInput,
+    QuickTakePromptKey,
+} from '@/lib/profileQuickTakes';
 export { useUserSearch } from './useUserSearch';
 export type { UserSearchResult } from './useUserSearch';
 export { useRecentCompanions } from './useRecentCompanions';

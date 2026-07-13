@@ -7,9 +7,9 @@
  *
  *   ProfileHeader (identity + ScoreBand stats strip)
  *   → TopFour (self: editable; public: read view)
- *   → TasteBand (top cuisines · cities · countries — Beli)
+ *   → QuickTakes (prompt-led, owner-curated opinions)
+ *   → TasteSignature (cuisines · geography · overall rating distribution)
  *   → DiningMapPreview (been-pins → /dining-map — Beli)
- *   → RatingHistogram (rating distribution — the Letterboxd profile histogram)
  *   → ProfileIndex (Journal · Spots · Reviews · Lists · Wishlist · Likes)
  *   → TablesInCommonSection
  *
@@ -33,16 +33,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUserProfile } from '@/hooks/users/useUserProfile';
-import { useUserSpots, deriveTaste, deriveEpithetInput } from '@/hooks/users/useUserSpots';
-import { epithetFor } from '@/lib/engraving';
+import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
 import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account';
 
 import { ProfileHeader } from './ProfileHeader';
 import { TopFour } from './TopFour';
 import { ProfileTopFourSheet } from './ProfileTopFourSheet';
-import { TasteBand } from './TasteBand';
+import { QuickTakes } from './QuickTakes';
+import { QuickTakesSheet } from './QuickTakesSheet';
+import { TasteSignature } from './TasteSignature';
 import { DiningMapPreview } from './DiningMapPreview';
-import { RatingHistogram } from './RatingHistogram';
 import { ProfileIndex } from './ProfileIndex';
 import { TablesInCommonSection } from './TablesInCommonSection';
 import { NotFoundState } from './NotFoundState';
@@ -72,19 +72,13 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         relationship === 'public_only' ||
         relationship === 'public_and_tables';
 
-    // Spots feed the taste band + map preview (server-gated same as regulars).
+    // Spots feed the quiet taste signature + map preview (server-gated same as regulars).
     const { data: spots, refetch: refetchSpots } = useUserSpots(
         hasPalateAccess ? profileData?.profile.user_id : null,
     );
     const taste = useMemo(() => deriveTaste(spots ?? []), [spots]);
-    // TICKET-145: the Taste Relic epithet — derived from the SAME spots payload,
-    // no server change. Null below the 10-meal floor (band renders as before).
-    const epithet = useMemo(
-        () => epithetFor(deriveEpithetInput(spots ?? [], taste.topCuisines[0] ?? null)),
-        [spots, taste.topCuisines],
-    );
-
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
+    const [editQuickTakesOpen, setEditQuickTakesOpen] = useState(false);
 
     // ── Viewer safety actions (TICKET-090, guideline 1.2) ────────────────────
     const reportContent = useReportContent();
@@ -327,17 +321,24 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 </Text>
             )}
 
-            {/* Taste + geography — the Beli modules, Heirloom voice */}
             {hasPalateAccess && (
-                <TasteBand
+                <QuickTakes
+                    takes={profileData.quick_takes ?? []}
+                    isOwner={isSelf}
+                    onEdit={isSelf ? () => setEditQuickTakesOpen(true) : undefined}
+                />
+            )}
+
+            {/* One quiet signature: cuisine + geography + overall rating use.
+                No generated House label and no secondary dimension spines. */}
+            {hasPalateAccess && (
+                <TasteSignature
                     topCuisines={taste.topCuisines}
                     cityCount={taste.cityCount}
                     countryCount={taste.countryCount}
-                    palette={palette}
-                    epithet={epithet}
-                    // TICKET-112: own profile → tappable drill-in. Non-empty
-                    // guard is TasteBand's own (it returns null on empty), so
-                    // wiring the handler here is enough.
+                    histogram={stats?.rating_histogram}
+                    averageRating={stats?.average_rating}
+                    isSelf={isSelf}
                     onPress={isSelf ? () => router.push('/taste') : undefined}
                 />
             )}
@@ -351,18 +352,6 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                             params: isSelf ? {} : { userId: targetUserId },
                         } as never)
                     }
-                />
-            )}
-
-            {/* Rating histogram — "how they rate, at a glance" (TICKET-165,
-                replacing the Regulars rail). Self taps through to /taste. */}
-            {hasPalateAccess && (
-                <RatingHistogram
-                    histogram={stats?.rating_histogram}
-                    dimensionAvgs={stats?.dimension_avgs}
-                    averageRating={stats?.average_rating}
-                    isSelf={isSelf}
-                    onPress={isSelf ? () => router.push('/taste') : undefined}
                 />
             )}
 
@@ -383,18 +372,27 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             )}
 
             {isSelf && (
-                <ProfileTopFourSheet
-                    visible={editTopFourOpen}
-                    onClose={() => setEditTopFourOpen(false)}
-                    userId={targetUserId}
-                    currentPicks={(profileData.top_four ?? []).map((p) => ({
-                        restaurant_id: p.restaurant_id,
-                        name: p.name,
-                        photo_url: p.photo_url,
-                        hero_entry_photo_id: p.hero_entry_photo_id ?? null,
-                        hero_photo_url: p.hero_photo_url ?? null,
-                    }))}
-                />
+                <>
+                    <ProfileTopFourSheet
+                        visible={editTopFourOpen}
+                        onClose={() => setEditTopFourOpen(false)}
+                        userId={targetUserId}
+                        currentPicks={(profileData.top_four ?? []).map((p) => ({
+                            restaurant_id: p.restaurant_id,
+                            name: p.name,
+                            photo_url: p.photo_url,
+                            hero_entry_photo_id: p.hero_entry_photo_id ?? null,
+                            hero_photo_url: p.hero_photo_url ?? null,
+                        }))}
+                    />
+                    <QuickTakesSheet
+                        visible={editQuickTakesOpen}
+                        onClose={() => setEditQuickTakesOpen(false)}
+                        userId={targetUserId}
+                        profileIdentifier={identifier!}
+                        currentTakes={profileData.quick_takes ?? []}
+                    />
+                </>
             )}
         </ScrollView>
     );

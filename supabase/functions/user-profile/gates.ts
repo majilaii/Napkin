@@ -119,6 +119,7 @@ export function buildPrivateProfileStub<P>(
     recently_logged: null;
     tables_in_common: never[];
     top_four: never[];
+    quick_takes: never[];
     regulars_preview: never[];
     is_self: false;
     is_following_viewer: boolean;
@@ -137,6 +138,7 @@ export function buildPrivateProfileStub<P>(
         recently_logged: null,
         tables_in_common: [],
         top_four: [],
+        quick_takes: [],
         regulars_preview: [],
         is_self: false,
         is_following_viewer: opts.isFollowingViewer,
