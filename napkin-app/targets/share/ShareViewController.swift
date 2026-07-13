@@ -40,7 +40,10 @@ class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.black.withAlphaComponent(0.3)
+        // Keep the extension canvas transparent: the Napkin card is the only
+        // surface, with the source app remaining visible behind it.
+        view.backgroundColor = .clear
+        view.isOpaque = false
         loadSnapshotIdentity()
         buildChrome()
     }
