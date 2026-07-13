@@ -5,6 +5,7 @@ export { AddToListButton } from './AddToListButton';
 export { CreateListSheet } from './CreateListSheet';
 export { ListEmojiPicker } from './ListEmojiPicker';
 export { ListDetailHeader } from './ListDetailHeader';
+export { ListMapHero } from './ListMapHero';
 export { ListEditForm } from './ListEditForm';
 export { EmptyListsState } from './EmptyListsState';
 export { ImportToListSheet } from './ImportToListSheet';

@@ -10,6 +10,9 @@
  *   delete           — delete a list
  *   list_mine        — caller's lists, MRU order
  *   get              — list detail + entries (privacy-gated)
+ *   save_list        — bookmark a visible public list (idempotent)
+ *   unsave_list      — remove caller's bookmark, even after visibility changes
+ *   saved_mine       — caller's currently-visible saved lists, save-recency order
  *   add_entry        — add a restaurant to a list (idempotent)
  *   remove_entry     — remove a restaurant from a list
  *   update_entry     — edit the per-entry note
@@ -31,6 +34,12 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant, type RestaurantInput } from '../_shared/restaurant.ts';
 import { buildPage, decodeCursor } from '../_shared/pagination.ts';
+import {
+    canViewerSavePublicList,
+    isBlockedEitherDirection,
+    parseListMutationId,
+    parseSavedListsPageRequest,
+} from './savedLists.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -197,6 +206,16 @@ async function backfillPositions(supabase: any, listId: string): Promise<void> {
             .update({ position: (i + 1) * 1024 })
             .eq('id', entries[i].id);
     }
+}
+
+/** Exact aggregate used only after the caller has passed the relevant gate. */
+async function countListSaves(supabase: any, listId: string): Promise<number> {
+    const { count, error } = await supabase
+        .from('list_saves')
+        .select('list_id', { count: 'exact', head: true })
+        .eq('list_id', listId);
+    if (error) throw error;
+    return count ?? 0;
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────
@@ -474,6 +493,107 @@ serve(async (req) => {
             return jsonResponse({ data: enriched });
         }
 
+        // ── saved_mine ────────────────────────────────────────────────────
+        // Saved lists are bookmarks, not wishlist imports. The bookmark row can
+        // outlive public visibility; every read therefore re-applies the full
+        // public gate and silently omits lists that became private/Table-owned,
+        // whose owner became private, or whose owner is blocked either way.
+        if (action === 'saved_mine') {
+            const page = parseSavedListsPageRequest(body as Record<string, unknown>);
+            if (page.error) return jsonResponse({ error: page.error }, 400);
+
+            // One service-only RPC owns the visibility joins, both-direction block
+            // gate, counts and cover selection. It returns the same card array as
+            // before, now capped and keyset-pageable with `(saved_at, id)`.
+            const { data: cards, error: cardsErr } = await supabase.rpc(
+                'fn_saved_list_cards',
+                {
+                    p_viewer_id: user.id,
+                    p_limit: page.value.limit,
+                    p_before_saved_at: page.value.before_saved_at,
+                    p_before_list_id: page.value.before_list_id,
+                },
+            );
+            if (cardsErr) throw cardsErr;
+
+            return jsonResponse({ data: cards ?? [] });
+        }
+
+        // ── save_list ─────────────────────────────────────────────────────
+        // Idempotent bookmark creation. Because the client is service-role,
+        // re-check every public eligibility dimension before writing.
+        if (action === 'save_list') {
+            const parsedListId = parseListMutationId(body.list_id);
+            if (parsedListId.error) return jsonResponse({ error: parsedListId.error }, 400);
+            const listId = parsedListId.value;
+
+            const { data: list, error: listErr } = await supabase
+                .from('lists')
+                .select('id, owner_id, privacy, table_id')
+                .eq('id', listId)
+                .maybeSingle();
+            if (listErr) throw listErr;
+            if (!list) return jsonResponse({ error: 'Not found' }, 404);
+
+            // Saving one's own authored list has no useful meaning and would
+            // distort the social proof count. This is the only non-404 gate
+            // because the caller already owns (and therefore knows) the list.
+            if (list.owner_id === user.id) {
+                return jsonResponse({ error: 'You cannot save your own list' }, 400);
+            }
+
+            const { data: ownerProfile, error: ownerErr } = await supabase
+                .from('profiles')
+                .select('account_privacy')
+                .eq('user_id', list.owner_id)
+                .maybeSingle();
+            if (ownerErr) throw ownerErr;
+
+            // Check the cheap static gates before querying the block graph.
+            if (!canViewerSavePublicList(user.id, list, ownerProfile, false)) {
+                return jsonResponse({ error: 'Not found' }, 404);
+            }
+            if (await isBlockedEitherDirection(supabase, user.id, list.owner_id)) {
+                return jsonResponse({ error: 'Not found' }, 404);
+            }
+
+            const { error: saveErr } = await supabase
+                .from('list_saves')
+                .upsert(
+                    { list_id: listId, user_id: user.id },
+                    { onConflict: 'list_id,user_id', ignoreDuplicates: true },
+                );
+            if (saveErr) throw saveErr;
+
+            return jsonResponse({
+                data: {
+                    list_id: listId,
+                    saved: true,
+                    save_count: await countListSaves(supabase, listId),
+                },
+            });
+        }
+
+        // ── unsave_list ───────────────────────────────────────────────────
+        // No list/profile/block gate by design: a caller must always be able to
+        // remove their own bookmark after the list's visibility changes. Do not
+        // return an aggregate count here; otherwise guessed private-list UUIDs
+        // become a popularity-probing surface.
+        if (action === 'unsave_list') {
+            const parsedListId = parseListMutationId(body.list_id);
+            if (parsedListId.error) return jsonResponse({ error: parsedListId.error }, 400);
+            const listId = parsedListId.value;
+
+            const { error: deleteErr } = await supabase
+                .from('list_saves')
+                .delete()
+                .eq('list_id', listId)
+                .eq('user_id', user.id);
+            if (deleteErr) throw deleteErr;
+
+            return jsonResponse({ data: { list_id: listId, saved: false } });
+        }
+
         // ── get ────────────────────────────────────────────────────────────
         if (action === 'get') {
             const { list_id } = body;
@@ -489,30 +609,57 @@ serve(async (req) => {
 
             // Owner profile — fetched up-front so the account_privacy gate (106)
             // reuses it (TICKET-020 already selects it for the author-line tap).
-            const { data: ownerProfile } = await supabase
+            const { data: ownerProfile, error: ownerProfileErr } = await supabase
                 .from('profiles')
                 .select('display_name, avatar_url, username, account_privacy')
                 .eq('user_id', list.owner_id)
                 .maybeSingle();
+            if (ownerProfileErr) throw ownerProfileErr;
 
             // ── Read gate — three composed branches (TICKET-115 + TICKET-106) ───
             //   1. owner           → any privacy
             //   2. table member    → 115: table_id set AND caller is a member
             //   3. public list     → 106: privacy='public' AND table_id IS NULL
-            //                         AND owner account is public
+            //                         AND owner account is public AND no block
+            //                         exists in either direction
             // A table list is always private, so branch 3's `table_id IS NULL`
             // guarantees it NEVER loads for a non-member via `get`. Private lists
             // stay "not found" (indistinguishable from "doesn't exist").
             const isOwner = list.owner_id === user.id;
             const isMemberOfTableList =
                 !!list.table_id && (await isTableMember(supabase, list.table_id, user.id));
-            const isPublicNonTable =
-                list.privacy === 'public' &&
-                !list.table_id &&
-                (ownerProfile?.account_privacy === 'public');
-            if (!isOwner && !isMemberOfTableList && !isPublicNonTable) {
+
+            // Start with the static public gate so we do not query block state for
+            // a private/Table list. The pair query then closes the public branch.
+            const passesStaticPublicGate = canViewerSavePublicList(
+                user.id,
+                list,
+                ownerProfile,
+                false,
+            );
+            const blockedPublicViewer = passesStaticPublicGate
+                ? await isBlockedEitherDirection(supabase, user.id, list.owner_id)
+                : false;
+            const canSave = passesStaticPublicGate && !blockedPublicViewer;
+
+            if (!isOwner && !isMemberOfTableList && !canSave) {
                 return jsonResponse({ error: 'Not found' }, 404);
             }
+
+            const [saveCountResult, viewerSaveResult] = await Promise.all([
+                supabase
+                    .from('list_saves')
+                    .select('list_id', { count: 'exact', head: true })
+                    .eq('list_id', list_id),
+                supabase
+                    .from('list_saves')
+                    .select('list_id')
+                    .eq('list_id', list_id)
+                    .eq('user_id', user.id)
+                    .maybeSingle(),
+            ]);
+            if (saveCountResult.error) throw saveCountResult.error;
+            if (viewerSaveResult.error) throw viewerSaveResult.error;
 
             // Entries — ordered by position (ranked) or created_at desc (unranked)
             const orderCol = list.ranked ? 'position' : 'created_at';
@@ -557,6 +704,9 @@ serve(async (req) => {
                         username: null,
                         account_privacy: 'private',
                     },
+                    save_count: saveCountResult.count ?? 0,
+                    viewer_has_saved: !!viewerSaveResult.data,
+                    can_save: canSave,
                 },
             });
         }

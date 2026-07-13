@@ -36,6 +36,7 @@ interface QueryLog {
     neq: Record<string, unknown>;
     in: Record<string, unknown[]>;
     order: Array<{ column: string; ascending: boolean }>;
+    or: string[];
 }
 
 /**
@@ -49,7 +50,7 @@ function fakeClient(tables: Record<string, any[]>): { client: LiveSpotsClient; l
     const log: QueryLog[] = [];
 
     const makeBuilder = (table: string) => {
-        const entry: QueryLog = { table, eq: {}, is: {}, not: [], neq: {}, in: {}, order: [] };
+        const entry: QueryLog = { table, eq: {}, is: {}, not: [], neq: {}, in: {}, order: [], or: [] };
         log.push(entry);
         const rows = tables[table] ?? [];
 
@@ -64,6 +65,7 @@ function fakeClient(tables: Record<string, any[]>): { client: LiveSpotsClient; l
                 entry.order.push({ column, ascending: opts.ascending });
                 return builder;
             },
+            or: (filter: string) => { entry.or.push(filter); return builder; },
             maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
             // Multi-row reads await the builder directly (PostgREST builders are thenable).
             then: (resolve: (v: { data: any[]; error: null }) => void) =>
@@ -76,6 +78,7 @@ function fakeClient(tables: Record<string, any[]>): { client: LiveSpotsClient; l
 }
 
 const OWNER = 'owner00-0000-4000-8000-000000000001';
+const VIEWER = 'viewer00-0000-4000-8000-000000000002';
 
 // ── Wishlist shares (listId = null) ───────────────────────────────────────────
 
@@ -233,6 +236,76 @@ Deno.test('loadLiveSpots(list): deleted / not-owned list → null (caller tombst
     });
     const live = await loadLiveSpots(client, OWNER, LIST_ID);
     assertStrictEquals(live, null);
+});
+
+Deno.test('loadLiveSpots(list): Table list → null (private group list never becomes a public handoff)', async () => {
+    const { client, log } = fakeClient({
+        lists: [{ id: LIST_ID, title: 'Table shortlist', ranked: false, table_id: 'table-1' }],
+        profiles: [{ display_name: 'Jacky' }],
+    });
+    const live = await loadLiveSpots(client, OWNER, LIST_ID);
+    assertStrictEquals(live, null);
+    assertEquals(log.some((query) => query.table === 'list_entries'), false);
+});
+
+Deno.test('loadLiveSpots(public relay): rechecks public list/profile and both-direction blocks', async () => {
+    const { client, log } = fakeClient({
+        lists: [{
+            id: LIST_ID,
+            owner_id: OWNER,
+            title: 'Public shortlist',
+            ranked: false,
+            privacy: 'public',
+            table_id: null,
+        }],
+        profiles: [{ display_name: 'Jacky', account_privacy: 'public' }],
+        blocked_users: [],
+        list_entries: [
+            { restaurant_id: 'r1', restaurant: { id: 'r1', name: 'A', verification: 'verified' } },
+        ],
+        entries: [],
+    });
+
+    const live = await loadLiveSpots(client, OWNER, LIST_ID, { publicViewerId: VIEWER });
+    assertEquals(live?.spots.map((spot) => spot.name), ['A']);
+    assertEquals(log.some((query) => query.table === 'blocked_users'), true);
+});
+
+Deno.test('loadLiveSpots(public relay): private source fails closed before reading entries', async () => {
+    const { client, log } = fakeClient({
+        lists: [{
+            id: LIST_ID,
+            owner_id: OWNER,
+            title: 'Now private',
+            ranked: false,
+            privacy: 'private',
+            table_id: null,
+        }],
+        profiles: [{ display_name: 'Jacky', account_privacy: 'public' }],
+    });
+
+    const live = await loadLiveSpots(client, OWNER, LIST_ID, { publicViewerId: VIEWER });
+    assertStrictEquals(live, null);
+    assertEquals(log.some((query) => query.table === 'list_entries'), false);
+});
+
+Deno.test('loadLiveSpots(public relay): either-direction block fails closed', async () => {
+    const { client, log } = fakeClient({
+        lists: [{
+            id: LIST_ID,
+            owner_id: OWNER,
+            title: 'Public shortlist',
+            ranked: false,
+            privacy: 'public',
+            table_id: null,
+        }],
+        profiles: [{ display_name: 'Jacky', account_privacy: 'public' }],
+        blocked_users: [{ blocker_id: OWNER, blocked_id: VIEWER }],
+    });
+
+    const live = await loadLiveSpots(client, OWNER, LIST_ID, { publicViewerId: VIEWER });
+    assertStrictEquals(live, null);
+    assertEquals(log.some((query) => query.table === 'list_entries'), false);
 });
 
 Deno.test('loadLiveSpots(list): existing list with all-unverified entries → empty spots (valid page, not null)', async () => {

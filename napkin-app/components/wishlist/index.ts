@@ -29,6 +29,7 @@ export { WishlistSpotRow } from './WishlistSpotRow';
 // Table wishlist ledger row (typographic, no photo) — mirrors WishlistSpotRow.
 export { TableWishlistRow } from './TableWishlistRow';
 export { WishlistListCardFull } from './WishlistListCardFull';
+export { SavedListCardFull } from './SavedListCardFull';
 export { WishlistEmptyState } from './WishlistEmptyState';
 export { FilterActionSheet, type FilterOption } from './FilterActionSheet';
 // TICKET-124: single tabbed filter sheet (Cuisine · Price · Area · Sort) —

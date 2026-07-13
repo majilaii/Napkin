@@ -44,6 +44,7 @@ import {
     // Wishlist Redesign (Pinned ↔ Lists) — numbered ledger + filter sheets + empty + inbox.
     WishlistSpotRow,
     WishlistListCardFull,
+    SavedListCardFull,
     WishlistEmptyState,
     FilterTabsSheet,
     type FilterOption,
@@ -60,6 +61,7 @@ import { useHasImported } from '@/hooks/wishlist/useHasImported';
 import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
+import { useSavedLists } from '@/hooks/lists/useSavedLists';
 import { useListMapPins } from '@/hooks/lists/useListMapPins';
 import { buildMapPins } from '@/components/wishlist/mapPinsUtils';
 import {
@@ -308,6 +310,7 @@ export default function WishlistScreen() {
     // entry points (settings row, ProfileScreenBody palate section). Same pattern
     // as TopFour on the profile tab.
     const { data: myLists } = useMyLists(user?.id);
+    const { data: savedLists } = useSavedLists(user?.id);
 
     // TICKET-108: list-entry pins for the map — every restaurant across my lists
     // with coords + the owning list's emoji. Unioned into `mapItems` below.
@@ -764,7 +767,7 @@ export default function WishlistScreen() {
     }, [requestLocation]);
 
     const totalPinned = pinnedRows.length;
-    const listsCount = myLists?.length ?? 0;
+    const listsCount = (myLists?.length ?? 0) + (savedLists?.length ?? 0);
 
     // "{N} spots · italian · $$" — the active filters spelled out after the count.
     const filterSuffix = useMemo(() => {
@@ -1057,6 +1060,7 @@ export default function WishlistScreen() {
                             <Text style={[styles.rSpotsKicker, { color: palette.textMuted }]}>
                                 {`${listsCount} ${listsCount === 1 ? 'list' : 'lists'}`}
                             </Text>
+                            <Text style={[styles.rCollectionHeading, { color: palette.textMuted }]}>Your lists</Text>
                             {(myLists ?? []).map((list) => (
                                 <WishlistListCardFull
                                     key={list.id}
@@ -1073,6 +1077,20 @@ export default function WishlistScreen() {
                                 <Ionicons name="add" size={17} color={palette.primary} />
                                 <Text style={[styles.rNewListText, { color: palette.primary }]}>New list</Text>
                             </Pressable>
+                            {(savedLists?.length ?? 0) > 0 ? (
+                                <>
+                                    <Text style={[styles.rCollectionHeading, styles.rSavedHeading, { color: palette.textMuted }]}>Saved lists</Text>
+                                    {(savedLists ?? []).map((list) => (
+                                        <SavedListCardFull
+                                            key={list.id}
+                                            list={list}
+                                            palette={palette}
+                                            scheme={scheme}
+                                            onPress={() => router.push(`/list/${list.id}` as any)}
+                                        />
+                                    ))}
+                                </>
+                            ) : null}
                         </ScrollView>
                     )}
 
@@ -1281,6 +1299,15 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         paddingTop: 14,
         paddingBottom: 2,
+    },
+    rCollectionHeading: {
+        fontFamily: 'Newsreader_600SemiBold',
+        fontSize: 20,
+        marginTop: 12,
+        marginBottom: 10,
+    },
+    rSavedHeading: {
+        marginTop: Spacing.xl,
     },
     rSpotsKickerFlex: {
         flex: 1,

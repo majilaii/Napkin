@@ -1,47 +1,27 @@
-/**
- * ListEntryRow — a single restaurant entry inside a list detail screen.
- *
- * Shows: rank number (ranked lists), restaurant name + city/cuisine line,
- * quiet `pin to wishlist` affordance (or `pinned` tag when already on the
- * wishlist — TICKET-074: a spot can live in both; lists never feed Tables),
- * per-entry note (if any), drag handle (owner + ranked + not reordering).
- * Tapping navigates to the standard restaurant page.
- */
 import React, { useState } from 'react';
-import {
-    View,
-    Text,
-    Pressable,
-    TextInput,
-    StyleSheet,
-} from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
+import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SwipeToDeleteRow } from '@/components/common';
+import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { ListEntry } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
 
 interface Props {
     entry: ListEntry;
-    rank?: number; // undefined = unranked list
+    rank?: number;
     isOwner: boolean;
     isRanked: boolean;
     isDragDisabled?: boolean;
-    /**
-     * TICKET-074 fix-pass: viewer-scoped "already on MY wishlist" flag, derived
-     * ONCE by the screen from the cached personal wishlist (derivePinnedIds) —
-     * replaces a per-row useIsWishlisted edge call (O(rows) request burst).
-     */
     isPinned?: boolean;
     onPress: () => void;
     onRemove: () => void;
     onNoteChange: (note: string | null) => void;
-    /** TICKET-074: add this entry's restaurant to the caller's wishlist. */
     onPinToWishlist?: () => void;
-    /** Drag handle props injected by DraggableFlatList (if present) */
     drag?: () => void;
 }
 
@@ -58,209 +38,258 @@ export function ListEntryRow({
     onPinToWishlist,
     drag,
 }: Props) {
-    const scheme = useColorScheme();
-    const palette = Colors[scheme ?? 'light'] as Palette;
-
+    const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
+    const palette = Colors[scheme] as Palette;
     const [editingNote, setEditingNote] = useState(false);
     const [noteText, setNoteText] = useState(entry.note ?? '');
+    const restaurant = entry.restaurant;
 
-    const r = entry.restaurant;
-    const metaParts: string[] = [];
-    if (r.city) metaParts.push(r.city);
-    if (r.cuisine) metaParts.push(r.cuisine);
-    const metaLine = metaParts.join(' · ');
+    const meta = [
+        restaurant.cuisine,
+        restaurant.city,
+        restaurant.price_level ? '$'.repeat(Math.min(4, Math.max(1, restaurant.price_level))) : null,
+    ].filter(Boolean).join(' · ');
 
-    const handleNoteBlur = () => {
+    const commitNote = () => {
         setEditingNote(false);
-        const trimmed = noteText.trim() || null;
-        if (trimmed !== entry.note) {
-            onNoteChange(trimmed);
-        }
+        const next = noteText.trim() || null;
+        if (next !== entry.note) onNoteChange(next);
     };
 
-    // Tap removes immediately; caller surfaces a subtle undo toast. No modal.
-    const handleRemove = () => {
-        onRemove();
-    };
+    const row = (
+        <View style={[styles.row, { borderBottomColor: palette.dividerSoft }]}>
+            {isRanked && rank !== undefined ? (
+                <View style={styles.rankColumn}>
+                    <Text style={[styles.rank, { color: palette.primary }]}>{String(rank).padStart(2, '0')}</Text>
+                    {isOwner && drag ? (
+                        <PressableScale
+                            onLongPress={drag}
+                            disabled={isDragDisabled}
+                            haptic="selection"
+                            style={[styles.iconTarget, { opacity: isDragDisabled ? 0.3 : 1 }]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Move ${restaurant.name}`}
+                        >
+                            <Ionicons name="reorder-three-outline" size={21} color={palette.textMuted} />
+                        </PressableScale>
+                    ) : null}
+                </View>
+            ) : null}
 
-    // TICKET-111: swipe-to-delete on list entries (owner, and never mid-reorder —
-    // a drag in flight sets isDragDisabled). Swipe reveals a trash panel whose tap
-    // runs the same remove-then-undo path as the ✕ button, so it stays confirmable.
-    const swipeEnabled = isOwner && !isDragDisabled;
+            <View style={styles.content}>
+                <PressableScale onPress={onPress} haptic="light" style={styles.placeTap}>
+                    <View
+                        style={[
+                            styles.photo,
+                            { backgroundColor: palette.surfaceContainerHigh },
+                            restaurant.photo_url && {
+                                borderWidth: StyleSheet.hairlineWidth,
+                                borderColor: scheme === 'dark'
+                                    ? 'rgba(255, 255, 255, 0.1)'
+                                    : 'rgba(0, 0, 0, 0.1)',
+                            },
+                        ]}
+                    >
+                        {restaurant.photo_url ? (
+                            <Image
+                                source={{ uri: restaurant.photo_url }}
+                                style={StyleSheet.absoluteFillObject}
+                                contentFit="cover"
+                                transition={180}
+                            />
+                        ) : (
+                            <Ionicons name="restaurant-outline" size={22} color={palette.textMuted} />
+                        )}
+                    </View>
 
-    const rowBody = (
-        <View style={[styles.row, { backgroundColor: palette.card }, Shadow.subtle]}>
-            {/* Rank number */}
-            {isRanked && rank !== undefined && (
-                <Text style={[styles.rank, Type.headlineItalic, { color: palette.textMuted }]}>
-                    {rank}
-                </Text>
-            )}
-
-            {/* Body — tappable to navigate */}
-            <Pressable
-                onPress={onPress}
-                style={({ pressed }) => [
-                    styles.body,
-                    { opacity: pressed ? 0.75 : 1 },
-                ]}
-            >
-                <Text
-                    style={[styles.name, { color: palette.text }]}
-                    numberOfLines={1}
-                >
-                    {r.name}
-                </Text>
-                {metaLine ? (
-                    <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
-                        {metaLine}
-                    </Text>
-                ) : null}
-
-                {/* Quiet wishlist affordance (TICKET-074) */}
-                {isPinned ? (
-                    <Text style={[styles.pinTag, { color: palette.textMuted }]}>
-                        pinned
-                    </Text>
-                ) : onPinToWishlist ? (
-                    <Pressable onPress={onPinToWishlist} hitSlop={8}>
-                        <Text style={[styles.pinAffordance, { color: palette.primary }]}>
-                            pin to wishlist
+                    <View style={styles.copy}>
+                        <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
+                            {restaurant.name}
                         </Text>
-                    </Pressable>
-                ) : null}
+                        {meta ? (
+                            <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={2}>
+                                {meta}
+                            </Text>
+                        ) : null}
+                    </View>
+                </PressableScale>
 
-                {/* Note area */}
                 {isOwner ? (
                     editingNote ? (
                         <TextInput
-                            style={[
-                                Type.bodySmall,
-                                styles.noteInput,
-                                { color: palette.text, borderBottomColor: palette.primary },
-                            ]}
                             value={noteText}
-                            onChangeText={(t) => setNoteText(t.slice(0, 140))}
-                            onBlur={handleNoteBlur}
+                            onChangeText={(text) => setNoteText(text.slice(0, 140))}
+                            onBlur={commitNote}
+                            onSubmitEditing={commitNote}
+                            autoFocus
+                            returnKeyType="done"
+                            maxLength={140}
                             placeholder="Add a note…"
                             placeholderTextColor={palette.textMuted}
-                            autoFocus
-                            maxLength={140}
-                            returnKeyType="done"
-                            onSubmitEditing={handleNoteBlur}
+                            style={[styles.noteInput, { color: palette.text, backgroundColor: palette.surfaceContainerLow }]}
                         />
-                    ) : entry.note ? (
-                        <Pressable onPress={() => setEditingNote(true)}>
+                    ) : (
+                        <PressableScale
+                            onPress={() => setEditingNote(true)}
+                            style={styles.noteTarget}
+                            accessibilityRole="button"
+                            accessibilityLabel={entry.note ? 'Edit note' : 'Add a note'}
+                        >
                             <Text
-                                style={[styles.noteQuote, { color: palette.textSecondary }]}
+                                style={[styles.note, { color: entry.note ? palette.textSecondary : palette.textMuted }]}
                                 numberOfLines={3}
                             >
-                                {`— ${entry.note}`}
+                                {entry.note ? `— ${entry.note}` : 'add a note…'}
                             </Text>
-                        </Pressable>
-                    ) : (
-                        <Pressable onPress={() => setEditingNote(true)}>
-                            <Text
-                                style={[
-                                    Type.bodySmall,
-                                    { color: palette.textMuted, marginTop: 4, fontStyle: 'italic' },
-                                ]}
-                            >
-                                add a note…
-                            </Text>
-                        </Pressable>
+                        </PressableScale>
                     )
                 ) : entry.note ? (
-                    <Text
-                        style={[styles.noteQuote, { color: palette.textSecondary }]}
-                        numberOfLines={3}
-                    >
-                        {`— ${entry.note}`}
+                    <Text style={[styles.note, { color: palette.textSecondary }]} numberOfLines={3}>
+                        — {entry.note}
                     </Text>
                 ) : null}
-            </Pressable>
+            </View>
 
-            {/* Owner actions */}
-            {isOwner && (
-                <View style={styles.actions}>
-                    {/* Drag handle — only for ranked lists */}
-                    {isRanked && drag && (
-                        <Pressable
-                            onLongPress={drag}
-                            disabled={isDragDisabled}
-                            hitSlop={8}
-                            style={{ opacity: isDragDisabled ? 0.3 : 1 }}
-                        >
-                            <Ionicons name="reorder-three-outline" size={22} color={palette.textMuted} />
-                        </Pressable>
-                    )}
-                    {/* Remove */}
-                    <Pressable onPress={handleRemove} hitSlop={8}>
-                        <Ionicons name="close-circle-outline" size={20} color={palette.textMuted} />
-                    </Pressable>
-                </View>
-            )}
+            <View style={styles.trailing}>
+                {onPinToWishlist ? (
+                    <PressableScale
+                        onPress={isPinned ? undefined : onPinToWishlist}
+                        disabled={isPinned}
+                        haptic="medium"
+                        style={[
+                            styles.pinButton,
+                            {
+                                backgroundColor: isPinned
+                                    ? palette.secondaryContainer
+                                    : palette.primaryMuted,
+                            },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={isPinned ? `${restaurant.name} is pinned` : `Pin ${restaurant.name} to wishlist`}
+                    >
+                        <Ionicons
+                            name={isPinned ? 'checkmark' : 'add'}
+                            size={21}
+                            color={isPinned ? palette.text : palette.primary}
+                        />
+                    </PressableScale>
+                ) : null}
+
+                {isOwner ? (
+                    <PressableScale
+                        onPress={onRemove}
+                        haptic="light"
+                        style={[styles.iconTarget, { backgroundColor: palette.surfaceContainerLow }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${restaurant.name} from list`}
+                    >
+                        <Ionicons name="close" size={18} color={palette.textMuted} />
+                    </PressableScale>
+                ) : null}
+            </View>
         </View>
     );
 
     return (
-        <SwipeToDeleteRow enabled={swipeEnabled} onDelete={handleRemove}>
-            {rowBody}
+        <SwipeToDeleteRow enabled={isOwner && !isDragDisabled} onDelete={onRemove}>
+            {row}
         </SwipeToDeleteRow>
     );
 }
 
 const styles = StyleSheet.create({
     row: {
+        minHeight: 126,
         flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: Spacing.md,
+        alignItems: 'flex-start',
+        gap: 10,
+        paddingHorizontal: Spacing.lg,
         paddingVertical: Spacing.md,
-        borderRadius: Radius.md,
-        gap: Spacing.md,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    rankColumn: {
+        width: 34,
+        alignItems: 'center',
+        gap: 8,
+        paddingTop: 2,
     },
     rank: {
-        width: 24,
-        textAlign: 'right',
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 18,
+        fontVariant: ['tabular-nums'],
+    },
+    content: {
+        flex: 1,
+        minWidth: 0,
+    },
+    placeTap: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 12,
+    },
+    photo: {
+        width: 78,
+        height: 92,
+        borderRadius: Radius.md,
+        overflow: 'hidden',
+        alignItems: 'center',
+        justifyContent: 'center',
         flexShrink: 0,
     },
-    body: {
+    copy: {
         flex: 1,
+        minWidth: 0,
+        paddingTop: 3,
     },
     name: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 21,
+        fontFamily: 'Newsreader_700Bold',
+        fontSize: 19,
+        lineHeight: 23,
+        letterSpacing: -0.2,
     },
-    noteQuote: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
-        lineHeight: 19,
+    meta: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        lineHeight: 17,
         marginTop: 5,
     },
+    noteTarget: {
+        minHeight: 40,
+        justifyContent: 'center',
+        marginLeft: 90,
+    },
+    note: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 13.5,
+        lineHeight: 18,
+    },
     noteInput: {
-        marginTop: 4,
-        paddingVertical: 2,
-        borderBottomWidth: 1,
+        minHeight: 40,
+        borderRadius: Radius.sm,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        marginTop: 7,
+        marginLeft: 90,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
     },
-    pinAffordance: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        letterSpacing: 1.0,
-        textTransform: 'lowercase',
-        marginTop: 6,
-    },
-    pinTag: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
-        letterSpacing: 1.0,
-        textTransform: 'lowercase',
-        marginTop: 6,
-    },
-    actions: {
-        flexDirection: 'row',
+    trailing: {
+        width: 44,
         alignItems: 'center',
-        gap: Spacing.sm,
-        flexShrink: 0,
+        gap: 8,
+    },
+    pinButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    iconTarget: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });
