@@ -1,10 +1,10 @@
 /**
- * Entry Detail — "Review · The Poster" (review-page-redesign handoff).
+ * Entry Detail — "Review · The Folio" (review-page-redesign handoff).
  *
- * Type-led review screen. NO flagship photo at the top — the review stands on
- * type and rhythm: who·when → place + rating → the note (hero) → your photos
- * "from the night" (a mosaic with the add tile built in) → who you were with →
- * engagement (loved-by + replies) over a persistent bottom composer.
+ * Adaptive review screen. The author's strongest material leads: user photos
+ * become a 4:3 folio hero; prose leads when there are no photos; a bare rating
+ * resolves to a quiet ledger note. The compact restaurant row remains the clear
+ * route to place detail in every state.
  *
  * Reading surface by default; existing-content edits (note / rating / dish /
  * breakdown) are gated behind an explicit edit mode (⋯ → edit review). Adding a
@@ -57,6 +57,7 @@ import { useAddEntryPhoto, useRemoveEntryPhoto } from '@/hooks/entries/useEntryP
 import { useReportContent, useBlockUser } from '@/hooks/account';
 import { CompanionPickerSheet } from '@/components/logging';
 import { formatCompanions } from '@/lib/companions';
+import { getReviewFolioMode, hasReviewWriting } from '@/lib/reviewFolio';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 import {
     useAddComment,
@@ -407,7 +408,11 @@ function EntryDetailScreen() {
     // Post interactions — scope determined by viewAs param
     // Table scope = default (existing behavior); public scope = restaurant-page review view
     const interactionScope = isPublicView ? 'public' : 'table' as const;
-    const { data: interactions } = usePostInteractions(
+    const {
+        data: interactions,
+        isPending: interactionsPending,
+        isError: interactionsError,
+    } = usePostInteractions(
         entry?.id ? 'entry' : null,
         entry?.id ?? null,
         interactionScope,
@@ -982,6 +987,17 @@ function EntryDetailScreen() {
         entry.service_rating != null ||
         entry.value_rating != null;
 
+    const hasWrittenBody = hasReviewWriting({
+        content: entry.content,
+        dishDescription: entry.dish_description,
+        hasCategoryRatings,
+        ownerEditing,
+        isEditingNote,
+        isEditingDish,
+        isEditingBreakdown,
+    });
+    const folioMode = getReviewFolioMode(hasUserPhotos, hasWrittenBody);
+
     const isRoundEntry = !!entry.table_night_id;
 
     // Past-tense verb per brand: "tried" when rated, "noted" when not.
@@ -1060,9 +1076,9 @@ function EntryDetailScreen() {
               .map((r) => r.emoji)
         : [];
 
-    const showEngagementBlock =
-        hasEngagement &&
-        (reactorList.length > 0 || comments.length > 0 || (isPublicView && repliesDisabled));
+    // Keep an in-page destination for the persistent composer, including the
+    // empty state. Without this, sparse reviews look unfinished above the bar.
+    const showEngagementBlock = hasEngagement;
 
     const goToRestaurant = () => {
         if (!entry.restaurant_id) return;
@@ -1074,6 +1090,343 @@ function EntryDetailScreen() {
             },
         });
     };
+
+    const renderPlaceAndRating = (ledger = false) => (
+        <View
+            style={ledger
+                ? [styles.ledgerNote, { backgroundColor: palette.surfaceContainerLow }]
+                : undefined}
+        >
+            <View style={styles.placeRow}>
+                <Pressable
+                    style={({ pressed }) => [
+                        styles.placeLink,
+                        { opacity: pressed && entry.restaurant_id ? 0.8 : 1 },
+                    ]}
+                    onPress={entry.restaurant_id ? goToRestaurant : undefined}
+                    accessibilityRole={entry.restaurant_id ? 'link' : 'text'}
+                    accessibilityLabel={
+                        entry.restaurant_id
+                            ? `Open ${restaurantName} restaurant page`
+                            : restaurantName
+                    }
+                    accessibilityHint={
+                        entry.restaurant_id ? 'Shows the restaurant’s details.' : undefined
+                    }
+                >
+                    <View style={styles.placeNameRow}>
+                        <Text style={[styles.placeName, { color: palette.text }]} numberOfLines={2}>
+                            {restaurantName}
+                        </Text>
+                        {entry.restaurant_id ? (
+                            <Ionicons
+                                name="chevron-forward"
+                                size={18}
+                                color={palette.textMuted}
+                                style={styles.placeChevron}
+                                accessible={false}
+                            />
+                        ) : null}
+                    </View>
+                    {addressLine ? (
+                        <Text
+                            style={[styles.placeMeta, { color: palette.textMuted }]}
+                            numberOfLines={1}
+                        >
+                            {addressLine.toUpperCase()}
+                        </Text>
+                    ) : null}
+                </Pressable>
+
+                {!isEditingRating ? (
+                    entry.rating != null && entry.rating > 0 ? (
+                        <Pressable
+                            onPress={ownerEditing ? handleRatingTap : undefined}
+                            disabled={!ownerEditing}
+                            style={styles.ratingNumeralWrap}
+                            accessibilityLabel={`rated ${entry.rating} out of 5`}
+                        >
+                            <Text style={[styles.ratingNumeral, { color: palette.primary }]}>
+                                {entry.rating.toFixed(1)}
+                            </Text>
+                            <Text style={[styles.ratingDenom, { color: palette.outlineVariant }]}>/5</Text>
+                            {entry.liked ? (
+                                <Ionicons
+                                    name="heart"
+                                    size={15}
+                                    color={palette.primary}
+                                    style={styles.ratingHeart}
+                                    accessibilityLabel="loved"
+                                />
+                            ) : null}
+                        </Pressable>
+                    ) : entry.liked ? (
+                        <Pressable
+                            onPress={ownerEditing ? handleRatingTap : undefined}
+                            disabled={!ownerEditing}
+                            style={styles.ratingNumeralWrap}
+                            accessibilityLabel="liked"
+                        >
+                            <Ionicons name="heart" size={24} color={palette.primary} />
+                        </Pressable>
+                    ) : ownerEditing ? (
+                        <Pressable
+                            onPress={handleRatingTap}
+                            style={[styles.ratePrompt, { backgroundColor: palette.surfaceContainerLow }]}
+                            accessibilityLabel="Add a rating"
+                        >
+                            <Text style={[styles.ratePromptText, { color: palette.textMuted }]}>rate</Text>
+                        </Pressable>
+                    ) : null
+                ) : null}
+            </View>
+
+            {isEditingRating ? (
+                <View style={styles.ratingEditor}>
+                    <StarRating
+                        value={localRating ?? 0}
+                        size={32}
+                        editable
+                        onChange={handleRatingChange}
+                    />
+                    <View style={styles.editButtonRow}>
+                        <Pressable onPress={handleRatingCancel} hitSlop={8}>
+                            <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
+                        </Pressable>
+                        <Pressable onPress={handleRatingSave} disabled={updateEntry.isPending} hitSlop={8}>
+                            {updateEntry.isPending ? (
+                                <ActivityIndicator size="small" color={palette.primary} />
+                            ) : (
+                                <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
+                            )}
+                        </Pressable>
+                    </View>
+                    {ratingError ? (
+                        <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
+                            {ratingError}
+                        </Text>
+                    ) : null}
+                </View>
+            ) : null}
+        </View>
+    );
+
+    const renderWrittenBody = () => (
+        <View>
+            {isEditingNote ? (
+                <View style={styles.noteEditor}>
+                    <TextInput
+                        style={[styles.noteInput, { color: palette.text }]}
+                        value={localNote}
+                        onChangeText={setLocalNote}
+                        placeholder="Say something about it."
+                        placeholderTextColor={palette.textMuted}
+                        multiline
+                        textAlignVertical="top"
+                        autoFocus
+                    />
+                    <View style={styles.editButtonRow}>
+                        {noteSaving && <ActivityIndicator size="small" color={palette.textMuted} />}
+                        <Pressable onPress={handleNoteCancel} hitSlop={8}>
+                            <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
+                        </Pressable>
+                        <Pressable onPress={handleNoteSave} disabled={updateEntry.isPending} hitSlop={8}>
+                            <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
+                        </Pressable>
+                    </View>
+                    {noteError ? (
+                        <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
+                            {noteError}
+                        </Text>
+                    ) : null}
+                </View>
+            ) : entry.content?.trim() ? (
+                <Pressable
+                    onPress={ownerEditing ? handleNoteEditStart : undefined}
+                    disabled={!ownerEditing}
+                    style={styles.noteBlock}
+                >
+                    <Text style={[styles.noteHero, { color: palette.text }]}>
+                        <Text style={[styles.noteDash, { color: palette.primary }]}>{'— '}</Text>
+                        {entry.content}
+                    </Text>
+                </Pressable>
+            ) : ownerEditing ? (
+                <Pressable
+                    onPress={handleNoteEditStart}
+                    style={styles.noteBlock}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add your writing"
+                >
+                    <Text style={[styles.noteMurmur, { color: palette.textMuted }]}>
+                        say something about the night
+                    </Text>
+                </Pressable>
+            ) : null}
+
+            {isEditingDish ? (
+                <View style={styles.dishEditor}>
+                    <TextInput
+                        style={[
+                            styles.inlineTextInput,
+                            { backgroundColor: palette.surfaceContainerLow, color: palette.text },
+                        ]}
+                        value={localDish}
+                        onChangeText={setLocalDish}
+                        placeholder="e.g. spicy rigatoni, negroni"
+                        placeholderTextColor={palette.textMuted}
+                        autoFocus
+                        onBlur={handleDishSave}
+                    />
+                    {dishError ? (
+                        <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
+                            {dishError}
+                        </Text>
+                    ) : null}
+                    <View style={styles.editButtonRow}>
+                        <Pressable onPress={handleDishCancel} hitSlop={8}>
+                            <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
+                        </Pressable>
+                        <Pressable onPress={handleDishSave} disabled={updateEntry.isPending} hitSlop={8}>
+                            <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
+                        </Pressable>
+                    </View>
+                </View>
+            ) : entry.dish_description?.trim() ? (
+                <Pressable
+                    onPress={ownerEditing ? handleDishEditStart : undefined}
+                    disabled={!ownerEditing}
+                    style={styles.dishRow}
+                >
+                    <Text style={[styles.dishText, { color: palette.textSecondary }]}>
+                        <Text style={[styles.dishLabel, { color: palette.textMuted }]}>dish{'  '}</Text>
+                        {'—  '}{entry.dish_description}
+                    </Text>
+                </Pressable>
+            ) : null}
+
+            {isEditingBreakdown ? (
+                <View style={styles.breakdownEditor}>
+                    <View style={styles.breakdownEditorHeader}>
+                        <Text style={[styles.sectionTinyLabel, { color: palette.textMuted }]}>break it down</Text>
+                        <Pressable onPress={handleBreakdownClose} hitSlop={8}>
+                            <Text style={[styles.editAction, { color: palette.primary }]}>done</Text>
+                        </Pressable>
+                    </View>
+                    {CATEGORY_LABELS.map(({ key, label }) => (
+                        <View key={key} style={styles.breakdownEditRow}>
+                            <Text style={[styles.breakdownEditLabel, { color: palette.textSecondary }]}>
+                                {label.toLowerCase()}
+                            </Text>
+                            <StarRating
+                                value={localBreakdown[key] ?? 0}
+                                size={20}
+                                editable
+                                onChange={(v) => handleBreakdownCategoryChange(key, v)}
+                            />
+                            {breakdownErrors[key] ? (
+                                <Text style={[Type.caption, { color: palette.error }]}>
+                                    {breakdownErrors[key]}
+                                </Text>
+                            ) : null}
+                        </View>
+                    ))}
+                </View>
+            ) : hasCategoryRatings ? (
+                <Pressable
+                    onPress={ownerEditing ? handleBreakdownEditStart : undefined}
+                    disabled={!ownerEditing}
+                    style={styles.breakdownStripWrap}
+                >
+                    <View style={styles.breakdownChips}>
+                        {CATEGORY_LABELS
+                            .filter(({ key }) => entry[key] != null)
+                            .map(({ key, label }) => {
+                                const val = entry[key] as number;
+                                return (
+                                    <View
+                                        key={key}
+                                        style={[styles.breakdownChip, { backgroundColor: palette.tertiaryFixed }]}
+                                    >
+                                        <Text style={[styles.breakdownChipLabel, { color: palette.tertiary }]}>
+                                            {label.toLowerCase()}
+                                        </Text>
+                                        <Text style={[styles.breakdownChipNum, { color: palette.tertiary }]}>
+                                            {val.toFixed(1)}
+                                        </Text>
+                                    </View>
+                                );
+                            })}
+                    </View>
+                </Pressable>
+            ) : null}
+        </View>
+    );
+
+    const renderPhotoFolio = () => (
+        <View>
+            <FromTheNight
+                photos={allPhotos}
+                canAdd={canAddPhotos}
+                onAdd={handlePhotoPress}
+                onPressPhoto={(i) => {
+                    setActivePhotoIndex(i);
+                    setLightboxOpen(true);
+                }}
+                palette={palette}
+            />
+
+            {newPhotoSlots.length > 0 ? (
+                <View style={{ marginTop: Spacing.sm }}>
+                    <MultiPhotoRow
+                        photos={newPhotoSlots}
+                        maxPhotos={MAX_PHOTOS - allPhotos.length}
+                        onAdd={handlePhotoPress}
+                        onRemove={(slotId) =>
+                            setNewPhotoSlots((prev) => prev.filter((s) => s.id !== slotId))
+                        }
+                        onRetry={(slotId) => {
+                            const slot = newPhotoSlots.find((s) => s.id === slotId);
+                            if (slot) startUploadForSlot(slotId, slot.localUri);
+                        }}
+                        palette={palette}
+                    />
+                </View>
+            ) : null}
+
+            {isOwnEntry && photoManageMode && hasUserPhotos && entryPhotoRows?.length ? (
+                <View style={{ marginTop: Spacing.md }}>
+                    <Text style={[Type.caption, { color: palette.textMuted }]}>Tap a photo to remove it</Text>
+                    <View
+                        style={{
+                            flexDirection: 'row',
+                            flexWrap: 'wrap',
+                            gap: Spacing.sm,
+                            marginTop: Spacing.xs,
+                        }}
+                    >
+                        {entryPhotoRows.map((row, index) => (
+                            <Pressable
+                                key={row.id}
+                                onPress={() => handleRemoveExistingPhoto(row.photo_url)}
+                                style={[
+                                    styles.photoThumbContainer,
+                                    { borderColor: palette.imageOutline },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Remove photo ${index + 1} of ${entryPhotoRows.length}`}
+                            >
+                                <Image source={{ uri: row.photo_url }} style={styles.photoThumb} resizeMode="cover" />
+                                <View style={[styles.photoRemoveOverlay, { backgroundColor: palette.overlay }]}>
+                                    <Ionicons name="trash-outline" size={16} color={palette.textInverse} />
+                                </View>
+                            </Pressable>
+                        ))}
+                    </View>
+                </View>
+            ) : null}
+        </View>
+    );
 
     return (
         <>
@@ -1164,371 +1517,34 @@ function EntryDetailScreen() {
                             </Text>
                         </Pressable>
 
-                        {/* ── place + rating ─────────────────────────────────── */}
-                        <View style={styles.placeRow}>
-                            <Pressable
-                                style={({ pressed }) => [
-                                    styles.placeLink,
-                                    { opacity: pressed && entry.restaurant_id ? 0.65 : 1 },
-                                ]}
-                                onPress={entry.restaurant_id ? goToRestaurant : undefined}
-                                accessibilityRole={entry.restaurant_id ? 'link' : 'text'}
-                                accessibilityLabel={
-                                    entry.restaurant_id
-                                        ? `Open ${restaurantName} restaurant page`
-                                        : restaurantName
-                                }
-                                accessibilityHint={
-                                    entry.restaurant_id ? 'Shows the restaurant’s details.' : undefined
-                                }
-                            >
-                                <Text style={[styles.placeName, { color: palette.text }]} numberOfLines={3}>
-                                    {restaurantName}
-                                </Text>
-                                {addressLine || entry.restaurant_id ? (
-                                    <View style={styles.placeMetaRow}>
-                                        {addressLine ? (
-                                            <Text
-                                                style={[styles.placeMeta, { color: palette.textMuted }]}
-                                                numberOfLines={1}
-                                            >
-                                                {addressLine.toUpperCase()}
-                                            </Text>
-                                        ) : (
-                                            <View style={styles.placeMetaSpacer} />
-                                        )}
-                                        {entry.restaurant_id ? (
-                                            <Ionicons
-                                                name="chevron-forward"
-                                                size={15}
-                                                color={palette.textMuted}
-                                                accessible={false}
-                                            />
-                                        ) : null}
+                        {/* ── adaptive authored folio ──────────────────────────────── */}
+                        {folioMode === 'photos' ? (
+                            <View>
+                                {renderPhotoFolio()}
+                                <View style={styles.placeAfterPhoto}>
+                                    {renderPlaceAndRating()}
+                                </View>
+                                {hasWrittenBody ? (
+                                    <View style={styles.bodyAfterPlace}>
+                                        {renderWrittenBody()}
                                     </View>
                                 ) : null}
-                            </Pressable>
-
-                            {!isEditingRating ? (
-                                entry.rating != null && entry.rating > 0 ? (
-                                    <Pressable
-                                        onPress={ownerEditing ? handleRatingTap : undefined}
-                                        disabled={!ownerEditing}
-                                        style={styles.ratingNumeralWrap}
-                                        accessibilityLabel={`rated ${entry.rating} out of 5`}
-                                    >
-                                        <Text style={[styles.ratingNumeral, { color: palette.primary }]}>
-                                            {entry.rating.toFixed(1)}
-                                        </Text>
-                                        <Text style={styles.ratingDenom}>/5</Text>
-                                        {entry.liked ? (
-                                            <Ionicons
-                                                name="heart"
-                                                size={15}
-                                                color={palette.primary}
-                                                style={styles.ratingHeart}
-                                                accessibilityLabel="loved"
-                                            />
-                                        ) : null}
-                                    </Pressable>
-                                ) : entry.liked ? (
-                                    <Pressable
-                                        onPress={ownerEditing ? handleRatingTap : undefined}
-                                        disabled={!ownerEditing}
-                                        style={styles.ratingNumeralWrap}
-                                        accessibilityLabel="liked"
-                                    >
-                                        <Ionicons name="heart" size={26} color={palette.primary} />
-                                    </Pressable>
-                                ) : ownerEditing ? (
-                                    <Pressable
-                                        onPress={handleRatingTap}
-                                        style={[styles.ratePrompt, { backgroundColor: palette.surfaceContainerLow }]}
-                                        accessibilityLabel="Add a rating"
-                                    >
-                                        <Text style={[styles.ratePromptText, { color: palette.textMuted }]}>rate</Text>
-                                    </Pressable>
-                                ) : null
-                            ) : null}
-                        </View>
-
-                        {/* Rating editor (inline, edit mode) */}
-                        {isEditingRating ? (
-                            <View style={styles.ratingEditor}>
-                                <StarRating
-                                    value={localRating ?? 0}
-                                    size={32}
-                                    editable
-                                    onChange={handleRatingChange}
-                                />
-                                <View style={styles.editButtonRow}>
-                                    <Pressable onPress={handleRatingCancel} hitSlop={8}>
-                                        <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
-                                    </Pressable>
-                                    <Pressable onPress={handleRatingSave} disabled={updateEntry.isPending} hitSlop={8}>
-                                        {updateEntry.isPending ? (
-                                            <ActivityIndicator size="small" color={palette.primary} />
-                                        ) : (
-                                            <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
-                                        )}
-                                    </Pressable>
+                            </View>
+                        ) : folioMode === 'writing' ? (
+                            <View>
+                                {renderWrittenBody()}
+                                <View style={styles.placeAfterBody}>
+                                    {renderPlaceAndRating()}
                                 </View>
-                                {ratingError ? (
-                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
-                                        {ratingError}
-                                    </Text>
+                                {canAddPhotos ? (
+                                    <View style={styles.photoAddAfterPlace}>
+                                        {renderPhotoFolio()}
+                                    </View>
                                 ) : null}
                             </View>
-                        ) : null}
-
-                        {/* Previously-here banner — non-own or Round entries only */}
-                        {!isPublicView && userHistory && userHistory.visit_count > 0 && !(isOwnEntry && !isRoundEntry) && (
-                            <View style={{ marginTop: Spacing.lg }}>
-                                <PreviouslyHereBanner
-                                    voice="user"
-                                    visitCount={userHistory.visit_count}
-                                    lastRating={userHistory.last_visit?.rating ?? null}
-                                    lastDate={userHistory.last_visit?.date ?? null}
-                                    onPress={entry.restaurant_id ? goToRestaurant : undefined}
-                                />
-                            </View>
+                        ) : (
+                            renderPlaceAndRating(true)
                         )}
-
-                        {/* Round context banner — hidden in public view */}
-                        {!isPublicView && isRoundEntry && roundContext && (
-                            <Pressable
-                                onPress={() =>
-                                    router.push({
-                                        pathname: '/table-night-detail',
-                                        params: { nightId: entry.table_night_id! },
-                                    })
-                                }
-                                style={({ pressed }) => [
-                                    styles.roundBanner,
-                                    { backgroundColor: palette.primaryMuted, opacity: pressed ? 0.7 : 1 },
-                                ]}
-                            >
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.roundBannerTitle, { color: palette.primary }]}>
-                                        Part of a Round
-                                    </Text>
-                                    <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
-                                        {roundContext.participantCount} {roundContext.participantCount === 1 ? 'person' : 'people'}
-                                        {roundContext.groupAverage != null
-                                            ? ` · Group avg ${roundContext.groupAverage.toFixed(1)}`
-                                            : ''}
-                                    </Text>
-                                </View>
-                                <Text style={[Type.body, { color: palette.primary }]}>›</Text>
-                            </Pressable>
-                        )}
-
-                        <View style={styles.divider} />
-
-                        {/* ── the note — hero, em-dash lead, roman serif ─────── */}
-                        {isEditingNote ? (
-                            <View style={styles.noteEditor}>
-                                <TextInput
-                                    style={[styles.noteInput, { color: palette.text }]}
-                                    value={localNote}
-                                    onChangeText={setLocalNote}
-                                    placeholder="Say something about it."
-                                    placeholderTextColor={palette.textMuted}
-                                    multiline
-                                    textAlignVertical="top"
-                                    autoFocus
-                                />
-                                <View style={styles.editButtonRow}>
-                                    {noteSaving && <ActivityIndicator size="small" color={palette.textMuted} />}
-                                    <Pressable onPress={handleNoteCancel} hitSlop={8}>
-                                        <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
-                                    </Pressable>
-                                    <Pressable onPress={handleNoteSave} disabled={updateEntry.isPending} hitSlop={8}>
-                                        <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
-                                    </Pressable>
-                                </View>
-                                {noteError ? (
-                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
-                                        {noteError}
-                                    </Text>
-                                ) : null}
-                            </View>
-                        ) : entry.content ? (
-                            <Pressable
-                                onPress={ownerEditing ? handleNoteEditStart : undefined}
-                                disabled={!ownerEditing}
-                                style={styles.noteBlock}
-                            >
-                                <Text style={[styles.noteHero, { color: palette.text }]}>
-                                    <Text style={[styles.noteDash, { color: palette.primary }]}>{'— '}</Text>
-                                    {entry.content}
-                                </Text>
-                            </Pressable>
-                        ) : ownerEditing ? (
-                            <Pressable
-                                onPress={handleNoteEditStart}
-                                style={styles.noteBlock}
-                                accessibilityRole="button"
-                                accessibilityLabel="Add your writing"
-                            >
-                                <Text style={[styles.noteMurmur, { color: palette.textMuted }]}>
-                                    {'— say something about the night'}
-                                </Text>
-                            </Pressable>
-                        ) : null}
-
-                        {/* Dish line */}
-                        {isEditingDish ? (
-                            <View style={styles.dishEditor}>
-                                <TextInput
-                                    style={[styles.inlineTextInput, { backgroundColor: palette.surfaceContainerLow, color: palette.text }]}
-                                    value={localDish}
-                                    onChangeText={setLocalDish}
-                                    placeholder="e.g. spicy rigatoni, negroni"
-                                    placeholderTextColor={palette.textMuted}
-                                    autoFocus
-                                    onBlur={handleDishSave}
-                                />
-                                {dishError ? (
-                                    <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
-                                        {dishError}
-                                    </Text>
-                                ) : null}
-                                <View style={styles.editButtonRow}>
-                                    <Pressable onPress={handleDishCancel} hitSlop={8}>
-                                        <Text style={[styles.editAction, { color: palette.textSecondary }]}>cancel</Text>
-                                    </Pressable>
-                                    <Pressable onPress={handleDishSave} disabled={updateEntry.isPending} hitSlop={8}>
-                                        <Text style={[styles.editAction, { color: palette.primary }]}>save</Text>
-                                    </Pressable>
-                                </View>
-                            </View>
-                        ) : entry.dish_description ? (
-                            <Pressable
-                                onPress={ownerEditing ? handleDishEditStart : undefined}
-                                disabled={!ownerEditing}
-                                style={styles.dishRow}
-                            >
-                                <Text style={[styles.dishText, { color: palette.textSecondary }]}>
-                                    <Text style={[styles.dishLabel, { color: palette.textMuted }]}>dish{'  '}</Text>
-                                    {'—  '}{entry.dish_description}
-                                </Text>
-                            </Pressable>
-                        ) : null}
-
-                        {/* Breakdown — chips (read) / editor (edit mode) */}
-                        {isEditingBreakdown ? (
-                            <View style={styles.breakdownEditor}>
-                                <View style={styles.breakdownEditorHeader}>
-                                    <Text style={[styles.sectionTinyLabel, { color: palette.textMuted }]}>break it down</Text>
-                                    <Pressable onPress={handleBreakdownClose} hitSlop={8}>
-                                        <Text style={[styles.editAction, { color: palette.primary }]}>done</Text>
-                                    </Pressable>
-                                </View>
-                                {CATEGORY_LABELS.map(({ key, label }) => (
-                                    <View key={key} style={styles.breakdownEditRow}>
-                                        <Text style={[styles.breakdownEditLabel, { color: palette.textSecondary }]}>
-                                            {label.toLowerCase()}
-                                        </Text>
-                                        <StarRating
-                                            value={localBreakdown[key] ?? 0}
-                                            size={20}
-                                            editable
-                                            onChange={(v) => handleBreakdownCategoryChange(key, v)}
-                                        />
-                                        {breakdownErrors[key] ? (
-                                            <Text style={[Type.caption, { color: palette.error }]}>
-                                                {breakdownErrors[key]}
-                                            </Text>
-                                        ) : null}
-                                    </View>
-                                ))}
-                            </View>
-                        ) : hasCategoryRatings ? (
-                            <Pressable
-                                onPress={ownerEditing ? handleBreakdownEditStart : undefined}
-                                disabled={!ownerEditing}
-                                style={styles.breakdownStripWrap}
-                            >
-                                <View style={styles.breakdownChips}>
-                                    {CATEGORY_LABELS
-                                        .filter(({ key }) => entry[key] != null)
-                                        .map(({ key, label }) => {
-                                            const val = entry[key] as number;
-                                            return (
-                                                <View
-                                                    key={key}
-                                                    style={[styles.breakdownChip, { backgroundColor: palette.tertiaryFixed }]}
-                                                >
-                                                    <Text style={[styles.breakdownChipLabel, { color: palette.tertiary }]}>
-                                                        {label.toLowerCase()}
-                                                    </Text>
-                                                    <Text style={[styles.breakdownChipNum, { color: palette.tertiary }]}>
-                                                        {val.toFixed(1)}
-                                                    </Text>
-                                                </View>
-                                            );
-                                        })}
-                                </View>
-                            </Pressable>
-                        ) : null}
-
-                        {/* ── From the night — your photos, mosaic + add tile ── */}
-                        {hasUserPhotos || canAddPhotos ? (
-                            <View style={styles.photosBlock}>
-                                <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>From the night</Text>
-                                <FromTheNight
-                                    photos={allPhotos}
-                                    canAdd={canAddPhotos}
-                                    onAdd={handlePhotoPress}
-                                    onPressPhoto={(i) => {
-                                        setActivePhotoIndex(i);
-                                        setLightboxOpen(true);
-                                    }}
-                                    palette={palette}
-                                />
-
-                                {/* In-progress new photo uploads */}
-                                {newPhotoSlots.length > 0 && (
-                                    <View style={{ marginTop: Spacing.sm }}>
-                                        <MultiPhotoRow
-                                            photos={newPhotoSlots}
-                                            maxPhotos={MAX_PHOTOS - allPhotos.length}
-                                            onAdd={handlePhotoPress}
-                                            onRemove={(slotId) =>
-                                                setNewPhotoSlots((prev) => prev.filter((s) => s.id !== slotId))
-                                            }
-                                            onRetry={(slotId) => {
-                                                const slot = newPhotoSlots.find((s) => s.id === slotId);
-                                                if (slot) startUploadForSlot(slotId, slot.localUri);
-                                            }}
-                                            palette={palette}
-                                        />
-                                    </View>
-                                )}
-
-                                {/* Manage panel — ⋯ → manage photos */}
-                                {isOwnEntry && photoManageMode && hasUserPhotos && entryPhotoRows && entryPhotoRows.length > 0 ? (
-                                    <View style={{ marginTop: Spacing.md }}>
-                                        <Text style={[Type.caption, { color: palette.textMuted }]}>Tap a photo to remove it</Text>
-                                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.xs }}>
-                                            {entryPhotoRows.map((row) => (
-                                                <Pressable
-                                                    key={row.id}
-                                                    onPress={() => handleRemoveExistingPhoto(row.photo_url)}
-                                                    style={styles.photoThumbContainer}
-                                                >
-                                                    <Image source={{ uri: row.photo_url }} style={styles.photoThumb} resizeMode="cover" />
-                                                    <View style={[styles.photoRemoveOverlay, { backgroundColor: palette.overlay }]}>
-                                                        <Ionicons name="trash-outline" size={16} color={palette.textInverse} />
-                                                    </View>
-                                                </Pressable>
-                                            ))}
-                                        </View>
-                                    </View>
-                                ) : null}
-                            </View>
-                        ) : null}
 
                         {/* ── who you were with ──────────────────────────────── */}
                         {(entry.companions ?? []).length > 0 ? (
@@ -1569,6 +1585,46 @@ function EntryDetailScreen() {
                                 </View>
                                 <Text style={[styles.companionsEmptyText, { color: palette.primary }]}>Who were you with?</Text>
                                 <Text style={[styles.companionsEmptyHint, { color: palette.textMuted }]}>Tag people</Text>
+                            </Pressable>
+                        ) : null}
+
+                        {/* Context follows the authored folio instead of interrupting it. */}
+                        {!isPublicView && userHistory && userHistory.visit_count > 0 && !(isOwnEntry && !isRoundEntry) ? (
+                            <View style={styles.contextModule}>
+                                <PreviouslyHereBanner
+                                    voice="user"
+                                    visitCount={userHistory.visit_count}
+                                    lastRating={userHistory.last_visit?.rating ?? null}
+                                    lastDate={userHistory.last_visit?.date ?? null}
+                                    onPress={entry.restaurant_id ? goToRestaurant : undefined}
+                                />
+                            </View>
+                        ) : null}
+
+                        {!isPublicView && isRoundEntry && roundContext ? (
+                            <Pressable
+                                onPress={() =>
+                                    router.push({
+                                        pathname: '/table-night-detail',
+                                        params: { nightId: entry.table_night_id! },
+                                    })
+                                }
+                                style={({ pressed }) => [
+                                    styles.roundBanner,
+                                    { backgroundColor: palette.primaryMuted, opacity: pressed ? 0.8 : 1 },
+                                ]}
+                            >
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.roundBannerTitle, { color: palette.primary }]}>Part of a Round</Text>
+                                    <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
+                                        {roundContext.participantCount}{' '}
+                                        {roundContext.participantCount === 1 ? 'person' : 'people'}
+                                        {roundContext.groupAverage != null
+                                            ? ` · Group avg ${roundContext.groupAverage.toFixed(1)}`
+                                            : ''}
+                                    </Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={18} color={palette.primary} />
                             </Pressable>
                         ) : null}
                     </View>
@@ -1612,7 +1668,12 @@ function EntryDetailScreen() {
                     {/* ── Engagement — loved-by + replies ────────────────────── */}
                     {showEngagementBlock ? (
                         <View style={styles.engagement}>
-                            <View style={styles.divider} />
+                            <View
+                                style={[
+                                    styles.engagementDivider,
+                                    { backgroundColor: palette.divider },
+                                ]}
+                            />
 
                             {reactorList.length > 0 ? (
                                 <View style={styles.lovedByRow}>
@@ -1655,11 +1716,20 @@ function EntryDetailScreen() {
                                 </View>
                             ) : null}
 
+                            <Text
+                                style={[
+                                    styles.repliesHeader,
+                                    reactorList.length === 0 && styles.repliesHeaderFirst,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {comments.length > 0
+                                    ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`
+                                    : 'Replies'}
+                            </Text>
+
                             {comments.length > 0 ? (
                                 <>
-                                    <Text style={[styles.repliesHeader, { color: palette.textMuted }]}>
-                                        {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
-                                    </Text>
                                     {threadRoots.map((root) => (
                                         <React.Fragment key={root.id}>
                                             <ReplyBubble
@@ -1691,6 +1761,8 @@ function EntryDetailScreen() {
                                         </React.Fragment>
                                     ))}
                                 </>
+                            ) : !repliesDisabled && !interactionsPending && !interactionsError ? (
+                                <Text style={[styles.repliesEmpty, { color: palette.textMuted }]}>No replies yet.</Text>
                             ) : null}
 
                             {isPublicView && repliesDisabled ? (
@@ -1863,6 +1935,7 @@ function FromTheNight({
     palette: Palette;
 }) {
     const n = photos.length;
+    const openPhotoLabel = (index: number) => `Open photo ${index + 1} of ${n}`;
 
     const addTile = (style: any) => (
         <Pressable
@@ -1896,16 +1969,34 @@ function FromTheNight({
         if (canAdd) {
             return (
                 <View style={styles.ftnRow}>
-                    <Pressable style={styles.ftnBig} onPress={() => onPressPhoto(0)}>
-                        <Image source={{ uri: photos[0] }} style={styles.ftnImg} resizeMode="cover" />
+                    <Pressable
+                        style={[styles.ftnBig, styles.ftnPhotoFrame, { borderColor: palette.imageOutline }]}
+                        onPress={() => onPressPhoto(0)}
+                        accessibilityRole="button"
+                        accessibilityLabel={openPhotoLabel(0)}
+                    >
+                        <Image
+                            source={{ uri: photos[0] }}
+                            style={styles.ftnImg}
+                            resizeMode="cover"
+                        />
                     </Pressable>
                     <View style={styles.ftnSide}>{addTile({ flex: 1 })}</View>
                 </View>
             );
         }
         return (
-            <Pressable style={styles.ftnSingle} onPress={() => onPressPhoto(0)}>
-                <Image source={{ uri: photos[0] }} style={styles.ftnImg} resizeMode="cover" />
+            <Pressable
+                style={[styles.ftnSingle, styles.ftnPhotoFrame, { borderColor: palette.imageOutline }]}
+                onPress={() => onPressPhoto(0)}
+                accessibilityRole="button"
+                accessibilityLabel={openPhotoLabel(0)}
+            >
+                <Image
+                    source={{ uri: photos[0] }}
+                    style={styles.ftnImg}
+                    resizeMode="cover"
+                />
             </Pressable>
         );
     }
@@ -1915,12 +2006,30 @@ function FromTheNight({
     const remainingIfNoAdd = n - 3; // hidden behind the bottom thumb (non-owner)
     return (
         <View style={styles.ftnRow}>
-            <Pressable style={styles.ftnBig} onPress={() => onPressPhoto(0)}>
-                <Image source={{ uri: photos[0] }} style={styles.ftnImg} resizeMode="cover" />
+            <Pressable
+                style={[styles.ftnBig, styles.ftnPhotoFrame, { borderColor: palette.imageOutline }]}
+                onPress={() => onPressPhoto(0)}
+                accessibilityRole="button"
+                accessibilityLabel={openPhotoLabel(0)}
+            >
+                <Image
+                    source={{ uri: photos[0] }}
+                    style={styles.ftnImg}
+                    resizeMode="cover"
+                />
             </Pressable>
             <View style={styles.ftnSide}>
-                <Pressable style={styles.ftnCell} onPress={() => onPressPhoto(1)}>
-                    <Image source={{ uri: photos[1] }} style={styles.ftnImg} resizeMode="cover" />
+                <Pressable
+                    style={[styles.ftnCell, styles.ftnPhotoFrame, { borderColor: palette.imageOutline }]}
+                    onPress={() => onPressPhoto(1)}
+                    accessibilityRole="button"
+                    accessibilityLabel={openPhotoLabel(1)}
+                >
+                    <Image
+                        source={{ uri: photos[1] }}
+                        style={styles.ftnImg}
+                        resizeMode="cover"
+                    />
                     {canAdd && remainingIfAdd > 0 ? (
                         <View style={[styles.ftnMoreOverlay, { backgroundColor: palette.overlay }]}>
                             <Text style={[styles.ftnMoreText, { color: palette.textOnImage }]}>+{remainingIfAdd}</Text>
@@ -1930,8 +2039,17 @@ function FromTheNight({
                 {canAdd ? (
                     addTile(styles.ftnCell)
                 ) : n >= 3 ? (
-                    <Pressable style={styles.ftnCell} onPress={() => onPressPhoto(2)}>
-                        <Image source={{ uri: photos[2] }} style={styles.ftnImg} resizeMode="cover" />
+                    <Pressable
+                        style={[styles.ftnCell, styles.ftnPhotoFrame, { borderColor: palette.imageOutline }]}
+                        onPress={() => onPressPhoto(2)}
+                        accessibilityRole="button"
+                        accessibilityLabel={openPhotoLabel(2)}
+                    >
+                        <Image
+                            source={{ uri: photos[2] }}
+                            style={styles.ftnImg}
+                            resizeMode="cover"
+                        />
                         {remainingIfNoAdd > 0 ? (
                             <View style={[styles.ftnMoreOverlay, { backgroundColor: palette.overlay }]}>
                                 <Text style={[styles.ftnMoreText, { color: palette.textOnImage }]}>+{remainingIfNoAdd}</Text>
@@ -2378,7 +2496,6 @@ function PosterComposer({
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
 const PAGE_H = 22;
-const DIVIDER = 'rgba(221, 192, 186, 0.5)';
 
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -2405,6 +2522,11 @@ const styles = StyleSheet.create({
 
     // ── Body ──
     body: { paddingHorizontal: PAGE_H, paddingTop: Spacing.sm },
+    placeAfterPhoto: { marginTop: Spacing.md },
+    bodyAfterPlace: { marginTop: Spacing.lg },
+    placeAfterBody: { marginTop: Spacing.lg },
+    photoAddAfterPlace: { marginTop: Spacing.md },
+    contextModule: { marginTop: Spacing.lg },
 
     // who · when
     whoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: Spacing.lg },
@@ -2412,27 +2534,49 @@ const styles = StyleSheet.create({
     whoMeta: { fontFamily: 'Manrope_400Regular', fontSize: 13, flexShrink: 1 },
 
     // place + rating
+    ledgerNote: {
+        borderRadius: Radius.lg,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.md,
+    },
     placeRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
-    placeLink: { flex: 1, minHeight: 44, paddingRight: Spacing.md },
+    placeLink: { flex: 1, minHeight: 44, paddingRight: Spacing.sm },
+    placeNameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
     placeName: {
         fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 36,
-        lineHeight: 39,
-        letterSpacing: -0.7,
-    },
-    placeMetaRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: 9 },
-    placeMeta: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 10,
-        letterSpacing: 1.2,
-        flex: 1,
+        fontSize: 24,
+        lineHeight: 28,
+        letterSpacing: -0.3,
         flexShrink: 1,
     },
-    placeMetaSpacer: { flex: 1 },
-    ratingNumeralWrap: { flexDirection: 'row', alignItems: 'baseline', gap: 3, paddingTop: 4 },
-    ratingNumeral: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 34, lineHeight: 36 },
-    ratingDenom: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 16, color: '#cdb8a8' },
-    ratePrompt: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full },
+    placeChevron: { marginTop: 2 },
+    placeMeta: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        lineHeight: 15,
+        letterSpacing: 1.2,
+        marginTop: Spacing.xs,
+    },
+    ratingNumeralWrap: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 3,
+        paddingTop: 4,
+        minWidth: 44,
+        minHeight: 44,
+        justifyContent: 'flex-end',
+    },
+    ratingNumeral: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 26, lineHeight: 29 },
+    ratingDenom: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 13 },
+    ratePrompt: {
+        minWidth: 44,
+        minHeight: 44,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     ratePromptText: { fontFamily: 'Manrope_500Medium', fontSize: 11, letterSpacing: 0.4 },
 
     ratingHeart: { marginLeft: 3, alignSelf: 'center' },
@@ -2455,13 +2599,11 @@ const styles = StyleSheet.create({
     },
     roundBannerTitle: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
 
-    divider: { height: 1, backgroundColor: DIVIDER, marginVertical: Spacing.lg },
-
     // the note — hero
     noteBlock: {},
     noteHero: { fontFamily: 'Newsreader_400Regular', fontSize: 20, lineHeight: 30 },
     noteDash: { fontFamily: 'Newsreader_600SemiBold' },
-    noteMurmur: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 19, lineHeight: 29 },
+    noteMurmur: { fontFamily: 'Manrope_500Medium', fontSize: 16, lineHeight: 24 },
     noteEditor: {},
     noteInput: {
         fontFamily: 'Newsreader_400Regular',
@@ -2474,14 +2616,14 @@ const styles = StyleSheet.create({
 
     // dish
     dishRow: { marginTop: Spacing.md },
-    dishText: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 15, lineHeight: 22 },
-    dishLabel: { fontFamily: 'Manrope_600SemiBold', fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase' },
+    dishText: { fontFamily: 'Newsreader_400Regular', fontSize: 16, lineHeight: 23 },
+    dishLabel: { fontFamily: 'Manrope_600SemiBold', fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase' },
     dishEditor: { marginTop: Spacing.md },
     inlineTextInput: {
         borderRadius: Radius.md,
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm,
-        fontSize: 15,
+        fontSize: 16,
         fontFamily: 'Manrope_400Regular',
         minHeight: 44,
     },
@@ -2498,23 +2640,29 @@ const styles = StyleSheet.create({
     breakdownEditLabel: { fontFamily: 'Manrope_500Medium', fontSize: 11, letterSpacing: 0.4, textTransform: 'uppercase', width: 60 },
     sectionTinyLabel: { fontFamily: 'Manrope_600SemiBold', fontSize: 10, letterSpacing: 0.8, textTransform: 'uppercase' },
 
-    // ── From the night ──
-    photosBlock: { marginTop: Spacing.lg },
-    sectionLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
-        letterSpacing: 1.5,
-        textTransform: 'uppercase',
-        marginBottom: 11,
+    // ── Folio photography ──
+    ftnRow: { flexDirection: 'row', gap: 8, aspectRatio: 4 / 3 },
+    ftnBig: {
+        flex: 2,
+        borderRadius: Radius.lg,
+        overflow: 'hidden',
     },
-    ftnRow: { flexDirection: 'row', gap: 8, height: 176 },
-    ftnBig: { flex: 2, borderRadius: 14, overflow: 'hidden' },
     ftnSide: { flex: 1, gap: 8 },
-    ftnCell: { flex: 1, borderRadius: 14, overflow: 'hidden' },
+    ftnCell: {
+        flex: 1,
+        borderRadius: Radius.lg,
+        overflow: 'hidden',
+    },
+    ftnPhotoFrame: { borderWidth: StyleSheet.hairlineWidth },
     ftnImg: { width: '100%', height: '100%' },
-    ftnSingle: { width: '100%', height: 200, borderRadius: 14, overflow: 'hidden' },
+    ftnSingle: {
+        width: '100%',
+        aspectRatio: 4 / 3,
+        borderRadius: Radius.lg,
+        overflow: 'hidden',
+    },
     ftnAddTile: {
-        borderRadius: 14,
+        borderRadius: Radius.lg,
         borderWidth: 1.5,
         borderStyle: 'dashed',
         borderColor: 'rgba(160,63,40,0.4)',
@@ -2526,7 +2674,7 @@ const styles = StyleSheet.create({
     ftnAddLabel: { fontFamily: 'Manrope_600SemiBold', fontSize: 9, letterSpacing: 0.5 },
     ftnWideAdd: {
         height: 96,
-        borderRadius: 14,
+        borderRadius: Radius.lg,
         borderWidth: 1.5,
         borderStyle: 'dashed',
         borderColor: 'rgba(160,63,40,0.4)',
@@ -2591,6 +2739,11 @@ const styles = StyleSheet.create({
 
     // ── Engagement ──
     engagement: { paddingHorizontal: PAGE_H, marginTop: Spacing.sm },
+    engagementDivider: {
+        height: 1,
+        marginTop: Spacing.lg,
+        marginBottom: Spacing.lg,
+    },
     lovedByRow: { flexDirection: 'row', alignItems: 'center', gap: 11, marginTop: Spacing.xs },
     lovedByText: { fontFamily: 'Manrope_400Regular', fontSize: 13, lineHeight: 18, flex: 1 },
     lovedByName: { fontFamily: 'Manrope_700Bold' },
@@ -2601,6 +2754,12 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         marginTop: Spacing.lg,
         marginBottom: 4,
+    },
+    repliesHeaderFirst: { marginTop: 0 },
+    repliesEmpty: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 14,
+        marginTop: Spacing.sm,
     },
     repliesOffText: { fontFamily: 'Manrope_400Regular', fontSize: 12, marginTop: Spacing.sm },
 
@@ -2671,7 +2830,14 @@ const styles = StyleSheet.create({
     menuLabel: { fontFamily: 'Manrope_500Medium', fontSize: 16 },
 
     // ── Photo manage thumbs ──
-    photoThumbContainer: { position: 'relative', width: 80, height: 80 },
+    photoThumbContainer: {
+        position: 'relative',
+        width: 80,
+        height: 80,
+        borderRadius: Radius.md,
+        borderWidth: StyleSheet.hairlineWidth,
+        overflow: 'hidden',
+    },
     photoThumb: { width: 80, height: 80, borderRadius: Radius.md },
     photoRemoveOverlay: {
         ...StyleSheet.absoluteFillObject,
