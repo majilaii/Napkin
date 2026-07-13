@@ -51,7 +51,7 @@ describe('lib/sentry DSN gating', () => {
         expect(mock.wrap).not.toHaveBeenCalled();
     });
 
-    it('DSN set → init with errors+sessions config, no tracing options', () => {
+    it('DSN set → init with errors+sessions config and a camera-safe hang threshold', () => {
         process.env.EXPO_PUBLIC_SENTRY_DSN = DSN;
         const { mock, lib } = load();
 
@@ -61,6 +61,7 @@ describe('lib/sentry DSN gating', () => {
             dsn: DSN,
             sendDefaultPii: false,
             enableAutoSessionTracking: true,
+            appHangTimeoutInterval: 4,
         });
         expect(lib.isSentryEnabled()).toBe(true);
 

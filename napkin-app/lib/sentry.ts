@@ -12,6 +12,12 @@ import * as Sentry from '@sentry/react-native';
 
 let initialized = false;
 
+// UIImagePickerController owns its AVCaptureSession. On dismissal, CameraUI can
+// synchronously wait just over Sentry's two-second default while AVFoundation
+// removes the preview layer. That work is outside Napkin's control and recovers
+// on its own, so keep hang reporting enabled but reserve it for longer stalls.
+const APP_HANG_TIMEOUT_SECONDS = 4;
+
 export function initSentry(): void {
     if (initialized) return;
     const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
@@ -21,6 +27,7 @@ export function initSentry(): void {
             dsn,
             sendDefaultPii: false,
             enableAutoSessionTracking: true,
+            appHangTimeoutInterval: APP_HANG_TIMEOUT_SECONDS,
         });
         initialized = true;
     } catch {
