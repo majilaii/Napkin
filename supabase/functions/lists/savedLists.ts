@@ -7,6 +7,7 @@
  * Keeping these decisions outside index.ts makes the contract executable in
  * focused Deno tests without importing the serve() entrypoint.
  */
+import { isUuid } from '../_shared/uuid.ts';
 
 export interface SavedListGateRow {
     id: string;
@@ -40,6 +41,21 @@ export interface SavedListsPageRequest {
 export type SavedListsPageParseResult =
     | { value: SavedListsPageRequest; error?: never }
     | { value?: never; error: string };
+
+export type ListMutationIdParseResult =
+    | { value: string; error?: never }
+    | { value?: never; error: string };
+
+/**
+ * Validate the shared list_id contract for save/unsave before PostgREST sees
+ * the value. UUID columns otherwise turn malformed client input into a 500.
+ */
+export function parseListMutationId(value: unknown): ListMutationIdParseResult {
+    const listId = typeof value === 'string' ? value : '';
+    if (!listId) return { error: 'list_id is required' };
+    if (!isUuid(listId)) return { error: 'list_id must be a valid uuid' };
+    return { value: listId };
+}
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

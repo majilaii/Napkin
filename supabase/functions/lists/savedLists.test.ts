@@ -7,6 +7,7 @@ import {
     canViewerSavePublicList,
     fetchBlockedCounterpartIds,
     isBlockedEitherDirection,
+    parseListMutationId,
     parseSavedListsPageRequest,
     SAVED_LISTS_DEFAULT_LIMIT,
     SAVED_LISTS_MAX_LIMIT,
@@ -16,6 +17,17 @@ import {
 const VIEWER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const OWNER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const LIST = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+Deno.test('parseListMutationId: rejects missing and malformed ids before PostgREST', () => {
+    assertEquals(parseListMutationId(undefined), { error: 'list_id is required' });
+    assertEquals(parseListMutationId(null), { error: 'list_id is required' });
+    assertEquals(parseListMutationId(42), { error: 'list_id is required' });
+    assertEquals(parseListMutationId(''), { error: 'list_id is required' });
+    assertEquals(parseListMutationId('not-a-uuid'), {
+        error: 'list_id must be a valid uuid',
+    });
+    assertEquals(parseListMutationId(LIST), { value: LIST });
+});
 
 function fakeBlockedUsersClient(
     rows: Array<{ blocker_id: string; blocked_id: string }> | null,

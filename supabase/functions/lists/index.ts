@@ -37,6 +37,7 @@ import { buildPage, decodeCursor } from '../_shared/pagination.ts';
 import {
     canViewerSavePublicList,
     isBlockedEitherDirection,
+    parseListMutationId,
     parseSavedListsPageRequest,
 } from './savedLists.ts';
 
@@ -522,8 +523,9 @@ serve(async (req) => {
         // Idempotent bookmark creation. Because the client is service-role,
         // re-check every public eligibility dimension before writing.
         if (action === 'save_list') {
-            const listId = typeof body.list_id === 'string' ? body.list_id : '';
-            if (!listId) return jsonResponse({ error: 'list_id is required' }, 400);
+            const parsedListId = parseListMutationId(body.list_id);
+            if (parsedListId.error) return jsonResponse({ error: parsedListId.error }, 400);
+            const listId = parsedListId.value;
 
             const { data: list, error: listErr } = await supabase
                 .from('lists')
@@ -578,8 +580,9 @@ serve(async (req) => {
         // return an aggregate count here; otherwise guessed private-list UUIDs
         // become a popularity-probing surface.
         if (action === 'unsave_list') {
-            const listId = typeof body.list_id === 'string' ? body.list_id : '';
-            if (!listId) return jsonResponse({ error: 'list_id is required' }, 400);
+            const parsedListId = parseListMutationId(body.list_id);
+            if (parsedListId.error) return jsonResponse({ error: parsedListId.error }, 400);
+            const listId = parsedListId.value;
 
             const { error: deleteErr } = await supabase
                 .from('list_saves')

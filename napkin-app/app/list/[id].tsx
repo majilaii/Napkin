@@ -359,9 +359,7 @@ const styles = StyleSheet.create({
         fontSize: 21,
     },
     emptyCopy: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
-        lineHeight: 20,
+        ...Type.editorialBody,
         textAlign: 'center',
         marginTop: 6,
     },

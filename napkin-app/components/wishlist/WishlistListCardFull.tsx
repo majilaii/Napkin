@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Shadow } from '@/constants/theme';
+import { Colors, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { MyList } from '@/hooks/lists/useMyLists';
@@ -115,10 +115,7 @@ const styles = StyleSheet.create({
     },
     eyebrow: {
         flex: 1,
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
-        letterSpacing: 0.5,
-        textTransform: 'uppercase',
+        ...Type.labelSmall,
     },
     title: {
         fontFamily: 'Newsreader_700Bold',
@@ -128,14 +125,11 @@ const styles = StyleSheet.create({
         marginTop: 2,
     },
     description: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
-        lineHeight: 17,
+        ...Type.caption,
         marginTop: 4,
     },
     meta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 10.5,
+        ...Type.metadata,
         fontVariant: ['tabular-nums'],
         marginTop: 'auto',
         paddingTop: 7,

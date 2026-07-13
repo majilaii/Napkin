@@ -10,7 +10,7 @@ import MapView, {
     type Region,
 } from 'react-native-maps';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { heirloomMapStyle } from '@/constants/mapStyle';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { ListEntry } from '@/hooks/lists/useList';
@@ -204,8 +204,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     fallbackText: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16,
+        ...Type.editorialBody,
     },
     backPosition: {
         position: 'absolute',
