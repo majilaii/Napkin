@@ -43,8 +43,10 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 import {
     buildPrivateProfileStub,
     computeRelationship,
+    decideTasteAggregateAccess,
     fetchBlockState,
     strangerCanReadPalate,
+    type BlockState,
     type ViewerRelationship,
 } from './gates.ts';
 import {
@@ -1619,10 +1621,10 @@ serve(async (req) => {
             return json({ data: page });
         }
 
-        // ── taste (read) — TICKET-112: category + cuisine taste drill-in ──────
-        // Owner-only in v1. Public taste is a later ticket once TICKET-093
-        // aggregate semantics extend to summarised numbers; until then a
-        // non-owner gets the uniform not_found (no existence leak).
+        // ── taste (read) — category + cuisine taste drill-in ──────────────────
+        // Public profiles use the same block + audience gate as every other
+        // palate surface. The RPC receives include_private=false for non-self,
+        // so private (and NULL-visibility) entries never enter any aggregate.
         if (action === 'taste') {
             const { identifier } = body as { identifier?: string };
             if (!identifier || typeof identifier !== 'string') {
@@ -1635,17 +1637,36 @@ serve(async (req) => {
             const callerId = user.id;
             const targetId = targetProfile.user_id;
             const isSelf = callerId === targetId;
-            // v1: owner-only. Anything else is not_found (matches the palate gate's
-            // no-existence-leak posture, but stricter — no stranger read at all yet).
-            if (!isSelf) return notFound();
+            let blockState: BlockState = 'none';
+            let relationship: ViewerRelationship = 'self';
+            if (!isSelf) {
+                blockState = await fetchBlockState(supabase, callerId, targetId);
+                const sharedTableIds = blockState === 'none'
+                    ? await fetchSharedTableIds(supabase, callerId, targetId)
+                    : [];
+                relationship = computeRelationship(
+                    callerId,
+                    targetProfile.account_privacy,
+                    sharedTableIds,
+                );
+            }
 
-            const { data: rows, error: tasteErr } = await supabase.rpc('fn_user_taste', {
-                p_user_id: targetId,
-            });
+            const access = decideTasteAggregateAccess(
+                callerId,
+                targetId,
+                blockState,
+                relationship,
+            );
+            if (!access.allowed) return notFound();
+
+            const { data: rows, error: tasteErr } = await supabase.rpc(
+                'fn_user_taste',
+                access.rpcArgs,
+            );
             if (tasteErr) throw tasteErr;
 
-            // The fn returns exactly one row (aggregate over the user's entries —
-            // empty set still yields one row with entry_count 0).
+            // The fn returns exactly one row (aggregate over the visibility-gated
+            // entries — an empty set still yields one row with entry_count 0).
             const row = Array.isArray(rows) ? rows[0] : rows;
             if (!row) {
                 // Defensive — should never happen, but never 500 the drill-in.

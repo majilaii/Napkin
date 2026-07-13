@@ -1,11 +1,11 @@
 /**
  * useUserTaste — the taste drill-in payload (TICKET-112).
  *
- * Per-category (flavor/service/value/vibe) avg + count, overall avg + rated
- * entry count, and top/bottom cuisines by overall rating. Owner-only in v1
- * (the edge action enforces isSelf → not_found for anyone else). Feeds the
- * /taste screen; the "you rate X the hardest" editorial line is derived
- * client-side from the four means, not returned by the server.
+ * Overall avg + rated entry count, top/bottom cuisines, histogram, and the
+ * legacy per-category payload. Self reads include the full journal; permitted
+ * public-profile reads aggregate public entries only. The current /taste screen
+ * deliberately does not turn flavor/service/value/vibe into a personality-style
+ * summary.
  */
 import { useQuery } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';

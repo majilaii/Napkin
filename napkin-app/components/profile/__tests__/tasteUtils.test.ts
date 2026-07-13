@@ -1,83 +1,18 @@
-/**
- * tasteUtils unit tests — TICKET-112 editorial-line gate.
- *
- * "you rate {axis} the hardest" fires ONLY when the signal is real:
- *   spread (max − min mean) >= 0.4 AND every axis n >= 5.
- * Thin or flat data → null (no line).
- */
+/** tasteUtils unit tests — histogram, cuisine, geography and repeat behaviour. */
 import {
     HISTOGRAM_BINS,
     JUNK_VENUE_TYPES,
-    deriveHardestAxis,
+    cityStatAccessibilityLabel,
+    cuisineStatAccessibilityLabel,
     deriveCityLedger,
     deriveRegular,
     deriveTaste,
     fillHistogram,
+    hasTasteDrillInContent,
+    ratingDistributionAccessibilityLabel,
+    resolveTasteRouteTarget,
 } from '../tasteUtils';
-import type { TasteData } from '@/hooks/users/useUserTaste';
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
-
-function cats(over: Partial<Record<keyof TasteData['categories'], { avg: number | null; n: number }>> = {}): TasteData['categories'] {
-    const base = { avg: 4.0, n: 10 };
-    return {
-        flavor: { ...base, ...over.flavor },
-        service: { ...base, ...over.service },
-        value: { ...base, ...over.value },
-        vibe: { ...base, ...over.vibe },
-    };
-}
-
-describe('deriveHardestAxis', () => {
-    it('returns the lowest-mean axis when spread >= 0.4 and all n >= 5', () => {
-        const c = cats({
-            flavor: { avg: 4.6, n: 8 },
-            service: { avg: 4.2, n: 7 },
-            value: { avg: 3.9, n: 6 },   // lowest → "Value"
-            vibe: { avg: 4.4, n: 5 },
-        });
-        expect(deriveHardestAxis(c)).toBe('Value');
-    });
-
-    it('returns null when spread < 0.4 (flat data)', () => {
-        const c = cats({
-            flavor: { avg: 4.1, n: 10 },
-            service: { avg: 4.0, n: 10 },
-            value: { avg: 4.0, n: 10 },
-            vibe: { avg: 4.2, n: 10 }, // spread 0.2 < 0.4
-        });
-        expect(deriveHardestAxis(c)).toBeNull();
-    });
-
-    it('returns null when ANY axis has n < 5 (thin data)', () => {
-        const c = cats({
-            flavor: { avg: 4.8, n: 10 },
-            service: { avg: 4.0, n: 10 },
-            value: { avg: 3.5, n: 4 },  // n < 5 → suppress the line entirely
-            vibe: { avg: 4.4, n: 10 },
-        });
-        expect(deriveHardestAxis(c)).toBeNull();
-    });
-
-    it('returns null when fewer than two axes have a mean', () => {
-        const c = cats({
-            flavor: { avg: 4.0, n: 10 },
-            service: { avg: null, n: 0 },
-            value: { avg: null, n: 0 },
-            vibe: { avg: null, n: 0 },
-        });
-        expect(deriveHardestAxis(c)).toBeNull();
-    });
-
-    it('taste (flavor) can itself be the hardest axis', () => {
-        const c = cats({
-            flavor: { avg: 3.4, n: 12 }, // lowest → "Taste"
-            service: { avg: 4.5, n: 8 },
-            value: { avg: 4.2, n: 6 },
-            vibe: { avg: 4.6, n: 9 },
-        });
-        expect(deriveHardestAxis(c)).toBe('Taste');
-    });
-});
 
 // ── TICKET-150 — histogram fill + city ledger + regular ─────────────────────
 
@@ -105,6 +40,54 @@ describe('fillHistogram', () => {
         ]);
         expect(counts.reduce((a, b) => a + b, 0)).toBe(3);
         expect(counts[HISTOGRAM_BINS.indexOf(2.0)]).toBe(3);
+    });
+});
+
+describe('ratingDistributionAccessibilityLabel', () => {
+    it('speaks only populated bins with correct singulars', () => {
+        expect(ratingDistributionAccessibilityLabel(fillHistogram([
+            { r: 1, n: 1 },
+            { r: 4.5, n: 3 },
+        ]))).toBe('Rating distribution: 1 star, 1 rating; 4.5 stars, 3 ratings');
+    });
+
+    it('has a useful empty fallback', () => {
+        expect(ratingDistributionAccessibilityLabel([])).toBe('Rating distribution: no ratings');
+    });
+});
+
+describe('hasTasteDrillInContent', () => {
+    it('keeps unrated spot history available for geography and the emblem', () => {
+        expect(hasTasteDrillInContent(0, 3)).toBe(true);
+        expect(hasTasteDrillInContent(2, 0)).toBe(true);
+        expect(hasTasteDrillInContent(0, 0)).toBe(false);
+    });
+});
+
+describe('resolveTasteRouteTarget', () => {
+    it('treats an omitted userId as self and a different canonical id as public', () => {
+        expect(resolveTasteRouteTarget(undefined, 'viewer-id')).toEqual({
+            targetUserId: 'viewer-id',
+            isSelf: true,
+        });
+        expect(resolveTasteRouteTarget('friend-id', 'viewer-id')).toEqual({
+            targetUserId: 'friend-id',
+            isSelf: false,
+        });
+        expect(resolveTasteRouteTarget('viewer-id', 'viewer-id').isSelf).toBe(true);
+    });
+});
+
+describe('ledger accessibility labels', () => {
+    it('replaces decorative dots and terse counts with semantic sentences', () => {
+        expect(cuisineStatAccessibilityLabel('Ramen', 4.25, 1)).toBe(
+            'Ramen, 4.3 average from 1 rating',
+        );
+        expect(cuisineStatAccessibilityLabel('Thai', 3.8, 4)).toBe(
+            'Thai, 3.8 average from 4 ratings',
+        );
+        expect(cityStatAccessibilityLabel('London', 1)).toBe('London, 1 meal');
+        expect(cityStatAccessibilityLabel('Paris', 12)).toBe('Paris, 12 meals');
     });
 });
 

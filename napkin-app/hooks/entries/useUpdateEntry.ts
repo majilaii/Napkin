@@ -10,14 +10,15 @@
  *     that edge functions access via service-role (no direct-client RLS write path
  *     is needed from the app layer). Scalar fields can be bundled with this call.
  *
- * Invalidation: only queryKeys.entries.detail(entryId) — NOT tables.activity or
- * entries.list, to preserve feed sort order (created_at is the sort key; edits
- * should not resurface entries in Tablemate feeds).
+ * Invalidation: entry detail plus server-derived profile/Spots/Taste aggregates.
+ * Table activity and entries.list stay patched in place so edits do not
+ * resurface entries in feeds sorted by created_at.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import { invalidateEntryTasteCaches } from './invalidateEntryTaste';
 
 export interface UpdateEntryInput {
     rating?: number | null;
@@ -153,7 +154,7 @@ export function useUpdateEntry(entryId: string) {
             // above) and doesn't touch stats anyway.
             const ownerId = (data as { user_id?: string } | null)?.user_id;
             if (ownerId) {
-                qc.invalidateQueries({ queryKey: queryKeys.users.profile(ownerId) });
+                invalidateEntryTasteCaches(qc, ownerId);
             }
 
             // mySolo cache still isn't reconciled here (uses the entry's user_id

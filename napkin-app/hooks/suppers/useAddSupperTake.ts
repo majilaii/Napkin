@@ -11,6 +11,8 @@
  *               (or replace) the caller's take so the merged screen updates
  *               instantly; return the snapshot for rollback.
  *   onError   → restore the snapshot.
+ *   onSuccess → refresh the caller's profile / Spots / Taste aggregates,
+ *               which all derive from the newly-created entry.
  *   onSettled → narrow-invalidate queryKeys.suppers.detail(supperId). The server
  *               take carries joined display_name/avatar_url + a real entry_id +
  *               server-sorted entry_photos that the optimistic stub can't
@@ -26,6 +28,7 @@ import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import { safeRandomUUID } from '@/lib/uuid';
+import { invalidateEntryTasteCaches } from '@/hooks/entries/invalidateEntryTaste';
 import type { SupperDetail, SupperTake } from './useSupper';
 
 export interface AddSupperTakeInput {
@@ -147,6 +150,14 @@ export function useAddSupperTake() {
             if (ctx?.previous !== undefined) {
                 qc.setQueryData(queryKeys.suppers.detail(input.supper_id), ctx.previous);
             }
+        },
+
+        onSuccess: (data) => {
+            // A Supper take is an entries row owned by the caller. Refresh every
+            // profile/Taste aggregate that derives from it, using the canonical
+            // owner returned by the server when available.
+            const ownerId = data.user_id ?? viewerId;
+            if (ownerId) invalidateEntryTasteCaches(qc, ownerId);
         },
 
         onSettled: (_data, _err, input) => {

@@ -107,7 +107,7 @@ export const queryKeys = {
         // TICKET-124: network map pins — restaurants logged by the follow set.
         networkMapPins: (userId: string) => ['users', 'networkMapPins', userId] as const,
         reviews: (userId: string) => ['users', 'reviews', userId] as const,
-        // TICKET-112 taste drill-in (category + cuisine breakdown, owner-only v1)
+        // Taste drill-in; public-profile payloads are visibility-scoped server-side.
         taste: (userId: string) => ['users', 'taste', userId] as const,
         searchAll: () => ['users', 'search'] as const,
         search: (q: string, opts?: { mutualOnly?: boolean }) =>

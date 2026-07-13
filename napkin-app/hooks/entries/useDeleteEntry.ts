@@ -25,6 +25,7 @@ import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
 import { removeFromArray } from '@/lib/optimistic';
 import { removeUploadedPhoto } from '@/lib/imageUpload';
+import { invalidateEntryTasteCaches } from './invalidateEntryTaste';
 
 export interface DeleteEntryInput {
     entryId: string;
@@ -117,7 +118,7 @@ export function useDeleteEntry() {
             // patch above only covers feed/activity/mySolo): the Diary scroll-back,
             // own-profile recents, and this user's restaurant history.
             qc.invalidateQueries({ queryKey: queryKeys.users.diary(userId) });
-            qc.invalidateQueries({ queryKey: queryKeys.users.profile(userId) });
+            invalidateEntryTasteCaches(qc, userId);
             if (restaurantId) {
                 qc.invalidateQueries({ queryKey: queryKeys.restaurants.page(restaurantId) });
                 qc.invalidateQueries({ queryKey: queryKeys.restaurants.userHistory(restaurantId, userId) });

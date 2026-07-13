@@ -9,6 +9,7 @@ export { TopFour } from './TopFour';
 export { QuickTakes } from './QuickTakes';
 export { QuickTakesSheet } from './QuickTakesSheet';
 export { TasteSignature } from './TasteSignature';
+export { TasteEmblem, TasteEmblemPending } from './TasteEmblem';
 export { MarqueePlate } from './MarqueePlate';
 export { RatingHistogram } from './RatingHistogram';
 export { DiaryRow } from './DiaryRow';

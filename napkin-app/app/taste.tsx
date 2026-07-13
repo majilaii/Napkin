@@ -1,35 +1,40 @@
 /**
- * /taste — the taste drill-in (TICKET-112, redesigned TICKET-150). Own profile
- * only, v1.
+ * /taste — the taste drill-in (TICKET-112, redesigned TICKET-150). Self uses
+ * the full journal; public profiles use public entries only.
  *
  * "The ledger of your palate" — a typographic page, no charts lib:
- *   hero numeral → half-star histogram (amber) → editorial line → the four
- *   axis marks in an inset panel → cuisine leaders (highest / toughest, menu
- *   dots) → the city ledger → a closing line about your regular.
+ *   earned Taste emblem → hero numeral → half-star histogram (amber) →
+ *   cuisine leaders (highest / toughest, menu dots) → the city ledger → a
+ *   closing line about your regular.
  *
- * Two accents only: terracotta (numerals, axis bars) + amber (histogram).
- * Olive stays ink. Ratings in Newsreader italic (brand numerals);
+ * The emblem draws from the existing terracotta / amber / olive identity
+ * palette; the factual histogram stays amber. Ratings in Newsreader italic;
  * labels in Manrope (functional). Dotted leaders are Text middle-dots —
  * the menu idiom, not a border trick.
  */
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Radius, Type } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserTaste } from '@/hooks/users/useUserTaste';
-import { useUserSpots } from '@/hooks/users/useUserSpots';
+import { deriveTasteEmblemInput, useUserSpots } from '@/hooks/users/useUserSpots';
+import { TasteEmblem, TasteEmblemPending } from '@/components/profile/TasteEmblem';
+import { tasteEmblemFor } from '@/lib/tasteEmblem';
 import {
-    TASTE_AXES as AXES,
     HISTOGRAM_BINS,
-    deriveHardestAxis,
+    cityStatAccessibilityLabel,
+    cuisineStatAccessibilityLabel,
     deriveCityLedger,
     deriveRegular,
     fillHistogram,
+    hasTasteDrillInContent,
+    ratingDistributionAccessibilityLabel,
+    resolveTasteRouteTarget,
 } from '@/components/profile/tasteUtils';
 
 const HIST_BAR_MAX = 56;
@@ -40,32 +45,28 @@ function fmt(avg: number | null): string {
 }
 
 export default function TasteScreen() {
+    const { userId: routeUserId } = useLocalSearchParams<{ userId?: string }>();
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
 
-    const identifier = user?.id;
-    const { data: taste, isLoading, isError } = useUserTaste(identifier);
+    const { targetUserId, isSelf } = resolveTasteRouteTarget(routeUserId, user?.id);
+    const { data: taste, isLoading: tasteLoading, isError: tasteError } = useUserTaste(targetUserId);
     // City ledger + regular derive from spots (already the band's source — no new fetch).
-    const { data: spots } = useUserSpots(identifier);
+    const { data: spots, isLoading: spotsLoading, isError: spotsError } = useUserSpots(targetUserId);
     const cityLedger = useMemo(() => (spots ? deriveCityLedger(spots) : null), [spots]);
     const regular = useMemo(() => (spots ? deriveRegular(spots) : null), [spots]);
+    const emblemInput = useMemo(() => (spots ? deriveTasteEmblemInput(spots) : null), [spots]);
+    const emblem = useMemo(() => (emblemInput ? tasteEmblemFor(emblemInput) : null), [emblemInput]);
 
     const histogram = useMemo(() => fillHistogram(taste?.rating_histogram), [taste]);
     const histTotal = useMemo(() => histogram.reduce((a, b) => a + b, 0), [histogram]);
     const histMax = Math.max(...histogram, 1);
-
-    const hardestAxis = useMemo(
-        () => (taste && taste.entry_count >= 5 ? deriveHardestAxis(taste.categories) : null),
-        [taste],
-    );
-
-    /** Meals carrying a category breakdown — one quiet caption instead of four n's. */
-    const breakdownN = useMemo(
-        () => (taste ? Math.max(...AXES.map(({ key }) => taste.categories[key].n)) : 0),
-        [taste],
+    const histogramAccessibilityLabel = useMemo(
+        () => ratingDistributionAccessibilityLabel(histogram),
+        [histogram],
     );
 
     const coverageLine = useMemo(() => {
@@ -83,28 +84,37 @@ export default function TasteScreen() {
 
             {/* Header — hierarchical back to profile */}
             <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
-                <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="back">
+                <Pressable
+                    onPress={() => router.back()}
+                    style={styles.backButton}
+                    accessibilityRole="button"
+                    accessibilityLabel="Back"
+                >
                     <Ionicons name="chevron-back" size={26} color={palette.text} />
                 </Pressable>
-                <Text style={[styles.headerTitle, { color: palette.text }]}>Your taste</Text>
-                <View style={{ width: 26 }} />
+                <Text style={[styles.headerTitle, { color: palette.text }]}>
+                    {isSelf ? 'Your taste' : 'Taste'}
+                </Text>
+                <View style={{ width: 44 }} />
             </View>
 
-            {isLoading ? (
+            {tasteLoading || spotsLoading ? (
                 <View style={styles.center}>
                     <ActivityIndicator color={palette.primary} />
                 </View>
-            ) : isError || !taste ? (
+            ) : tasteError || spotsError || !taste || !spots ? (
                 <View style={styles.center}>
                     <Text style={[styles.emptyLine, { color: palette.textMuted }]}>
-                        couldn&apos;t load your taste just now.
+                        couldn&apos;t load this taste just now.
                     </Text>
                 </View>
-            ) : taste.entry_count === 0 ? (
+            ) : !hasTasteDrillInContent(taste.entry_count, spots.length) ? (
                 <View style={styles.center}>
-                    <Text style={[styles.emptyHead, { color: palette.text }]}>Nothing rated yet</Text>
+                    <Text style={[styles.emptyHead, { color: palette.text }]}>Nothing logged yet</Text>
                     <Text style={[styles.emptyLine, { color: palette.textMuted }]}>
-                        Rate a few meals and your taste takes shape here.
+                        {isSelf
+                            ? 'Log a few meals and your taste takes shape here.'
+                            : 'There isn’t enough public journal activity here yet.'}
                     </Text>
                 </View>
             ) : (
@@ -112,19 +122,43 @@ export default function TasteScreen() {
                     contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 48 }]}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Overall + count */}
-                    <View style={styles.overallBlock}>
-                        <Text style={[styles.overallNum, { color: palette.primary }]}>
-                            {fmt(taste.overall_avg)}
-                        </Text>
-                        <Text style={[styles.overallMeta, { color: palette.textMuted }]}>
-                            {`across ${taste.entry_count} rated ${taste.entry_count === 1 ? 'meal' : 'meals'}`}
-                        </Text>
-                    </View>
+                    {emblem && emblemInput ? (
+                        <TasteEmblem
+                            emblem={emblem}
+                            totalMeals={emblemInput.totalMeals}
+                            totalPlaces={emblemInput.totalPlaces}
+                            cityCount={emblemInput.cityCount}
+                            countryCount={emblemInput.countryCount}
+                            isSelf={isSelf}
+                        />
+                    ) : emblemInput ? (
+                        <TasteEmblemPending
+                            totalMeals={emblemInput.totalMeals}
+                            cityCount={emblemInput.cityCount}
+                            countryCount={emblemInput.countryCount}
+                            isSelf={isSelf}
+                        />
+                    ) : null}
+
+                    {/* Overall + count — omitted when the journal has only unrated logs. */}
+                    {taste.entry_count > 0 ? (
+                        <View style={styles.overallBlock}>
+                            <Text style={[styles.overallNum, { color: palette.primary }]}>
+                                {fmt(taste.overall_avg)}
+                            </Text>
+                            <Text style={[styles.overallMeta, { color: palette.textMuted }]}>
+                                {`across ${taste.entry_count} rated ${taste.entry_count === 1 ? 'meal' : 'meals'}`}
+                            </Text>
+                        </View>
+                    ) : null}
 
                     {/* The shape of it — half-star histogram */}
                     {taste.entry_count >= 3 && histTotal > 0 ? (
-                        <View style={styles.histBlock}>
+                        <View
+                            style={styles.histBlock}
+                            accessible
+                            accessibilityLabel={histogramAccessibilityLabel}
+                        >
                             <View style={styles.histRow}>
                                 {HISTOGRAM_BINS.map((bin, i) => {
                                     const count = histogram[i];
@@ -152,53 +186,6 @@ export default function TasteScreen() {
                         </View>
                     ) : null}
 
-                    {/* Editorial line — only on real, well-sampled spread */}
-                    {hardestAxis ? (
-                        <Text style={[styles.editorial, { color: palette.textSecondary }]}>
-                            {`You rate ${hardestAxis.toLowerCase()} the hardest.`}
-                        </Text>
-                    ) : null}
-
-                    {/* Category ledger — inset panel, one caption instead of four n's */}
-                    {breakdownN > 0 ? (
-                        <>
-                            <View style={styles.kickerRow}>
-                                <Text style={[styles.sectionKicker, { color: palette.textMuted, marginBottom: 0 }]}>
-                                    BY THE NUMBERS
-                                </Text>
-                                <Text style={[styles.kickerMeta, { color: palette.textMuted }]}>
-                                    {`${breakdownN} OF ${taste.entry_count} MEALS`}
-                                </Text>
-                            </View>
-                            <View style={[styles.axisPanel, { backgroundColor: palette.surfaceJournalLow }]}>
-                                {AXES.map(({ key, label }) => {
-                                    const stat = taste.categories[key];
-                                    const pct = stat.avg != null ? Math.max(0, Math.min(1, stat.avg / 5)) : 0;
-                                    return (
-                                        <View key={key} style={styles.catRow}>
-                                            <Text style={[styles.catLabel, { color: palette.textSecondary }]}>
-                                                {label.toUpperCase()}
-                                            </Text>
-                                            <View style={styles.catBarWrap}>
-                                                <View
-                                                    style={[styles.catTrack, { backgroundColor: palette.surfaceJournalHi }]}
-                                                >
-                                                    <View
-                                                        style={[
-                                                            styles.catFill,
-                                                            { width: `${pct * 100}%`, backgroundColor: palette.primary },
-                                                        ]}
-                                                    />
-                                                </View>
-                                            </View>
-                                            <Text style={[styles.catNum, { color: palette.text }]}>{fmt(stat.avg)}</Text>
-                                        </View>
-                                    );
-                                })}
-                            </View>
-                        </>
-                    ) : null}
-
                     {/* Cuisine leaders — junk-filtered, disjoint (server) */}
                     {taste.top_cuisines.length > 0 ? (
                         <>
@@ -206,19 +193,31 @@ export default function TasteScreen() {
                                 HIGHEST MARKS
                             </Text>
                             {taste.top_cuisines.map((c) => (
-                                <View key={`top-${c.cuisine}`} style={styles.leaderRow}>
-                                    <Text style={[styles.leaderName, { color: palette.text }]} numberOfLines={1}>
-                                        {c.cuisine}
-                                    </Text>
-                                    <Text
-                                        style={[styles.leaderDots, { color: palette.textMuted }]}
-                                        numberOfLines={1}
-                                        ellipsizeMode="clip"
+                                <View
+                                    key={`top-${c.cuisine}`}
+                                    accessible
+                                    accessibilityLabel={cuisineStatAccessibilityLabel(c.cuisine, c.avg, c.n)}
+                                >
+                                    <View
+                                        style={styles.leaderRow}
+                                        accessibilityElementsHidden
+                                        importantForAccessibility="no-hide-descendants"
                                     >
-                                        {LEADER}
-                                    </Text>
-                                    <Text style={[styles.leaderNum, { color: palette.primary }]}>{c.avg.toFixed(1)}</Text>
-                                    <Text style={[styles.leaderN, { color: palette.textMuted }]}>{`×${c.n}`}</Text>
+                                        <Text style={[styles.leaderName, { color: palette.text }]} numberOfLines={1}>
+                                            {c.cuisine}
+                                        </Text>
+                                        <Text
+                                            style={[styles.leaderDots, { color: palette.textMuted }]}
+                                            numberOfLines={1}
+                                            ellipsizeMode="clip"
+                                        >
+                                            {LEADER}
+                                        </Text>
+                                        <Text style={[styles.leaderNum, { color: palette.primary }]}>
+                                            {c.avg.toFixed(1)}
+                                        </Text>
+                                        <Text style={[styles.leaderN, { color: palette.textMuted }]}>{`×${c.n}`}</Text>
+                                    </View>
                                 </View>
                             ))}
                         </>
@@ -230,21 +229,31 @@ export default function TasteScreen() {
                                 TOUGHEST MARKS
                             </Text>
                             {taste.bottom_cuisines.map((c) => (
-                                <View key={`bot-${c.cuisine}`} style={styles.leaderRow}>
-                                    <Text style={[styles.leaderName, { color: palette.text }]} numberOfLines={1}>
-                                        {c.cuisine}
-                                    </Text>
-                                    <Text
-                                        style={[styles.leaderDots, { color: palette.textMuted }]}
-                                        numberOfLines={1}
-                                        ellipsizeMode="clip"
+                                <View
+                                    key={`bot-${c.cuisine}`}
+                                    accessible
+                                    accessibilityLabel={cuisineStatAccessibilityLabel(c.cuisine, c.avg, c.n)}
+                                >
+                                    <View
+                                        style={styles.leaderRow}
+                                        accessibilityElementsHidden
+                                        importantForAccessibility="no-hide-descendants"
                                     >
-                                        {LEADER}
-                                    </Text>
-                                    <Text style={[styles.leaderNum, { color: palette.textSecondary }]}>
-                                        {c.avg.toFixed(1)}
-                                    </Text>
-                                    <Text style={[styles.leaderN, { color: palette.textMuted }]}>{`×${c.n}`}</Text>
+                                        <Text style={[styles.leaderName, { color: palette.text }]} numberOfLines={1}>
+                                            {c.cuisine}
+                                        </Text>
+                                        <Text
+                                            style={[styles.leaderDots, { color: palette.textMuted }]}
+                                            numberOfLines={1}
+                                            ellipsizeMode="clip"
+                                        >
+                                            {LEADER}
+                                        </Text>
+                                        <Text style={[styles.leaderNum, { color: palette.textSecondary }]}>
+                                            {c.avg.toFixed(1)}
+                                        </Text>
+                                        <Text style={[styles.leaderN, { color: palette.textMuted }]}>{`×${c.n}`}</Text>
+                                    </View>
                                 </View>
                             ))}
                         </>
@@ -254,21 +263,33 @@ export default function TasteScreen() {
                     {cityLedger && cityLedger.rows.length > 0 ? (
                         <>
                             <Text style={[styles.sectionKicker, { color: palette.textMuted, marginTop: Spacing.xl }]}>
-                                WHERE YOU&apos;VE EATEN
+                                {isSelf ? 'WHERE YOU’VE EATEN' : 'WHERE THEY’VE EATEN'}
                             </Text>
                             {cityLedger.rows.map((c) => (
-                                <View key={c.city} style={styles.leaderRow}>
-                                    <Text style={[styles.leaderName, { color: palette.text }]} numberOfLines={1}>
-                                        {c.city}
-                                    </Text>
-                                    <Text
-                                        style={[styles.leaderDots, { color: palette.textMuted }]}
-                                        numberOfLines={1}
-                                        ellipsizeMode="clip"
+                                <View
+                                    key={c.city}
+                                    accessible
+                                    accessibilityLabel={cityStatAccessibilityLabel(c.city, c.meals)}
+                                >
+                                    <View
+                                        style={styles.leaderRow}
+                                        accessibilityElementsHidden
+                                        importantForAccessibility="no-hide-descendants"
                                     >
-                                        {LEADER}
-                                    </Text>
-                                    <Text style={[styles.cityCount, { color: palette.textSecondary }]}>{c.meals}</Text>
+                                        <Text style={[styles.leaderName, { color: palette.text }]} numberOfLines={1}>
+                                            {c.city}
+                                        </Text>
+                                        <Text
+                                            style={[styles.leaderDots, { color: palette.textMuted }]}
+                                            numberOfLines={1}
+                                            ellipsizeMode="clip"
+                                        >
+                                            {LEADER}
+                                        </Text>
+                                        <Text style={[styles.cityCount, { color: palette.textSecondary }]}>
+                                            {c.meals}
+                                        </Text>
+                                    </View>
                                 </View>
                             ))}
                             {coverageLine ? (
@@ -280,7 +301,9 @@ export default function TasteScreen() {
                     {/* The regular — closing line */}
                     {regular ? (
                         <Text style={[styles.editorialClose, { color: palette.textSecondary }]}>
-                            {`You keep going back to ${regular.name} — ${regular.visits} visits.`}
+                            {isSelf
+                                ? `You keep going back to ${regular.name} — ${regular.visits} visits.`
+                                : `They keep going back to ${regular.name} — ${regular.visits} visits.`}
                         </Text>
                     ) : null}
                 </ScrollView>
@@ -295,11 +318,17 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: Spacing.lg,
+        paddingHorizontal: 14,
         paddingBottom: Spacing.sm,
     },
     headerTitle: {
         ...Type.screenTitle,
+    },
+    backButton: {
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     center: {
         flex: 1,
@@ -364,67 +393,11 @@ const styles = StyleSheet.create({
         fontSize: 9,
         letterSpacing: 0.5,
     },
-    editorial: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 23,
-        textAlign: 'center',
-        paddingHorizontal: Spacing.md,
-        paddingBottom: Spacing.sm,
-    },
-    kickerRow: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        justifyContent: 'space-between',
-        marginTop: Spacing.lg,
-        marginBottom: Spacing.sm,
-    },
     sectionKicker: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 10,
         letterSpacing: 1.6,
         marginBottom: Spacing.sm,
-    },
-    kickerMeta: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1,
-    },
-    axisPanel: {
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm + 2,
-    },
-    catRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        paddingVertical: 9,
-    },
-    catLabel: {
-        width: 66,
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10.5,
-        letterSpacing: 0.8,
-    },
-    catBarWrap: {
-        flex: 1,
-    },
-    catTrack: {
-        height: 6,
-        borderRadius: 3,
-        overflow: 'hidden',
-    },
-    catFill: {
-        height: 6,
-        borderRadius: 3,
-    },
-    catNum: {
-        width: 34,
-        textAlign: 'right',
-        fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 19,
-        fontVariant: ['tabular-nums'],
     },
     leaderRow: {
         flexDirection: 'row',

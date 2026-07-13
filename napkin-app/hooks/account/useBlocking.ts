@@ -39,6 +39,7 @@ function invalidateBlockFallout(queryClient: ReturnType<typeof useQueryClient>, 
     queryClient.invalidateQueries({ queryKey: queryKeys.users.diary(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.spots(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.reviews(targetId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.taste(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.feed.rootAll() });
 }
 
@@ -50,6 +51,12 @@ export function useBlockUser() {
             return targetUserId;
         },
         onSuccess: (targetUserId) => {
+            // Taste is now a public-profile cache. Drop its data immediately so
+            // navigation history cannot briefly replay a pre-block aggregate.
+            queryClient.removeQueries({
+                queryKey: queryKeys.users.taste(targetUserId),
+                exact: true,
+            });
             invalidateBlockFallout(queryClient, targetUserId);
             queryClient.invalidateQueries({ queryKey: queryKeys.account.blocked() });
         },
