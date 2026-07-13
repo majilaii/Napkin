@@ -15,7 +15,7 @@ interface AuthContextType {
      *   string    → already onboarded (the timestamp)
      */
     onboardedAt: string | null | undefined;
-    /** Let the completion mutation flip the gate locally (optimistic release). */
+    /** Let the completion mutation reconcile the gate after server confirmation. */
     setOnboardedAt: (value: string | null) => void;
     signOut: () => Promise<void>;
 }

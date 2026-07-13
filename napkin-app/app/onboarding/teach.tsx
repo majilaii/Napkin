@@ -38,10 +38,10 @@ export default function OnboardingTeachScreen() {
                 avatar_url: draft.avatar_url,
             },
             {
-                // The gate is flipped optimistically in onMutate, so navigate
-                // immediately; a failure rolls the gate back to null and
-                // RootLayoutNav returns the user to onboarding.
-                onSettled: () => router.replace('/wishlist'),
+                // Navigate only after the server confirms onboarding. Using
+                // onSettled here also navigates on failure and races the route
+                // gate rollback, which can strand the user between screens.
+                onSuccess: () => router.replace('/wishlist'),
             },
         );
     };
@@ -55,6 +55,11 @@ export default function OnboardingTeachScreen() {
                 bottomInset={insets.bottom}
                 onDone={finish}
                 isPending={complete.isPending}
+                completionError={
+                    complete.isError
+                        ? "We couldn't finish setup. Check your connection and try again."
+                        : null
+                }
             />
         </View>
     );
