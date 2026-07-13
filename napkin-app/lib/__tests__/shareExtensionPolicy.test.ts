@@ -33,4 +33,10 @@ describe('native share extension policy', () => {
         expect(source).toContain('Nothing is saved until you review the import in Napkin.');
         expect(source).toContain('add for review');
     });
+
+    it('keeps only the card surface over the source app', () => {
+        expect(source).toContain('view.backgroundColor = .clear');
+        expect(source).toContain('view.isOpaque = false');
+        expect(source).not.toContain('view.backgroundColor = UIColor.black');
+    });
 });
