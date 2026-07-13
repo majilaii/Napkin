@@ -50,24 +50,23 @@ tag a friend AND ≥ 1 Table forms organically**. Recommended play:
 Doctrine from the TestFlight builds — every trap here has been hit once:
 
 ```bash
-# 1. Build from a worktree of the MERGED commit (never a dirty tree)
-git -C /Users/jacky/Napkin worktree add /Users/jacky/napkin-build-<PR#> <merged-sha>
-cd /Users/jacky/napkin-build-<PR#>/napkin-app
-
-# 2. FRESH install — never symlink founder node_modules (stale deps → silent
-#    expo-config exit 1). postinstall runs patch-package (AIRMap New-Arch
-#    patches — a build without them crashes the map screens).
-npm ci
-
-# 3. KEYLESS build: do NOT set GOOGLE_MAPS_IOS_KEY (TICKET-132 path is
-#    compile-blocked; keyless = Apple Maps, which is the shipping target).
-npx eas build --platform ios --profile production --local
-# Don't pipe through `| tail` — it swallows the exit code. Foreground it.
-
-# 4. Submit the .ipa (ascAppId already in eas.json)
-npx eas submit --platform ios --path ./build-*.ipa
+# Build and submit only through the cleanup-safe wrapper.
+scripts/release-testflight.sh <merged-sha>
 ```
 
+- Manual release worktrees are prohibited. The wrapper verifies the commit is
+  merged into `origin/main`, creates a unique worktree under the system temp
+  directory, and installs dependencies fresh. Never create
+  `/Users/jacky/napkin-build-*` again.
+- The wrapper unsets `GOOGLE_MAPS_IOS_KEY`, runs the local production EAS build,
+  submits the single generated IPA, and uses an exit trap to remove the
+  worktree, `node_modules`, IPA, and scratch directory on success, failure, or
+  cancellation. It exits nonzero if cleanup leaves any residue.
+- Before reporting the release complete, verify `git worktree list --porcelain`
+  has no temporary release worktree, `/private/tmp` contains no
+  `napkin-testflight.*` scratch directory, and the home directory contains no
+  `napkin-build-*` directory. Cleanup is part of the release, not an optional
+  follow-up.
 - `--local` because EAS cloud quota runs out; local needs Xcode + the
   distribution cert EAS manages (`eas credentials` if it ever complains).
 - Export compliance never prompts: `ITSAppUsesNonExemptEncryption=false` is in
