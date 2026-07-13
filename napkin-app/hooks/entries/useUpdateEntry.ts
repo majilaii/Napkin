@@ -122,8 +122,15 @@ export function useUpdateEntry(entryId: string) {
         },
 
         onSuccess: (data, input) => {
-            // Invalidate detail so it refetches the canonical row (companions, etc).
-            qc.invalidateQueries({ queryKey: queryKeys.entries.detail(entryId) });
+            // Companion edits already carry the exact display rows selected by the
+            // user. Mark the detail stale for the next mount/focus, but do not
+            // immediately refetch the active screen: that refetch can replace the
+            // optimistic names with an older join-table snapshot and make a saved
+            // companion appear to vanish. Scalar-only edits can reconcile now.
+            void qc.invalidateQueries({
+                queryKey: queryKeys.entries.detail(entryId),
+                ...(input.companion_ids !== undefined ? { refetchType: 'none' as const } : {}),
+            });
 
             // TICKET-036 P1-5: scalar edits should appear immediately on the
             // feed card and the table activity card. Without this patch the

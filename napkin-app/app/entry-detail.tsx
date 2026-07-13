@@ -580,6 +580,25 @@ function EntryDetailScreen() {
     const [companionEditMode, setCompanionEditMode] = useState(false);
     const [companionSaving, setCompanionSaving] = useState(false);
     const [localCompanions, setLocalCompanions] = useState<UserSearchResult[]>([]);
+    const [companionPreview, setCompanionPreview] = useState<EntryDetail['companions'] | null>(null);
+    const displayedCompanions = companionPreview ?? entry?.companions ?? [];
+
+    useEffect(() => {
+        setCompanionPreview(null);
+        setCompanionEditMode(false);
+    }, [entry?.id]);
+
+    useEffect(() => {
+        if (!companionPreview || updateEntry.isPending) return;
+        const previewIds = companionPreview.map((companion) => companion.user_id).sort();
+        const cachedIds = (entry?.companions ?? []).map((companion) => companion.user_id).sort();
+        if (
+            previewIds.length === cachedIds.length &&
+            previewIds.every((id, index) => id === cachedIds[index])
+        ) {
+            setCompanionPreview(null);
+        }
+    }, [companionPreview, entry?.companions, updateEntry.isPending]);
 
     const toggleLocalCompanion = useCallback((u: UserSearchResult) => {
         if (!viewer || u.user_id === viewer.id) return;
@@ -593,7 +612,7 @@ function EntryDetailScreen() {
     const handleCompanionEditStart = () => {
         if (!isOwnEntry || !entry) return;
         setLocalCompanions(
-            (entry.companions ?? []).map(c => ({
+            displayedCompanions.map(c => ({
                 user_id: c.user_id,
                 display_name: c.display_name,
                 avatar_url: null,
@@ -609,17 +628,29 @@ function EntryDetailScreen() {
 
     const handleCompanionSave = async () => {
         if (!entry || companionSaving) return;
+        const previousCompanions = displayedCompanions;
+        const nextCompanions = localCompanions.map(c => ({
+            user_id: c.user_id,
+            display_name: c.display_name,
+        }));
+
+        // Commit the staged selection to the visible review before waiting on
+        // the network. The row remains truthful on success and rolls back on error.
+        setCompanionPreview(nextCompanions);
+        setCompanionEditMode(false);
         setCompanionSaving(true);
         try {
             await updateEntry.mutateAsync({
-                companion_ids: localCompanions.map(c => c.user_id),
-                optimisticCompanions: localCompanions.map(c => ({
-                    user_id: c.user_id,
-                    display_name: c.display_name,
-                })),
+                companion_ids: nextCompanions.map(c => c.user_id),
+                optimisticCompanions: nextCompanions,
             });
-            setCompanionEditMode(false);
         } catch {
+            setCompanionPreview(null);
+            setLocalCompanions(previousCompanions.map(c => ({
+                user_id: c.user_id,
+                display_name: c.display_name,
+                avatar_url: null,
+            })));
             Alert.alert('Error', "Couldn't update companions. Try again.");
         } finally {
             setCompanionSaving(false);
@@ -1235,20 +1266,21 @@ function EntryDetailScreen() {
         <View>
             {isEditingNote ? (
                 <View style={styles.noteEditor}>
-                    <TextInput
-                        style={[
-                            styles.noteInput,
-                            { color: palette.text, backgroundColor: palette.surfaceContainerLow },
-                        ]}
-                        value={localNote}
-                        onChangeText={setLocalNote}
-                        placeholder="Say something about it."
-                        placeholderTextColor={palette.textMuted}
-                        multiline
-                        textAlignVertical="top"
-                        autoFocus
-                        selectionColor={palette.primary}
-                    />
+                    <Text style={[styles.noteEditorLabel, { color: palette.textMuted }]}>YOUR NOTE</Text>
+                    <View style={[styles.noteInputRule, { borderLeftColor: palette.ruleInkSoft }]}>
+                        <TextInput
+                            style={[styles.noteInput, { color: palette.text }]}
+                            value={localNote}
+                            onChangeText={setLocalNote}
+                            placeholder="Say something about it."
+                            placeholderTextColor={palette.textMuted}
+                            multiline
+                            textAlignVertical="top"
+                            autoFocus
+                            selectionColor={palette.primary}
+                            accessibilityLabel="Review note"
+                        />
+                    </View>
                     {noteError ? (
                         <Text style={[Type.caption, { color: palette.error, marginTop: Spacing.xs }]}>
                             {noteError}
@@ -1259,17 +1291,14 @@ function EntryDetailScreen() {
                 <Pressable
                     onPress={ownerEditing ? handleNoteEditStart : undefined}
                     disabled={!ownerEditing}
-                    style={styles.noteBlock}
+                    style={[styles.noteBlock, { borderLeftColor: palette.ruleInkSoft }]}
                 >
-                    <Text style={[styles.noteHero, { color: palette.text }]}>
-                        <Text style={[styles.noteDash, { color: palette.primary }]}>{'— '}</Text>
-                        {entry.content}
-                    </Text>
+                    <Text style={[styles.noteHero, { color: palette.text }]}>{entry.content}</Text>
                 </Pressable>
             ) : ownerEditing ? (
                 <Pressable
                     onPress={handleNoteEditStart}
-                    style={styles.noteBlock}
+                    style={[styles.noteBlock, { borderLeftColor: palette.ruleInkSoft }]}
                     accessibilityRole="button"
                     accessibilityLabel="Add your writing"
                 >
@@ -1591,45 +1620,71 @@ function EntryDetailScreen() {
                             renderPlaceAndRating(true)
                         )}
 
-                        {/* ── who you were with ──────────────────────────────── */}
-                        {(entry.companions ?? []).length > 0 ? (
+                        {/* ── dining companions ──────────────────────────────── */}
+                        {displayedCompanions.length > 0 || ownerEditing ? (
                             <Pressable
                                 onPress={ownerEditing ? handleCompanionEditStart : undefined}
-                                disabled={!ownerEditing}
-                                style={styles.companionsRow}
+                                disabled={!ownerEditing || companionSaving}
+                                style={({ pressed }) => [
+                                    styles.companionsCard,
+                                    {
+                                        backgroundColor: pressed
+                                            ? palette.surfaceContainerHigh
+                                            : palette.surfaceContainerLow,
+                                    },
+                                ]}
+                                accessibilityRole={ownerEditing ? 'button' : undefined}
+                                accessibilityState={{
+                                    busy: companionSaving,
+                                    disabled: !ownerEditing || companionSaving,
+                                }}
+                                accessibilityLabel={
+                                    displayedCompanions.length > 0
+                                        ? `Dining companions: ${formatCompanions(displayedCompanions)}`
+                                        : 'Add dining companions'
+                                }
                             >
-                                <View style={styles.facesStack}>
-                                    {(entry.companions ?? []).slice(0, 4).map((c, i) => (
-                                        <View
-                                            key={c.user_id}
-                                            style={[
-                                                styles.faceWrap,
-                                                { marginLeft: i === 0 ? 0 : -10, zIndex: 4 - i, borderColor: palette.background },
-                                            ]}
-                                        >
-                                            <InitialsAvatar name={c.display_name} size={28} palette={palette} />
-                                        </View>
-                                    ))}
+                                {displayedCompanions.length > 0 ? (
+                                    <View style={styles.facesStack}>
+                                        {displayedCompanions.slice(0, 3).map((c, i) => (
+                                            <View
+                                                key={c.user_id}
+                                                style={[
+                                                    styles.faceWrap,
+                                                    {
+                                                        marginLeft: i === 0 ? 0 : -9,
+                                                        zIndex: 3 - i,
+                                                        borderColor: palette.surfaceContainerLow,
+                                                    },
+                                                ]}
+                                            >
+                                                <InitialsAvatar name={c.display_name} size={28} palette={palette} />
+                                            </View>
+                                        ))}
+                                    </View>
+                                ) : (
+                                    <View style={[styles.companionsAddIcon, { backgroundColor: palette.primaryMuted }]}>
+                                        <Ionicons name="person-add-outline" size={17} color={palette.primary} />
+                                    </View>
+                                )}
+                                <View style={styles.companionsCopy}>
+                                    <Text style={[styles.companionsLabel, { color: palette.textMuted }]}>DINING COMPANIONS</Text>
+                                    <Text style={[styles.companionsValue, { color: palette.text }]} numberOfLines={1}>
+                                        {displayedCompanions.length > 0
+                                            ? formatCompanions(displayedCompanions)
+                                            : 'Add people to this review'}
+                                    </Text>
                                 </View>
-                                <Text style={[styles.companionsText, { color: palette.textSecondary }]} numberOfLines={1}>
-                                    {'with '}{formatCompanions(entry.companions)}
-                                </Text>
-                                {ownerEditing ? (
-                                    <Text style={[styles.companionsEdit, { color: palette.primary }]}>+ tag</Text>
+                                {companionSaving ? (
+                                    <ActivityIndicator size="small" color={palette.primary} />
+                                ) : ownerEditing ? (
+                                    <View style={styles.companionsAction}>
+                                        <Text style={[styles.companionsActionText, { color: palette.primary }]}>
+                                            {displayedCompanions.length > 0 ? 'Edit' : 'Add'}
+                                        </Text>
+                                        <Ionicons name="chevron-forward" size={15} color={palette.primary} />
+                                    </View>
                                 ) : null}
-                            </Pressable>
-                        ) : ownerEditing ? (
-                            <Pressable
-                                onPress={handleCompanionEditStart}
-                                style={styles.companionsEmpty}
-                                accessibilityRole="button"
-                                accessibilityLabel="Who were you with?"
-                            >
-                                <View style={styles.companionsEmptyIcon}>
-                                    <Ionicons name="person-add-outline" size={16} color={palette.primary} />
-                                </View>
-                                <Text style={[styles.companionsEmptyText, { color: palette.primary }]}>Who were you with?</Text>
-                                <Text style={[styles.companionsEmptyHint, { color: palette.textMuted }]}>Tag people</Text>
                             </Pressable>
                         ) : null}
 
@@ -2647,21 +2702,35 @@ const styles = StyleSheet.create({
     },
     roundBannerTitle: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
 
-    // the note — hero
-    noteBlock: {},
-    noteHero: { fontFamily: 'Newsreader_400Regular', fontSize: 20, lineHeight: 30 },
-    noteDash: { fontFamily: 'Newsreader_600SemiBold' },
-    noteMurmur: { fontFamily: 'Manrope_500Medium', fontSize: 16, lineHeight: 24 },
-    noteEditor: {},
+    // the note — quiet journal rule, not a second card
+    noteBlock: {
+        borderLeftWidth: 2,
+        paddingLeft: 12,
+        paddingVertical: 2,
+        minHeight: 44,
+        justifyContent: 'center',
+    },
+    noteHero: { fontFamily: 'Newsreader_400Regular', fontSize: 17, lineHeight: 26 },
+    noteMurmur: { fontFamily: 'Manrope_500Medium', fontSize: 14, lineHeight: 21 },
+    noteEditor: { gap: Spacing.sm },
+    noteEditorLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 10,
+        lineHeight: 14,
+        letterSpacing: 1.1,
+    },
+    noteInputRule: {
+        borderLeftWidth: 2,
+        paddingLeft: 12,
+    },
     noteInput: {
         fontFamily: 'Newsreader_400Regular',
-        fontSize: 20,
-        lineHeight: 30,
-        minHeight: 88,
-        maxHeight: 220,
-        borderRadius: Radius.md,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
+        fontSize: 17,
+        lineHeight: 26,
+        minHeight: 62,
+        maxHeight: 180,
+        paddingHorizontal: 0,
+        paddingVertical: 0,
         textAlignVertical: 'top',
     },
 
@@ -2746,34 +2815,39 @@ const styles = StyleSheet.create({
     // companions
     facesStack: { flexDirection: 'row', alignItems: 'center' },
     faceWrap: { borderRadius: 999, borderWidth: 1.5 },
-    companionsRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: Spacing.lg },
-    companionsText: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 14, flexShrink: 1 },
-    companionsEdit: { fontFamily: 'Manrope_600SemiBold', fontSize: 12, marginLeft: 'auto' },
-    companionsEmpty: {
+    companionsCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: Spacing.sm + 4,
         marginTop: Spacing.lg,
-        paddingVertical: 13,
-        paddingHorizontal: 16,
-        borderWidth: 1.5,
-        borderStyle: 'dashed',
-        borderColor: 'rgba(160,63,40,0.35)',
-        borderRadius: 14,
-        backgroundColor: 'rgba(160,63,40,0.03)',
+        minHeight: 64,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: Radius.lg,
     },
-    companionsEmptyIcon: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        borderWidth: 1.5,
-        borderStyle: 'dashed',
-        borderColor: 'rgba(160,63,40,0.45)',
+    companionsAddIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    companionsEmptyText: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
-    companionsEmptyHint: { fontFamily: 'Manrope_400Regular', fontSize: 12, marginLeft: 'auto' },
+    companionsCopy: { flex: 1, minWidth: 0 },
+    companionsLabel: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 9,
+        lineHeight: 13,
+        letterSpacing: 0.9,
+        marginBottom: 2,
+    },
+    companionsValue: { fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 18 },
+    companionsAction: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        minHeight: 44,
+        paddingLeft: Spacing.xs,
+    },
+    companionsActionText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
 
     // add-your-take CTA (supper)
     addTakeCta: {

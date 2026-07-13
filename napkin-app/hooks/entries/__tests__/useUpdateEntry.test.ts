@@ -1,4 +1,5 @@
 import { act, waitFor } from '@testing-library/react-native';
+import { QueryObserver } from '@tanstack/react-query';
 
 import { renderHookWithClient } from '@/__tests__/utils/queryWrapper';
 import { callEdgeFn } from '@/lib/edgeInvoke';
@@ -30,6 +31,16 @@ describe('useUpdateEntry companion edits', () => {
         const { result, client } = renderHookWithClient(() => useUpdateEntry(ENTRY_ID));
         const detailKey = queryKeys.entries.detail(ENTRY_ID);
         client.setQueryData(detailKey, { id: ENTRY_ID, companions: [ORIGINAL] });
+        const staleServerFetch = jest.fn().mockResolvedValue({
+            id: ENTRY_ID,
+            companions: [ORIGINAL],
+        });
+        const detailObserver = new QueryObserver(client, {
+            queryKey: detailKey,
+            queryFn: staleServerFetch,
+            staleTime: Infinity,
+        });
+        const unsubscribe = detailObserver.subscribe(() => undefined);
 
         act(() => {
             result.current.mutate({
@@ -41,10 +52,13 @@ describe('useUpdateEntry companion edits', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
         expect(client.getQueryData(detailKey)).toMatchObject({ companions: [PRIYA] });
+        expect(staleServerFetch).not.toHaveBeenCalled();
+        expect(detailObserver.getCurrentResult().isStale).toBe(true);
         expect(mockCallEdgeFn).toHaveBeenCalledWith('entry', {
             action: 'update-companions',
             body: { entry_id: ENTRY_ID, companion_ids: [PRIYA.user_id] },
         });
+        unsubscribe();
     });
 
     it('restores the previous companions when persistence fails', async () => {
