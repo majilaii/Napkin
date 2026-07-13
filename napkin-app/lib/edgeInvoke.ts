@@ -20,6 +20,13 @@ export interface CallEdgeFnOptions<TBody = unknown> {
     /** JSON body for POST. Ignored for GET. */
     body?: TBody;
     /**
+     * Set false to keep the complete successful response envelope instead of
+     * returning its `data` field. Pagination endpoints need this when cursors
+     * live beside `data`, for example `{ data: rows, next_cursor }`.
+     * Defaults to true for backwards compatibility with existing callers.
+     */
+    unwrapData?: boolean;
+    /**
      * AbortSignal for cancellation.
      * - On GET: always wired through to fetch (existing behavior).
      * - On POST with signal: routes to postWithFetch() so the upstream request
@@ -175,7 +182,7 @@ async function callEdgeFnOnce<T = unknown>(
     name: string,
     opts: CallEdgeFnOptions = {},
 ): Promise<T> {
-    const { action, method = 'POST', params, body, signal } = opts;
+    const { action, method = 'POST', params, body, signal, unwrapData = true } = opts;
 
     addBreadcrumb({ category: 'edge', message: `${name}:${action ?? ''}` });
 
@@ -238,7 +245,7 @@ async function callEdgeFnOnce<T = unknown>(
             }
             throwInvokeError({ code: 'LEGACY', message: String(errPayload) });
         }
-        return (json?.data ?? json) as T;
+        return (unwrapData ? (json?.data ?? json) : json) as T;
     }
 
     // POST: if a signal is provided, use raw fetch so AbortSignal actually cancels
@@ -294,7 +301,7 @@ async function callEdgeFnOnce<T = unknown>(
         }
         throwInvokeError({ code: 'LEGACY', message: String(errPayload) });
     }
-    return (data?.data ?? data) as T;
+    return (unwrapData ? (data?.data ?? data) : data) as T;
 }
 
 /**
@@ -303,7 +310,7 @@ async function callEdgeFnOnce<T = unknown>(
  * Called by callEdgeFn when method === 'POST' && signal is present. [ARCH-REVIEW-M2]
  */
 async function postWithFetch<T>(name: string, opts: CallEdgeFnOptions): Promise<T> {
-    const { action, params, body, signal } = opts;
+    const { action, params, body, signal, unwrapData = true } = opts;
     const { data: { session } } = await supabase.auth.getSession();
     const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
     const url = new URL(`${baseUrl}/functions/v1/${name}`);
@@ -369,7 +376,7 @@ async function postWithFetch<T>(name: string, opts: CallEdgeFnOptions): Promise<
         }
         throwInvokeError({ code: 'LEGACY', message: String(errPayload) });
     }
-    return (json?.data ?? json) as T;
+    return (unwrapData ? (json?.data ?? json) : json) as T;
 }
 
 /**

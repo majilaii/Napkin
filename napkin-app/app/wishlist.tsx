@@ -1140,69 +1140,89 @@ export default function WishlistScreen() {
                                 onImportsHub={() => router.push('/import-progress' as any)}
                             />
                         ) : (
-                            <ScrollView
+                            <FlatList
+                                style={styles.pinnedList}
+                                data={displayedRows}
+                                keyExtractor={(row) => row.item.id}
+                                renderItem={({ item: row, index }) => (
+                                    <WishlistSpotRow
+                                        index={index + 1}
+                                        item={row.item}
+                                        distanceLabel={row.distanceLabel}
+                                        palette={palette}
+                                        onPress={() => handlePinnedRowPress(row.item)}
+                                        onLongPress={() => setRemoveItem(row.item)}
+                                        onRemove={() => setRemoveItem(row.item)}
+                                    />
+                                )}
                                 contentContainerStyle={[
                                     styles.rListContent,
                                     { paddingBottom: insets.bottom + 150 },
                                 ]}
                                 showsVerticalScrollIndicator={false}
-                            >
-                                {importSlot ? (
-                                    <ImportInboxCard
-                                        title={importSlot.title}
-                                        sublabel={importSlot.sublabel}
-                                        iconName={importSlot.icon}
-                                        palette={palette}
-                                        onPress={() => router.push(importSlot.route as any)}
-                                    />
-                                ) : null}
+                                onEndReached={() => {
+                                    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+                                }}
+                                onEndReachedThreshold={0.4}
+                                ListHeaderComponent={(
+                                    <>
+                                        {importSlot ? (
+                                            <ImportInboxCard
+                                                title={importSlot.title}
+                                                sublabel={importSlot.sublabel}
+                                                iconName={importSlot.icon}
+                                                palette={palette}
+                                                onPress={() => router.push(importSlot.route as any)}
+                                            />
+                                        ) : null}
 
-                                {pendingRows.map((item) => (
-                                    <PendingSaveCard
-                                        key={item.id}
-                                        status={item.extraction_status as 'pending' | 'needs_confirm'}
-                                        restaurantName={item.restaurant?.name}
-                                        restaurantCity={item.restaurant?.city}
-                                        restaurantCuisine={item.restaurant?.cuisine}
-                                        restaurantPhotoUrl={item.restaurant?.photo_url}
-                                        onConfirm={
-                                            item.extraction_status === 'needs_confirm'
-                                                ? () => handleConfirm(item)
-                                                : undefined
-                                        }
-                                    />
-                                ))}
+                                        {pendingRows.map((item) => (
+                                            <PendingSaveCard
+                                                key={item.id}
+                                                status={item.extraction_status as 'pending' | 'needs_confirm'}
+                                                restaurantName={item.restaurant?.name}
+                                                restaurantCity={item.restaurant?.city}
+                                                restaurantCuisine={item.restaurant?.cuisine}
+                                                restaurantPhotoUrl={item.restaurant?.photo_url}
+                                                onConfirm={
+                                                    item.extraction_status === 'needs_confirm'
+                                                        ? () => handleConfirm(item)
+                                                        : undefined
+                                                }
+                                            />
+                                        ))}
 
-                                <View style={styles.rSpotsHeading}>
-                                    <Text
-                                        style={[
-                                            styles.rSpotsKicker,
-                                            styles.rSpotsKickerFlex,
-                                            { color: palette.textMuted },
-                                        ]}
-                                    >
-                                        {`${displayedRows.length} ${displayedRows.length === 1 ? 'spot' : 'spots'}${filterSuffix}`}
-                                    </Text>
-                                    {totalPinned > 0 ? (
-                                        <Pressable
-                                            onPress={() => setShareTarget({ count: totalPinned })}
-                                            style={({ pressed }) => [
-                                                styles.rShareButton,
-                                                {
-                                                    backgroundColor: palette.surfaceJournalHi,
-                                                    opacity: pressed ? 0.78 : 1,
-                                                    transform: [{ scale: pressed ? 0.96 : 1 }],
-                                                },
-                                            ]}
-                                            accessibilityRole="button"
-                                            accessibilityLabel="share saved places"
-                                        >
-                                            <Ionicons name="share-outline" size={16} color={palette.textSecondary} />
-                                        </Pressable>
-                                    ) : null}
-                                </View>
-
-                                {displayedRows.length === 0 ? (
+                                        <View style={styles.rSpotsHeading}>
+                                            <Text
+                                                style={[
+                                                    styles.rSpotsKicker,
+                                                    styles.rSpotsKickerFlex,
+                                                    { color: palette.textMuted },
+                                                ]}
+                                            >
+                                                {`${displayedRows.length} ${displayedRows.length === 1 ? 'spot' : 'spots'}${filterSuffix}`}
+                                            </Text>
+                                            {totalPinned > 0 ? (
+                                                <Pressable
+                                                    onPress={() => setShareTarget({ count: totalPinned })}
+                                                    style={({ pressed }) => [
+                                                        styles.rShareButton,
+                                                        {
+                                                            backgroundColor: palette.surfaceJournalHi,
+                                                            opacity: pressed ? 0.78 : 1,
+                                                            transform: [{ scale: pressed ? 0.96 : 1 }],
+                                                        },
+                                                    ]}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel="share saved places"
+                                                >
+                                                    <Ionicons name="share-outline" size={16} color={palette.textSecondary} />
+                                                </Pressable>
+                                            ) : null}
+                                        </View>
+                                    </>
+                                )}
+                                ListEmptyComponent={(
                                     <View style={styles.rNoResults}>
                                         <Text style={[styles.rNoResultsTitle, { color: palette.text }]}>Nothing matches that</Text>
                                         <Text style={[styles.rNoResultsHint, { color: palette.textMuted }]}>Try loosening a filter.</Text>
@@ -1214,29 +1234,13 @@ export default function WishlistScreen() {
                                             <Text style={[styles.rClearText, { color: palette.primary }]}>Clear filters</Text>
                                         </Pressable>
                                     </View>
-                                ) : (
-                                    displayedRows.map(({ item, distanceLabel }, i) => (
-                                        <WishlistSpotRow
-                                            key={item.id}
-                                            index={i + 1}
-                                            item={item}
-                                            distanceLabel={distanceLabel}
-                                            palette={palette}
-                                            onPress={() => handlePinnedRowPress(item)}
-                                            onLongPress={() => setRemoveItem(item)}
-                                            onRemove={() => setRemoveItem(item)}
-                                        />
-                                    ))
                                 )}
-
-                                {hasNextPage && !isFetchingNextPage ? (
-                                    <Pressable onPress={() => fetchNextPage()} style={styles.loadMoreRow}>
-                                        <Text style={[styles.loadMoreLabel, { color: palette.textMuted }]}>more</Text>
-                                    </Pressable>
-                                ) : isFetchingNextPage ? (
-                                    <ActivityIndicator color={palette.primary} style={styles.loadMoreRow} size="small" />
-                                ) : null}
-                            </ScrollView>
+                                ListFooterComponent={
+                                    isFetchingNextPage ? (
+                                        <ActivityIndicator color={palette.primary} style={styles.loadMoreRow} size="small" />
+                                    ) : null
+                                }
+                            />
                         )
                     ) : (
                         <ScrollView
@@ -1429,6 +1433,9 @@ const styles = StyleSheet.create({
     },
     listOverlay: {
         zIndex: 10,
+    },
+    pinnedList: {
+        flex: 1,
     },
     // List workspace bar — Pinned|Lists segment + filter/import icons (TICKET-163).
     listBar: {

@@ -43,18 +43,18 @@ export interface PersonalWishlistPage {
 
 const PAGE_LIMIT = 40;
 
-async function fetchPersonalWishlist(
+export async function fetchPersonalWishlist(
     before_created_at: string | null,
 ): Promise<PersonalWishlistPage> {
     const body: Record<string, unknown> = { limit: PAGE_LIMIT };
     if (before_created_at) body.before_created_at = before_created_at;
 
-    // The wishlist edge function returns { data: PersonalWishlistItem[], next_cursor: string | null }
-    // at the response root. callEdgeFn unwraps `data` already; we ask for the
-    // full payload by reading what's after the unwrap and shape it ourselves.
+    // The cursor sits beside `data`, so preserve the full response envelope.
+    // The default callEdgeFn behavior intentionally unwraps `data`, which would
+    // otherwise turn this into a one-page query capped at PAGE_LIMIT rows.
     const raw = await callEdgeFn<
         { data?: PersonalWishlistItem[]; next_cursor?: string | null } | PersonalWishlistItem[]
-    >('wishlist', { action: 'list_personal', body });
+    >('wishlist', { action: 'list_personal', body, unwrapData: false });
     if (Array.isArray(raw)) {
         return { data: raw, next_cursor: null };
     }

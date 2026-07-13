@@ -68,4 +68,29 @@ describe('callEdgeFn POST action routing (TICKET-121 follow-up)', () => {
             body: { table_id: 't1' },
         });
     });
+
+    it('unwraps the data field by default', async () => {
+        mockSupabase.functions.invoke.mockResolvedValue({
+            data: { data: [{ id: 'w1' }], next_cursor: 'cursor-2' },
+            error: null,
+        });
+
+        await expect(callEdgeFn('wishlist', { action: 'list_personal' })).resolves.toEqual([
+            { id: 'w1' },
+        ]);
+    });
+
+    it('preserves a pagination envelope when unwrapping is disabled', async () => {
+        mockSupabase.functions.invoke.mockResolvedValue({
+            data: { data: [{ id: 'w1' }], next_cursor: 'cursor-2' },
+            error: null,
+        });
+
+        await expect(
+            callEdgeFn('wishlist', { action: 'list_personal', unwrapData: false }),
+        ).resolves.toEqual({
+            data: [{ id: 'w1' }],
+            next_cursor: 'cursor-2',
+        });
+    });
 });
