@@ -32,6 +32,12 @@ jest.mock('@react-native-async-storage/async-storage', () =>
     require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
 
+// Native reachability is unavailable in Jest. Use the package's supported mock;
+// connectivity-focused tests replace its methods with scenario-specific values.
+jest.mock('@react-native-community/netinfo', () =>
+    require('@react-native-community/netinfo/jest/netinfo-mock.js')
+);
+
 // @sentry/react-native ships ESM dist (not in transformIgnorePatterns) — mock
 // globally so any module importing lib/sentry.ts parses in node tests.
 jest.mock('@sentry/react-native', () => ({

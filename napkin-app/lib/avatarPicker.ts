@@ -48,7 +48,13 @@ async function fromLibrary(): Promise<ImagePicker.ImagePickerAsset | null> {
 }
 
 async function fromCamera(): Promise<ImagePicker.ImagePickerAsset | null> {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    let status: ImagePicker.PermissionStatus;
+    try {
+        ({ status } = await ImagePicker.requestCameraPermissionsAsync());
+    } catch {
+        Alert.alert("Couldn't access the camera", 'Try choosing from your library.');
+        return null;
+    }
     if (status !== 'granted') {
         Alert.alert('Camera access needed', 'Enable camera access in Settings.');
         return null;
@@ -78,7 +84,9 @@ export function chooseAvatarAsset(
     return new Promise((resolve) => {
         const go = (source: () => Promise<ImagePicker.ImagePickerAsset | null>) => {
             onSourceChosen?.();
-            void source().then(resolve);
+            // Every source settles the outer promise, even if a native picker
+            // rejects somewhere outside its normal guarded path.
+            void source().then(resolve, () => resolve(null));
         };
         if (Platform.OS === 'ios') {
             ActionSheetIOS.showActionSheetWithOptions(

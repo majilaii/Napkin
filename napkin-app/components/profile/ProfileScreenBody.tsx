@@ -33,6 +33,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUserProfile } from '@/hooks/users/useUserProfile';
+import { useUpdateProfile } from '@/hooks/users/useUpdateProfile';
 import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
 import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account';
 
@@ -47,6 +48,11 @@ import { ProfileIndex } from './ProfileIndex';
 import { TablesInCommonSection } from './TablesInCommonSection';
 import { NotFoundState } from './NotFoundState';
 import type { IndexSection } from './ProfileIndex';
+import { useConnectivity } from '@/providers/ConnectivityProvider';
+import {
+    chooseAndSaveNewProfilePhoto,
+    shouldBlockProfilePhotoPicker,
+} from '@/lib/profilePhoto';
 
 interface Props {
     identifier: string | null | undefined;
@@ -64,6 +70,9 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
 
     const isNotFound = result?.isNotFound ?? false;
     const profileData = result?.data ?? null;
+    const profileUserId = profileData?.profile.user_id ?? null;
+    const updateProfile = useUpdateProfile(profileUserId);
+    const { status: connectivityStatus } = useConnectivity();
 
     const relationship = profileData?.viewer_target_relationship ?? 'none';
     const isSelf = profileData?.is_self ?? false;
@@ -79,6 +88,39 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
     const taste = useMemo(() => deriveTaste(spots ?? []), [spots]);
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
     const [editQuickTakesOpen, setEditQuickTakesOpen] = useState(false);
+    const [isAddingProfilePhoto, setIsAddingProfilePhoto] = useState(false);
+    const profilePhotoWorking = isAddingProfilePhoto || updateProfile.isPending;
+
+    const handleAddProfilePhoto = async () => {
+        if (shouldBlockProfilePhotoPicker(connectivityStatus)) {
+            Alert.alert(
+                'No connection',
+                'Connect to the internet to add a profile photo.',
+            );
+            return;
+        }
+        if (
+            profilePhotoWorking ||
+            !profileUserId ||
+            !profileData?.is_self ||
+            profileData.profile.avatar_url
+        ) {
+            return;
+        }
+
+        try {
+            await chooseAndSaveNewProfilePhoto({
+                userId: profileUserId,
+                onSourceChosen: () => setIsAddingProfilePhoto(true),
+                saveAvatarUrl: (avatarUrl) =>
+                    updateProfile.mutateAsync({ avatar_url: avatarUrl }),
+            });
+        } catch {
+            Alert.alert("Couldn't save that photo", 'Please try again.');
+        } finally {
+            setIsAddingProfilePhoto(false);
+        }
+    };
 
     // ── Viewer safety actions (TICKET-090, guideline 1.2) ────────────────────
     const reportContent = useReportContent();
@@ -297,6 +339,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 calibration={profileData.calibration}
                 viewerRatedEntryCount={profileData.viewer_rated_entry_count}
                 onSafetyMenu={!isSelf ? handleSafetyMenu : undefined}
+                onAddPhoto={isSelf ? handleAddProfilePhoto : undefined}
+                isAddingPhoto={profilePhotoWorking}
             />
 
             {/* Top 4 — identity leads (Letterboxd: favorites before any feed).

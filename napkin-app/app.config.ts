@@ -127,9 +127,9 @@ export default ({ config }: ConfigContext): ExpoConfig =>
             'expo-image-picker',
             {
                 photosPermission:
-                    '$(PRODUCT_NAME) would like to access your photo library to add a photo to your entry.',
+                    '$(PRODUCT_NAME) would like to access your photo library to add photos to your entries and profile.',
                 cameraPermission:
-                    '$(PRODUCT_NAME) would like to use your camera to take a photo for your entry.',
+                    '$(PRODUCT_NAME) would like to use your camera to take photos for your entries and profile.',
                 // TICKET-090: photos only (mediaTypes: ['images'] everywhere) — no
                 // mic string, or App Review asks why a food journal wants audio.
                 microphonePermission: false,
