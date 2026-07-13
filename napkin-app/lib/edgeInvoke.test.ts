@@ -11,7 +11,8 @@
 
 jest.mock('@/lib/supabase', () => require('@/__mocks__/supabase'));
 
-import { isAuthFailure, SessionExpiredError } from './edgeInvoke';
+import { FunctionsFetchError, FunctionsRelayError } from '@supabase/supabase-js';
+import { isAuthFailure, SessionExpiredError, unwrapInvokeError } from './edgeInvoke';
 
 // Build an Error carrying the structured `.cause: UnwrappedError` that
 // throwInvokeError attaches.
@@ -70,5 +71,26 @@ describe('SessionExpiredError', () => {
         const e = new SessionExpiredError('custom copy');
         expect(e.message).toBe('custom copy');
         expect(e.code).toBe('session_expired');
+    });
+});
+
+describe('unwrapInvokeError transport classification', () => {
+    it('classifies a FunctionsFetchError as an expected network failure', async () => {
+        await expect(
+            unwrapInvokeError(new FunctionsFetchError(new TypeError('Network request failed'))),
+        ).resolves.toEqual({
+            code: 'NETWORK',
+            message: 'Couldn’t reach Napkin. Check your connection and try again.',
+        });
+    });
+
+    it('keeps a FunctionsRelayError distinct and observable', async () => {
+        await expect(
+            unwrapInvokeError(new FunctionsRelayError({ status: 503 })),
+        ).resolves.toEqual({
+            code: 'EDGE_RELAY',
+            message: 'Napkin is temporarily unavailable. Please try again.',
+            status: 503,
+        });
     });
 });

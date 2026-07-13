@@ -19,6 +19,7 @@ import { callEdgeFn, SessionExpiredError } from './edgeInvoke';
 import { mockSupabase } from '@/__mocks__/supabase';
 import { trackError } from '@/lib/track';
 import { addBreadcrumb, captureError } from '@/lib/sentry';
+import { FunctionsFetchError } from '@supabase/supabase-js';
 
 describe('callEdgeFn reporting (TICKET-121)', () => {
     it('adds an edge breadcrumb per call', async () => {
@@ -56,6 +57,28 @@ describe('callEdgeFn reporting (TICKET-121)', () => {
             context: 'edge:wishlist:add',
             tags: { fn: 'wishlist', action: 'add', code: 'SERVER_ERROR', status: '' },
         });
+    });
+
+    it('does not report an expected device-network failure', async () => {
+        mockSupabase.functions.invoke.mockResolvedValue({
+            data: null,
+            error: new FunctionsFetchError(new TypeError('Network request failed')),
+        });
+
+        let caught: unknown;
+        try {
+            await callEdgeFn('wishlist', { action: 'list_personal' });
+        } catch (err) {
+            caught = err;
+        }
+
+        expect(caught).toMatchObject({
+            message: 'Couldn’t reach Napkin. Check your connection and try again.',
+            cause: { code: 'NETWORK' },
+            __napkinReported: true,
+        });
+        expect(trackError).not.toHaveBeenCalled();
+        expect(captureError).not.toHaveBeenCalled();
     });
 
     it('preserves the structured .cause envelope on reported errors', async () => {
