@@ -15,7 +15,7 @@
  *
  * TICKET-060 corrections: pending/needs_confirm → CorrectModal flow preserved.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -30,7 +30,7 @@ import {
     ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Type, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -50,6 +50,8 @@ import {
     type FilterOption,
     ImportInboxCard,
     DiscoverPeopleSheet,
+    WishlistListsSheet,
+    type WishlistMapListOption,
 } from '@/components/wishlist';
 import { UnmappedSpotsSheet } from '@/components/wishlist/UnmappedSpotsSheet';
 import { AddToListSheet } from '@/components/lists';
@@ -62,8 +64,14 @@ import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useSavedLists } from '@/hooks/lists/useSavedLists';
-import { useListMapPins } from '@/hooks/lists/useListMapPins';
+import { useList } from '@/hooks/lists/useList';
 import { buildMapPins } from '@/components/wishlist/mapPinsUtils';
+import {
+    countUnmappableListEntries,
+    listEntriesToWishlistMapItems,
+    routeParamValue,
+    shouldReturnToListOrigin,
+} from '@/components/wishlist/listMapScope';
 import {
     spotsToMapItems,
     networkPinsToMapItems,
@@ -284,6 +292,12 @@ export default function WishlistScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
+    const params = useLocalSearchParams<{
+        view?: string | string[];
+        listId?: string | string[];
+        restaurantId?: string | string[];
+        fromList?: string | string[];
+    }>();
     const { user } = useAuth();
     const insets = useSafeAreaInsets();
 
@@ -312,9 +326,25 @@ export default function WishlistScreen() {
     const { data: myLists } = useMyLists(user?.id);
     const { data: savedLists } = useSavedLists(user?.id);
 
-    // TICKET-108: list-entry pins for the map — every restaurant across my lists
-    // with coords + the owning list's emoji. Unioned into `mapItems` below.
-    const { data: listMapPins } = useListMapPins(user?.id);
+    const routeView = routeParamValue(params.view);
+    const routeListId = routeParamValue(params.listId);
+    const routeRestaurantId = routeParamValue(params.restaurantId);
+    const routeFromList = routeParamValue(params.fromList);
+    const [selectedListId, setSelectedListId] = useState<string | null>(routeListId);
+    const [focusRestaurantId, setFocusRestaurantId] = useState<string | null>(routeRestaurantId);
+    const [listsSheetOpen, setListsSheetOpen] = useState(false);
+    const {
+        data: selectedListResult,
+        isLoading: isSelectedListLoading,
+        isError: isSelectedListError,
+        refetch: refetchSelectedList,
+    } = useList(selectedListId);
+    const selectedListDetail = selectedListResult?.data ?? null;
+    const selectedListEntries = useMemo(
+        () => selectedListDetail?.entries ?? [],
+        [selectedListDetail?.entries],
+    );
+    const selectedList = selectedListDetail?.list ?? null;
 
     // ── The import slot — ONE card, ever (review > running > failed > recent).
     // Active states route to the imports hub; a recently-saved batch (48h,
@@ -466,6 +496,29 @@ export default function WishlistScreen() {
     // launch). Replaces the old friend rail's null=all/toggle-off-to-hide model.
     const [checkedPeople, setCheckedPeople] = useState<Set<string>>(new Set());
     const [peopleSheetOpen, setPeopleSheetOpen] = useState(false);
+
+    // Deep links from List Places mode arrive before the selected List query.
+    // Keep that scope stable while the entries hydrate; the map handles the
+    // requested restaurant once it appears and will not reopen it after close.
+    useEffect(() => {
+        if (routeView === 'map') setViewMode('map');
+        if (routeListId) {
+            setSelectedListId(routeListId);
+            setMapSource('your');
+            setCuisineFilter(null);
+            setPriceFilter(null);
+            setCityFilter(null);
+        }
+        setFocusRestaurantId(routeRestaurantId);
+    }, [routeListId, routeRestaurantId, routeView]);
+
+    useEffect(() => {
+        if (!selectedListId || !selectedListResult?.isNotFound) return;
+        setSelectedListId(null);
+        setFocusRestaurantId(null);
+        router.setParams({ listId: '', restaurantId: '', fromList: '' });
+        toast.show('That List is no longer available');
+    }, [router, selectedListId, selectedListResult?.isNotFound, toast]);
     // TICKET-138: "gather here" on an overlap peek → GatherSheet, prefilled with
     // the restaurant + the overlap's max-count table. The 409 ALREADY_PROPOSED
     // path is owned inside GatherSheet (Alert), exactly as the restaurant page.
@@ -518,29 +571,38 @@ export default function WishlistScreen() {
     // Cuisine chips, frequency-ranked: most-saved cuisines lead. The inline row
     // caps to the top few (below) — the rest live in the overflow sheet so the
     // chip strip never becomes an endless horizontal scroll.
+    const facetRestaurants = useMemo(
+        () => selectedListId
+            ? selectedListEntries.map((entry) => entry.restaurant)
+            : pinnedRows
+                .map((item) => item.restaurant)
+                .filter((restaurant): restaurant is NonNullable<typeof restaurant> => restaurant != null),
+        [pinnedRows, selectedListEntries, selectedListId],
+    );
+
     const cuisineCounts = useMemo(() => {
         const counts = new Map<string, number>();
-        for (const i of pinnedRows) {
-            const c = i.restaurant?.cuisine?.trim();
+        for (const restaurant of facetRestaurants) {
+            const c = restaurant.cuisine?.trim();
             if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
         }
         return [...counts.entries()]
             .map(([cuisine, count]) => ({ cuisine, count }))
             .sort((a, b) => (b.count !== a.count ? b.count - a.count : a.cuisine.localeCompare(b.cuisine)));
-    }, [pinnedRows]);
+    }, [facetRestaurants]);
 
     // Price tiers present in the saved set (1–4 → "$".."$$$$"), frequency-ranked,
     // for the Price filter sheet. Only tiers that exist appear as options.
     const priceCounts = useMemo(() => {
         const counts = new Map<number, number>();
-        for (const i of pinnedRows) {
-            const lvl = i.restaurant?.price_level;
+        for (const restaurant of facetRestaurants) {
+            const lvl = restaurant.price_level;
             if (lvl != null && lvl > 0) counts.set(lvl, (counts.get(lvl) ?? 0) + 1);
         }
         return [...counts.entries()]
             .map(([level, count]) => ({ level, count }))
             .sort((a, b) => a.level - b.level);
-    }, [pinnedRows]);
+    }, [facetRestaurants]);
 
     // Cities present in the saved set ("London", "Lisbon"…), frequency-ranked, for
     // the City filter — answers "show me only my London spots." Sourced from the
@@ -548,14 +610,14 @@ export default function WishlistScreen() {
     // ≥2 cities exist (a single-city wishlist needs no city filter).
     const cityCounts = useMemo(() => {
         const counts = new Map<string, number>();
-        for (const i of pinnedRows) {
-            const c = i.restaurant?.city?.trim();
+        for (const restaurant of facetRestaurants) {
+            const c = restaurant.city?.trim();
             if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
         }
         return [...counts.entries()]
             .map(([city, count]) => ({ city, count }))
             .sort((a, b) => (b.count !== a.count ? b.count - a.count : a.city.localeCompare(b.city)));
-    }, [pinnedRows]);
+    }, [facetRestaurants]);
 
     // ── Filter-sheet option lists + current-value labels (Cuisine · Price · Sort) ──
     const cuisineOptions = useMemo<FilterOption[]>(
@@ -635,15 +697,9 @@ export default function WishlistScreen() {
         return decorated;
     }, [pinnedRows, cityFilter, cuisineFilter, priceFilter, sortMode, coords]);
 
-    // Map view: filtered union of (A) wishlist saves + (B) my-list entries
-    // (TICKET-108). Sort is irrelevant on a map (position is the signal), so
-    // this reads from pinnedRows/listMapPins directly, not the distance-decorated
-    // displayedRows. The same city/cuisine/price filters apply to BOTH sources.
-    //
-    // Precedence (spec decision 3): key by restaurant id; seed with wishlist
-    // saves (plain teardrop); then fold list pins ordered by list updated_at ASC
-    // (newest written last, so it wins), and an emoji ALWAYS overwrites a plain save
-    // (more specific). One pin per restaurant — matches Google Maps' one-icon rule.
+    // Default Your map is explicit personal context: Wishlist + Been. Lists no
+    // longer leak every authored collection into this layer; the Lists picker
+    // scopes one collection deliberately below.
     const { mapItems, unmappableCount, unmappedItems } = useMemo(() => {
         const saves = pinnedRows
             .map((i) => i.restaurant)
@@ -654,7 +710,7 @@ export default function WishlistScreen() {
                 // lat/lng may be absent → buildMapPins counts them as unmappable.
                 lat: r.lat ?? null, lng: r.lng ?? null,
             }));
-        const { items, unmappableSaves, unmappableSaveIds } = buildMapPins(saves, listMapPins ?? [], {
+        const { items, unmappableSaves, unmappableSaveIds } = buildMapPins(saves, [], {
             city: cityFilter,
             cuisine: cuisineFilter,
             price: priceFilter,
@@ -668,7 +724,7 @@ export default function WishlistScreen() {
             unmappableCount: unmappableSaves,
             unmappedItems: unmapped,
         };
-    }, [pinnedRows, listMapPins, cityFilter, cuisineFilter, priceFilter]);
+    }, [pinnedRows, cityFilter, cuisineFilter, priceFilter]);
 
     // Been / Network layers (TICKET-131): shared mappers + the active cuisine
     // filter (the one filter that applies to whichever layer is active — price/
@@ -687,6 +743,60 @@ export default function WishlistScreen() {
     const yourItems = useMemo(
         () => mergeYourItems(mapItems, beenItems, { showSaved, showBeen }),
         [mapItems, beenItems, showSaved, showBeen],
+    );
+
+    const scopedListItems = useMemo(
+        () => selectedList
+            ? listEntriesToWishlistMapItems(selectedListEntries, {
+                emoji: selectedList.emoji,
+                ranked: selectedList.ranked,
+                city: cityFilter,
+                cuisine: cuisineFilter,
+                price: priceFilter,
+            })
+            : [],
+        [selectedList, selectedListEntries, cityFilter, cuisineFilter, priceFilter],
+    );
+    const scopedListUnmappableCount = useMemo(
+        () => countUnmappableListEntries(selectedListEntries, {
+            city: cityFilter,
+            cuisine: cuisineFilter,
+            price: priceFilter,
+        }),
+        [selectedListEntries, cityFilter, cuisineFilter, priceFilter],
+    );
+
+    const myListOptions = useMemo<WishlistMapListOption[]>(
+        () => (myLists ?? []).map((list) => ({
+            id: list.id,
+            title: list.title,
+            emoji: list.emoji,
+            entryCount: list.entry_count,
+            ownerLabel: list.table_name ?? null,
+        })),
+        [myLists],
+    );
+    const savedListOptions = useMemo<WishlistMapListOption[]>(
+        () => (savedLists ?? []).map((list) => ({
+            id: list.id,
+            title: list.title,
+            emoji: list.emoji,
+            entryCount: list.entry_count,
+            ownerLabel: list.owner_display_name ?? list.owner_username,
+        })),
+        [savedLists],
+    );
+    const activeListOption = useMemo(
+        () => [...myListOptions, ...savedListOptions].find((option) => option.id === selectedListId)
+            ?? (selectedList
+                ? {
+                    id: selectedList.id,
+                    title: selectedList.title,
+                    emoji: selectedList.emoji,
+                    entryCount: selectedListEntries.length,
+                }
+                : null),
+        [myListOptions, savedListOptions, selectedList, selectedListEntries.length, selectedListId],
     );
 
     // Picker roster — distinct authors across the network layer (no new endpoint;
@@ -719,7 +829,11 @@ export default function WishlistScreen() {
         [overlapItems, networkItems, checkedPeople],
     );
 
-    const activeMapItems = mapSource === 'discover' ? discoverItems : yourItems;
+    const activeMapItems = mapSource === 'discover'
+        ? discoverItems
+        : selectedListId
+            ? scopedListItems
+            : yourItems;
 
     // Chip label reflects the APPLIED set: Everyone · one name · N people.
     const peopleLabel = useMemo(
@@ -766,6 +880,36 @@ export default function WishlistScreen() {
         if (mode === 'map') requestLocation();
     }, [requestLocation]);
 
+    const handleSelectListScope = useCallback((nextListId: string | null) => {
+        setSelectedListId(nextListId);
+        setFocusRestaurantId(null);
+        setMapSource('your');
+        setViewMode('map');
+        setActiveTab('pinned');
+        setCuisineFilter(null);
+        setPriceFilter(null);
+        setCityFilter(null);
+        router.setParams({
+            view: 'map',
+            listId: nextListId ?? '',
+            restaurantId: '',
+            fromList: '',
+        });
+        requestLocation();
+    }, [requestLocation, router]);
+
+    const handleSwitchToPlaces = useCallback(() => {
+        if (selectedListId) {
+            if (shouldReturnToListOrigin(routeFromList, routeListId, selectedListId)) {
+                router.back();
+                return;
+            }
+            router.push({ pathname: '/list/[id]', params: { id: selectedListId } });
+            return;
+        }
+        handleSelectView('list');
+    }, [handleSelectView, routeFromList, routeListId, router, selectedListId]);
+
     const totalPinned = pinnedRows.length;
     const listsCount = (myLists?.length ?? 0) + (savedLists?.length ?? 0);
 
@@ -788,7 +932,7 @@ export default function WishlistScreen() {
     // that can't apply reads as a bug.
     const mapFiltersActive =
         mapSource === 'your'
-            ? hasActiveFilters || !showSaved || !showBeen
+            ? hasActiveFilters || (!selectedListId && (!showSaved || !showBeen))
             : !!cuisineFilter;
 
     // ── Full-bleed map — ALWAYS mounted (the Map tab's hero). The list is an
@@ -801,8 +945,20 @@ export default function WishlistScreen() {
             items={activeMapItems}
             // Unmappable murmur is a saved-layer concern only. Tapping it opens
             // the which-spots + fix sheet (founder ask 2026-07-12).
-            unmappableCount={mapSource === 'your' && showSaved ? unmappableCount : 0}
-            onUnmappablePress={() => setUnmappedSheetOpen(true)}
+            unmappableCount={
+                mapSource === 'your'
+                    ? selectedListId
+                        ? scopedListUnmappableCount
+                        : showSaved
+                            ? unmappableCount
+                            : 0
+                    : 0
+            }
+            onUnmappablePress={
+                mapSource === 'your' && !selectedListId
+                    ? () => setUnmappedSheetOpen(true)
+                    : undefined
+            }
             userCoords={coords}
             locationStatus={locationStatus}
             onRequestLocation={requestLocation}
@@ -817,7 +973,29 @@ export default function WishlistScreen() {
             // its corner chrome — filter chip + Import chip top-right, List pill
             // bottom-right (corner law v2). The old inbox card shrinks to a
             // status chip; the full card survives only as the list-mode inbox row.
-            onSwitchToList={() => handleSelectView('list')}
+            onSwitchToList={handleSwitchToPlaces}
+            preserveItemOrder={mapSource === 'your' && !!selectedListId && !!selectedList?.ranked}
+            collectionScopeKey={mapSource === 'your' && selectedListId ? `list:${selectedListId}` : null}
+            focusItemId={mapSource === 'your' && selectedListId ? focusRestaurantId : null}
+            emptyMessage={
+                mapSource === 'your' && selectedListId
+                    ? isSelectedListLoading
+                        ? 'gathering this List…'
+                        : isSelectedListError
+                            ? 'couldn’t load this List.'
+                            : 'this List has no mappable places for the current filters.'
+                    : undefined
+            }
+            emptyAction={
+                mapSource === 'your' && selectedListId && isSelectedListError
+                    ? { label: 'Try again', onPress: () => void refetchSelectedList() }
+                    : undefined
+            }
+            unmappableLabel={
+                mapSource === 'your' && selectedListId && scopedListUnmappableCount > 0
+                    ? `${scopedListUnmappableCount} ${scopedListUnmappableCount === 1 ? 'place in this List isn’t' : 'places in this List aren’t'} on the map`
+                    : undefined
+            }
             onOpenFilters={() => setFiltersOpen(true)}
             filtersActive={mapFiltersActive}
             onImport={() => setImportSheetVisible(true)}
@@ -842,6 +1020,17 @@ export default function WishlistScreen() {
             peopleChip={
                 mapSource === 'discover'
                     ? { label: peopleLabel, onPress: () => setPeopleSheetOpen(true) }
+                    : undefined
+            }
+            listChip={
+                mapSource === 'your'
+                    ? {
+                        label: activeListOption
+                            ? `${activeListOption.emoji ? `${activeListOption.emoji} ` : ''}${activeListOption.title}`
+                            : 'Lists',
+                        selected: !!selectedListId,
+                        onPress: () => setListsSheetOpen(true),
+                    }
                     : undefined
             }
             // Save-from-the-map (#167): Discover peek cards render a Save pill.
@@ -1156,12 +1345,12 @@ export default function WishlistScreen() {
                 sort={{ options: sortOptions, selected: sortMode, onSelect: handleSelectSort }}
                 // "On the map" layer toggles — Your map only (TICKET-134).
                 showSaved={
-                    viewMode === 'map' && mapSource === 'your'
+                    viewMode === 'map' && mapSource === 'your' && !selectedListId
                         ? { value: showSaved, onToggle: () => setShowSaved((v) => !v) }
                         : undefined
                 }
                 showBeen={
-                    viewMode === 'map' && mapSource === 'your'
+                    viewMode === 'map' && mapSource === 'your' && !selectedListId
                         ? { value: showBeen, onToggle: () => setShowBeen((v) => !v) }
                         : undefined
                 }
@@ -1176,6 +1365,16 @@ export default function WishlistScreen() {
                     { label: 'Remove from wishlist', kind: 'destructive', onPress: handleConfirmRemove },
                 ]}
                 onCancel={() => setRemoveItem(null)}
+            />
+
+            <WishlistListsSheet
+                visible={listsSheetOpen}
+                onDismiss={() => setListsSheetOpen(false)}
+                palette={palette}
+                selectedListId={selectedListId}
+                myLists={myListOptions}
+                savedLists={savedListOptions}
+                onSelect={handleSelectListScope}
             />
 
             {/* TICKET-137: Discover people picker (exclusive-include, draft-apply:

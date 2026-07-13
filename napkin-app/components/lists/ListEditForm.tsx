@@ -1,6 +1,6 @@
 /**
  * ListEditForm — full edit form for a list.
- * Handles: rename, toggle ranked, toggle privacy, delete.
+ * Handles: rename, toggle ranked, personal-list privacy, and delete.
  * Delete uses a destructive action sheet (Alert).
  */
 import React, { useState } from 'react';
@@ -43,6 +43,7 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
     const [ranked, setRanked] = useState(list.ranked);
     const [isPublic, setIsPublic] = useState(list.privacy === 'public');
     const [emoji, setEmoji] = useState<string | null>(list.emoji ?? null);
+    const isTableList = !!list.table_id;
 
     const updateList = useUpdateList(userId);
     const deleteList = useDeleteList(userId);
@@ -51,7 +52,7 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
         title.trim() !== list.title ||
         description.trim() !== (list.description ?? '') ||
         ranked !== list.ranked ||
-        isPublic !== (list.privacy === 'public') ||
+        (!isTableList && isPublic !== (list.privacy === 'public')) ||
         emoji !== (list.emoji ?? null);
 
     const handleSave = () => {
@@ -67,7 +68,7 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
                 title: trimmedTitle,
                 description: description.trim() || null,
                 ranked,
-                privacy: isPublic ? 'public' : 'private',
+                ...(!isTableList ? { privacy: isPublic ? 'public' as const : 'private' as const } : {}),
                 emoji,
             },
             {
@@ -180,23 +181,35 @@ export function ListEditForm({ list, userId, onDone, onDeleted }: Props) {
                 />
             </View>
 
-            {/* Privacy toggle */}
-            <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>
-                <View>
-                    <Text style={[Type.titleSmall, { color: palette.text }]}>Public</Text>
-                    <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
-                        {isPublic
-                            ? 'Anyone with the link can view'
-                            : 'Only you can see this list'}
-                    </Text>
+            {/* Table Lists are always shared with Table members and excluded from
+                public discovery; only personal Lists expose a privacy switch. */}
+            {isTableList ? (
+                <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[Type.titleSmall, { color: palette.text }]}>Shared with the Table</Text>
+                        <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
+                            Everyone at this Table can view and add spots
+                        </Text>
+                    </View>
                 </View>
-                <Switch
-                    value={isPublic}
-                    onValueChange={setIsPublic}
-                    trackColor={{ false: palette.outlineVariant, true: palette.primary }}
-                    thumbColor="#fff"
-                />
-            </View>
+            ) : (
+                <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>
+                    <View>
+                        <Text style={[Type.titleSmall, { color: palette.text }]}>Public</Text>
+                        <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
+                            {isPublic
+                                ? 'Anyone with the link can view'
+                                : 'Only you can see this list'}
+                        </Text>
+                    </View>
+                    <Switch
+                        value={isPublic}
+                        onValueChange={setIsPublic}
+                        trackColor={{ false: palette.outlineVariant, true: palette.primary }}
+                        thumbColor="#fff"
+                    />
+                </View>
+            )}
 
             {/* Save */}
             <Pressable

@@ -37,8 +37,8 @@ export default function NewListScreen() {
     const { user } = useAuth();
 
     // TICKET-115: optional Table context — "new list in {Table}". When present the
-    // list is shared (table_id) and FORCED private (Tables-never-public), so the
-    // public/private toggle is hidden.
+    // list is shared with every Table member (table_id) and excluded from public
+    // discovery, so the personal public/private toggle is hidden.
     const { tableId, tableName } = useLocalSearchParams<{ tableId?: string; tableName?: string }>();
     const isTableContext = !!tableId;
 
@@ -67,7 +67,7 @@ export default function NewListScreen() {
                 title: trimmedTitle,
                 description: description.trim() || undefined,
                 ranked,
-                // Table lists are always private (server also coerces).
+                // Table Lists are Table-visible and excluded from global public discovery.
                 privacy: isTableContext ? 'private' : (isPublic ? 'public' : 'private'),
                 emoji,
                 ...(isTableContext ? { table_id: tableId } : {}),
@@ -193,14 +193,14 @@ export default function NewListScreen() {
                             />
                         </View>
 
-                        {/* Privacy — hidden in a Table context (table lists are always
-                            private, shared only with members). */}
+                        {/* Personal privacy is hidden in a Table context: membership
+                            itself is the audience. */}
                         {isTableContext ? (
                             <View style={[styles.toggleRow, { borderTopColor: palette.surfaceContainerLow }]}>
                                 <View style={{ flex: 1 }}>
                                     <Text style={[Type.titleSmall, { color: palette.text }]}>Shared with the table</Text>
                                     <Text style={[Type.bodySmall, { color: palette.textMuted, marginTop: 2 }]}>
-                                        Every member can add · private to the table
+                                        Everyone at this Table can view and add spots
                                     </Text>
                                 </View>
                             </View>
