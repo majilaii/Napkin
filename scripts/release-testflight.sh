@@ -6,6 +6,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: scripts/release-testflight.sh <merged-sha>
        scripts/release-testflight.sh --self-test-cleanup [ref]
+       scripts/release-testflight.sh --self-test-cancel [ref]
 
 Builds and submits a merged commit to TestFlight from a temporary worktree.
 The worktree and all generated build artifacts are removed on every exit path.
@@ -13,8 +14,12 @@ EOF
 }
 
 mode="release"
-if [[ "${1:-}" == "--self-test-cleanup" ]]; then
-  mode="self-test"
+if [[ "${1:-}" == "--self-test-cleanup" || "${1:-}" == "--self-test-cancel" ]]; then
+  if [[ "$1" == "--self-test-cancel" ]]; then
+    mode="self-test-cancel"
+  else
+    mode="self-test"
+  fi
   shift
   merged_ref="${1:-origin/main}"
   if [[ $# -gt 1 ]]; then
@@ -57,29 +62,55 @@ worktree_is_registered() {
 run_child() {
   local child_status=0
 
-  # A separate process group lets TERM/HUP/INT reach npx and all of the native
-  # build processes it starts before the EXIT trap removes their workspace.
-  set -m
+  # Keep terminal-aware EAS commands in the wrapper's foreground process group.
+  # Running asynchronously only lets Bash handle signals while it waits; job
+  # control must remain disabled or EAS is suspended when it touches the TTY.
   "$@" &
   child_pid=$!
-  set +m
   wait "$child_pid" || child_status=$?
   child_pid=""
 
   return "$child_status"
 }
 
+signal_process_tree() {
+  local parent_pid="$1"
+  local signal="$2"
+  local descendant_pid
+
+  for descendant_pid in $(pgrep -P "$parent_pid" 2>/dev/null); do
+    signal_process_tree "$descendant_pid" "$signal"
+  done
+
+  kill -s "$signal" "$parent_pid" 2>/dev/null || true
+  kill -CONT "$parent_pid" 2>/dev/null || true
+}
+
 handle_signal() {
   local signal="$1"
   local status="$2"
+  local child_signal="$signal"
+  local watchdog_pid=""
 
   trap - "$signal"
   if [[ -n "$child_pid" ]]; then
-    kill -s "$signal" -- "-$child_pid" 2>/dev/null \
-      || kill -s "$signal" "$child_pid" 2>/dev/null \
-      || true
+    # Non-interactive Bash starts async children with SIGINT ignored. Forward
+    # TERM for Ctrl-C, but preserve the wrapper's conventional exit code 130.
+    if [[ "$signal" == "INT" ]]; then
+      child_signal="TERM"
+    fi
+
+    signal_process_tree "$child_pid" "$child_signal"
+    (
+      sleep 5
+      signal_process_tree "$child_pid" KILL
+    ) &
+    watchdog_pid=$!
+
     wait "$child_pid" 2>/dev/null || true
     child_pid=""
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
   fi
 
   exit "$status"
@@ -168,8 +199,19 @@ scratch_dir="$(mktemp -d "$tmp_root/napkin-testflight.XXXXXX")"
 release_worktree="$scratch_dir/worktree"
 git -C "$repo_root" worktree add --detach "$release_worktree" "$merged_sha"
 
+if [[ "$mode" == "self-test-cancel" ]]; then
+  (
+    sleep 1
+    kill -INT "$$"
+  ) &
+  echo "Cancellation child started."
+  run_child /bin/sleep 30
+  echo "Cancellation self-test failed to interrupt the child process." >&2
+  exit 1
+fi
+
 if [[ "$mode" == "self-test" ]]; then
-  run_child /bin/bash -c 'exit 0'
+  run_child /bin/bash -c 'printf "Child-process runner is terminal-safe.\n"'
   echo "Cleanup self-test created a disposable worktree at: $release_worktree"
   exit 0
 fi
