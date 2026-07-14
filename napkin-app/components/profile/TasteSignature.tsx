@@ -153,7 +153,7 @@ export function TasteSignature({
 }
 
 const styles = StyleSheet.create({
-    wrapper: { marginTop: Spacing.md },
+    wrapper: { marginTop: 20 },
     wrapperPressed: { transform: [{ scale: 0.96 }] },
     card: {
         marginHorizontal: Spacing.lg,

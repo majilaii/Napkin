@@ -69,11 +69,11 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'baseline',
         justifyContent: 'space-between',
-        paddingHorizontal: 22,
+        paddingHorizontal: Spacing.lg,
     },
     normal: {
-        paddingTop: Spacing.xl,
-        paddingBottom: 12,
+        paddingTop: 22,
+        paddingBottom: Spacing.sm,
     },
     small: {
         paddingTop: Spacing.lg,
