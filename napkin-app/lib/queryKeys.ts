@@ -85,8 +85,6 @@ export const queryKeys = {
         detail: (listId: string) => ['lists', 'detail', listId] as const,
         containing: (userId: string, restaurantId: string) =>
             ['lists', 'containing', userId, restaurantId] as const,
-        /** TICKET-108: all my-list entries w/ coords + emoji for the wishlist map. */
-        mapPins: (userId: string) => ['lists', 'mapPins', userId] as const,
         /** TICKET-106: public-list search results (keyset-paginated). */
         searchPublic: (q: string) => ['lists', 'searchPublic', q] as const,
         /** TICKET-125: For You browse block — recent public lists, global (not per-viewer). */

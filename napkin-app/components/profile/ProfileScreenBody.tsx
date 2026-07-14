@@ -36,6 +36,7 @@ import { useUserProfile } from '@/hooks/users/useUserProfile';
 import { useUpdateProfile } from '@/hooks/users/useUpdateProfile';
 import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
 import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account';
+import { useImportSlot } from '@/hooks/imports/useImportSlot';
 
 import { ProfileHeader } from './ProfileHeader';
 import { TopFour } from './TopFour';
@@ -44,6 +45,7 @@ import { QuickTakes } from './QuickTakes';
 import { QuickTakesSheet } from './QuickTakesSheet';
 import { TasteSignature } from './TasteSignature';
 import { DiningMapPreview } from './DiningMapPreview';
+import { ListsShelf } from './ListsShelf';
 import { ProfileIndex } from './ProfileIndex';
 import { TablesInCommonSection } from './TablesInCommonSection';
 import { NotFoundState } from './NotFoundState';
@@ -86,6 +88,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         hasPalateAccess ? profileData?.profile.user_id : null,
     );
     const taste = useMemo(() => deriveTaste(spots ?? []), [spots]);
+    // Live import state for the self-only Explore "Imports" row (TICKET-185).
+    const importSlot = useImportSlot(isSelf ? profileUserId : null);
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
     const [editQuickTakesOpen, setEditQuickTakesOpen] = useState(false);
     const [isAddingProfilePhoto, setIsAddingProfilePhoto] = useState(false);
@@ -271,27 +275,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             hint: 'The written ones',
             route: `/reviews?userId=${targetUserId}`,
         });
-
-        const publicLists = profileData.public_lists ?? [];
-        if (isSelf) {
-            indexSections.push({
-                title: 'Lists',
-                count: publicLists.length || null,
-                hint:
-                    publicLists.length > 0
-                        ? publicLists.slice(0, 3).map((l) => l.title).join(' · ')
-                        : 'Curated collections',
-                route: '/lists',
-            });
-        } else if (publicLists.length > 0) {
-            // Stranger list browsing is a fast-follow — quiet inventory for now.
-            indexSections.push({
-                title: 'Lists',
-                count: publicLists.length,
-                hint: publicLists.slice(0, 3).map((l) => l.title).join(' · '),
-                disabled: true,
-            });
-        }
+        // Lists now live in the ListsShelf rail above the index (TICKET-185) —
+        // no text TOC row here, for self or stranger.
     }
 
     if (isSelf) {
@@ -300,6 +285,15 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             count: null,
             hint: 'Places saving for later',
             route: '/wishlist',
+        });
+
+        // Imports — the durable home for the imports hub (was map-tab-only).
+        // Hint + count reflect the live import slot; idle shows the sources.
+        indexSections.push({
+            title: 'Imports',
+            count: importSlot?.kind === 'review' ? importSlot.count : null,
+            hint: importSlot ? importSlot.title : 'From TikTok, IG and Maps',
+            route: '/import-progress',
         });
     }
 
@@ -404,6 +398,15 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                             params: isSelf ? {} : { userId: targetUserId },
                         } as never)
                     }
+                />
+            )}
+
+            {/* Lists shelf — cover-plate rail (replaces the old Lists TOC row) */}
+            {hasPalateAccess && (
+                <ListsShelf
+                    isSelf={isSelf}
+                    userId={targetUserId}
+                    publicLists={profileData.public_lists ?? []}
                 />
             )}
 

@@ -271,8 +271,7 @@ export default function ListDetailScreen() {
 
     const empty = (
         <View style={styles.emptyState}>
-            <Text style={[styles.emptyTitle, { color: palette.text }]}>A list waiting to happen.</Text>
-            <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>— add the first place and the map will take shape</Text>
+            <Text style={[styles.emptyTitle, { color: palette.text }]}>No places yet</Text>
             {canEditEntries ? (
                 <PressableScale
                     onPress={() => setImportVisible(true)}
@@ -398,11 +397,6 @@ const styles = StyleSheet.create({
     emptyTitle: {
         fontFamily: 'Newsreader_600SemiBold',
         fontSize: 21,
-    },
-    emptyCopy: {
-        ...Type.editorialBody,
-        textAlign: 'center',
-        marginTop: 6,
     },
     emptyButton: {
         minWidth: 132,

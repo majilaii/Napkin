@@ -205,7 +205,7 @@ export function ListEntryRow({
                             styles.iconButton,
                             {
                                 backgroundColor: isWishlisted
-                                    ? palette.secondaryContainer
+                                    ? palette.primaryMuted
                                     : palette.surfaceContainerLow,
                                 opacity: isWishlistPending ? 0.5 : 1,
                             },
@@ -217,9 +217,9 @@ export function ListEntryRow({
                         accessibilityState={{ selected: isWishlisted, disabled: isWishlistPending }}
                     >
                         <Ionicons
-                            name={isWishlisted ? 'bookmark' : 'bookmark-outline'}
+                            name={isWishlisted ? 'heart' : 'heart-outline'}
                             size={18}
-                            color={isWishlisted ? palette.text : palette.textMuted}
+                            color={isWishlisted ? palette.primary : palette.textMuted}
                         />
                     </PressableScale>
                 ) : null}

@@ -13,8 +13,6 @@ export { RowToggle, type RowToggleProps } from './RowToggle';
 export { CandidatePickerPanel } from './CandidatePickerPanel';
 // TICKET-072: wishlist handoff share/revoke sheet
 export { HandoffSheet } from './HandoffSheet';
-// Lists shelf at the top of the Wishlist tab
-export { ListsRail } from './ListsRail';
 // "Recently imported" band — async import batch history
 // Map of saved spots near you (list/map toggle on the Wishlist tab)
 export { WishlistMapView, type WishlistMapItem } from './WishlistMapView';
