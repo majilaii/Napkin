@@ -1,11 +1,12 @@
 import type { ListEntry } from '@/hooks/lists/useList';
 import {
     countUnmappableListEntries,
+    hasValidCoordinates,
     isCityScaleCollection,
     listCollectionFrameKey,
     listEntriesToWishlistMapItems,
     routeParamValue,
-    shouldReturnToListOrigin,
+    resolveSwitchToPlaces,
 } from '../listMapScope';
 
 function entry(
@@ -91,11 +92,28 @@ describe('listCollectionFrameKey', () => {
     });
 });
 
-describe('shouldReturnToListOrigin', () => {
-    it('returns only to the exact List that opened Map', () => {
-        expect(shouldReturnToListOrigin('1', 'list-1', 'list-1')).toBe(true);
-        expect(shouldReturnToListOrigin('1', 'list-1', 'list-2')).toBe(false);
-        expect(shouldReturnToListOrigin(null, 'list-1', 'list-1')).toBe(false);
+describe('hasValidCoordinates', () => {
+    it('accepts finite in-range coordinates including the origin', () => {
+        expect(hasValidCoordinates(entry('ok'))).toBe(true);
+        expect(hasValidCoordinates(entry('origin', { lat: 0, lng: 0 }))).toBe(true);
+    });
+
+    it('rejects null, non-finite, and out-of-range coordinates', () => {
+        expect(hasValidCoordinates(entry('null', { lat: null }))).toBe(false);
+        expect(hasValidCoordinates(entry('nan', { lat: Number.NaN }))).toBe(false);
+        expect(hasValidCoordinates(entry('inf', { lng: Number.POSITIVE_INFINITY }))).toBe(false);
+        expect(hasValidCoordinates(entry('lat-high', { lat: 90.0001 }))).toBe(false);
+        expect(hasValidCoordinates(entry('lng-low', { lng: -180.0001 }))).toBe(false);
+    });
+});
+
+describe('resolveSwitchToPlaces', () => {
+    it('pushes the scoped List route when a List is selected', () => {
+        expect(resolveSwitchToPlaces('list-1')).toEqual({ kind: 'push-list', listId: 'list-1' });
+    });
+
+    it('shows the in-tab list overlay when nothing is scoped', () => {
+        expect(resolveSwitchToPlaces(null)).toEqual({ kind: 'show-list-overlay' });
     });
 });
 

@@ -1,5 +1,9 @@
 import type { ListEntry } from '@/hooks/lists/useList';
-import type { WishlistMapItem } from './WishlistMapView';
+import { isCityScaleCollection, type WishlistMapItem } from './mapShared';
+
+// isCityScaleCollection moved to the neutral mapShared module (shared with
+// ScopedListMap); re-exported here so existing callers/tests keep resolving.
+export { isCityScaleCollection };
 
 export interface ListMapFilters {
     city: string | null;
@@ -10,22 +14,6 @@ export interface ListMapFilters {
 export interface ListMapScopeOptions extends ListMapFilters {
     emoji: string | null;
     ranked: boolean;
-}
-
-const COLLECTION_FIT_MAX_LAT_SPAN = 0.45;
-const COLLECTION_FIT_MAX_LNG_SPAN = 0.65;
-
-/** Whether all points still form a useful city/regional overview. */
-export function isCityScaleCollection(
-    items: readonly Pick<WishlistMapItem, 'lat' | 'lng'>[],
-): boolean {
-    if (items.length < 2) return true;
-    const latitudes = items.map((item) => item.lat);
-    const longitudes = items.map((item) => item.lng);
-    return (
-        Math.max(...latitudes) - Math.min(...latitudes) <= COLLECTION_FIT_MAX_LAT_SPAN
-        && Math.max(...longitudes) - Math.min(...longitudes) <= COLLECTION_FIT_MAX_LNG_SPAN
-    );
 }
 
 /** Stable camera-frame identity: order changes do not reframe, filter membership does. */
@@ -44,15 +32,24 @@ export function routeParamValue(value: string | string[] | undefined): string | 
     return trimmed ? trimmed : null;
 }
 
-export function shouldReturnToListOrigin(
-    fromList: string | null,
-    routeListId: string | null,
-    selectedListId: string | null,
-): boolean {
-    return fromList === '1' && !!selectedListId && routeListId === selectedListId;
+/**
+ * The map tab's "Places" affordance (TICKET-186, A6). A scoped List pushes to
+ * that list's own sheet-over-map route; the unscoped map switches to the in-tab
+ * list overlay. (The former back-bridge is gone — one route now owns
+ * both a list's places and its map, so back is trivially correct.)
+ */
+export type SwitchToPlacesTarget =
+    | { kind: 'push-list'; listId: string }
+    | { kind: 'show-list-overlay' };
+
+export function resolveSwitchToPlaces(selectedListId: string | null): SwitchToPlacesTarget {
+    return selectedListId
+        ? { kind: 'push-list', listId: selectedListId }
+        : { kind: 'show-list-overlay' };
 }
 
-function hasValidCoordinates(entry: ListEntry): boolean {
+/** Shared coordinate-validity guard for list entries (TICKET-186, A12). */
+export function hasValidCoordinates(entry: ListEntry): boolean {
     const { lat, lng } = entry.restaurant;
     return (
         typeof lat === 'number'
