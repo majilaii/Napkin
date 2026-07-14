@@ -26,3 +26,17 @@ export function isUnhandledFocus(
 ): request is FocusRequest {
     return request != null && handledSeq !== request.seq;
 }
+
+/**
+ * G1: every settle CONSUMES the pending focus. It fires only when the sheet
+ * came to rest at peek; any other snap means the focus-driven transition was
+ * superseded (new gesture, new snapTo, edit lock) and the request is
+ * discarded — a stale focus must never fire on a later unrelated peek settle.
+ */
+export function resolveSettleFocus<S>(
+    pending: string | null,
+    settledSnap: S,
+    peekSnap: S,
+): { fire: string | null } {
+    return { fire: pending != null && settledSnap === peekSnap ? pending : null };
+}

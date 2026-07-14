@@ -19,9 +19,11 @@
  * headerPan's detector wraps ONLY the handle+header block, listPan+nativeScroll
  * wrap the list — so they never contend for a touch and need no declared
  * relationship with each other. Each pan owns its own gesture-state shared
- * values. The list's scroll is disabled the moment ANY path leaves full
- * (either pan's drag, imperative snapTo, edit lock) and re-enabled only from
- * the spring completion at full.
+ * values. The list's scroll is disabled when a path leaves full: listPan's
+ * A9-2 takeover disables mid-drag (the finger is ON the list), and `settle()`
+ * disables for every non-full target (header drag release, imperative snapTo,
+ * edit lock — review G4 dropped headerPan's redundant mid-drag disable).
+ * Re-enable happens only from the spring completion at full.
  */
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
@@ -46,6 +48,7 @@ import {
     FULL,
     HALF,
     PEEK,
+    listPanOwnsSheet,
     offsetsFor,
     resolveSnap,
     sheetHeight,
@@ -70,6 +73,9 @@ export interface ListDetailSheetProps {
     reorder: boolean;
     onDragEnd: (params: { data: ListEntry[]; from: number; to: number }) => void;
     onSnapSettle: (snap: Snap) => void;
+    /** Fires when either pan ACTIVATES (a real drag past ±10pt, not a tap) —
+     * the host discards a pending focus the new gesture supersedes (G1). */
+    onPanStart?: () => void;
     emptyComponent: React.ReactElement | null;
     sheetRef: React.Ref<ListDetailSheetHandle>;
     /** Usable height (screen − top inset), measured by the host; offsets re-derive. */
@@ -87,6 +93,7 @@ export function ListDetailSheet({
     reorder,
     onDragEnd,
     onSnapSettle,
+    onPanStart,
     emptyComponent,
     sheetRef,
     H,
@@ -110,8 +117,6 @@ export function ListDetailSheet({
     const listOwns = useSharedValue(false);
     // headerPan gesture state — independent (F2).
     const headerStartY = useSharedValue(0);
-    const headerAtFull = useSharedValue(false);
-    const headerLeftFull = useSharedValue(false);
     const scrollOffset = useSharedValue(0);
 
     const [scrollEnabled, setScrollEnabled] = useState(false);
@@ -161,15 +166,20 @@ export function ListDetailSheet({
         if (prevEditingRef.current === editing) return;
         if (H <= 0) return; // wait for layout; act once H arrives
         prevEditingRef.current = editing;
+        // G3: the list implementation swaps on every edit toggle and the fresh
+        // instance mounts at top — reset the tracked offset or the stranded
+        // positive value makes `beganTop` false forever (dead drag at full).
+        scrollOffset.value = 0;
         runOnUI(settle)(editing ? FULL : HALF);
         // settle is a per-render worklet closure; runs on an editing change only.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [editing, H]);
 
     // No deps array: the handle is rebuilt each render so snapTo/currentSnap
-    // always close over the latest `settle`/shared values.
+    // always close over the latest `settle`/`editing`.
     useImperativeHandle(sheetRef, () => ({
-        snapTo: (snap: Snap) => runOnUI(settle)(snap),
+        // While the edit lock holds, ANY caller's snap clamps to FULL (G1).
+        snapTo: (snap: Snap) => runOnUI(settle)(editing ? FULL : snap),
         currentSnap: () => snapIndex.value,
     }));
 
@@ -190,13 +200,15 @@ export function ListDetailSheet({
             listBeganTop.value = scrollOffset.value <= 0;
             listOwns.value = false;
         })
+        .onStart(() => {
+            if (onPanStart) runOnJS(onPanStart)(); // G1: a real drag supersedes a pending focus
+        })
         .onUpdate((e) => {
-            if (!listOwns.value) {
-                if (!listAtFull.value) listOwns.value = true;               // A9-1
-                else if (listBeganTop.value && e.translationY > 0) {       // A9-2 down-from-top
-                    listOwns.value = true;
-                    runOnJS(disableScroll)();                              // Codex #3: leave full now
-                }
+            // A9-1 / A9-2 ownership — the pure, jest-probed predicate (G3).
+            if (!listOwns.value
+                && listPanOwnsSheet(listAtFull.value, listBeganTop.value, e.translationY)) {
+                listOwns.value = true;
+                if (listAtFull.value) runOnJS(disableScroll)();            // Codex #3: leave full now
             }
             if (listOwns.value) translateY.value = clamp(listStartY.value + e.translationY);
             // else A9-3: at full, up / not-from-top → list scrolls natively
@@ -210,15 +222,13 @@ export function ListDetailSheet({
         .enabled(!editing)
         .onBegin(() => {
             headerStartY.value = translateY.value;
-            headerAtFull.value = snapIndex.value === FULL;
-            headerLeftFull.value = false;
+        })
+        .onStart(() => {
+            if (onPanStart) runOnJS(onPanStart)(); // G1: a real drag supersedes a pending focus
         })
         .onUpdate((e) => {
-            // Leaving full via the header drag also stops the list NOW (F2).
-            if (headerAtFull.value && !headerLeftFull.value && e.translationY > 0) {
-                headerLeftFull.value = true;
-                runOnJS(disableScroll)();
-            }
+            // No mid-drag scroll disable here (G4): the finger is on the
+            // header, and `settle()` disables on release for non-full targets.
             translateY.value = clamp(headerStartY.value + e.translationY);
         })
         .onFinalize((e) => {

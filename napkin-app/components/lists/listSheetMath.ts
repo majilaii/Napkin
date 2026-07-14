@@ -66,6 +66,22 @@ export function resolveSheetMode(
 }
 
 /**
+ * The A9 listPan ownership decision at first movement: below full the sheet
+ * always takes the pan; at full it takes only a downward drag that BEGAN with
+ * the list at top. Extracted pure (review G3) so the edit-round-trip
+ * scroll-state regression is probeable in jest; `ListDetailSheet` calls this
+ * from the gesture worklet.
+ */
+export function listPanOwnsSheet(
+    atFull: boolean,
+    beganTop: boolean,
+    translationY: number,
+): boolean {
+    'worklet';
+    return !atFull || (beganTop && translationY > 0);
+}
+
+/**
  * Commit a released drag to the snap nearest the velocity-projected position
  * (A8: `pos + v·0.2s`, nearest snap, no dead zones). Called on the UI thread
  * from the sheet's gesture worklets; the `'worklet'` directive is a no-op in

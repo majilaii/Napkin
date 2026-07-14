@@ -229,6 +229,9 @@ export function ScopedListMap({
     // reframe re-anchors on the nearest pin (Codex #3/#4/#5).
     useEffect(() => {
         if (!mapReady || !collectionFrameKey || items.length === 0) return;
+        // G2: an in-flight focus request owns the camera — never race it with
+        // a collection frame. The focus handler marks the frame consumed.
+        if (isUnhandledFocus(handledSeqRef.current, focusRequest)) return;
 
         if (framedKeyRef.current !== collectionFrameKey) {
             const action = chooseCollectionCamera(items, userCoords, locationStatus);
@@ -270,7 +273,7 @@ export function ScopedListMap({
                 applyAction(action);
             }
         }
-    }, [applyAction, collectionFrameKey, items, locationStatus, mapReady, userCoords]);
+    }, [applyAction, collectionFrameKey, focusRequest, items, locationStatus, mapReady, userCoords]);
 
     useEffect(() => () => {
         if (deferTimerRef.current) clearTimeout(deferTimerRef.current);
@@ -294,9 +297,19 @@ export function ScopedListMap({
         const target = items.find((i) => i.id === focusRequest.id);
         if (!target) return;
         handledSeqRef.current = focusRequest.seq;
+        // G2: focus takes camera priority — kill the deferred fallback and mark
+        // the current collection frame consumed, so items[0]@CITY_DELTA can
+        // never fire after the focus; suppress the corrective reframe too.
+        if (deferTimerRef.current) {
+            clearTimeout(deferTimerRef.current);
+            deferTimerRef.current = null;
+        }
+        if (collectionFrameKey) framedKeyRef.current = collectionFrameKey;
+        framedWithoutCoordsRef.current = false;
+        correctedRef.current = true;
         setSelectedId(target.id);
         mapRef.current?.animateToRegion(regionAt(target, SPOT_DELTA), 320);
-    }, [focusRequest, items, mapReady]);
+    }, [collectionFrameKey, focusRequest, items, mapReady]);
 
     // Imperative reframe the host calls at a ≤half settle (membership change /
     // returning to a framed view). Best-effort: a defer collapses to the first pin.

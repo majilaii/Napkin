@@ -3,6 +3,7 @@ import {
     HALF,
     PEEK,
     PEEK_FLOOR,
+    listPanOwnsSheet,
     offsetsFor,
     resolveSheetMode,
     resolveSnap,
@@ -53,6 +54,37 @@ describe('resolveSnap', () => {
     it('lands on a valid snap after a reversed drag (down then back up)', () => {
         // Released a hair past half with a gentle settle velocity → half.
         expect(resolveSnap(offsets[HALF] + 6, -20, offsets)).toBe(HALF);
+    });
+});
+
+describe('listPanOwnsSheet (A9 ownership)', () => {
+    it('below full the sheet always takes the pan', () => {
+        expect(listPanOwnsSheet(false, false, -5)).toBe(true);
+        expect(listPanOwnsSheet(false, true, 5)).toBe(true);
+    });
+
+    it('at full only a downward drag that began at top takes the sheet', () => {
+        expect(listPanOwnsSheet(true, true, 12)).toBe(true);   // A9-2
+        expect(listPanOwnsSheet(true, true, -12)).toBe(false); // up → list scrolls
+        expect(listPanOwnsSheet(true, false, 12)).toBe(false); // began scrolled → list scrolls
+    });
+});
+
+describe('edit round-trip scroll-state reset (review G3 regression probe)', () => {
+    it('the reset restores pull-down-from-top sheet ownership after edit', () => {
+        // Scrolled at full → the tracked offset is positive.
+        let scrollOffset = 400;
+        // Enter edit: the list implementation swaps and the tracked offset is
+        // reset to 0 (the G3 fix in ListDetailSheet's editing effect). Exit
+        // edit mounts a fresh list at top — offset agrees.
+        scrollOffset = 0;
+        // Back at full, drag down from the top: the sheet must own the pan.
+        expect(listPanOwnsSheet(true, scrollOffset <= 0, 12)).toBe(true);
+    });
+
+    it('without the reset the stranded offset dead-drags the sheet (the bug)', () => {
+        const strandedOffset = 400; // never reset across the impl swap
+        expect(listPanOwnsSheet(true, strandedOffset <= 0, 12)).toBe(false);
     });
 });
 

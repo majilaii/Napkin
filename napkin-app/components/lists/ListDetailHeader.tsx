@@ -346,7 +346,7 @@ const styles = StyleSheet.create({
     },
     contextText: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        fontSize: 13, // metadata floor (review G5)
         flexShrink: 1,
     },
 });

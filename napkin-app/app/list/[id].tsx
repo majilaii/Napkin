@@ -31,7 +31,7 @@ import {
 import { ListEntryRow } from '@/components/lists/ListEntryRow';
 import { deriveContextLine, deriveCover, deriveMetadataLine } from '@/components/lists/listHeaderUtils';
 import { HALF, PEEK, resolveSheetMode, visibleHeight, type Snap } from '@/components/lists/listSheetMath';
-import { mintFocusRequest, type FocusRequest } from '@/components/lists/focusRequest';
+import { mintFocusRequest, resolveSettleFocus, type FocusRequest } from '@/components/lists/focusRequest';
 import { derivePinnedIds } from '@/components/lists/pinnedLookupUtils';
 import {
     countUnmappableListEntries,
@@ -169,19 +169,26 @@ export default function ListDetailScreen() {
     }, [router]);
 
     // Row-locate / pin-tap → snap to peek, then fire the focus from the settle.
+    // G1: rejected outright while the edit lock holds (the locate icons are
+    // also disabled then; the sheet's snapTo clamps to FULL as a backstop).
     const focusPin = useCallback((restaurantId: string) => {
+        if (sheetMode.locked) return;
         pendingFocusRef.current = restaurantId;
         sheetRef.current?.snapTo(PEEK);
+    }, [sheetMode.locked]);
+
+    // G1: a real drag supersedes an in-flight focus transition.
+    const handlePanStart = useCallback(() => {
+        pendingFocusRef.current = null;
     }, []);
 
     const handleSnapSettle = useCallback((snap: Snap) => {
-        const focusDriven = snap === PEEK && pendingFocusRef.current != null;
-        focusDrivenSettleRef.current = focusDriven;
-        if (focusDriven) {
-            const targetId = pendingFocusRef.current!;
-            pendingFocusRef.current = null;
-            setFocusRequest(mintFocusRequest(focusSeqRef, targetId));
-        }
+        // G1: every settle consumes the pending focus — fired only at PEEK,
+        // discarded on any other snap (superseded transition).
+        const { fire } = resolveSettleFocus(pendingFocusRef.current, snap, PEEK);
+        pendingFocusRef.current = null;
+        focusDrivenSettleRef.current = fire != null;
+        if (fire) setFocusRequest(mintFocusRequest(focusSeqRef, fire));
         setSettledSnap(snap);
     }, []);
 
@@ -302,7 +309,8 @@ export default function ListDetailScreen() {
                 isDragDisabled={dragDisabled || reorderEntry.isPending}
                 isWishlisted={pinnedIds.has(entry.restaurant_id)}
                 isWishlistPending={wishlistPendingIds.has(entry.restaurant_id)}
-                canShowOnMap={hasValidCoordinates(entry)}
+                // G1: locate is quiet-disabled while the edit lock holds.
+                canShowOnMap={hasValidCoordinates(entry) && !sheetMode.locked}
                 onPress={() => openRestaurant(entry.restaurant_id)}
                 onShowOnMap={() => focusPin(entry.restaurant_id)}
                 onRemove={() => handleRemove(entry)}
@@ -313,7 +321,7 @@ export default function ListDetailScreen() {
                 drag={drag}
             />
         ),
-        [list, canEditEntries, isEditingPlaces, dragDisabled, reorderEntry.isPending, pinnedIds, wishlistPendingIds, user, openRestaurant, focusPin, handleRemove, handleNoteChange, handleToggleWishlist],
+        [list, canEditEntries, isEditingPlaces, sheetMode.locked, dragDisabled, reorderEntry.isPending, pinnedIds, wishlistPendingIds, user, openRestaurant, focusPin, handleRemove, handleNoteChange, handleToggleWishlist],
     );
 
     const canShareList = !!list && !list.table_id && verifiedCount > 0 && (isOwner || list.privacy === 'public');
@@ -411,6 +419,7 @@ export default function ListDetailScreen() {
                             reorder={sheetMode.reorder}
                             onDragEnd={handleDragEnd}
                             onSnapSettle={handleSnapSettle}
+                            onPanStart={handlePanStart}
                             emptyComponent={entries.length === 0 ? empty : null}
                         />
                     ) : null}
