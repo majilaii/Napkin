@@ -89,6 +89,9 @@ jest.mock('@/hooks/account', () => ({
     useBlockUser: () => ({ mutate: jest.fn() }),
     useUnblockUser: () => ({ mutate: jest.fn(), isPending: false }),
 }));
+jest.mock('@/hooks/imports/useImportSlot', () => ({
+    useImportSlot: () => null,
+}));
 jest.mock('@/providers/ConnectivityProvider', () => ({
     useConnectivity: () => ({ status: mockConnectivityStatus }),
 }));
@@ -107,6 +110,7 @@ jest.mock('../QuickTakes', () => ({ QuickTakes: 'QuickTakes' }));
 jest.mock('../QuickTakesSheet', () => ({ QuickTakesSheet: 'QuickTakesSheet' }));
 jest.mock('../TasteSignature', () => ({ TasteSignature: 'TasteSignature' }));
 jest.mock('../DiningMapPreview', () => ({ DiningMapPreview: 'DiningMapPreview' }));
+jest.mock('../ListsShelf', () => ({ ListsShelf: 'ListsShelf' }));
 jest.mock('../ProfileIndex', () => ({ ProfileIndex: 'ProfileIndex' }));
 jest.mock('../TablesInCommonSection', () => ({
     TablesInCommonSection: 'TablesInCommonSection',

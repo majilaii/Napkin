@@ -10,15 +10,28 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { MyList } from '@/hooks/lists/useMyLists';
 
 type Palette = typeof Colors.light;
 
+/** Structural subset ListCard renders — satisfied by both MyList and SavedList. */
+export interface ListCardData {
+    title: string;
+    emoji: string | null;
+    table_id?: string | null;
+    privacy: 'public' | 'private';
+    entry_count: number;
+    ranked: boolean;
+    updated_at: string;
+}
+
 interface Props {
-    list: MyList;
+    list: ListCardData;
     onPress: () => void;
     /** TICKET-111: long-press → owner sheet (Edit · Delete). */
     onLongPress?: () => void;
+    /** TICKET-185: replaces the default "N spots · ranked · date" meta (e.g. a
+     * saved list shows "by owner · N saves" instead). */
+    metaOverride?: string;
 }
 
 function formatRelativeDate(iso: string): string {
@@ -32,16 +45,19 @@ function formatRelativeDate(iso: string): string {
     return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
-export function ListCard({ list, onPress, onLongPress }: Props) {
+export function ListCard({ list, onPress, onLongPress, metaOverride }: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
 
-    const metaParts: string[] = [
-        `${list.entry_count} ${list.entry_count === 1 ? 'spot' : 'spots'}`,
-    ];
-    if (list.ranked) metaParts.push('ranked');
-    metaParts.push(formatRelativeDate(list.updated_at));
-    const metaLine = metaParts.join(' · ');
+    let metaLine = metaOverride;
+    if (metaLine === undefined) {
+        const metaParts: string[] = [
+            `${list.entry_count} ${list.entry_count === 1 ? 'spot' : 'spots'}`,
+        ];
+        if (list.ranked) metaParts.push('ranked');
+        metaParts.push(formatRelativeDate(list.updated_at));
+        metaLine = metaParts.join(' · ');
+    }
 
     return (
         <Pressable
@@ -113,7 +129,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_400Regular',
         fontSize: 18,
         lineHeight: 22,
     },

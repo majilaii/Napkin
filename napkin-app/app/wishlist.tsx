@@ -58,9 +58,8 @@ import { AddToListSheet } from '@/components/lists';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
-import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { useHasImported } from '@/hooks/wishlist/useHasImported';
-import { importSourceIcon, importSourceLabel, relativeTime } from '@/components/wishlist/importSourceLabel';
+import { useImportSlot } from '@/hooks/imports/useImportSlot';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useSavedLists } from '@/hooks/lists/useSavedLists';
@@ -92,7 +91,6 @@ import { useTables } from '@/hooks/tables/useTables';
 import { fetchTableMembers } from '@/hooks/tables/useTableMembers';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
-import { useActiveImports } from '@/hooks/wishlist/useActiveImports';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import { OwnerActionsSheet } from '@/components/common';
@@ -346,70 +344,12 @@ export default function WishlistScreen() {
     );
     const selectedList = selectedListDetail?.list ?? null;
 
-    // ── The import slot — ONE card, ever (review > running > failed > recent).
-    // Active states route to the imports hub; a recently-saved batch (48h,
-    // latest only) routes straight into its fix/prune screen. Never stacks.
-    const { data: recentImports } = useRecentImports(user?.id, 4);
-    const activeImports = useActiveImports();
     // Collapses the empty-state activation hub to compact once a first import lands.
     const hasImported = useHasImported(user?.id);
-    const importSlot = useMemo(() => {
-        const review = activeImports.filter((m) => m.phase === 'review');
-        const working = activeImports.filter((m) => m.phase === 'reading' || m.phase === 'saving');
-        const failed = activeImports.filter((m) => m.phase === 'failed');
-        if (review.length > 0) {
-            const n = review.reduce((sum, m) => sum + m.spotCount, 0);
-            return {
-                kind: 'review' as const,
-                count: n,
-                icon: 'sparkles-outline' as const,
-                title: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review`,
-                sublabel: 'review and pin',
-                // ALWAYS via the hub — deep-linking straight into the review
-                // screen broke back-navigation (review → back should land on
-                // the hub, not the wishlist; founder 2026-07-02).
-                route: '/import-progress',
-            };
-        }
-        if (working.length > 0) {
-            return {
-                kind: 'working' as const,
-                count: null,
-                icon: 'sync-outline' as const,
-                title: working.length === 1 ? 'importing…' : `importing ${working.length}…`,
-                sublabel: 'spots land here when done',
-                route: '/import-progress',
-            };
-        }
-        if (failed.length > 0) {
-            return {
-                kind: 'failed' as const,
-                count: null,
-                icon: 'alert-circle-outline' as const,
-                title: 'an import needs attention',
-                sublabel: 'try again or discard',
-                route: '/import-progress',
-            };
-        }
-        const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-        const latest = (recentImports ?? []).find(
-            (b) => new Date(b.created_at).getTime() > cutoff,
-        );
-        if (latest) {
-            return {
-                kind: 'recent' as const,
-                count: null,
-                icon: importSourceIcon(latest.source),
-                title: `${latest.item_count} ${latest.item_count === 1 ? 'spot' : 'spots'} ${importSourceLabel(latest.source)}`,
-                sublabel: `${relativeTime(latest.created_at)} · fix or prune in imports`,
-                // Hierarchical back-nav is sacred: EVERY state of this card goes
-                // via the imports hub — never deep-link past the intermediate
-                // screen (founder rule, 2026-07-02, twice).
-                route: '/import-progress',
-            };
-        }
-        return null;
-    }, [activeImports, recentImports]);
+    // The import slot — ONE card, ever (review > running > failed > recent, then
+    // idle). Derivation lives in useImportSlot so this map chip and the profile
+    // Explore "Imports" row read the same live state (TICKET-185).
+    const importSlot = useImportSlot(user?.id);
 
     const allItems = useMemo(
         () => (wishlistPages?.pages ?? []).flatMap((p) => p.data ?? []),

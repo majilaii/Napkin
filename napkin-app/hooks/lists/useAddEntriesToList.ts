@@ -88,8 +88,6 @@ export function useAddEntriesToList(userId: string | null | undefined) {
         },
         onSettled: (_data, _err, { list_id }) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.lists.detail(list_id) });
-            // Refresh the wishlist map's emoji pins (TICKET-108).
-            if (userId) queryClient.invalidateQueries({ queryKey: queryKeys.lists.mapPins(userId) });
         },
     });
 }

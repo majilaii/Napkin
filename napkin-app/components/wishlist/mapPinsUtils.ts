@@ -29,7 +29,7 @@ export interface SaveInput {
     lng: number | null;
 }
 
-/** Minimal shape a list-entry pin contributes (from useListMapPins). */
+/** Minimal shape a list-entry pin contributes to the wishlist map union. */
 export interface ListPinInput {
     restaurant_id: string;
     name: string;

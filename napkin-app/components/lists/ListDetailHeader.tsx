@@ -231,30 +231,27 @@ export function ListDetailHeader({
                 </View>
             ) : null}
 
-            <View style={styles.presentationRow}>
-                <View style={[styles.presentationControl, { backgroundColor: palette.surfaceContainerLow }]}>
-                    <View style={[styles.activePresentation, Shadow.subtle, { backgroundColor: palette.card }]}>
-                        <Ionicons name="list-outline" size={17} color={palette.primary} />
-                        <Text style={[styles.activePresentationLabel, { color: palette.text }]}>Places</Text>
-                    </View>
-                    <PressableScale
-                        onPress={onOpenMap}
-                        haptic="selection"
-                        style={styles.presentationButton}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Show ${list.title} on the map`}
-                    >
-                        <Ionicons name="map-outline" size={17} color={palette.textMuted} />
-                        <Text style={[styles.presentationLabel, { color: palette.textMuted }]}>Map</Text>
-                    </PressableScale>
-                </View>
+            {/* Two honest actions, not a segmented control: "map" navigates to the
+                scoped map (back-bridge returns here); "edit"/"done" toggles inline
+                entry editing in place. No permanently-active inert chip (TICKET-185). */}
+            <View style={styles.controlsRow}>
+                <PressableScale
+                    onPress={onOpenMap}
+                    haptic="selection"
+                    style={[styles.actionChip, { backgroundColor: palette.surfaceContainerLow }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Show ${list.title} on the map`}
+                >
+                    <Ionicons name="map-outline" size={18} color={palette.textMuted} />
+                    <Text style={[styles.actionChipLabel, { color: palette.text }]}>map</Text>
+                </PressableScale>
 
                 {canEditEntries ? (
                     <PressableScale
                         onPress={onToggleEditingPlaces}
                         haptic="selection"
                         style={[
-                            styles.editPlacesButton,
+                            styles.actionChip,
                             {
                                 backgroundColor: isEditingPlaces
                                     ? palette.secondaryContainer
@@ -266,11 +263,11 @@ export function ListDetailHeader({
                     >
                         <Ionicons
                             name={isEditingPlaces ? 'checkmark' : 'create-outline'}
-                            size={17}
+                            size={18}
                             color={isEditingPlaces ? palette.text : palette.textMuted}
                         />
-                        <Text style={[styles.editPlacesLabel, { color: isEditingPlaces ? palette.text : palette.textMuted }]}>
-                            {isEditingPlaces ? 'Done' : 'Edit'}
+                        <Text style={[styles.actionChipLabel, { color: isEditingPlaces ? palette.text : palette.textMuted }]}>
+                            {isEditingPlaces ? 'done' : 'edit'}
                         </Text>
                     </PressableScale>
                 ) : null}
@@ -412,59 +409,25 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    presentationRow: {
+    controlsRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.sm,
         marginTop: Spacing.md,
     },
-    presentationControl: {
-        minHeight: 52,
+    actionChip: {
         flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: Radius.lg,
-        padding: 4,
-    },
-    activePresentation: {
-        minHeight: 44,
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        borderRadius: Radius.md,
-    },
-    presentationButton: {
-        minHeight: 44,
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        borderRadius: Radius.md,
-    },
-    activePresentationLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
-    },
-    presentationLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-    },
-    editPlacesButton: {
-        minWidth: 82,
-        minHeight: 44,
+        minHeight: 48,
         borderRadius: Radius.lg,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
+        gap: 7,
         paddingHorizontal: 12,
     },
-    editPlacesLabel: {
+    actionChipLabel: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
+        fontSize: 14,
     },
     privateLine: {
         minHeight: 32,
