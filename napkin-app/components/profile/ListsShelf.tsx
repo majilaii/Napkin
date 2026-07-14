@@ -32,6 +32,7 @@ type Palette = typeof Colors.light;
 
 const CARD_W = 144;
 const PLATE_H = Math.round((CARD_W * 5) / 4); // 4:5 cover plate
+const MAX_SHELF_CARDS = 12;
 
 interface Props {
     isSelf: boolean;
@@ -118,7 +119,8 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
     if (isSelf) {
         // Hold render until own lists resolve — avoids flashing the ghost card.
         if (myLists === undefined) return null;
-        const items = myListsToShelf(myLists);
+        // Eager horizontal rail — cap mounts; the full set lives behind "see all".
+        const items = myListsToShelf(myLists).slice(0, MAX_SHELF_CARDS);
         const hasLists = items.length > 0;
         return (
             <View>
@@ -149,7 +151,7 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
         );
     }
 
-    const items = publicListsToShelf(publicLists);
+    const items = publicListsToShelf(publicLists).slice(0, MAX_SHELF_CARDS);
     if (items.length === 0) return null;
     return (
         <View>

@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_400Regular',
         fontSize: 18,
         lineHeight: 22,
     },
