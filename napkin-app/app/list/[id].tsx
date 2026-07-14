@@ -177,10 +177,20 @@ export default function ListDetailScreen() {
         sheetRef.current?.snapTo(PEEK);
     }, [sheetMode.locked]);
 
-    // G1: a real drag supersedes an in-flight focus transition.
+    // G1: a real drag supersedes an in-flight focus transition — including one
+    // already emitted but not yet handled (map not ready), which would
+    // otherwise fire a late camera jump after the user changed modes.
     const handlePanStart = useCallback(() => {
         pendingFocusRef.current = null;
+        setFocusRequest(null);
     }, []);
+
+    // Entering the edit lock supersedes any in-flight or emitted focus too.
+    useEffect(() => {
+        if (!sheetMode.locked) return;
+        pendingFocusRef.current = null;
+        setFocusRequest(null);
+    }, [sheetMode.locked]);
 
     const handleSnapSettle = useCallback((snap: Snap) => {
         // G1: every settle consumes the pending focus — fired only at PEEK,

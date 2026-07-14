@@ -202,6 +202,9 @@ export function ScopedListMap({
     const correctedRef = useRef(false);
     const deferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const handledSeqRef = useRef<number | null>(null);
+    // Re-runs the collection effect after a focus is terminally rejected —
+    // consuming a seq via ref alone would leave the framing gate closed.
+    const [focusRejectedTick, setFocusRejectedTick] = useState(0);
 
     const collectionFrameKey = listCollectionFrameKey(collectionScopeKey, items);
 
@@ -273,7 +276,7 @@ export function ScopedListMap({
                 applyAction(action);
             }
         }
-    }, [applyAction, collectionFrameKey, focusRequest, items, locationStatus, mapReady, userCoords]);
+    }, [applyAction, collectionFrameKey, focusRequest, focusRejectedTick, items, locationStatus, mapReady, userCoords]);
 
     useEffect(() => () => {
         if (deferTimerRef.current) clearTimeout(deferTimerRef.current);
@@ -295,7 +298,14 @@ export function ScopedListMap({
     useEffect(() => {
         if (!mapReady || !isUnhandledFocus(handledSeqRef.current, focusRequest)) return;
         const target = items.find((i) => i.id === focusRequest.id);
-        if (!target) return;
+        if (!target) {
+            // Target left the list mid-flight → terminally reject the request,
+            // or it would gate collection framing forever (and could fire late
+            // if the item returned).
+            handledSeqRef.current = focusRequest.seq;
+            setFocusRejectedTick((t) => t + 1);
+            return;
+        }
         handledSeqRef.current = focusRequest.seq;
         // G2: focus takes camera priority — kill the deferred fallback and mark
         // the current collection frame consumed, so items[0]@CITY_DELTA can
