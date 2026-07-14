@@ -82,14 +82,6 @@ function RestaurantArt({
                     {(take.name.trim()[0] ?? '·').toUpperCase()}
                 </Text>
             )}
-            <View
-                style={[styles.openBadge, { backgroundColor: palette.scrimFrost }]}
-                pointerEvents="none"
-                accessible={false}
-                importantForAccessibility="no-hide-descendants"
-            >
-                <Ionicons name="chevron-forward" size={15} color={palette.text} />
-            </View>
         </PressableScale>
     );
 }
@@ -140,29 +132,13 @@ function QuickTakeRow({
                     style={[styles.detail, { backgroundColor: palette.surfaceJournalLow }]}
                     testID="quick-take-detail"
                 >
-                    <View style={styles.detailCopy} testID="quick-take-detail-copy">
-                        <View>
-                            <Text
-                                style={[Type.sectionKicker, { color: palette.primary }]}
-                            >
-                                {prompt}
-                            </Text>
-                            <Text style={[styles.detailName, { color: palette.text }]} numberOfLines={3}>
-                                {take.name}
-                            </Text>
-                            {meta ? (
-                                <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={2}>
-                                    {meta}
-                                </Text>
-                            ) : null}
-                            {take.note ? (
-                                <Text style={[styles.note, { color: palette.textSecondary }]}>
-                                    {`— ${take.note}`}
-                                </Text>
-                            ) : null}
-                        </View>
-                    </View>
-                    <View style={styles.detailActions} testID="quick-take-detail-actions">
+                    <View style={styles.detailHeader} testID="quick-take-detail-header">
+                        <Text
+                            style={[Type.sectionKicker, styles.detailPrompt, { color: palette.primary }]}
+                            numberOfLines={2}
+                        >
+                            {prompt}
+                        </Text>
                         <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
                         <PressableScale
                             onPress={onToggle}
@@ -178,6 +154,24 @@ function QuickTakeRow({
                                 <Ionicons name="chevron-down" size={18} color={palette.textMuted} />
                             </Animated.View>
                         </PressableScale>
+                    </View>
+                    <View style={styles.detailBody} testID="quick-take-detail-body">
+                        <Text style={[styles.detailName, { color: palette.text }]} numberOfLines={3}>
+                            {take.name}
+                        </Text>
+                        {meta ? (
+                            <Text
+                                style={[Type.metadata, styles.detailMeta, { color: palette.textMuted }]}
+                                numberOfLines={2}
+                            >
+                                {meta}
+                            </Text>
+                        ) : null}
+                        {take.note ? (
+                            <Text style={[styles.note, { color: palette.textSecondary }]}>
+                                {`— ${take.note}`}
+                            </Text>
+                        ) : null}
                     </View>
                 </View>
             ) : (
@@ -283,25 +277,20 @@ const styles = StyleSheet.create({
     prompt: { width: 112 },
     answer: { flex: 1, minWidth: 0 },
     detail: {
-        minHeight: 164,
         margin: 4,
-        paddingLeft: 14,
-        paddingRight: 0,
-        paddingTop: 0,
-        paddingBottom: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
         borderRadius: 12,
-        flexDirection: 'row',
-        alignItems: 'stretch',
-        gap: 12,
+        gap: 10,
     },
-    detailCopy: { flex: 1, minWidth: 0, justifyContent: 'center' },
+    detailHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    detailPrompt: { flex: 1, minWidth: 0 },
+    detailBody: { minWidth: 0 },
     copyPressed: { opacity: 0.78 },
-    detailActions: {
-        width: 156,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 4,
-    },
     collapseButton: {
         width: 44,
         height: 44,
@@ -310,16 +299,17 @@ const styles = StyleSheet.create({
     },
     detailName: {
         ...Type.editorialTitle,
-        marginTop: 7,
-        marginBottom: 3,
+    },
+    detailMeta: {
+        marginTop: 3,
     },
     note: {
         ...Type.quote,
-        marginTop: 10,
+        marginTop: 8,
     },
     art: {
-        width: 108,
-        height: 136,
+        width: 44,
+        height: 44,
         borderRadius: 10,
         borderWidth: 1,
         overflow: 'hidden',
@@ -328,18 +318,8 @@ const styles = StyleSheet.create({
     },
     monogram: {
         fontFamily: 'Newsreader_600SemiBold',
-        fontSize: 36,
-        lineHeight: 42,
-    },
-    openBadge: {
-        position: 'absolute',
-        right: 8,
-        bottom: 8,
-        width: 32,
-        height: 32,
-        borderRadius: Radius.full,
-        alignItems: 'center',
-        justifyContent: 'center',
+        fontSize: 18,
+        lineHeight: 22,
     },
     empty: {
         minHeight: 52,

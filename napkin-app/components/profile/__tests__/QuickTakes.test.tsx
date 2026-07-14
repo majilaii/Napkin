@@ -103,8 +103,9 @@ it('opens the restaurant from the expanded artwork without collapsing the take',
     expect(onOpenRestaurant).toHaveBeenCalledWith('restaurant-1');
     expect(pressableWith(renderer, 'accessibilityHint', 'Collapses this take')).toBeDefined();
     expect(onEdit).not.toHaveBeenCalled();
+    // One chevron on the card: the circular open badge (chevron-forward) is gone.
     expect(renderer.root.findAllByType('Ionicons').some((node: any) => node.props.name === 'chevron-forward'))
-        .toBe(true);
+        .toBe(false);
 });
 
 it('keeps collapse, owner edit, and restaurant navigation as separate actions', () => {
@@ -121,52 +122,51 @@ it('keeps collapse, owner edit, and restaurant navigation as separate actions', 
     expect(onOpenRestaurant).not.toHaveBeenCalled();
 });
 
-it('places the artwork beside the collapse control at the card top-right', () => {
+it('places a small thumbnail inline immediately left of the collapse chevron in the header row', () => {
     const { renderer } = renderQuickTakes(PHOTO_TAKE);
     const detail = renderer.root.findByProps({ testID: 'quick-take-detail' });
-    const actions = renderer.root.findByProps({ testID: 'quick-take-detail-actions' });
+    const header = renderer.root.findByProps({ testID: 'quick-take-detail-header' });
     const collapse = pressableWith(renderer, 'testID', 'quick-take-collapse-control');
     const artLink = pressableWith(
         renderer,
         'accessibilityLabel',
         'Open Evelyn’s Table restaurant page',
     );
-    const actionPressables = actions.findAllByType('Pressable');
     const collapseSurface = collapse.findAllByType('AnimatedView')[0];
     const artSurface = artLink.findAllByType('AnimatedView')[0];
 
+    // detail is a column: header row on top, full-width body below.
     expect(
         detail.children
             .filter((node: any) => typeof node !== 'string')
             .map((node: any) => node.props.testID),
-    ).toEqual(['quick-take-detail-copy', 'quick-take-detail-actions']);
-    expect(flattenStyle(detail.props.style)).toMatchObject({
-        flexDirection: 'row',
-        paddingRight: 0,
-        paddingTop: 0,
-    });
-    expect(actionPressables.map((node: any) => node.props.accessibilityLabel)).toEqual([
+    ).toEqual(['quick-take-detail-header', 'quick-take-detail-body']);
+    expect(flattenStyle(detail.props.style).flexDirection).not.toBe('row');
+
+    // header row order: prompt kicker · artwork · collapse — art immediately left of the chevron.
+    expect(header.findAllByType('Pressable').map((node: any) => node.props.accessibilityLabel)).toEqual([
         'Open Evelyn’s Table restaurant page',
         'Collapse Best value: Evelyn’s Table',
     ]);
-    expect(flattenStyle(actions.props.style)).toMatchObject({
-        width: 156,
+    expect(flattenStyle(header.props.style)).toMatchObject({
         flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 4,
+        alignItems: 'center',
     });
+
+    // small thumbnail (~44) sits beside a 44 hit target; neither is absolutely positioned.
+    expect(flattenStyle(artSurface.props.style)).toMatchObject({ width: 44, height: 44 });
     expect(flattenStyle(collapseSurface.props.style)).toMatchObject({
         width: 44,
         height: 44,
         alignItems: 'center',
         justifyContent: 'center',
     });
-    expect(flattenStyle(artSurface.props.style)).toMatchObject({
-        width: 108,
-        height: 136,
-    });
-    expect(flattenStyle(collapseSurface.props.style).position).toBeUndefined();
     expect(flattenStyle(artSurface.props.style).position).toBeUndefined();
+    expect(flattenStyle(collapseSurface.props.style).position).toBeUndefined();
+
+    // no circular open badge anywhere.
+    expect(renderer.root.findAllByType('Ionicons').some((node: any) => node.props.name === 'chevron-forward'))
+        .toBe(false);
 });
 
 it('uses the monogram fallback as the same restaurant link', () => {
