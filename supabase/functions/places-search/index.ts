@@ -8,6 +8,8 @@ import {
     clamp,
     mapRegularOpeningHours,
     shouldGlobalFallback,
+    resolveGlobalFallback,
+    FALLBACK_TIMEOUT_MS,
     WORLD_RECT_BIAS,
     type SearchPayload,
 } from './utils.ts';
@@ -201,6 +203,11 @@ serve(async req => {
             INTERNAL_CALL_SECRET.length > 0 &&
             timingSafeEqualBytes(enc.encode(callerSecret), enc.encode(INTERNAL_CALL_SECRET));
 
+        // Hoisted so the TICKET-174 fallback pass can charge a SECOND rate-limit
+        // unit against the same user + bucket. Stays null on the internal path,
+        // which can never reach the fallback (it never sends coords).
+        let rateLimitUserId: string | null = null;
+
         if (!isInternalCall) {
             // ── Auth gate (user-facing path) ───────────────────────────────
             const authHeader = req.headers.get('Authorization');
@@ -244,6 +251,7 @@ serve(async req => {
                     { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
                 );
             }
+            rateLimitUserId = user.id;
         }
         // On the internal path: no auth.getUser call; supabase client uses service-role
         // key. Internal calls are already throttled upstream by resolve-url's buckets.
@@ -378,7 +386,7 @@ serve(async req => {
         // Extended field mask to include rating, price, and address components
         const fieldMask = PLACE_FIELDS.map(f => `places.${f}`).join(',');
 
-        const runTextSearch = async (body: any) => {
+        const runTextSearch = async (body: any, signal?: AbortSignal) => {
             const res = await fetch(GOOGLE_PLACES_BASE_URL, {
                 method: 'POST',
                 headers: {
@@ -387,6 +395,7 @@ serve(async req => {
                     'X-Goog-FieldMask': fieldMask,
                 },
                 body: JSON.stringify(body),
+                signal,
             });
             return { ok: res.ok, status: res.status, body: await res.json() };
         };
@@ -416,26 +425,38 @@ serve(async req => {
         // caller opted in AND the first pass was biased AND it came back
         // empty, re-run the same query with a world rectangle bias and tag
         // the rows so the client can render them as farther afield.
-        // Best-effort: a fallback error degrades to the empty first pass.
-        // Cost note: this doubles Google calls only on the zero-result path;
-        // the 120/hr places_search bucket counts edge invocations, so the
-        // retry is invisible to the limiter — accepted at friends-test scale.
+        //
+        // Review fixes (dual-review, TICKET-174):
+        //   FIX 1 — the fallback is a SECOND paid Google call, so it charges its
+        //     OWN unit against the same places_search bucket the first pass used.
+        //     If the limiter denies, the fetch is skipped and the empty first
+        //     pass is returned (200). Every paid call maps to one unit.
+        //   FIX 2 — the fetch runs under a 4s abort deadline; abort/timeout/any
+        //     failure degrades to the empty first pass (200, never 5xx), so the
+        //     client's retry:1 never re-pays both passes.
+        // resolveGlobalFallback owns both invariants and cannot throw out.
         if (shouldGlobalFallback(payload, sanitized.length)) {
-            try {
-                const fallback = await runTextSearch({
-                    ...requestBody,
-                    locationBias: WORLD_RECT_BIAS,
-                });
-                if (fallback.ok) {
-                    sanitized = (fallback.body?.places ?? [])
-                        .map(sanitizePlace)
-                        .map((p: ReturnType<typeof sanitizePlace>) => ({ ...p, fartherAfield: true }));
-                } else {
-                    console.error('Global fallback pass failed:', fallback.body);
-                }
-            } catch (e) {
-                console.error('Global fallback pass threw:', e);
-            }
+            sanitized = await resolveGlobalFallback({
+                firstPassRows: sanitized,
+                consumeRateUnit: async () => {
+                    // Internal path never reaches here (no coords → no fallback);
+                    // if it somehow did, there is no user bucket to charge, so
+                    // proceed without a unit (internal calls are throttled upstream).
+                    if (!rateLimitUserId) return true;
+                    const { data: fbRateRows, error: fbRateError } = await supabase.rpc(
+                        'check_and_increment_rate_limit',
+                        { p_user_id: rateLimitUserId, p_bucket_key: 'places_search', p_max: 120, p_window_seconds: 3600 },
+                    );
+                    if (fbRateError) console.error('places-search fallback rate check failed:', fbRateError);
+                    const fbRateRow = fbRateRows?.[0];
+                    return !!(fbRateRow && fbRateRow.allowed);
+                },
+                fetchFallback: (signal) => runTextSearch({ ...requestBody, locationBias: WORLD_RECT_BIAS }, signal),
+                mapRows: (body) => (body?.places ?? [])
+                    .map(sanitizePlace)
+                    .map((p: ReturnType<typeof sanitizePlace>) => ({ ...p, fartherAfield: true })),
+                timeoutMs: FALLBACK_TIMEOUT_MS,
+            });
         }
 
         return new Response(JSON.stringify({ data: sanitized }), {

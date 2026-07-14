@@ -14,6 +14,7 @@ import {
     firstNumber,
     mapRegularOpeningHours,
     shouldGlobalFallback,
+    resolveGlobalFallback,
     WORLD_RECT_BIAS,
 } from './utils.ts';
 
@@ -111,6 +112,88 @@ Deno.test('shouldGlobalFallback (TICKET-174)', async (t) => {
         assertEquals(WORLD_RECT_BIAS.rectangle.low.longitude, -180);
         assertEquals(WORLD_RECT_BIAS.rectangle.high.longitude, 180);
     });
+});
+
+Deno.test('resolveGlobalFallback (TICKET-174 review fixes)', async (t) => {
+    // The failure paths log via console.error (matching the fn's idiom); silence
+    // the expected noise so the test output reads clean.
+    const origError = console.error;
+    console.error = () => {};
+    try {
+        await t.step('FIX 1 — limiter denies → fetch is SKIPPED, first pass returned intact', async () => {
+            let fetched = false;
+            const firstPass = [{ id: 'near' }];
+            const out = await resolveGlobalFallback<{ id: string }>({
+                firstPassRows: firstPass,
+                consumeRateUnit: async () => false, // limiter denies the second unit
+                fetchFallback: async () => {
+                    fetched = true;
+                    return { ok: true, status: 200, body: { places: [{ id: 'far' }] } };
+                },
+                mapRows: (body) => body.places,
+                timeoutMs: 50,
+            });
+            assertEquals(out, firstPass); // first pass unchanged
+            assertEquals(fetched, false); // no SECOND paid Google call fired
+        });
+
+        await t.step('limiter allows + ok fallback → mapped fallback rows replace the empty first pass', async () => {
+            const out = await resolveGlobalFallback<{ id: string; fartherAfield?: boolean }>({
+                firstPassRows: [],
+                consumeRateUnit: async () => true,
+                fetchFallback: async () => ({ ok: true, status: 200, body: { places: [{ id: 'far' }] } }),
+                mapRows: (body) => body.places.map((p: { id: string }) => ({ ...p, fartherAfield: true })),
+                timeoutMs: 50,
+            });
+            assertEquals(out, [{ id: 'far', fartherAfield: true }]);
+        });
+
+        await t.step('non-ok Google fallback → degrade to first pass (no throw)', async () => {
+            const firstPass = [{ id: 'near' }];
+            const out = await resolveGlobalFallback<{ id: string }>({
+                firstPassRows: firstPass,
+                consumeRateUnit: async () => true,
+                fetchFallback: async () => ({ ok: false, status: 429, body: { error: 'quota' } }),
+                mapRows: (body) => body.places,
+                timeoutMs: 50,
+            });
+            assertEquals(out, firstPass);
+        });
+
+        await t.step('fallback fetch throws (network) → degrade to first pass (no throw escapes)', async () => {
+            const firstPass = [{ id: 'near' }];
+            const out = await resolveGlobalFallback<{ id: string }>({
+                firstPassRows: firstPass,
+                consumeRateUnit: async () => true,
+                fetchFallback: async () => { throw new Error('network down'); },
+                mapRows: (body) => body.places,
+                timeoutMs: 50,
+            });
+            assertEquals(out, firstPass);
+        });
+
+        await t.step('FIX 2 — stalled fallback hits the abort deadline → first pass returned, signal aborted', async () => {
+            const firstPass = [{ id: 'near' }];
+            let aborted = false;
+            const out = await resolveGlobalFallback<{ id: string }>({
+                firstPassRows: firstPass,
+                consumeRateUnit: async () => true,
+                // Never resolves on its own — only the timeout can end it.
+                fetchFallback: (signal) => new Promise((_resolve, reject) => {
+                    signal.addEventListener('abort', () => {
+                        aborted = true;
+                        reject(new DOMException('Aborted', 'AbortError'));
+                    });
+                }),
+                mapRows: (body) => body.places,
+                timeoutMs: 10, // short deadline so the test doesn't wait 4s
+            });
+            assertEquals(out, firstPass); // valid empty-or-nearby first pass survives the stall
+            assertEquals(aborted, true); // the deadline actually fired
+        });
+    } finally {
+        console.error = origError;
+    }
 });
 
 Deno.test('mapRegularOpeningHours (TICKET-081)', async (t) => {

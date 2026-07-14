@@ -55,6 +55,58 @@ export function shouldGlobalFallback(payload: SearchPayload, firstPassCount: num
         firstPassCount === 0;
 }
 
+/** Default abort deadline (ms) for the global fallback fetch. */
+export const FALLBACK_TIMEOUT_MS = 4000;
+
+/**
+ * TICKET-174 review — orchestrate the best-effort global fallback pass. Kept
+ * here (pure, side-effects injected) so both invariants are unit-testable
+ * without booting serve().
+ *
+ * FIX 1 (spend ceiling): the fallback is a SECOND paid Google call, so it must
+ * consume its OWN rate-limit unit from the same bucket the first pass charged.
+ * `consumeRateUnit` returns false when the limiter denies (or errors) — we then
+ * SKIP the fetch entirely and keep the first-pass rows. Without this a 120/hr
+ * cap uncorks 240 paid searches.
+ *
+ * FIX 2 (unbounded fetch): the fetch runs under a `timeoutMs` AbortController
+ * deadline. On abort/timeout, a network throw, an RPC throw, or a non-ok Google
+ * response we degrade to the (valid, empty) `firstPassRows`. Nothing throws out
+ * of here — a fallback failure must NEVER 5xx, or the client's `retry:1`
+ * re-pays both passes.
+ *
+ * Returns `firstPassRows` unchanged on every non-success path; only a genuinely
+ * ok fallback response replaces them (via `mapRows`).
+ */
+export async function resolveGlobalFallback<T>(opts: {
+    firstPassRows: T[];
+    consumeRateUnit: () => Promise<boolean>;
+    fetchFallback: (signal: AbortSignal) => Promise<{ ok: boolean; status: number; body: any }>;
+    mapRows: (body: any) => T[];
+    timeoutMs?: number;
+}): Promise<T[]> {
+    const { firstPassRows, consumeRateUnit, fetchFallback, mapRows, timeoutMs = FALLBACK_TIMEOUT_MS } = opts;
+    try {
+        const allowed = await consumeRateUnit();
+        if (!allowed) return firstPassRows;
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const fallback = await fetchFallback(controller.signal);
+            if (fallback.ok) return mapRows(fallback.body);
+            console.error('Global fallback pass failed:', fallback.body);
+            return firstPassRows;
+        } finally {
+            clearTimeout(timer);
+        }
+    } catch (e) {
+        // Abort/timeout/network/RPC throw — degrade to the empty first pass (200).
+        console.error('Global fallback pass threw:', e);
+        return firstPassRows;
+    }
+}
+
 export async function parsePayload(req: Request): Promise<SearchPayload> {
     const { searchParams } = new URL(req.url);
     if (req.headers.get('content-type')?.includes('application/json')) {
