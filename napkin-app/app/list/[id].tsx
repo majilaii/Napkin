@@ -30,7 +30,8 @@ import {
 } from '@/components/lists';
 import { ListEntryRow } from '@/components/lists/ListEntryRow';
 import { deriveContextLine, deriveCover, deriveMetadataLine } from '@/components/lists/listHeaderUtils';
-import { HALF, PEEK, visibleHeight, type Snap } from '@/components/lists/listSheetMath';
+import { HALF, PEEK, resolveSheetMode, visibleHeight, type Snap } from '@/components/lists/listSheetMath';
+import { mintFocusRequest, type FocusRequest } from '@/components/lists/focusRequest';
 import { derivePinnedIds } from '@/components/lists/pinnedLookupUtils';
 import {
     countUnmappableListEntries,
@@ -85,9 +86,16 @@ export default function ListDetailScreen() {
     const sheetRef = useRef<ListDetailSheetHandle>(null);
     const reframeRef = useRef<() => void>(() => {});
     const pendingFocusRef = useRef<string | null>(null);
+    // F4: the seq counter lives for the whole screen and NEVER resets — the
+    // map's handled marker persists across restaurant round-trips.
+    const focusSeqRef = useRef(0);
+    // True when the latest settle consumed a pendingFocus (owns its own camera).
+    const focusDrivenSettleRef = useRef(false);
     const [settledSnap, setSettledSnap] = useState<Snap>(HALF);
-    const [focusRequest, setFocusRequest] = useState<{ id: string; seq: number } | null>(null);
+    const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
     const [isEditingPlaces, setIsEditingPlaces] = useState(false);
+    // F3: the edit lock ignores `ranked`; ranked only picks the reorder list.
+    const sheetMode = resolveSheetMode(isEditingPlaces, canEditEntries, !!list?.ranked);
 
     // ── Overlays (one discriminated state + a present lock; Codex #10) ────────────
     const [overlay, setOverlay] = useState<Overlay>('none');
@@ -144,7 +152,7 @@ export default function ListDetailScreen() {
     const cover = useMemo(() => deriveCover(entries), [entries]);
     const metadata = list ? deriveMetadataLine(entries.length, saveCount, list.privacy, list.table_id) : '';
     const contextLine = useMemo(
-        () => (list && ownerProfile ? deriveContextLine(list, isOwner, ownerProfile) : null),
+        () => (list ? deriveContextLine(list, isOwner, ownerProfile) : null),
         [list, ownerProfile, isOwner],
     );
 
@@ -167,16 +175,25 @@ export default function ListDetailScreen() {
     }, []);
 
     const handleSnapSettle = useCallback((snap: Snap) => {
-        setSettledSnap(snap);
-        if (snap === PEEK && pendingFocusRef.current) {
-            const targetId = pendingFocusRef.current;
+        const focusDriven = snap === PEEK && pendingFocusRef.current != null;
+        focusDrivenSettleRef.current = focusDriven;
+        if (focusDriven) {
+            const targetId = pendingFocusRef.current!;
             pendingFocusRef.current = null;
-            setFocusRequest((current) => ({ id: targetId, seq: (current?.seq ?? 0) + 1 }));
-            return;
+            setFocusRequest(mintFocusRequest(focusSeqRef, targetId));
         }
-        // Re-frame the whole collection only at rest in a usable viewport.
-        if (snap <= HALF && !isEditingPlaces) reframeRef.current?.();
-    }, [isEditingPlaces]);
+        setSettledSnap(snap);
+    }, []);
+
+    // F1: re-frame only AFTER the settle's mapPadding has committed —
+    // settledSnap drives sheetVisibleHeight, which is the map's padding prop,
+    // so a synchronous reframe inside the settle callback would fit against
+    // stale occlusion. Focus-driven settles own their camera via focusRequest.
+    useEffect(() => {
+        if (focusDrivenSettleRef.current) return;
+        if (settledSnap > HALF || sheetMode.locked) return;
+        reframeRef.current?.();
+    }, [settledSnap, sheetMode.locked]);
 
     const handleRemove = useCallback((entry: ListEntry) => {
         removeFromList.mutate({ list_id: entry.list_id, restaurant_id: entry.restaurant_id });
@@ -345,7 +362,7 @@ export default function ListDetailScreen() {
                         <Text style={[styles.retryLabel, { color: palette.primary }]}>Go back</Text>
                     </PressableScale>
                 </View>
-            ) : list && ownerProfile ? (
+            ) : list ? (
                 <>
                     <View style={StyleSheet.absoluteFill}>
                         <ScopedListMap
@@ -390,7 +407,8 @@ export default function ListDetailScreen() {
                             description={list.description}
                             entries={entries}
                             renderRow={renderRow}
-                            editing={isEditingPlaces && !!list.ranked && canEditEntries}
+                            editing={sheetMode.locked}
+                            reorder={sheetMode.reorder}
                             onDragEnd={handleDragEnd}
                             onSnapSettle={handleSnapSettle}
                             emptyComponent={entries.length === 0 ? empty : null}

@@ -4,6 +4,7 @@ import {
     PEEK,
     PEEK_FLOOR,
     offsetsFor,
+    resolveSheetMode,
     resolveSnap,
     sheetHeight,
     visibleHeight,
@@ -52,5 +53,19 @@ describe('resolveSnap', () => {
     it('lands on a valid snap after a reversed drag (down then back up)', () => {
         // Released a hair past half with a gentle settle velocity → half.
         expect(resolveSnap(offsets[HALF] + 6, -20, offsets)).toBe(HALF);
+    });
+});
+
+describe('resolveSheetMode (review F3)', () => {
+    it('locks the sheet for any permitted edit, ranked or not', () => {
+        expect(resolveSheetMode(true, true, true)).toEqual({ locked: true, reorder: true });
+        // Unranked edit still locks (full + pans off); only the reorder swap is gated.
+        expect(resolveSheetMode(true, true, false)).toEqual({ locked: true, reorder: false });
+    });
+
+    it('never locks without edit permission or outside edit mode', () => {
+        expect(resolveSheetMode(true, false, true)).toEqual({ locked: false, reorder: false });
+        expect(resolveSheetMode(false, true, true)).toEqual({ locked: false, reorder: false });
+        expect(resolveSheetMode(false, false, false)).toEqual({ locked: false, reorder: false });
     });
 });

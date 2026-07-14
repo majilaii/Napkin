@@ -101,4 +101,16 @@ describe('deriveContextLine (A13)', () => {
             deriveContextLine(list(), false, owner({ display_name: 'Ivy', account_privacy: 'private' })),
         ).toEqual({ kind: 'byline', text: 'a list by Ivy', profileHandle: null });
     });
+
+    it('missing owner profile drops the byline but keeps profile-free lines (F5a)', () => {
+        expect(deriveContextLine(list(), false, null)).toBeNull();
+        expect(deriveContextLine(list({ table_id: 't1' }), false, null)).toEqual({
+            kind: 'table',
+            text: 'Shared with everyone at this Table',
+        });
+        expect(deriveContextLine(list({ privacy: 'private' }), true, null)).toEqual({
+            kind: 'private',
+            text: 'Only you can find this list',
+        });
+    });
 });

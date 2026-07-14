@@ -14,9 +14,17 @@
  * latched once in `onBegin`, `onFinalize` always settling. This exact
  * composition was type-verified against the installed RNGH/Reanimated (ticket
  * spike); do not improvise it.
+ *
+ * Gesture topology (review F2): the two pans live on DISJOINT subtrees —
+ * headerPan's detector wraps ONLY the handle+header block, listPan+nativeScroll
+ * wrap the list — so they never contend for a touch and need no declared
+ * relationship with each other. Each pan owns its own gesture-state shared
+ * values. The list's scroll is disabled the moment ANY path leaves full
+ * (either pan's drag, imperative snapTo, edit lock) and re-enabled only from
+ * the spring completion at full.
  */
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
     runOnJS,
@@ -54,7 +62,12 @@ export interface ListDetailSheetProps {
     description: string | null;
     entries: ListEntry[];
     renderRow: (entry: ListEntry, index: number, drag?: () => void) => React.ReactElement | null;
+    /** The edit LOCK: force-full + both pans disabled (review F3 — derives
+     * from `isEditingPlaces && canEditEntries`, regardless of ranked). */
     editing: boolean;
+    /** `editing && ranked` → DraggableFlatList; unranked edit = a plain
+     * scrollable list at full (review F3: ranked gates ONLY the reorder swap). */
+    reorder: boolean;
     onDragEnd: (params: { data: ListEntry[]; from: number; to: number }) => void;
     onSnapSettle: (snap: Snap) => void;
     emptyComponent: React.ReactElement | null;
@@ -71,6 +84,7 @@ export function ListDetailSheet({
     entries,
     renderRow,
     editing,
+    reorder,
     onDragEnd,
     onSnapSettle,
     emptyComponent,
@@ -84,12 +98,20 @@ export function ListDetailSheet({
     const offsets = useMemo(() => offsetsFor(H), [H]);
     const SHEET_H = sheetHeight(H);
 
-    const translateY = useSharedValue(0);
+    // First paint at the HALF offset, never at full (review F5c). The host only
+    // mounts the sheet once H is measured, so the prop is the real metric; the
+    // H-effect below re-aligns exactly (a no-op on mount).
+    const translateY = useSharedValue(offsetsFor(H)[HALF]);
     const snapIndex = useSharedValue<Snap>(HALF);
-    const startY = useSharedValue(0);
-    const atFull = useSharedValue(false);
-    const beganTop = useSharedValue(true);
-    const owns = useSharedValue(false);
+    // listPan gesture state — its own set; never shared with headerPan (F2).
+    const listStartY = useSharedValue(0);
+    const listAtFull = useSharedValue(false);
+    const listBeganTop = useSharedValue(true);
+    const listOwns = useSharedValue(false);
+    // headerPan gesture state — independent (F2).
+    const headerStartY = useSharedValue(0);
+    const headerAtFull = useSharedValue(false);
+    const headerLeftFull = useSharedValue(false);
     const scrollOffset = useSharedValue(0);
 
     const [scrollEnabled, setScrollEnabled] = useState(false);
@@ -98,7 +120,10 @@ export function ListDetailSheet({
         scrollOffset.value = e.contentOffset.y;
     });
 
-    // JS thread — fired only from the spring's `finished` completion (Codex #3).
+    // JS thread. `disableScroll` fires the moment any path LEAVES full (F2);
+    // `commitSettle` fires only from the spring's `finished` completion
+    // (Codex #3) and is the sole path that re-enables scroll.
+    const disableScroll = () => setScrollEnabled(false);
     const commitSettle = (index: Snap) => {
         setScrollEnabled(index === FULL);
         onSnapSettle(index);
@@ -106,6 +131,9 @@ export function ListDetailSheet({
     const settle = (index: Snap) => {
         'worklet';
         snapIndex.value = index;
+        // Every path that leaves full — pan release, imperative snapTo, edit
+        // lock — stops the list scrolling NOW, not when the spring lands (F2).
+        if (index !== FULL) runOnJS(disableScroll)();
         translateY.value = withSpring(offsets[index], SPRING, (finished) => {
             if (finished) runOnJS(commitSettle)(index);
         });
@@ -146,6 +174,10 @@ export function ListDetailSheet({
     }));
 
     // ── A9 gesture machine (type-verified spike; do not improvise) ───────────────
+    // Explicit compose relationships (F2): listPan ↔ nativeScroll run
+    // simultaneously (declared both via `simultaneousWithExternalGesture` and
+    // the `Gesture.Simultaneous` composition in the detector). headerPan is on
+    // a disjoint subtree (handle+header only) and relates to neither.
     const nativeScroll = Gesture.Native();
 
     const listPan = Gesture.Pan()
@@ -153,35 +185,41 @@ export function ListDetailSheet({
         .enabled(!editing)
         .simultaneousWithExternalGesture(nativeScroll)
         .onBegin(() => {
-            startY.value = translateY.value;      // Codex #2: capture at touch-begin
-            atFull.value = snapIndex.value === FULL;
-            beganTop.value = scrollOffset.value <= 0;
-            owns.value = false;
+            listStartY.value = translateY.value;  // Codex #2: capture at touch-begin
+            listAtFull.value = snapIndex.value === FULL;
+            listBeganTop.value = scrollOffset.value <= 0;
+            listOwns.value = false;
         })
         .onUpdate((e) => {
-            if (!owns.value) {
-                if (!atFull.value) owns.value = true;                       // A9-1
-                else if (beganTop.value && e.translationY > 0) {           // A9-2 down-from-top
-                    owns.value = true;
-                    runOnJS(setScrollEnabled)(false);                      // Codex #3: leave full now
+            if (!listOwns.value) {
+                if (!listAtFull.value) listOwns.value = true;               // A9-1
+                else if (listBeganTop.value && e.translationY > 0) {       // A9-2 down-from-top
+                    listOwns.value = true;
+                    runOnJS(disableScroll)();                              // Codex #3: leave full now
                 }
             }
-            if (owns.value) translateY.value = clamp(startY.value + e.translationY);
+            if (listOwns.value) translateY.value = clamp(listStartY.value + e.translationY);
             // else A9-3: at full, up / not-from-top → list scrolls natively
         })
         .onFinalize((e) => {
-            if (owns.value) settle(resolveSnap(translateY.value, e.velocityY, offsets));
+            if (listOwns.value) settle(resolveSnap(translateY.value, e.velocityY, offsets));
         });
 
     const headerPan = Gesture.Pan()
         .activeOffsetY([-10, 10])
         .enabled(!editing)
         .onBegin(() => {
-            startY.value = translateY.value;
-            owns.value = true;
+            headerStartY.value = translateY.value;
+            headerAtFull.value = snapIndex.value === FULL;
+            headerLeftFull.value = false;
         })
         .onUpdate((e) => {
-            translateY.value = clamp(startY.value + e.translationY);
+            // Leaving full via the header drag also stops the list NOW (F2).
+            if (headerAtFull.value && !headerLeftFull.value && e.translationY > 0) {
+                headerLeftFull.value = true;
+                runOnJS(disableScroll)();
+            }
+            translateY.value = clamp(headerStartY.value + e.translationY);
         })
         .onFinalize((e) => {
             settle(resolveSnap(translateY.value, e.velocityY, offsets));
@@ -199,21 +237,27 @@ export function ListDetailSheet({
     const contentPad = { paddingBottom: insets.bottom + Spacing.xxl };
 
     return (
-        <GestureDetector gesture={headerPan}>
-            <Animated.View
-                style={[
-                    styles.sheet,
-                    { height: SHEET_H, backgroundColor: palette.background },
-                    sheetStyle,
-                ]}
-            >
-                {/* Fixed drag zone: handle + header (headerPan drives; taps win). */}
-                <View style={styles.handleZone}>
-                    <View style={[styles.handle, { backgroundColor: palette.ruleWarmNib }]} />
+        <Animated.View
+            style={[
+                styles.sheet,
+                { height: SHEET_H, backgroundColor: palette.background },
+                sheetStyle,
+            ]}
+        >
+            {/* Fixed drag zone: handle + header ONLY (F2 — headerPan must not
+                wrap the list subtree; taps on header actions win via the ±10pt
+                activation offset). */}
+            <GestureDetector gesture={headerPan}>
+                <View collapsable={false}>
+                    <View style={styles.handleZone}>
+                        <View style={[styles.handle, { backgroundColor: palette.ruleWarmNib }]} />
+                    </View>
+                    <ListDetailHeader {...headerProps} />
                 </View>
-                <ListDetailHeader {...headerProps} />
+            </GestureDetector>
 
-                {editing ? (
+            {editing ? (
+                reorder ? (
                     <DraggableFlatList
                         data={entries}
                         keyExtractor={(item) => item.id}
@@ -226,26 +270,38 @@ export function ListDetailSheet({
                         showsVerticalScrollIndicator={false}
                     />
                 ) : (
-                    <GestureDetector gesture={Gesture.Simultaneous(listPan, nativeScroll)}>
-                        <Animated.FlatList
-                            data={entries}
-                            keyExtractor={(item: ListEntry) => item.id}
-                            onScroll={onScroll}
-                            scrollEventThrottle={16}
-                            scrollEnabled={scrollEnabled}
-                            bounces={false}
-                            overScrollMode="never"
-                            ListHeaderComponent={listHeader}
-                            ListEmptyComponent={emptyComponent}
-                            renderItem={({ item, index }: { item: ListEntry; index: number }) =>
-                                renderRow(item, index)}
-                            contentContainerStyle={contentPad}
-                            showsVerticalScrollIndicator={false}
-                        />
-                    </GestureDetector>
-                )}
-            </Animated.View>
-        </GestureDetector>
+                    // Unranked edit (F3): plain scrollable list at full; the
+                    // sheet is pan-locked, so no handoff tracking is needed.
+                    <FlatList
+                        data={entries}
+                        keyExtractor={(item) => item.id}
+                        ListHeaderComponent={listHeader}
+                        ListEmptyComponent={emptyComponent}
+                        renderItem={({ item, index }) => renderRow(item, index)}
+                        contentContainerStyle={contentPad}
+                        showsVerticalScrollIndicator={false}
+                    />
+                )
+            ) : (
+                <GestureDetector gesture={Gesture.Simultaneous(listPan, nativeScroll)}>
+                    <Animated.FlatList
+                        data={entries}
+                        keyExtractor={(item: ListEntry) => item.id}
+                        onScroll={onScroll}
+                        scrollEventThrottle={16}
+                        scrollEnabled={scrollEnabled}
+                        bounces={false}
+                        overScrollMode="never"
+                        ListHeaderComponent={listHeader}
+                        ListEmptyComponent={emptyComponent}
+                        renderItem={({ item, index }: { item: ListEntry; index: number }) =>
+                            renderRow(item, index)}
+                        contentContainerStyle={contentPad}
+                        showsVerticalScrollIndicator={false}
+                    />
+                </GestureDetector>
+            )}
+        </Animated.View>
     );
 }
 

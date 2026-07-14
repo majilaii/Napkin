@@ -63,7 +63,7 @@ export type ContextLine =
 export function deriveContextLine(
     list: HeaderList,
     isOwner: boolean,
-    ownerProfile: HeaderOwner,
+    ownerProfile: HeaderOwner | null,
 ): ContextLine | null {
     if (list.table_id) {
         return { kind: 'table', text: 'Shared with everyone at this Table' };
@@ -74,6 +74,9 @@ export function deriveContextLine(
             : null;
     }
     // Non-owner, non-Table lists the server surfaced are public personal lists.
+    // A missing owner profile just drops the byline (review F5a) — the screen
+    // must still render.
+    if (!ownerProfile) return null;
     const name = ownerProfile.display_name ?? ownerProfile.username ?? 'Unknown';
     const profileHandle = ownerProfile.account_privacy === 'public' && ownerProfile.username
         ? ownerProfile.username

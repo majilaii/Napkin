@@ -52,6 +52,20 @@ export function offsetsFor(H: number): [number, number, number] {
 }
 
 /**
+ * Review F3: the sheet's edit LOCK (force-full + both pans disabled) derives
+ * from edit permission alone — `ranked` gates ONLY the DraggableFlatList swap.
+ * Unranked edit = a plain scrollable list at full, pans still disabled.
+ */
+export function resolveSheetMode(
+    isEditingPlaces: boolean,
+    canEditEntries: boolean,
+    ranked: boolean,
+): { locked: boolean; reorder: boolean } {
+    const locked = isEditingPlaces && canEditEntries;
+    return { locked, reorder: locked && ranked };
+}
+
+/**
  * Commit a released drag to the snap nearest the velocity-projected position
  * (A8: `pos + v·0.2s`, nearest snap, no dead zones). Called on the UI thread
  * from the sheet's gesture worklets; the `'worklet'` directive is a no-op in

@@ -46,6 +46,7 @@ import {
     type WishlistMapItem,
 } from '@/components/wishlist/mapShared';
 import { listCollectionFrameKey } from '@/components/wishlist/listMapScope';
+import { isUnhandledFocus, type FocusRequest } from './focusRequest';
 
 type Palette = typeof Colors.light;
 
@@ -56,8 +57,9 @@ export interface ScopedListMapProps {
     unmappableCount: number;
     userCoords: GeoLatLng | null;
     locationStatus: LocationStatus;
-    /** Event-like focus (row-locate / pin-tap): repeat taps re-fire via `seq`. */
-    focusRequest: { id: string; seq: number } | null;
+    /** Event-like focus (row-locate / pin-tap): repeat taps re-fire via `seq`,
+     * which is monotonic for the life of the host screen (review F4). */
+    focusRequest: FocusRequest | null;
     /** `list:<id>` — stable identity; frames the collection once per membership. */
     collectionScopeKey: string;
     /** Live sheet height → mapPadding.bottom (the single occlusion source). */
@@ -285,9 +287,10 @@ export function ScopedListMap({
     }, [items.length, locationStatus, mapReady, userCoords]);
 
     // Focus (row-locate / pin-tap round-trip) — event-like, re-fires on new seq.
+    // handledSeqRef persists across restaurant round-trips; the host's seq is
+    // monotonic so a re-focus after back always reads as unhandled (F4).
     useEffect(() => {
-        if (!focusRequest || !mapReady) return;
-        if (handledSeqRef.current === focusRequest.seq) return;
+        if (!mapReady || !isUnhandledFocus(handledSeqRef.current, focusRequest)) return;
         const target = items.find((i) => i.id === focusRequest.id);
         if (!target) return;
         handledSeqRef.current = focusRequest.seq;
@@ -436,7 +439,7 @@ const styles = StyleSheet.create({
     },
     murmurText: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        fontSize: 13, // metadata floor (review F5b)
     },
     attribution: {
         position: 'absolute',

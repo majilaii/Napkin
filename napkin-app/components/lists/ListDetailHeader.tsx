@@ -23,7 +23,8 @@ type Palette = typeof Colors.light;
 
 export interface ListDetailHeaderProps {
     list: ListDetail;
-    ownerProfile: OwnerProfile;
+    /** Nullable (review F5a): a missing profile renders without the byline. */
+    ownerProfile: OwnerProfile | null;
     /** deriveCover(entries) — first entry photo, else the emoji plate. */
     cover: string | null;
     /** deriveMetadataLine(...) — "{n} places" + optional " · saved {m} times". */
@@ -212,7 +213,7 @@ export function ListDetailHeader({
                     line={contextLine}
                     palette={palette}
                     onOpenProfile={(handle) => router.push(`/u/${handle}`)}
-                    ownerName={ownerProfile.display_name ?? ownerProfile.username ?? 'Unknown'}
+                    ownerName={ownerProfile?.display_name ?? ownerProfile?.username ?? 'Unknown'}
                 />
             ) : null}
         </View>
