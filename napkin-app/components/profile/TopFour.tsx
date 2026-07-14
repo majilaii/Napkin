@@ -122,7 +122,7 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
 const styles = StyleSheet.create({
     section: {
         marginTop: Spacing.sm,
-        paddingBottom: Spacing.lg,
+        paddingBottom: Spacing.md,
     },
     row: {
         flexDirection: 'row',

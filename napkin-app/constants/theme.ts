@@ -353,8 +353,8 @@ export const Type = {
   // the beginning of each module obvious while scanning.
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '700' as const,
-    fontFamily: 'Manrope_700Bold',
+    fontWeight: '600' as const,
+    fontFamily: 'Manrope_600SemiBold',
     letterSpacing: -0.2,
     lineHeight: 24,
   } as TextStyle,
