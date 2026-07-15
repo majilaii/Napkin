@@ -68,7 +68,9 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
     const socials = useSocials(viewerId);
     const browse = useBrowsePublicLists(viewerId);
     const followCandidates = useFollowCandidates(viewerId);
-    const coDiners = useCoDiners(viewerId);
+    // Only one people source is live per flag state: v2 on → the mixed rail
+    // owns the block, so the co-diner query stays disabled (null id).
+    const coDiners = useCoDiners(FOR_YOU_PEOPLE_V2 ? null : viewerId);
 
     const socialsCards = useMemo(() => socials.data ?? [], [socials.data]);
     const browseLists = useMemo(() => browse.data ?? [], [browse.data]);
