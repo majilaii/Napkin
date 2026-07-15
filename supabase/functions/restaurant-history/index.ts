@@ -30,6 +30,10 @@ import { buildPage, decodeCursor, encodeCursor } from '../_shared/pagination.ts'
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { projectRound } from '../_shared/round_projection.ts';
 // TICKET-156: the single content-key authority for the On Socials rail — the
+// TICKET-189: exact-hostname IG predicate (TS copy of fn_is_instagram_url) —
+// replaced the inline /instagram\.com|instagr\.am/ substring regex, closing
+// the notinstagram.com / query-string deception gap in this rail too.
+import { isInstagramUrl } from '../_shared/socialHost.ts';
 // SAME normalizer the capture action and backfill import, so read/capture/
 // backfill keys never diverge.
 import { contentKey } from '../_shared/videoUrlKey.ts';
@@ -551,8 +555,10 @@ serve(async (req) => {
                 const t = src?.type;
                 if (t === 'tiktok' || t === 'video') return true;
                 if (t === 'web') {
+                    // Exact-hostname predicate (TICKET-189) — synced with the
+                    // SQL copy fn_is_instagram_url; substring matching banned.
                     const u = typeof src?.url === 'string' ? src.url : '';
-                    return /instagram\.com|instagr\.am/i.test(u);
+                    return isInstagramUrl(u);
                 }
                 return false;
             };

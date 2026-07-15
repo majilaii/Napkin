@@ -1123,67 +1123,51 @@ serve(async (req) => {
             return jsonResponse({ data: page });
         }
 
-        // ── browse_public (TICKET-125) ─────────────────────────────────────
+        // ── browse_public (TICKET-125, rebuilt TICKET-189) ──────────────────
         // The For You feed's public-lists block: recent public lists with NO
-        // search query. Reuses fn_search_public_lists — SAME TRIPLE GATE in SQL
-        // (privacy='public' AND table_id IS NULL AND owner account_privacy='public').
+        // search query. Now VIEWER-KEYED via fn_browse_public_lists — same
+        // triple gate in SQL (privacy='public' AND table_id IS NULL AND owner
+        // account public) PLUS owner_id <> viewer applied BEFORE the limit, so
+        // the viewer's own lists are never presented back as "discovery" and
+        // never consume the cap.
         //
-        // COUPLING NOTE (load-bearing): we pass q='' on purpose. The RPC's
-        // predicate is `title ILIKE '%'||q||'%' OR description ILIKE '%'||q||'%'`,
-        // which with q='' collapses to `ILIKE '%%'` — matches ALL public lists,
-        // already ordered `updated_at DESC` (recency) by the RPC. If a future edit
-        // to fn_search_public_lists changes that WHERE (e.g. drops the ILIKE, or
-        // makes an empty q short-circuit to nothing), browse silently empties.
-        // The browse test (asserts non-empty rows with q='') is the guard.
+        // The first-restaurant cover collapsed into the RPC's lateral (the old
+        // per-list fan-out is gone): cover_photo_url arrives NULL unless the
+        // restaurant hero is photo_source='places' WITH attribution — a
+        // user/table hero (someone's entry photo promoted to the restaurant
+        // row) must never back a public-feed cover. photo_source +
+        // attribution_html ride along so the client renders the Places credit.
+        // Additive on the wire — old clients ignore the two new fields.
         //
         // Non-paginated: cap 6, single page, NO cursor. "see more" hands off to
-        // the search tab's Lists segment (locked decision 5). No limit+1, no
-        // buildPage — the client hook consumes { rows } directly.
+        // the search tab's Lists segment (locked decision 5). The client hook
+        // consumes { rows } directly.
         if (action === 'browse_public') {
             const BROWSE_CAP = 6;
-            const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_search_public_lists', {
-                q: '',
-                p_cursor_date: null,
-                p_cursor_id: null,
+            const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_browse_public_lists', {
+                p_viewer: user.id,
                 p_limit: BROWSE_CAP,
             });
             if (rpcErr) throw rpcErr;
 
-            // The browse surface is visual rather than a plain search-result list.
-            // Attach one honest cover: the first restaurant in each author's list,
-            // ordered exactly as the author ordered it. The browse cap is six, so
-            // this bounded fan-out is deliberate and keeps the public-list RPC
-            // focused on its privacy gate + ranking contract.
-            const rows = (rpcRows ?? []) as Array<ListRow & Record<string, unknown>>;
-            const enrichedRows = await Promise.all(
-                rows.map(async (list) => {
-                    const orderCol = list.ranked ? 'position' : 'created_at';
-                    const orderAsc = list.ranked;
-                    const { data: firstEntry, error: coverErr } = await supabase
-                        .from('list_entries')
-                        .select('restaurant:restaurants(photo_url)')
-                        .eq('list_id', list.id)
-                        .order(orderCol, { ascending: orderAsc })
-                        .limit(1)
-                        .maybeSingle();
-                    if (coverErr) {
-                        console.warn('lists browse cover lookup failed:', coverErr);
-                        return { ...list, cover_photo_url: null };
-                    }
-
-                    return {
-                        ...list,
-                        cover_photo_url:
-                            (firstEntry?.restaurant as { photo_url?: string | null } | null)
-                                ?.photo_url ?? null,
-                    };
-                }),
-            );
-
+            type BrowseRow = ListRow & {
+                cover_photo_url: string | null;
+                cover_photo_source: string | null;
+                cover_attribution_html: string | null;
+            };
             // The RPC returns an explicit public projection (never table_id),
-            // already recency-ordered and capped at p_limit. Keep that projection
-            // intact and add only the restaurant photo URL above.
-            return jsonResponse({ data: { rows: enrichedRows } });
+            // recency-ordered, self-excluded, capped. Re-project the cover
+            // fields onto the client names straight through.
+            const rows = ((rpcRows ?? []) as BrowseRow[]).map((list) => {
+                const { cover_photo_source, cover_attribution_html, ...rest } = list;
+                return {
+                    ...rest,
+                    photo_source: cover_photo_source ?? null,
+                    attribution_html: cover_attribution_html ?? null,
+                };
+            });
+
+            return jsonResponse({ data: { rows } });
         }
 
         return jsonResponse({ error: 'Unknown action' }, 400);

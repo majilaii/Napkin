@@ -162,21 +162,28 @@ async function ensureTable(token: string): Promise<void> {
 // The server excludes self from the taken check, so re-running with an
 // already-owned name succeeds; if another user ever claims it, fall back to a
 // user-id-derived name (lowercase hex — always passes the username format).
-async function ensureProfilePublic(token: string, userId: string): Promise<void> {
+// TICKET-189: parametrized (baseUsername + label) so the second socials-saver
+// account reuses the same self-heal with its own deterministic username.
+async function ensureProfilePublic(
+    token: string,
+    userId: string,
+    baseUsername = 'napkin_smoke',
+    label = 'smoke profile',
+): Promise<void> {
     const prof = await edge(token, 'user-profile', { action: 'profile', identifier: userId });
     const profile = prof?.profile;
     if (!profile) {
         throw new Error(`own profile lookup returned no profile: ${JSON.stringify(prof).slice(0, 200)}`);
     }
     if (profile.account_privacy === 'public') {
-        console.log('✓ smoke profile already public — nothing to change');
+        console.log(`✓ ${label} already public — nothing to change`);
         return;
     }
 
-    console.log('→ smoke profile is private — flipping to public via user-profile…');
+    console.log(`→ ${label} is private — flipping to public via user-profile…`);
     const candidates: (string | undefined)[] = profile.username
         ? [undefined]  // already has a username — the flip needs no new one
-        : ['napkin_smoke', `smoke_${userId.replace(/-/g, '').slice(0, 8)}`];
+        : [baseUsername, `smoke_${userId.replace(/-/g, '').slice(0, 8)}`];
     let lastErr: Error | null = null;
     for (const username of candidates) {
         try {
@@ -265,6 +272,111 @@ async function ensureSupperPin(token: string): Promise<void> {
     console.log(`✓ map_pins fixture ready (${rows.length} row(s))`);
 }
 
+// ── TICKET-189: the feed-socials populated-key smoke needs a SECOND public
+// account's TikTok clip at SMOKE_TEST_RESTAURANT_ID — the module self-excludes
+// the viewer's own saves, so the smoke user's own clip can never populate its
+// own rail. This seeding is MANDATORY (the smoke has no array-only fallback —
+// an escape hatch would recreate the payload-shape blind spot the fail-closed
+// design closes).
+//
+// Account: SMOKE_TEST_EMAIL_2 / SMOKE_TEST_PASSWORD_2 when set; else derived
+// plus-addressing on the primary smoke creds (local+socials@domain, same
+// password). Sign-in first; fall back to sign-up. If the project requires
+// email confirmation the sign-up returns no session — fail LOUDLY with the
+// exact fix (pre-create the account, set the _2 secrets).
+//
+// Freshness: the socials candidate window is 30d, so a one-time seed rots.
+// Re-seed (remove + add, refreshing created_at) once the save is ≥25 days old
+// — the 5-day margin means the stage-1 cache (1h TTL) always still holds the
+// OLD still-in-window save while the fresh one lands, so the populated smoke
+// can never see a gap. Both prod-deploy and the 6h scheduled smoke run this
+// script, so the fixture refreshes long before the margin runs out.
+const SAVER_RESEED_AGE_DAYS = 25;
+const SAVER_TIKTOK_SOURCE = {
+    type: 'tiktok',
+    url: 'https://www.tiktok.com/@napkinsmoke/video/7000000000000000189',
+    author_handle: 'napkinsmoke',
+};
+
+function deriveSaverEmail(primary: string): string {
+    const at = primary.indexOf('@');
+    if (at < 0) return `napkin-smoke-saver@example.invalid`; // unreachable; env-checked
+    return `${primary.slice(0, at)}+socials${primary.slice(at)}`;
+}
+
+async function signInSaver(): Promise<{ token: string; userId: string }> {
+    const email = Deno.env.get('SMOKE_TEST_EMAIL_2') ?? deriveSaverEmail(EMAIL!);
+    const password = Deno.env.get('SMOKE_TEST_PASSWORD_2') ?? PASSWORD!;
+
+    const tryAuth = async (path: string) => {
+        const res = await fetch(`${SUPABASE_URL}${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', apikey: ANON_KEY! },
+            body: JSON.stringify({ email, password }),
+        });
+        const json = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, json };
+    };
+
+    const signInRes = await tryAuth('/auth/v1/token?grant_type=password');
+    if (signInRes.ok && signInRes.json?.access_token) {
+        return { token: signInRes.json.access_token, userId: signInRes.json.user.id };
+    }
+
+    console.log(`→ socials-saver account ${email} not signing in — attempting sign-up…`);
+    const signUpRes = await tryAuth('/auth/v1/signup');
+    const su = signUpRes.json ?? {};
+    const token = su?.access_token ?? su?.session?.access_token ?? null;
+    const userId = su?.user?.id ?? su?.id ?? null;
+    if (signUpRes.ok && token && userId) {
+        console.log(`  ✓ socials-saver account created (${email})`);
+        return { token, userId };
+    }
+    throw new Error(
+        `socials-saver account unavailable (sign-in HTTP ${signInRes.status}, sign-up HTTP ${signUpRes.status}: ` +
+            `${JSON.stringify(su).slice(0, 200)}). If email confirmation is enabled, pre-create the account and ` +
+            'set SMOKE_TEST_EMAIL_2 + SMOKE_TEST_PASSWORD_2.',
+    );
+}
+
+async function ensureSocialsSaver(): Promise<void> {
+    const { token, userId } = await signInSaver();
+
+    // The candidate compute is public-accounts-only — the saver must be public.
+    await ensureProfilePublic(token, userId, 'napkin_smoke_saver', 'socials-saver profile');
+
+    // Age probe through the saver's own list read (app read path).
+    const page = await edge(token, 'wishlist', { action: 'list_personal', limit: 100 });
+    const items: Array<{ created_at?: string; restaurant?: { id?: string } | null }> =
+        Array.isArray(page) ? page : [];
+    const mine = items.find((i) => i?.restaurant?.id === RESTAURANT_ID);
+    const ageDays = mine?.created_at
+        ? (Date.now() - new Date(mine.created_at).getTime()) / 86_400_000
+        : Infinity;
+
+    if (mine && ageDays < SAVER_RESEED_AGE_DAYS) {
+        console.log(`✓ socials-saver clip fixture fresh (${ageDays.toFixed(1)}d old) — nothing to seed`);
+        return;
+    }
+
+    if (mine) {
+        console.log(`→ socials-saver clip is ${ageDays.toFixed(1)}d old — re-seeding to refresh created_at…`);
+        await edge(token, 'wishlist', { action: 'remove', restaurant_id: RESTAURANT_ID });
+    } else {
+        console.log('→ socials-saver has no clip at the smoke restaurant — seeding…');
+    }
+
+    const added = await edge(token, 'wishlist', {
+        action: 'add',
+        restaurant_id: RESTAURANT_ID,
+        source: SAVER_TIKTOK_SOURCE,
+    });
+    if (!added?.id) {
+        throw new Error(`socials-saver wishlist add returned no id: ${JSON.stringify(added).slice(0, 200)}`);
+    }
+    console.log(`  ✓ socials-saver TikTok clip seeded (wishlist item ${added.id})`);
+}
+
 async function main() {
     const { token, userId } = await signIn();
     const have = await reviewsCount(token, userId);
@@ -300,6 +412,10 @@ async function main() {
     // TICKET-139 follow-up: group-meal floor — the map_pins member-path
     // check depends on it. Runs after ensureTable (needs the table).
     await ensureSupperPin(token);
+
+    // TICKET-189: second-public-saver TikTok clip — the feed-socials
+    // populated-key smoke depends on it (MANDATORY, no array-only fallback).
+    await ensureSocialsSaver();
 }
 
 main().catch((e) => {

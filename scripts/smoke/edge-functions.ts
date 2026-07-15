@@ -518,6 +518,62 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-189: feed-socials — the "on socials" For You module (two-stage:
+    // cached candidates + JWT-bound viewer pass). The fn FAILS CLOSED (a
+    // missing/broken RPC → 500, caught by the status assert — never a silent
+    // []), and ensure-fixtures seeds a SECOND public account's TikTok clip at
+    // SMOKE_TEST_RESTAURANT_ID, so rows MUST be non-empty here: this is the
+    // MANDATORY populated-key smoke (no array-only fallback — an empty pass
+    // would recreate the payload-shape blind spot the fail-closed design
+    // closes). Asserts restaurant_id + rung + platform on rows[0], and that
+    // no saver identity ever rides the projection.
+    {
+        name: 'feed-socials POST populated rail (TICKET-189 — seeded second-saver fixture)',
+        method: 'POST',
+        fn: 'feed-socials',
+        body: {},
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (data.rows.length === 0) {
+                return 'rows is empty — ensure-fixtures seeds a second public saver\'s TikTok clip; ' +
+                    'empty means the fixture, the candidate cache, or the viewer pass regressed';
+            }
+            const r = data.rows[0] as Record<string, unknown>;
+            if (typeof r.restaurant_id !== 'string') return 'rows[0].restaurant_id is not a string';
+            if (r.rung !== 1 && r.rung !== 2 && r.rung !== 3) return `rows[0].rung is not 1|2|3 (got ${r.rung})`;
+            if (r.platform !== 'tiktok' && r.platform !== 'instagram' && r.platform !== 'socials') {
+                return `rows[0].platform is not tiktok|instagram|socials (got ${r.platform})`;
+            }
+            if ('saver_id' in r || 'rep_saver_id' in r || 'saver' in r) {
+                return 'a saver identity field leaked into the feed-socials projection (banned)';
+            }
+            return null;
+        },
+    },
+    // TICKET-189: follow_candidates — the people-to-follow v2 mixed rail
+    // (co-diners + recently-active public authors). An empty array is
+    // legitimate (the smoke user may have no unfollowed candidates); when a
+    // row is present, assert the user_id + kind contract.
+    {
+        name: 'user-profile?action=follow_candidates (TICKET-189 people v2 — empty array is legitimate)',
+        method: 'POST',
+        fn: 'user-profile',
+        body: { action: 'follow_candidates' },
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!Array.isArray(data)) return 'data is not an array';
+            if (data.length > 0) {
+                const c = data[0] as Record<string, unknown>;
+                if (typeof c.user_id !== 'string') return 'data[0].user_id is not a string';
+                if (c.kind !== 'co_diner' && c.kind !== 'public') {
+                    return `data[0].kind is not co_diner|public (got ${c.kind})`;
+                }
+            }
+            return null;
+        },
+    },
     // TICKET-101: co-diner candidates read path — backs the zero-follow feed
     // empty state (tier 1). callEdgeFn unwraps { data: [...] } to the array, so
     // the smoke asserts Array.isArray(data) ONLY — an empty array is the
