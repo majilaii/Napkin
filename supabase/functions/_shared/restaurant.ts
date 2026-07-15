@@ -10,6 +10,7 @@
  */
 
 import { escapeAttr } from './htmlEscape.ts';
+import { reportError } from './report.ts';
 
 // TICKET-057: when adding a second hero-photo writer, extract _setRestaurantHero({ url, source,
 // photoReference, attributionHtml }) from this file so all writers share one UPDATE statement and
@@ -351,7 +352,19 @@ export async function acquireAndMirrorHeroPhotos(
             .from('restaurants')
             .select('id, external_id, photo_url, photo_source, verification')
             .in('id', ids);
-        if (error || !Array.isArray(rows)) return;
+        if (error) {
+            // Returned DB error on the batch read: the WHOLE deferred job dies —
+            // must reach Sentry, not just the isolate log (monitoring doctrine:
+            // a fleet-wide deferred-photo failure surfacing only as missing
+            // photos means Jacky is the failure detector).
+            reportError(error, {
+                fn: 'resolve-url',
+                action: 'photo-mirror',
+                extra: { user_id: userId, stage: 'restaurants_read', restaurant_count: ids.length },
+            });
+            return;
+        }
+        if (!Array.isArray(rows)) return;
 
         const rawMax = Number(Deno.env.get('PHOTO_FETCH_MAX_PER_DAY') ?? '200');
         const photoFetchMax = Number.isFinite(rawMax) && rawMax > 0 ? Math.floor(rawMax) : 200;
@@ -364,6 +377,9 @@ export async function acquireAndMirrorHeroPhotos(
             if (row.verification !== 'verified') continue;    // ghost quarantine
 
             // ── photo_fetch bucket — fail-closed (TICKET-091 doctrine) ────────
+            // A returned RPC error or throw is REPORTED (it silently starves all
+            // photo work); a plain allowed=false (budget exhausted) is the
+            // designed state and is NOT reported.
             let allowed = false;
             try {
                 const { data: rlRows, error: rlErr } = await supabase.rpc(
@@ -375,8 +391,20 @@ export async function acquireAndMirrorHeroPhotos(
                         p_window_seconds: 86400,
                     },
                 );
+                if (rlErr) {
+                    reportError(rlErr, {
+                        fn: 'resolve-url',
+                        action: 'photo-mirror',
+                        extra: { user_id: userId, restaurant_id: row.id, stage: 'rate_limit' },
+                    });
+                }
                 allowed = !rlErr && !!rlRows?.[0]?.allowed;
-            } catch {
+            } catch (e) {
+                reportError(e, {
+                    fn: 'resolve-url',
+                    action: 'photo-mirror',
+                    extra: { user_id: userId, restaurant_id: row.id, stage: 'rate_limit' },
+                });
                 allowed = false;
             }
             // Budget exhausted or DB blip → stop the WHOLE job (every later row
@@ -417,18 +445,35 @@ export async function acquireAndMirrorHeroPhotos(
             if (!photoName || !attributionHtml) {
                 // Genuinely photo-less (or unattributable) place → TERMINAL. Without
                 // this, the row re-fires Details forever (the pre-TICKET-187 gap).
-                await supabase
+                const { error: stampErr } = await supabase
                     .from('restaurants')
                     .update({ photo_source: 'none' })
                     .eq('id', row.id)
                     .is('photo_url', null);
+                if (stampErr) {
+                    // Returned DB error (row simply retries later, but the write
+                    // path is broken — report it).
+                    reportError(stampErr, {
+                        fn: 'resolve-url',
+                        action: 'photo-mirror',
+                        extra: { user_id: userId, restaurant_id: row.id, stage: 'stamp_none' },
+                    });
+                }
                 continue;
             }
 
             await _storeHeroPhoto(supabase, row.id, photoName, attributionHtml);
         }
     } catch (e) {
-        // The deferred job must never throw into the isolate.
+        // The deferred job must never throw into the isolate — but an unexpected
+        // exception here kills the WHOLE deferred job and would otherwise surface
+        // only as missing photos. Report it (designed transient states — Details
+        // 404/5xx/network → NULL — never reach this catch and stay non-reported).
+        reportError(e, {
+            fn: 'resolve-url',
+            action: 'photo-mirror',
+            extra: { user_id: userId },
+        });
         console.error('acquireAndMirrorHeroPhotos failed (non-fatal):', e);
     }
 }

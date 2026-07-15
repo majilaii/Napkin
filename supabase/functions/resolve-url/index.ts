@@ -1584,8 +1584,19 @@ async function handleSaveSpots(
     const mirrorIds = dedupeSuccessfulRestaurantIds(results);
     if (mirrorIds.length > 0) {
         // .catch first: an unhandled rejection must never crash the isolate.
+        // acquireAndMirrorHeroPhotos reports its own failures to Sentry
+        // internally (its outer catch swallows, so this .catch is a dead-code
+        // last resort today) — the reportError here only fires if a future
+        // refactor lets the job reject.
         const photoJob = acquireAndMirrorHeroPhotos(supabase, mirrorIds, user.id)
-            .catch((e) => console.error('deferred hero-photo job failed (non-fatal):', e));
+            .catch((e) => {
+                console.error('deferred hero-photo job failed (non-fatal):', e);
+                reportError(e, {
+                    fn: 'resolve-url',
+                    action: 'photo-mirror',
+                    extra: { user_id: user.id },
+                });
+            });
         try {
             // Supabase's edge runtime keeps the isolate alive until the job
             // settles WITHOUT delaying the response. Not available everywhere

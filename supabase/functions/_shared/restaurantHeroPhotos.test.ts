@@ -43,13 +43,23 @@ interface Captured {
 function makeMockSupabase(opts: {
     rows: Array<Record<string, unknown>>;
     rateAllowed?: boolean | 'rpc-error';
+    /** Returned Supabase error on the initial restaurants read. */
+    readError?: unknown;
+    /** The initial restaurants read REJECTS (unexpected throw inside the job). */
+    readRejects?: boolean;
 }) {
     const calls: Captured = { rpc: [], updates: [], uploads: [] };
     const client = {
         from: (table: string) => ({
             select: (_cols: string) => ({
                 in: (_col: string, _ids: string[]) =>
-                    Promise.resolve({ data: opts.rows, error: null }),
+                    opts.readRejects
+                        ? Promise.reject(new Error('restaurants read blew up'))
+                        : Promise.resolve(
+                            opts.readError
+                                ? { data: null, error: opts.readError }
+                                : { data: opts.rows, error: null },
+                        ),
             }),
             update: (payload: Record<string, unknown>) => ({
                 eq: (col: string, val: unknown) => ({
@@ -90,6 +100,7 @@ function makeMockSupabase(opts: {
 interface SeenFetch {
     url: string;
     fieldMask: string | null;
+    body: string | null;
 }
 
 function stubFetch(handler: (url: string) => Response) {
@@ -102,10 +113,28 @@ function stubFetch(handler: (url: string) => Response) {
                 ? input.toString()
                 : input.url;
         const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-        seen.push({ url, fieldMask: headers.get('X-Goog-FieldMask') });
+        seen.push({
+            url,
+            fieldMask: headers.get('X-Goog-FieldMask'),
+            body: typeof init?.body === 'string' ? init.body : null,
+        });
         return Promise.resolve(handler(url));
     }) as typeof fetch;
     return { seen, restore: () => { globalThis.fetch = original; } };
+}
+
+// ── reportError observation (TICKET-187 review fix) ──────────────────────────
+// reportError (_shared/report.ts) activates on the SENTRY_DSN env and emits a
+// fire-and-forget fetch to the DSN host — the only observable spy point without
+// injection. Steps that assert reporting set TEST_DSN and count sentry-bound
+// requests through the same fetch stub; steps that assert exact Google-call
+// counts leave SENTRY_DSN unset (reportError no-ops).
+
+const TEST_DSN = 'https://pubkey@sentry.example/42';
+
+/** Sentry-bound requests made by reportError (host from TEST_DSN). */
+function sentryCalls(seen: SeenFetch[]): SeenFetch[] {
+    return seen.filter((s) => s.url.includes('sentry.example'));
 }
 
 function detailsBody(photoName: string | null, displayName: string | null, uri: string | null) {
@@ -329,6 +358,106 @@ Deno.test('acquireAndMirrorHeroPhotos (TICKET-187)', async (t) => {
         assertEquals(calls.rpc.length, 0);
         assertEquals(fetchStub.seen.length, 0);
         assertEquals(calls.updates.length, 0);
+    });
+
+    // ── TICKET-187 review fix: deferred-job failures must reach reportError ──
+    // (monitoring doctrine: a fleet-wide deferred-photo failure must never
+    // surface only as missing photos.)
+
+    await t.step('unexpected throw inside the job → EXACTLY ONE reportError, wrapper resolves', async () => {
+        Deno.env.set('SENTRY_DSN', TEST_DSN);
+        const { client } = makeMockSupabase({ rows: [], readRejects: true });
+        const fetchStub = stubFetch(() => new Response('{}', { status: 200 }));
+        try {
+            // Must RESOLVE — the job never throws into the isolate/waitUntil.
+            await acquireAndMirrorHeroPhotos(client, ['r1'], USER_ID);
+        } finally {
+            fetchStub.restore();
+            Deno.env.delete('SENTRY_DSN');
+        }
+        const reports = sentryCalls(fetchStub.seen);
+        assertEquals(reports.length, 1, 'exactly one reportError emission');
+        // Context contract: { fn: 'resolve-url', action: 'photo-mirror', extra.user_id }.
+        const event = JSON.parse(reports[0].body ?? '{}');
+        assertEquals(event.tags?.fn, 'resolve-url');
+        assertEquals(event.tags?.action, 'photo-mirror');
+        assertEquals(event.extra?.user_id, USER_ID);
+    });
+
+    await t.step('restaurants read returns a DB error → reported once, job stops, no Google calls', async () => {
+        Deno.env.set('SENTRY_DSN', TEST_DSN);
+        const { client, calls } = makeMockSupabase({
+            rows: [],
+            readError: { message: 'connection refused', code: '08006' },
+        });
+        const fetchStub = stubFetch(() => new Response('{}', { status: 200 }));
+        try {
+            await acquireAndMirrorHeroPhotos(client, ['r1', 'r2'], USER_ID);
+        } finally {
+            fetchStub.restore();
+            Deno.env.delete('SENTRY_DSN');
+        }
+        const reports = sentryCalls(fetchStub.seen);
+        assertEquals(reports.length, 1, 'returned Supabase read error must be reported');
+        assertEquals(fetchStub.seen.length - reports.length, 0, 'no Google calls after a dead read');
+        assertEquals(calls.rpc.length, 0, 'no tokens after a dead read');
+        assertEquals(calls.updates.length, 0);
+    });
+
+    await t.step('rate-limit RPC error → reported once, still fail-closed (zero Google spend)', async () => {
+        Deno.env.set('SENTRY_DSN', TEST_DSN);
+        const { client, calls } = makeMockSupabase({
+            rows: [{ id: 'r1', external_id: 'ChIJ-real', photo_url: null, photo_source: null, verification: 'verified' }],
+            rateAllowed: 'rpc-error',
+        });
+        const fetchStub = stubFetch(() => new Response('{}', { status: 200 }));
+        try {
+            await acquireAndMirrorHeroPhotos(client, ['r1'], USER_ID);
+        } finally {
+            fetchStub.restore();
+            Deno.env.delete('SENTRY_DSN');
+        }
+        const reports = sentryCalls(fetchStub.seen);
+        assertEquals(reports.length, 1, 'a rate-RPC DB blip silently starves photo work — must be reported');
+        const event = JSON.parse(reports[0].body ?? '{}');
+        assertEquals(event.extra?.restaurant_id, 'r1');
+        assertEquals(fetchStub.seen.length - reports.length, 0, 'fail-closed: still zero Google calls');
+        assertEquals(calls.updates.length, 0);
+    });
+
+    await t.step('DESIGNED transient states (Details 404/5xx, budget denial) are NOT reported', async () => {
+        Deno.env.set('SENTRY_DSN', TEST_DSN);
+        try {
+            // Details 404 + 500 → transient NULL, non-reported.
+            for (const status of [404, 500]) {
+                const { client } = makeMockSupabase({
+                    rows: [{ id: 'r1', external_id: 'ChIJ-stale', photo_url: null, photo_source: null, verification: 'verified' }],
+                });
+                const fetchStub = stubFetch(() => new Response('nope', { status }));
+                try {
+                    await acquireAndMirrorHeroPhotos(client, ['r1'], USER_ID);
+                } finally {
+                    fetchStub.restore();
+                }
+                assertEquals(sentryCalls(fetchStub.seen).length, 0,
+                    `Details ${status} is a designed retry state — never reported`);
+            }
+            // Budget exhausted (allowed=false, no error) → designed, non-reported.
+            const { client } = makeMockSupabase({
+                rows: [{ id: 'r1', external_id: 'ChIJ-real', photo_url: null, photo_source: null, verification: 'verified' }],
+                rateAllowed: false,
+            });
+            const fetchStub = stubFetch(() => new Response('{}', { status: 200 }));
+            try {
+                await acquireAndMirrorHeroPhotos(client, ['r1'], USER_ID);
+            } finally {
+                fetchStub.restore();
+            }
+            assertEquals(sentryCalls(fetchStub.seen).length, 0,
+                'budget denial is the designed state — never reported');
+        } finally {
+            Deno.env.delete('SENTRY_DSN');
+        }
     });
 });
 
