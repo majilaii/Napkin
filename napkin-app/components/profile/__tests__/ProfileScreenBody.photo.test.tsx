@@ -20,7 +20,7 @@ const mockProfileResult = {
                 username: 'clara',
                 display_name: 'Clara Example',
                 bio: null,
-                avatar_url: null,
+                avatar_url: 'https://cdn.example/old.jpg',
                 account_privacy: 'public',
                 allow_public_replies: true,
             },
@@ -126,11 +126,13 @@ const mockChooseAndSave = chooseAndSaveNewProfilePhoto as jest.MockedFunction<
     typeof chooseAndSaveNewProfilePhoto
 >;
 
-function renderBody() {
+function renderBody(inTab = true) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let renderer: any;
     act(() => {
-        renderer = TestRenderer.create(<ProfileScreenBody identifier="user-1" inTab />);
+        renderer = TestRenderer.create(
+            <ProfileScreenBody identifier="user-1" inTab={inTab} />,
+        );
     });
     return renderer;
 }
@@ -139,7 +141,7 @@ function profileHeader(renderer: ReturnType<typeof renderBody>) {
     return renderer.root.findByType('ProfileHeader');
 }
 
-describe('ProfileScreenBody add-photo orchestration', () => {
+describe('ProfileScreenBody avatar-swap orchestration', () => {
     beforeEach(() => {
         mockConnectivityStatus = 'online';
         mockAlert.mockReset();
@@ -147,18 +149,26 @@ describe('ProfileScreenBody add-photo orchestration', () => {
         mockUpdateProfile.mockReset();
     });
 
+    it('does not expose the swap action on the public profile surface, even for self', () => {
+        const renderer = renderBody(false);
+
+        expect(profileHeader(renderer).props.onChangePhoto).toBeUndefined();
+        expect(profileHeader(renderer).props.isChangingPhoto).toBe(false);
+        act(() => renderer.unmount());
+    });
+
     it('explains the offline block without opening the picker', async () => {
         mockConnectivityStatus = 'offline';
         const renderer = renderBody();
 
         await act(async () => {
-            await profileHeader(renderer).props.onAddPhoto();
+            await profileHeader(renderer).props.onChangePhoto();
         });
 
         expect(mockChooseAndSave).not.toHaveBeenCalled();
         expect(mockAlert).toHaveBeenCalledWith(
             'No connection',
-            'Connect to the internet to add a profile photo.',
+            'Connect to the internet to change your profile photo.',
         );
         act(() => renderer.unmount());
     });
@@ -175,12 +185,15 @@ describe('ProfileScreenBody add-photo orchestration', () => {
         let action!: Promise<void>;
 
         act(() => {
-            action = profileHeader(renderer).props.onAddPhoto();
+            action = profileHeader(renderer).props.onChangePhoto();
         });
 
-        expect(profileHeader(renderer).props.isAddingPhoto).toBe(true);
+        expect(profileHeader(renderer).props.isChangingPhoto).toBe(true);
         expect(mockChooseAndSave).toHaveBeenCalledWith(
-            expect.objectContaining({ userId: 'user-1' }),
+            expect.objectContaining({
+                userId: 'user-1',
+                previousAvatarUrl: 'https://cdn.example/old.jpg',
+            }),
         );
 
         await act(async () => {
@@ -188,7 +201,35 @@ describe('ProfileScreenBody add-photo orchestration', () => {
             await action;
         });
 
-        expect(profileHeader(renderer).props.isAddingPhoto).toBe(false);
+        expect(profileHeader(renderer).props.isChangingPhoto).toBe(false);
+        expect(mockAlert).not.toHaveBeenCalled();
+        act(() => renderer.unmount());
+    });
+
+    it('saves a picked replacement through the profile mutation', async () => {
+        mockUpdateProfile.mockResolvedValue(undefined);
+        mockChooseAndSave.mockImplementation(
+            async ({ onSourceChosen, saveAvatarUrl }) => {
+                onSourceChosen();
+                await saveAvatarUrl('https://cdn.example/new.jpg');
+                return true;
+            },
+        );
+        const renderer = renderBody();
+
+        await act(async () => {
+            await profileHeader(renderer).props.onChangePhoto();
+        });
+
+        expect(mockChooseAndSave).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: 'user-1',
+                previousAvatarUrl: 'https://cdn.example/old.jpg',
+            }),
+        );
+        expect(mockUpdateProfile).toHaveBeenCalledWith({
+            avatar_url: 'https://cdn.example/new.jpg',
+        });
         expect(mockAlert).not.toHaveBeenCalled();
         act(() => renderer.unmount());
     });
@@ -201,14 +242,14 @@ describe('ProfileScreenBody add-photo orchestration', () => {
         const renderer = renderBody();
 
         await act(async () => {
-            await profileHeader(renderer).props.onAddPhoto();
+            await profileHeader(renderer).props.onChangePhoto();
         });
 
         expect(mockAlert).toHaveBeenCalledWith(
             "Couldn't save that photo",
             'Please try again.',
         );
-        expect(profileHeader(renderer).props.isAddingPhoto).toBe(false);
+        expect(profileHeader(renderer).props.isChangingPhoto).toBe(false);
         act(() => renderer.unmount());
     });
 });

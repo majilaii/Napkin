@@ -75,7 +75,7 @@ function renderHeader(overrides: Partial<React.ComponentProps<typeof ProfileHead
                 profile={profile(null)}
                 isSelf
                 relationship="self"
-                onAddPhoto={jest.fn()}
+                onChangePhoto={jest.fn()}
                 {...overrides}
             />,
         );
@@ -87,44 +87,55 @@ function cameraButton(renderer: ReturnType<typeof renderHeader>) {
     return renderer.root.findAll(
         // Component + host can both carry props; select the host node.
         (node: any) =>
-            node.type === 'PressableScale' && node.props.testID === 'profile-add-photo',
+            node.type === 'PressableScale' && node.props.testID === 'profile-avatar-swap',
     );
 }
 
-describe('ProfileHeader add-photo affordance', () => {
-    it('shows the labeled camera action for the owner with no photo', () => {
-        const onAddPhoto = jest.fn();
-        const renderer = renderHeader({ onAddPhoto });
-
-        const buttons = cameraButton(renderer);
-        expect(buttons).toHaveLength(1);
-        expect(buttons[0].props.accessibilityLabel).toBe('Add a profile photo');
-        expect(buttons[0].props.accessibilityRole).toBe('button');
-
-        act(() => buttons[0].props.onPress());
-        expect(onAddPhoto).toHaveBeenCalledTimes(1);
-        act(() => renderer.unmount());
-    });
-
-    it('does not show the shortcut for an existing photo or someone else', () => {
+describe('ProfileHeader avatar swap badge', () => {
+    it('shows the labeled camera action for the owner with or without a photo', () => {
+        const onChangePhoto = jest.fn();
+        const withoutPhoto = renderHeader({ onChangePhoto });
         const withPhoto = renderHeader({
             profile: profile('https://cdn.example/avatar.jpg'),
+            onChangePhoto,
         });
-        const otherPerson = renderHeader({ isSelf: false, relationship: 'public_only' });
 
-        expect(cameraButton(withPhoto)).toHaveLength(0);
-        expect(cameraButton(otherPerson)).toHaveLength(0);
+        expect(cameraButton(withoutPhoto)).toHaveLength(1);
+        const buttons = cameraButton(withPhoto);
+        expect(buttons).toHaveLength(1);
+        expect(buttons[0].props.accessibilityLabel).toBe('change profile photo');
+        expect(buttons[0].props.accessibilityRole).toBe('button');
+        expect(buttons[0].props.hitSlop).toBe(8);
+
+        act(() => buttons[0].props.onPress());
+        expect(onChangePhoto).toHaveBeenCalledTimes(1);
+        act(() => withoutPhoto.unmount());
         act(() => withPhoto.unmount());
+    });
+
+    it('does not show the badge on someone else’s profile', () => {
+        const otherPerson = renderHeader({
+            profile: profile('https://cdn.example/avatar.jpg'),
+            isSelf: false,
+            relationship: 'public_only',
+            onChangePhoto: jest.fn(),
+        });
+
+        expect(cameraButton(otherPerson)).toHaveLength(0);
         act(() => otherPerson.unmount());
     });
 
-    it('disables the action and replaces the camera with a spinner while saving', () => {
-        const renderer = renderHeader({ isAddingPhoto: true });
+    it('dims the avatar, disables the badge, and shows a spinner while saving', () => {
+        const renderer = renderHeader({
+            profile: profile('https://cdn.example/avatar.jpg'),
+            isChangingPhoto: true,
+        });
         const button = cameraButton(renderer)[0];
 
         expect(button.props.disabled).toBe(true);
         expect(button.props.accessibilityState).toEqual({ busy: true, disabled: true });
         expect(renderer.root.findAllByType('ActivityIndicator')).toHaveLength(1);
+        expect(renderer.root.findAllByProps({ testID: 'profile-avatar-dimmer' })).toHaveLength(1);
         act(() => renderer.unmount());
     });
 });

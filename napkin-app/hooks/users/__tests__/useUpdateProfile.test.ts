@@ -12,13 +12,16 @@ jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
 
 import { act, waitFor } from '@testing-library/react-native';
 import { renderHookWithClient } from '@/__tests__/utils/queryWrapper';
-import { mockEdgeFnResolves, mockEdgeFnRejects } from '@/__tests__/utils/mockEdgeFn';
+import { mockEdgeFnResolves } from '@/__tests__/utils/mockEdgeFn';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useUpdateProfile } from '../useUpdateProfile';
 import type { UserProfileResult, UserProfileRow } from '../useUserProfile';
 
 const USER_ID = 'user-1';
 const USERNAME = 'clara';
+const OLD_AVATAR_URL = 'https://cdn/old.jpg';
+const NEW_AVATAR_URL = 'https://cdn/new.jpg';
 
 function makeRow(over: Partial<UserProfileRow> = {}): UserProfileRow {
     return {
@@ -57,45 +60,62 @@ const nameKey = queryKeys.users.profile(USERNAME);
 
 describe('useUpdateProfile', () => {
     it('(a) patches BOTH the uuid- and username-keyed caches, then reconciles', async () => {
-        mockEdgeFnResolves(makeRow({ avatar_url: 'https://cdn/new.jpg' }));
+        mockEdgeFnResolves(makeRow({ avatar_url: NEW_AVATAR_URL }));
 
         const { result, client } = renderHookWithClient(() => useUpdateProfile(USER_ID));
         client.setQueryData(idKey, makeProfile());
         client.setQueryData(nameKey, makeProfile());
 
         act(() => {
-            result.current.mutate({ avatar_url: 'https://cdn/new.jpg' });
+            result.current.mutate({ avatar_url: NEW_AVATAR_URL });
         });
 
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
         expect(client.getQueryData<UserProfileResult>(idKey)?.data?.profile.avatar_url).toBe(
-            'https://cdn/new.jpg',
+            NEW_AVATAR_URL,
         );
         expect(client.getQueryData<UserProfileResult>(nameKey)?.data?.profile.avatar_url).toBe(
-            'https://cdn/new.jpg',
+            NEW_AVATAR_URL,
         );
     });
 
-    it('(b) rolls BOTH caches back on server error', async () => {
-        mockEdgeFnRejects({ code: 'SERVER_ERROR', message: 'fail' });
+    it('(b) optimistically swaps, then rolls BOTH caches back to the previous avatar', async () => {
+        let rejectRequest!: (error: Error) => void;
+        (callEdgeFn as jest.Mock).mockImplementationOnce(
+            () =>
+                new Promise((_resolve, reject) => {
+                    rejectRequest = reject;
+                }),
+        );
 
         const { result, client } = renderHookWithClient(() => useUpdateProfile(USER_ID));
-        client.setQueryData(idKey, makeProfile({ avatar_url: null }));
-        client.setQueryData(nameKey, makeProfile({ avatar_url: null }));
+        client.setQueryData(idKey, makeProfile({ avatar_url: OLD_AVATAR_URL }));
+        client.setQueryData(nameKey, makeProfile({ avatar_url: OLD_AVATAR_URL }));
 
         act(() => {
-            result.current.mutate({ avatar_url: 'https://cdn/new.jpg' });
+            result.current.mutate({ avatar_url: NEW_AVATAR_URL });
         });
 
+        await waitFor(() => {
+            expect(callEdgeFn).toHaveBeenCalledTimes(1);
+            expect(
+                client.getQueryData<UserProfileResult>(idKey)?.data?.profile.avatar_url,
+            ).toBe(NEW_AVATAR_URL);
+            expect(
+                client.getQueryData<UserProfileResult>(nameKey)?.data?.profile.avatar_url,
+            ).toBe(NEW_AVATAR_URL);
+        });
+
+        act(() => rejectRequest(new Error('save failed')));
         await waitFor(() => expect(result.current.isError).toBe(true));
 
         expect(
             client.getQueryData<UserProfileResult>(idKey)?.data?.profile.avatar_url,
-        ).toBeNull();
+        ).toBe(OLD_AVATAR_URL);
         expect(
             client.getQueryData<UserProfileResult>(nameKey)?.data?.profile.avatar_url,
-        ).toBeNull();
+        ).toBe(OLD_AVATAR_URL);
     });
 
     it('(c) works when only the uuid-keyed cache exists (no second reality)', async () => {
