@@ -21,6 +21,13 @@ row is never on screen outside the blurred clip. If you re-cut, re-check every
 frame that precedes a transition: the Apps list dismissal at ~13.9s briefly
 re-shows the share sheet contacts.
 
+**Frame 1 is a poster frame.** expo-video sits on a clip's first frame while
+the source loads, so a single bad frame at the cut point is a multi-second
+exposure on device (2026-07-15 leak: teach-2 originally cut at 6.15 caught the
+drawer mid-slide — recipients below the band, names readable). Every clip must
+pass an every-frame scan (`ffmpeg -i clip.mp4 -vf select=1 -vsync vfr f%03d.png`,
+tile into a contact sheet, eyeball ALL frames), not just the freeze frame.
+
 ## Production commands used
 
 Cut list (source timestamps):
@@ -28,10 +35,30 @@ Cut list (source timestamps):
 | clip | in | duration | ends frozen on |
 | --- | --- | --- | --- |
 | `teach-1-share.mp4` | 2.00 | 3.85s | video, share arrow crisp |
-| `teach-2-tiktok-more.mp4` | 6.15 | 1.55s | drawer settled, More at row end |
+| `teach-2-tiktok-more.mp4` | 6.35 | 1.35s | drawer settled, More at row end |
 | `teach-3-ios-more.mp4` | 8.65 | 2.65s | sheet settled, app-row More visible |
 | `teach-4-apps-napkin.mp4` | 11.75 | 1.95s | Apps list, Napkin top of Suggestions |
 | `teach-5-add-review.mp4` | 14.65 | 1.65s | extension card, add for review |
+
+`teach-2` starts at 6.35 (NOT the 6.15 drawer slide-in): the drawer is fully
+settled by ~6.25, which keeps the recipients row inside the fixed blur band in
+every frame including frame 1.
+
+`teach-5` is a composite, not a raw cut: the extension presents over a nearly
+pure-black scrim (unrecoverable — gamma lifts give flat gray), so the dark
+pixels are replaced with a blurred, slightly lifted `teach-4` still via a soft
+luma key. Card/button pixels come straight from the recording:
+
+```bash
+ffmpeg -i clip5-raw.mp4 -loop 1 -t 1.66 -i bg5.png -filter_complex \
+  "[0:v]format=yuv420p,split[c1][c2];\
+   [c2]format=gray,lut=y='clip((val-35)*8,0,255)',gblur=sigma=3[mask];\
+   [1:v]format=yuv420p[bg];[bg][c1][mask]maskedmerge[out]" \
+  -map "[out]" -frames:v 99 -c:v libx264 -preset slow -crf 26 -pix_fmt yuv420p \
+  -movflags +faststart -an teach-5-add-review.mp4
+# bg5.png = teach-4-apps-napkin-still.png + gblur sigma=30 + eq brightness=0.10:saturation=1.05
+# clip5-raw = master cut at 14.65 for 1.65s with the standard crop/scale (no blur band needed)
+```
 
 Every clip: crop the 110px status bar, halve resolution, H.264:
 
