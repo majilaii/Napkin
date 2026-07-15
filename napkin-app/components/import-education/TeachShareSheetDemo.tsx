@@ -12,7 +12,7 @@
  * Footage assets are placeholders until the real recording lands - see
  * assets/onboarding/teach/FOOTAGE.md for the file-for-file swap.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Image,
@@ -64,6 +64,7 @@ export interface TeachShareSheetDemoProps {
 }
 
 const RESULT_THUMB = require('../../assets/onboarding/tiktok-crudo.png');
+const FIRST_FRAME_FALLBACK_MS = 250;
 
 const SAVED_PLACES = [
     { name: 'Lita', detail: 'Marylebone · Mediterranean', score: '4.8' },
@@ -88,12 +89,31 @@ export function TeachShareSheetDemo({
     const [beat, setBeat] = useState(0);
     const [phase, setPhase] = useState<BeatPhase>('playing');
     const [videoFailed, setVideoFailed] = useState(false);
+    const [loadedStillBeat, setLoadedStillBeat] = useState<number | null>(null);
+    const [liveVideoBeat, setLiveVideoBeat] = useState<number | null>(null);
     const [stage, setStage] = useState<StageSize | null>(null);
     const lastHapticBeat = useRef(beat);
+    const activeBeat = useRef(beat);
+    const activePlaybackBeat = useRef<number | null>(null);
+    const pendingFirstFrameBeat = useRef<number | null>(null);
+    const firstFrameFallback = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const footage = footageForBeat(beat);
     // Reduced motion never autoplays; a playback error falls back the same way.
     const stillOnly = reduced || videoFailed;
+    const stillLoaded = loadedStillBeat === beat;
+    const decisionReady = phase === 'ready' && stillLoaded;
+
+    const revealPendingVideo = useCallback(() => {
+        const pendingBeat = pendingFirstFrameBeat.current;
+        if (pendingBeat === null || pendingBeat !== activeBeat.current) return;
+        pendingFirstFrameBeat.current = null;
+        if (firstFrameFallback.current) {
+            clearTimeout(firstFrameFallback.current);
+            firstFrameFallback.current = null;
+        }
+        setLiveVideoBeat(pendingBeat);
+    }, []);
 
     const player = useVideoPlayer(TEACH_FOOTAGE[0].video, (instance) => {
         instance.muted = true;
@@ -104,7 +124,11 @@ export function TeachShareSheetDemo({
         // A genuine end leaves the playhead at the end of the CURRENT clip. A
         // stale event from a just-replaced (or watchdog-recovered) source finds
         // the new clip near zero and must not mark the new beat ready.
-        if (player.duration > 0 && player.currentTime >= player.duration - 0.3) {
+        if (
+            activePlaybackBeat.current === activeBeat.current &&
+            player.duration > 0 &&
+            player.currentTime >= player.duration - 0.3
+        ) {
             setPhase('ready');
         }
     });
@@ -113,6 +137,12 @@ export function TeachShareSheetDemo({
     });
 
     useEffect(() => {
+        pendingFirstFrameBeat.current = null;
+        activePlaybackBeat.current = null;
+        if (firstFrameFallback.current) {
+            clearTimeout(firstFrameFallback.current);
+            firstFrameFallback.current = null;
+        }
         if (!footage) {
             // Intro and result beats render no video; a watchdog-recovered clip
             // must not keep playing invisibly behind them.
@@ -124,6 +154,11 @@ export function TeachShareSheetDemo({
             return;
         }
         if (stillOnly) {
+            try {
+                player.pause();
+            } catch {
+                // player already released during teardown
+            }
             setPhase('ready');
             return;
         }
@@ -132,11 +167,26 @@ export function TeachShareSheetDemo({
         (async () => {
             try {
                 await player.replaceAsync(footage.video);
-                if (cancelled) return;
+                if (cancelled || activeBeat.current !== beat) return;
                 player.currentTime = 0;
-                player.play();
+                activePlaybackBeat.current = beat;
+                pendingFirstFrameBeat.current = beat;
+                await Promise.resolve(player.play());
+                if (
+                    cancelled ||
+                    activeBeat.current !== beat ||
+                    pendingFirstFrameBeat.current !== beat
+                ) {
+                    return;
+                }
+                // onFirstFrameRender is the authoritative cover-release signal.
+                // Keep a short fallback for native callback misses.
+                firstFrameFallback.current = setTimeout(
+                    revealPendingVideo,
+                    FIRST_FRAME_FALLBACK_MS,
+                );
             } catch {
-                if (!cancelled) setVideoFailed(true);
+                if (!cancelled && activeBeat.current === beat) setVideoFailed(true);
             }
         })();
         // If a clip stalls (bad swap, decoder hiccup), unlock the target anyway.
@@ -146,13 +196,23 @@ export function TeachShareSheetDemo({
         return () => {
             cancelled = true;
             clearTimeout(watchdog);
+            if (pendingFirstFrameBeat.current === beat) {
+                pendingFirstFrameBeat.current = null;
+            }
+            if (activePlaybackBeat.current === beat) {
+                activePlaybackBeat.current = null;
+            }
+            if (firstFrameFallback.current) {
+                clearTimeout(firstFrameFallback.current);
+                firstFrameFallback.current = null;
+            }
             try {
                 player.pause();
             } catch {
                 // player already released during teardown
             }
         };
-    }, [beat, footage, player, stillOnly]);
+    }, [beat, footage, player, revealPendingVideo, stillOnly]);
 
     useEffect(() => {
         if (lastHapticBeat.current === beat) return;
@@ -161,15 +221,15 @@ export function TeachShareSheetDemo({
     }, [beat]);
 
     useEffect(() => {
-        if (phase !== 'ready' || !footage) return;
+        if (!decisionReady || !footage) return;
         Haptics.selectionAsync().catch(() => undefined);
-    }, [phase, footage]);
+    }, [decisionReady, footage]);
 
     const ringPulse = useSharedValue(0);
     useEffect(() => {
         cancelAnimation(ringPulse);
         ringPulse.value = 0;
-        if (reduced || phase !== 'ready' || !footage) return;
+        if (reduced || !decisionReady || !footage) return;
         ringPulse.value = withRepeat(
             withSequence(
                 withTiming(1, { duration: 850, easing: Easing.inOut(Easing.quad) }),
@@ -179,7 +239,7 @@ export function TeachShareSheetDemo({
             false,
         );
         return () => cancelAnimation(ringPulse);
-    }, [footage, phase, reduced, ringPulse]);
+    }, [decisionReady, footage, reduced, ringPulse]);
 
     const ringPulseStyle = useAnimatedStyle(() => ({
         opacity: 0.75 + ringPulse.value * 0.25,
@@ -193,14 +253,24 @@ export function TeachShareSheetDemo({
         // for a frame before the clip starts.
         const next = advanceOnTarget(beat, target);
         if (next === beat) return;
+        activeBeat.current = next;
+        activePlaybackBeat.current = null;
+        pendingFirstFrameBeat.current = null;
+        if (firstFrameFallback.current) {
+            clearTimeout(firstFrameFallback.current);
+            firstFrameFallback.current = null;
+        }
         setPhase(stillOnly ? 'ready' : 'playing');
+        setLoadedStillBeat(null);
+        setLiveVideoBeat(null);
         setBeat(next);
     };
 
     const overlayGeometry =
-        footage && phase === 'ready' && stage
+        footage && decisionReady && stage
             ? computeOverlayGeometry(footage, stage, topInset)
             : null;
+    const holdPreviousFrame = footage && !decisionReady && liveVideoBeat !== beat;
 
     return (
         <View style={styles.root} accessibilityViewIsModal>
@@ -218,17 +288,31 @@ export function TeachShareSheetDemo({
                             style={StyleSheet.absoluteFill}
                             contentFit="cover"
                             nativeControls={false}
+                            onFirstFrameRender={revealPendingVideo}
                         />
                     ) : null}
-                    {footage && (phase === 'ready' || stillOnly) ? (
-                        // The exported last frame goes on top of the paused video so
-                        // freeze, magnifier crop, and reduced motion share one image.
+                    {footage ? (
+                        // Decode from beat start, but reveal only once both playback
+                        // has frozen and this exact beat's still has loaded.
                         <Image
+                            key={beat}
                             source={footage.still}
                             resizeMode="cover"
-                            style={StyleSheet.absoluteFill}
+                            onLoad={() => {
+                                if (activeBeat.current === beat) setLoadedStillBeat(beat);
+                            }}
+                            onError={() => {
+                                // A still that fails to decode must not gate the walkthrough
+                                // shut - degrade to overlaying the paused final frame.
+                                if (activeBeat.current === beat) setLoadedStillBeat(beat);
+                            }}
+                            style={[
+                                StyleSheet.absoluteFill,
+                                { opacity: decisionReady ? 1 : 0 },
+                            ]}
                         />
                     ) : null}
+                    {holdPreviousFrame ? <PlaybackCover beat={beat} /> : null}
                 </View>
             ) : null}
 
@@ -471,6 +555,34 @@ function TypewriterText({ text, instant }: { text: string; instant: boolean }) {
     );
 }
 
+function PlaybackCover({ beat }: { beat: number }) {
+    const previousFootage = footageForBeat(beat - 1);
+    if (previousFootage) {
+        return (
+            <Image
+                source={previousFootage.still}
+                resizeMode="cover"
+                style={StyleSheet.absoluteFill}
+            />
+        );
+    }
+    return <IntroBackdrop />;
+}
+
+function IntroBackdrop() {
+    return (
+        <>
+            <Image
+                source={TEACH_FOOTAGE[0].still}
+                resizeMode="cover"
+                blurRadius={22}
+                style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.introScrim} />
+        </>
+    );
+}
+
 function IntroOverlay({
     topInset,
     bottomInset,
@@ -482,13 +594,7 @@ function IntroOverlay({
 }) {
     return (
         <View style={styles.introOverlay}>
-            <Image
-                source={TEACH_FOOTAGE[0].still}
-                resizeMode="cover"
-                blurRadius={22}
-                style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.introScrim} />
+            <IntroBackdrop />
             <View
                 style={[
                     styles.introContent,
