@@ -63,7 +63,7 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         still: require('../../assets/onboarding/teach/teach-2-tiktok-more-still.png'),
         videoWidth: 646,
         videoHeight: 1344,
-        durationMs: 1550,
+        durationMs: 1350,
         caption: TEACH_COPY.tiktokMoreCaption,
         hint: TEACH_COPY.tiktokMoreHint,
         a11yLabel: 'More sharing options',
