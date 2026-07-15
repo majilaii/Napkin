@@ -17,13 +17,12 @@ export { SharedSaveCard, type SharedSaveCardProps, type SharedSaveCardRestaurant
 export { ShareDigestCard, type ShareDigestCardProps } from './ShareDigestCard';
 export { RestaurantFloatCard, type RestaurantFloatCardProps, type FloatMember } from './RestaurantFloatCard';
 
-// Feed tab (TICKET-098: friends-only reviews + trending rail)
+// Feed tab (TICKET-098: friends-only reviews)
 export { FriendFeedCard } from './FriendFeedCard';
-export { TrendingRail } from './TrendingRail';
 export { InlineStars } from './InlineStars';
 
-// Feed re-dress — discovery ledger + sparse tail (TICKET-103)
-export { DiscoveryLedger } from './DiscoveryLedger';
+// Feed re-dress — sparse tail (TICKET-103; DiscoveryLedger + TrendingRail
+// reaped in TICKET-189 §7)
 export { FeedSparseTail } from './FeedSparseTail';
 
 // Feed modes — For You / Following (TICKET-125)

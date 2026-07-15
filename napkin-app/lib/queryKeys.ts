@@ -137,8 +137,8 @@ export const queryKeys = {
          * cache sync in usePostInteractions [ARCH-REVIEW-2]. */
         friendsAll: () => ['feed', 'friends'] as const,
         friends: (userId: string) => ['feed', 'friends', userId] as const,
-        /** Trending rail — global (not per-viewer), 1h server cache. */
-        trending: () => ['feed', 'trending'] as const,
+        // (feed.trending removed in TICKET-189 §7 with the TrendingRail render —
+        //  the feed-trending BACKEND + {rows,fallback} wire shape stay intact.)
         /** TICKET-101: co-diner follow candidates for the zero-follow empty state. */
         coDiners: (userId: string) => ['feed', 'coDiners', userId] as const,
         /** TICKET-189: "on socials" module — VIEWER-KEYED (stage-2 privacy pass
