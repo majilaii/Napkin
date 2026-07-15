@@ -25,7 +25,8 @@ const mockRemoveUploadedAvatar = removeUploadedAvatar as jest.MockedFunction<
 
 describe('chooseAndSaveNewProfilePhoto', () => {
     beforeEach(() => {
-        jest.clearAllMocks();
+        jest.resetAllMocks();
+        mockRemoveUploadedAvatar.mockResolvedValue(undefined);
     });
 
     it('treats picker cancellation as a no-op', async () => {
@@ -35,6 +36,7 @@ describe('chooseAndSaveNewProfilePhoto', () => {
         await expect(
             chooseAndSaveNewProfilePhoto({
                 userId: 'user-1',
+                previousAvatarUrl: null,
                 onSourceChosen: jest.fn(),
                 saveAvatarUrl,
             }),
@@ -44,14 +46,16 @@ describe('chooseAndSaveNewProfilePhoto', () => {
         expect(saveAvatarUrl).not.toHaveBeenCalled();
     });
 
-    it('uploads and saves the selected avatar', async () => {
+    it('uploads and saves a replacement, then cleans up the previous avatar', async () => {
         mockChooseAvatarAsset.mockResolvedValue({ uri: 'file:///photo.jpg' } as never);
         mockCompressAndUploadAvatar.mockResolvedValue('https://cdn.example/avatar.jpg');
+        mockRemoveUploadedAvatar.mockRejectedValue(new Error('cleanup failed'));
         const saveAvatarUrl = jest.fn().mockResolvedValue(undefined);
 
         await expect(
             chooseAndSaveNewProfilePhoto({
                 userId: 'user-1',
+                previousAvatarUrl: 'https://cdn.example/previous.jpg',
                 onSourceChosen: jest.fn(),
                 saveAvatarUrl,
             }),
@@ -62,7 +66,12 @@ describe('chooseAndSaveNewProfilePhoto', () => {
             'user-1',
         );
         expect(saveAvatarUrl).toHaveBeenCalledWith('https://cdn.example/avatar.jpg');
-        expect(mockRemoveUploadedAvatar).not.toHaveBeenCalled();
+        expect(mockRemoveUploadedAvatar).toHaveBeenCalledWith(
+            'https://cdn.example/previous.jpg',
+        );
+        expect(saveAvatarUrl.mock.invocationCallOrder[0]).toBeLessThan(
+            mockRemoveUploadedAvatar.mock.invocationCallOrder[0],
+        );
     });
 
     it('removes a fresh upload when the profile save fails', async () => {
@@ -74,6 +83,7 @@ describe('chooseAndSaveNewProfilePhoto', () => {
         await expect(
             chooseAndSaveNewProfilePhoto({
                 userId: 'user-1',
+                previousAvatarUrl: 'https://cdn.example/previous.jpg',
                 onSourceChosen: jest.fn(),
                 saveAvatarUrl: jest.fn().mockRejectedValue(saveError),
             }),
@@ -81,6 +91,9 @@ describe('chooseAndSaveNewProfilePhoto', () => {
 
         expect(mockRemoveUploadedAvatar).toHaveBeenCalledWith(
             'https://cdn.example/orphan.jpg',
+        );
+        expect(mockRemoveUploadedAvatar).not.toHaveBeenCalledWith(
+            'https://cdn.example/previous.jpg',
         );
     });
 
@@ -98,6 +111,7 @@ describe('chooseAndSaveNewProfilePhoto', () => {
         let settled = false;
         const result = chooseAndSaveNewProfilePhoto({
             userId: 'user-1',
+            previousAvatarUrl: 'https://cdn.example/previous.jpg',
             onSourceChosen: jest.fn(),
             saveAvatarUrl: jest.fn().mockRejectedValue(saveError),
         }).then(
@@ -114,6 +128,9 @@ describe('chooseAndSaveNewProfilePhoto', () => {
         for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
         expect(mockRemoveUploadedAvatar).toHaveBeenCalledWith(
             'https://cdn.example/orphan.jpg',
+        );
+        expect(mockRemoveUploadedAvatar).not.toHaveBeenCalledWith(
+            'https://cdn.example/previous.jpg',
         );
         expect(settled).toBe(false);
 

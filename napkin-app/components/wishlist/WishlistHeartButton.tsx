@@ -20,7 +20,7 @@
  *   - userId:       required to enable the mutations and drive useIsWishlisted
  */
 import React from 'react';
-import { Pressable, Alert } from 'react-native';
+import { Pressable, Alert, ActivityIndicator } from 'react-native';
 import Animated, {
     useSharedValue,
     useAnimatedStyle,
@@ -65,7 +65,7 @@ export function WishlistHeartButton({
     const removeMutation = useWishlistRemove(userId);
 
     const handlePress = () => {
-        if (!userId) return;
+        if (!userId || saved === undefined) return;
 
         // Scale bounce
         scale.value = withSpring(1.3, { damping: 10, stiffness: 300 }, () => {
@@ -99,15 +99,27 @@ export function WishlistHeartButton({
     return (
         <Pressable
             onPress={handlePress}
+            disabled={!userId || saved === undefined || addMutation.isPending || removeMutation.isPending}
             hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={saved === undefined ? 'Checking wishlist' : saved ? 'Remove from wishlist' : 'Add to wishlist'}
+            accessibilityState={{
+                disabled: !userId || saved === undefined,
+                selected: saved === true,
+                busy: addMutation.isPending || removeMutation.isPending,
+            }}
             style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
         >
             <Animated.View style={animatedStyle}>
-                <Ionicons
-                    name={saved ? 'heart' : 'heart-outline'}
-                    size={size}
-                    color={saved ? palette.primary : palette.icon}
-                />
+                {saved === undefined || addMutation.isPending || removeMutation.isPending ? (
+                    <ActivityIndicator size="small" color={palette.icon} />
+                ) : (
+                    <Ionicons
+                        name={saved ? 'heart' : 'heart-outline'}
+                        size={size}
+                        color={saved ? palette.primary : palette.icon}
+                    />
+                )}
             </Animated.View>
         </Pressable>
     );

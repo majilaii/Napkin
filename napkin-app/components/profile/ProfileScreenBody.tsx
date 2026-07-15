@@ -62,7 +62,7 @@ import {
 
 interface Props {
     identifier: string | null | undefined;
-    /** True when mounted inside the (tabs) tab — adds extra bottom padding */
+    /** True inside the owner tab — enables the avatar shortcut and extra bottom padding. */
     inTab?: boolean;
 }
 
@@ -82,6 +82,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
 
     const relationship = profileData?.viewer_target_relationship ?? 'none';
     const isSelf = profileData?.is_self ?? false;
+    const canChangeProfilePhoto = isSelf && inTab;
     const hasPalateAccess =
         relationship === 'self' ||
         relationship === 'public_only' ||
@@ -99,37 +100,38 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
     const importSlot = useImportSlot(isSelf ? profileUserId : null);
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
     const [editQuickTakesOpen, setEditQuickTakesOpen] = useState(false);
-    const [isAddingProfilePhoto, setIsAddingProfilePhoto] = useState(false);
-    const profilePhotoWorking = isAddingProfilePhoto || updateProfile.isPending;
+    const [isChangingProfilePhoto, setIsChangingProfilePhoto] = useState(false);
+    const profilePhotoWorking = isChangingProfilePhoto || updateProfile.isPending;
 
-    const handleAddProfilePhoto = async () => {
+    const handleChangeProfilePhoto = async () => {
+        if (
+            !canChangeProfilePhoto ||
+            profilePhotoWorking ||
+            !profileUserId ||
+            !profileData
+        ) {
+            return;
+        }
         if (shouldBlockProfilePhotoPicker(connectivityStatus)) {
             Alert.alert(
                 'No connection',
-                'Connect to the internet to add a profile photo.',
+                'Connect to the internet to change your profile photo.',
             );
-            return;
-        }
-        if (
-            profilePhotoWorking ||
-            !profileUserId ||
-            !profileData?.is_self ||
-            profileData.profile.avatar_url
-        ) {
             return;
         }
 
         try {
             await chooseAndSaveNewProfilePhoto({
                 userId: profileUserId,
-                onSourceChosen: () => setIsAddingProfilePhoto(true),
+                previousAvatarUrl: profileData.profile.avatar_url,
+                onSourceChosen: () => setIsChangingProfilePhoto(true),
                 saveAvatarUrl: (avatarUrl) =>
                     updateProfile.mutateAsync({ avatar_url: avatarUrl }),
             });
         } catch {
             Alert.alert("Couldn't save that photo", 'Please try again.');
         } finally {
-            setIsAddingProfilePhoto(false);
+            setIsChangingProfilePhoto(false);
         }
     };
 
@@ -324,8 +326,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 calibration={profileData.calibration}
                 viewerRatedEntryCount={profileData.viewer_rated_entry_count}
                 onSafetyMenu={!isSelf ? handleSafetyMenu : undefined}
-                onAddPhoto={isSelf ? handleAddProfilePhoto : undefined}
-                isAddingPhoto={profilePhotoWorking}
+                onChangePhoto={canChangeProfilePhoto ? handleChangeProfilePhoto : undefined}
+                isChangingPhoto={canChangeProfilePhoto && profilePhotoWorking}
                 importSlot={isSelf ? importSlot : null}
             />
 

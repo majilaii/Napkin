@@ -54,10 +54,8 @@ import {
     type WishlistMapListOption,
 } from '@/components/wishlist';
 import { UnmappedSpotsSheet } from '@/components/wishlist/UnmappedSpotsSheet';
-import { AddToListSheet } from '@/components/lists';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useMyWishlist, type PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
-import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useHasImported } from '@/hooks/wishlist/useHasImported';
 import { useImportSlot } from '@/hooks/imports/useImportSlot';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
@@ -92,7 +90,6 @@ import { fetchTableMembers } from '@/hooks/tables/useTableMembers';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
-import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import { OwnerActionsSheet } from '@/components/common';
 import { useToast } from '@/providers/ToastProvider';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
@@ -371,39 +368,6 @@ export default function WishlistScreen() {
         ),
         [allItems],
     );
-
-    // Save-from-the-map (network layer peek cards). Loaded pages are enough:
-    // a stale miss just shows "Save" and the sheet's add is idempotent server-side.
-    const wishlistAdd = useWishlistAdd(user?.id);
-    const savedRestaurantIds = useMemo(
-        () => new Set(allItems.map((i) => i.restaurant?.id).filter((id): id is string => !!id)),
-        [allItems],
-    );
-    // TICKET-137: the peek Save pill now opens the SAME save sheet the restaurant
-    // page uses (AddToListSheet — wishlist / list / unsave), rather than a one-tap
-    // add. handleMapSave just targets the sheet; the sheet owns the mutations.
-    const [saveSheetItem, setSaveSheetItem] = useState<WishlistMapItem | null>(null);
-    const handleMapSave = useCallback((item: WishlistMapItem) => setSaveSheetItem(item), []);
-    // Mirror the restaurant page's bookmark wiring for the sheet's Wishlist row:
-    // a server-checked saved flag + an idempotent add / remove toggle. Network pin
-    // ids are persisted restaurant UUIDs (networkPinsToMapItems → restaurant_id).
-    const saveSheetSaved = useIsWishlisted(saveSheetItem?.id, user?.id);
-    const handleToggleSaveSheetWishlist = useCallback(() => {
-        const item = saveSheetItem;
-        if (!item) return;
-        if (saveSheetSaved) {
-            wishlistRemove.mutate(item.id, {
-                onError: () => toast.show('Could not remove that — try again'),
-            });
-        } else {
-            wishlistAdd.mutate(
-                { restaurant_id: item.id },
-                // Parity with the remove branch + the restaurant page (review
-                // P2-4): a failed save must not die silently.
-                { onError: () => toast.show('Could not save that — try again') },
-            );
-        }
-    }, [saveSheetItem, saveSheetSaved, wishlistAdd, wishlistRemove, toast]);
 
     // ── Wishlist Redesign: Pinned ↔ Lists segmented tab ──────────────────────
     const [activeTab, setActiveTab] = useState<'pinned' | 'lists'>('pinned');
@@ -969,8 +933,6 @@ export default function WishlistScreen() {
                     }
                     : undefined
             }
-            // Save-from-the-map (#167): Discover peek cards render a Save pill.
-            save={{ savedIds: savedRestaurantIds, onSave: handleMapSave }}
             // TICKET-138: overlap peek cards render "gather here" (only overlap
             // items call this; reachable on Discover with the people filter off).
             onGather={(item) => setGatherItem(item)}
@@ -1331,19 +1293,6 @@ export default function WishlistScreen() {
                 // TICKET-139: "your table" rows — one tap drafts only that table's
                 // members (overlap pins then hide per 138; their visits show).
                 tableRows={tableRows}
-            />
-
-            {/* TICKET-137: peek Save pill → the shared save sheet (wishlist / list /
-                unsave), same component + data flow as the restaurant page bookmark. */}
-            <AddToListSheet
-                visible={saveSheetItem !== null}
-                onClose={() => setSaveSheetItem(null)}
-                userId={user?.id}
-                restaurantId={saveSheetItem?.id}
-                restaurantName={saveSheetItem?.name}
-                showWishlist
-                isWishlisted={saveSheetSaved}
-                onToggleWishlist={handleToggleSaveSheetWishlist}
             />
 
             {/* TICKET-138: "gather here" from an overlap peek → propose a date to

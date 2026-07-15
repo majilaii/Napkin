@@ -11,7 +11,6 @@ import Animated, {
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { tintFor } from '@/lib/engraving';
 import {
     quickTakePromptLabel,
     type ProfileQuickTake,
@@ -41,6 +40,8 @@ function RestaurantArt({
     useEffect(() => setFailed(false), [take.photo_url]);
     const showPhoto = !!take.photo_url && !failed;
 
+    if (!showPhoto) return null;
+
     return (
         <PressableScale
             onPress={onPress}
@@ -48,40 +49,32 @@ function RestaurantArt({
             style={[
                 styles.art,
                 {
-                    backgroundColor: tintFor(take.restaurant_id, palette),
                     borderColor: palette.imageOutline,
                 },
             ]}
             accessibilityRole="link"
             accessibilityLabel={`Open ${take.name} restaurant page`}
             accessibilityHint="Shows the restaurant’s details"
+            testID="quick-take-restaurant-art-link"
         >
-            {showPhoto ? (
-                <>
-                    <Image
-                        source={{ uri: take.photo_url! }}
-                        style={StyleSheet.absoluteFill}
-                        contentFit="cover"
-                        transition={160}
-                        onError={() => setFailed(true)}
-                        accessible={false}
-                    />
-                    <View
-                        style={[
-                            StyleSheet.absoluteFill,
-                            {
-                                backgroundColor: palette.placesOverlayTint,
-                                opacity: palette.placesOverlayOpacity,
-                            },
-                        ]}
-                        pointerEvents="none"
-                    />
-                </>
-            ) : (
-                <Text style={[styles.monogram, { color: palette.primary }]} accessible={false}>
-                    {(take.name.trim()[0] ?? '·').toUpperCase()}
-                </Text>
-            )}
+            <Image
+                source={{ uri: take.photo_url! }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                transition={160}
+                onError={() => setFailed(true)}
+                accessible={false}
+            />
+            <View
+                style={[
+                    StyleSheet.absoluteFill,
+                    {
+                        backgroundColor: palette.placesOverlayTint,
+                        opacity: palette.placesOverlayOpacity,
+                    },
+                ]}
+                pointerEvents="none"
+            />
         </PressableScale>
     );
 }
@@ -139,7 +132,6 @@ function QuickTakeRow({
                         >
                             {prompt}
                         </Text>
-                        <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
                         <PressableScale
                             onPress={onToggle}
                             scaleTo={0.96}
@@ -156,19 +148,41 @@ function QuickTakeRow({
                         </PressableScale>
                     </View>
                     <View style={styles.detailBody} testID="quick-take-detail-body">
-                        <Text style={[styles.detailName, { color: palette.text }]} numberOfLines={3}>
-                            {take.name}
-                        </Text>
-                        {meta ? (
-                            <Text
-                                style={[Type.metadata, styles.detailMeta, { color: palette.textMuted }]}
-                                numberOfLines={2}
+                        <View style={styles.mediaRow} testID="quick-take-detail-media-row">
+                            <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
+                            <Pressable
+                                onPress={onOpenRestaurant}
+                                style={({ pressed }) => [
+                                    styles.detailStack,
+                                    pressed ? styles.copyPressed : null,
+                                ]}
+                                accessibilityRole="link"
+                                accessibilityLabel={`Open ${take.name} restaurant page`}
+                                accessibilityHint="Shows the restaurant’s details"
+                                testID="quick-take-restaurant-copy-link"
                             >
-                                {meta}
-                            </Text>
-                        ) : null}
+                                <Text style={[styles.detailName, { color: palette.text }]} numberOfLines={3}>
+                                    {take.name}
+                                </Text>
+                                {meta ? (
+                                    <Text
+                                        style={[
+                                            Type.metadata,
+                                            styles.detailMeta,
+                                            { color: palette.textSecondary },
+                                        ]}
+                                        numberOfLines={2}
+                                    >
+                                        {meta}
+                                    </Text>
+                                ) : null}
+                            </Pressable>
+                        </View>
                         {take.note ? (
-                            <Text style={[styles.note, { color: palette.textSecondary }]}>
+                            <Text
+                                style={[styles.note, { color: palette.textSecondary }]}
+                                testID="quick-take-detail-note"
+                            >
                                 {`— ${take.note}`}
                             </Text>
                         ) : null}
@@ -290,6 +304,17 @@ const styles = StyleSheet.create({
     },
     detailPrompt: { flex: 1, minWidth: 0 },
     detailBody: { minWidth: 0 },
+    mediaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md - Spacing.xs / 2,
+    },
+    detailStack: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 44,
+        justifyContent: 'center',
+    },
     copyPressed: { opacity: 0.78 },
     collapseButton: {
         width: 44,
@@ -302,24 +327,21 @@ const styles = StyleSheet.create({
     },
     detailMeta: {
         marginTop: 3,
+        fontFamily: Type.sectionTitle.fontFamily,
+        fontWeight: Type.sectionTitle.fontWeight,
     },
     note: {
         ...Type.quote,
-        marginTop: 8,
+        marginTop: Spacing.sm + Spacing.xs,
     },
     art: {
-        width: 44,
-        height: 44,
-        borderRadius: 10,
+        width: 76,
+        height: 76,
+        borderRadius: Radius.md,
         borderWidth: 1,
         overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    monogram: {
-        fontFamily: 'Newsreader_600SemiBold',
-        fontSize: 18,
-        lineHeight: 22,
     },
     empty: {
         minHeight: 52,

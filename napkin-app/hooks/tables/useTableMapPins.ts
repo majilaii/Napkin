@@ -11,6 +11,8 @@ import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 
 export interface TableMapPin {
+    /** Client-attached enclosing table context; the wire rows are table-scoped. */
+    table_id: string;
     restaurant_id: string;
     name: string;
     city: string | null;
@@ -27,11 +29,11 @@ export function useTableMapPins(tableId: string | null | undefined, opts?: { ena
     return useQuery<TableMapPin[], Error>({
         queryKey: queryKeys.atlas.mapPins(tableId ?? ''),
         queryFn: async () => {
-            const data = await callEdgeFn<{ rows?: TableMapPin[] }>('table-atlas', {
+            const data = await callEdgeFn<{ rows?: Omit<TableMapPin, 'table_id'>[] }>('table-atlas', {
                 action: 'map_pins',
                 body: { table_id: tableId },
             });
-            return data?.rows ?? [];
+            return (data?.rows ?? []).map((row) => ({ ...row, table_id: tableId! }));
         },
         enabled: !!tableId && (opts?.enabled ?? true), // lazy-armed on first "Been together" select
         staleTime: 1000 * 60 * 5,

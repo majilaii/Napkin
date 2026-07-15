@@ -8,6 +8,7 @@
 import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { buildPrivateProfileStub } from './gates.ts';
+import { projectListSummary } from './listSummary.ts';
 import { computeRatingHistogram, computeDimensionAvgs } from './stats.ts';
 
 Deno.test('user-profile edge function', async (t) => {
@@ -38,6 +39,79 @@ Deno.test('user-profile edge function', async (t) => {
     await t.step('profile action returns empty arrays for tables_in_common relationship - TODO (skipped)', () => {
         // When relationship === 'tables_in_common', top_four and regulars_preview
         // should both be empty arrays (no palate access).
+    });
+
+    const publicList = {
+        id: '11111111-1111-1111-1111-111111111111',
+        title: 'Friday tables',
+        ranked: true,
+        privacy: 'public' as const,
+        updated_at: '2026-07-15T12:00:00.000Z',
+    };
+
+    await t.step('profile payload snapshot: public list gains additive Places cover fields', () => {
+        const payload = {
+            data: {
+                public_lists: [projectListSummary(
+                    publicList,
+                    3,
+                    {
+                        photo_url: 'https://places.test/photo.jpg',
+                        photo_source: 'places',
+                        places_photo_attribution_html:
+                            '<a href="https://maps.test/contributor">A. Photo</a>',
+                    },
+                )],
+            },
+        };
+
+        assertEquals(payload, {
+            data: {
+                public_lists: [{
+                    id: '11111111-1111-1111-1111-111111111111',
+                    title: 'Friday tables',
+                    entry_count: 3,
+                    ranked: true,
+                    privacy: 'public',
+                    updated_at: '2026-07-15T12:00:00.000Z',
+                    cover_photo_url: 'https://places.test/photo.jpg',
+                    cover_photo_source: 'places',
+                    cover_attribution_html:
+                        '<a href="https://maps.test/contributor">A. Photo</a>',
+                }],
+            },
+        });
+    });
+
+    await t.step('profile list summary: non-Places cover keeps existing URL with no attribution', () => {
+        assertEquals(
+            projectListSummary(
+                publicList,
+                3,
+                {
+                    photo_url: 'https://napkin.test/member-photo.jpg',
+                    photo_source: 'user',
+                    places_photo_attribution_html: null,
+                },
+            ),
+            {
+                ...publicList,
+                entry_count: 3,
+                cover_photo_url: 'https://napkin.test/member-photo.jpg',
+                cover_photo_source: 'user',
+                cover_attribution_html: null,
+            },
+        );
+    });
+
+    await t.step('profile list summary: cover payload null-normalizes every additive field', () => {
+        assertEquals(projectListSummary(publicList, 0, null), {
+            ...publicList,
+            entry_count: 0,
+            cover_photo_url: null,
+            cover_photo_source: null,
+            cover_attribution_html: null,
+        });
     });
 
     // TICKET-155 (ARCH-REVIEW W2): the reachable private-account stub payload

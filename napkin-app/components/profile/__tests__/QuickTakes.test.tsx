@@ -2,6 +2,7 @@ import React from 'react';
 // @ts-expect-error react-test-renderer ships no types in this project.
 import TestRenderer, { act } from 'react-test-renderer';
 
+import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import type { ProfileQuickTake } from '@/lib/profileQuickTakes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -78,32 +79,43 @@ function flattenStyle(style: any) {
     return Object.assign({}, ...styles.filter(Boolean));
 }
 
-it('opens the restaurant from the expanded artwork without collapsing the take', () => {
-    const { renderer, onOpenRestaurant, onEdit } = renderQuickTakes(PHOTO_TAKE);
-    const artLink = pressableWith(
-        renderer,
-        'accessibilityLabel',
-        'Open Evelyn’s Table restaurant page',
+function resolvedPressableStyle(node: any, pressed = false) {
+    return flattenStyle(
+        typeof node.props.style === 'function'
+            ? node.props.style({ pressed })
+            : node.props.style,
     );
+}
+
+it('opens the restaurant from both the expanded plate and name without collapsing the take', () => {
+    const { renderer, onOpenRestaurant, onEdit } = renderQuickTakes(PHOTO_TAKE);
+    const artLink = pressableWith(renderer, 'testID', 'quick-take-restaurant-art-link');
+    const copyLink = pressableWith(renderer, 'testID', 'quick-take-restaurant-copy-link');
     const collapse = pressableWith(renderer, 'accessibilityHint', 'Collapses this take');
 
-    expect(artLink).toBeDefined();
-    expect(artLink.props.accessibilityRole).toBe('link');
-    expect(artLink.props.accessibilityHint).toBe('Shows the restaurant’s details');
     expect(collapse).toBeDefined();
+    for (const link of [artLink, copyLink]) {
+        expect(link).toBeDefined();
+        expect(link.props.accessibilityRole).toBe('link');
+        expect(link.props.accessibilityLabel).toBe('Open Evelyn’s Table restaurant page');
+        expect(link.props.accessibilityHint).toBe('Shows the restaurant’s details');
 
-    let ancestor = artLink.parent;
-    while (ancestor) {
-        expect(ancestor).not.toBe(collapse);
-        ancestor = ancestor.parent;
+        let ancestor = link.parent;
+        while (ancestor) {
+            expect(ancestor).not.toBe(collapse);
+            ancestor = ancestor.parent;
+        }
     }
 
-    act(() => artLink.props.onPress());
+    act(() => {
+        artLink.props.onPress();
+        copyLink.props.onPress();
+    });
 
-    expect(onOpenRestaurant).toHaveBeenCalledWith('restaurant-1');
+    expect(onOpenRestaurant).toHaveBeenNthCalledWith(1, 'restaurant-1');
+    expect(onOpenRestaurant).toHaveBeenNthCalledWith(2, 'restaurant-1');
     expect(pressableWith(renderer, 'accessibilityHint', 'Collapses this take')).toBeDefined();
     expect(onEdit).not.toHaveBeenCalled();
-    // One chevron on the card: the circular open badge (chevron-forward) is gone.
     expect(renderer.root.findAllByType('Ionicons').some((node: any) => node.props.name === 'chevron-forward'))
         .toBe(false);
 });
@@ -113,7 +125,20 @@ it('keeps collapse, owner edit, and restaurant navigation as separate actions', 
     const collapse = pressableWith(renderer, 'accessibilityHint', 'Collapses this take');
 
     act(() => collapse.props.onPress());
-    expect(pressableWith(renderer, 'accessibilityHint', 'Expands this take')).toBeDefined();
+    const summary = pressableWith(renderer, 'accessibilityHint', 'Expands this take');
+    const summaryTexts = summary.findAllByType('Text');
+
+    expect(summary).toBeDefined();
+    expect(flattenStyle(summaryTexts[0].props.style).width).toBe(112);
+    expect(flattenStyle(summaryTexts[1].props.style)).toMatchObject({ flex: 1, minWidth: 0 });
+    expect(summary.findAllByType('Ionicons').map((node: any) => node.props.name)).toEqual([
+        'chevron-down',
+    ]);
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(onOpenRestaurant).not.toHaveBeenCalled();
+
+    act(() => summary.props.onPress());
+    expect(pressableWith(renderer, 'accessibilityHint', 'Collapses this take')).toBeDefined();
     expect(onOpenRestaurant).not.toHaveBeenCalled();
 
     const edit = pressableWith(renderer, 'accessibilityLabel', 'edit');
@@ -122,20 +147,24 @@ it('keeps collapse, owner edit, and restaurant navigation as separate actions', 
     expect(onOpenRestaurant).not.toHaveBeenCalled();
 });
 
-it('places a small thumbnail inline immediately left of the collapse chevron in the header row', () => {
+it('renders the approved photo plate grid with olive semibold metadata', () => {
     const { renderer } = renderQuickTakes(PHOTO_TAKE);
     const detail = renderer.root.findByProps({ testID: 'quick-take-detail' });
     const header = renderer.root.findByProps({ testID: 'quick-take-detail-header' });
+    const body = renderer.root.findByProps({ testID: 'quick-take-detail-body' });
+    const mediaRow = renderer.root.findByProps({ testID: 'quick-take-detail-media-row' });
     const collapse = pressableWith(renderer, 'testID', 'quick-take-collapse-control');
-    const artLink = pressableWith(
-        renderer,
-        'accessibilityLabel',
-        'Open Evelyn’s Table restaurant page',
-    );
+    const artLink = pressableWith(renderer, 'testID', 'quick-take-restaurant-art-link');
+    const copyLink = pressableWith(renderer, 'testID', 'quick-take-restaurant-copy-link');
     const collapseSurface = collapse.findAllByType('AnimatedView')[0];
     const artSurface = artLink.findAllByType('AnimatedView')[0];
+    const image = artLink.findByType('Image');
+    const overlay = artSurface.findAllByType('View')[0];
+    const kicker = header.findAllByType('Text')[0];
+    const name = copyLink.findAllByType('Text')[0];
+    const meta = copyLink.findAllByType('Text')[1];
+    const note = renderer.root.findByProps({ testID: 'quick-take-detail-note' });
 
-    // detail is a column: header row on top, full-width body below.
     expect(
         detail.children
             .filter((node: any) => typeof node !== 'string')
@@ -143,18 +172,61 @@ it('places a small thumbnail inline immediately left of the collapse chevron in 
     ).toEqual(['quick-take-detail-header', 'quick-take-detail-body']);
     expect(flattenStyle(detail.props.style).flexDirection).not.toBe('row');
 
-    // header row order: prompt kicker · artwork · collapse — art immediately left of the chevron.
-    expect(header.findAllByType('Pressable').map((node: any) => node.props.accessibilityLabel)).toEqual([
-        'Open Evelyn’s Table restaurant page',
-        'Collapse Best value: Evelyn’s Table',
+    expect(header.findAllByType('Pressable').map((node: any) => node.props.testID)).toEqual([
+        'quick-take-collapse-control',
     ]);
+    expect(kicker.props.numberOfLines).toBe(2);
     expect(flattenStyle(header.props.style)).toMatchObject({
         flexDirection: 'row',
         alignItems: 'center',
     });
 
-    // small thumbnail (~44) sits beside a 44 hit target; neither is absolutely positioned.
-    expect(flattenStyle(artSurface.props.style)).toMatchObject({ width: 44, height: 44 });
+    expect(mediaRow.findAllByType('Pressable').map((node: any) => node.props.testID)).toEqual([
+        'quick-take-restaurant-art-link',
+        'quick-take-restaurant-copy-link',
+    ]);
+    expect(flattenStyle(mediaRow.props.style)).toMatchObject({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+    });
+    expect(flattenStyle(artSurface.props.style)).toMatchObject({
+        width: 76,
+        height: 76,
+        borderRadius: Radius.md,
+        borderWidth: 1,
+        borderColor: Colors.light.imageOutline,
+    });
+    expect(image.props).toMatchObject({ contentFit: 'cover', accessible: false });
+    expect(flattenStyle(overlay.props.style)).toMatchObject({
+        position: 'absolute',
+        inset: 0,
+        backgroundColor: Colors.light.placesOverlayTint,
+        opacity: Colors.light.placesOverlayOpacity,
+    });
+    expect(overlay.props.pointerEvents).toBe('none');
+    expect(resolvedPressableStyle(copyLink)).toMatchObject({
+        flex: 1,
+        minWidth: 0,
+        minHeight: 44,
+    });
+    expect(name.props.numberOfLines).toBe(3);
+    expect(meta.children).toEqual(['London · Modern British']);
+    expect(flattenStyle(meta.props.style)).toMatchObject({
+        fontSize: Type.metadata.fontSize,
+        lineHeight: Type.metadata.lineHeight,
+        fontFamily: Type.sectionTitle.fontFamily,
+        fontWeight: Type.sectionTitle.fontWeight,
+        color: Colors.light.textSecondary,
+    });
+
+    expect(
+        body.children
+            .filter((node: any) => typeof node !== 'string')
+            .map((node: any) => node.props.testID),
+    ).toEqual(['quick-take-detail-media-row', 'quick-take-detail-note']);
+    expect(note.children).toEqual(['— The set menu still feels generous.']);
+    expect(flattenStyle(note.props.style).marginTop).toBe(Spacing.sm + Spacing.xs);
     expect(flattenStyle(collapseSurface.props.style)).toMatchObject({
         width: 44,
         height: 44,
@@ -163,24 +235,45 @@ it('places a small thumbnail inline immediately left of the collapse chevron in 
     });
     expect(flattenStyle(artSurface.props.style).position).toBeUndefined();
     expect(flattenStyle(collapseSurface.props.style).position).toBeUndefined();
-
-    // no circular open badge anywhere.
-    expect(renderer.root.findAllByType('Ionicons').some((node: any) => node.props.name === 'chevron-forward'))
-        .toBe(false);
 });
 
-it('uses the monogram fallback as the same restaurant link', () => {
+it('renders a pure-type, full-width restaurant link when no photo exists', () => {
     const take = { ...PHOTO_TAKE, photo_url: null };
     const { renderer, onOpenRestaurant } = renderQuickTakes(take);
-    const artLink = pressableWith(
-        renderer,
-        'accessibilityLabel',
-        'Open Evelyn’s Table restaurant page',
-    );
+    const mediaRow = renderer.root.findByProps({ testID: 'quick-take-detail-media-row' });
+    const copyLink = pressableWith(renderer, 'testID', 'quick-take-restaurant-copy-link');
 
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-    expect(JSON.stringify(renderer.toJSON())).toContain('E');
+    expect(pressableWith(renderer, 'testID', 'quick-take-restaurant-art-link')).toBeUndefined();
+    expect(mediaRow.findAllByType('AnimatedView')).toHaveLength(0);
+    expect(mediaRow.findAllByType('Pressable').map((node: any) => node.props.testID)).toEqual([
+        'quick-take-restaurant-copy-link',
+    ]);
+    expect(mediaRow.findAllByType('Text').map((node: any) => node.children.join(''))).toEqual([
+        'Evelyn’s Table',
+        'London · Modern British',
+    ]);
+    expect(resolvedPressableStyle(copyLink)).toMatchObject({ flex: 1, minWidth: 0 });
 
-    act(() => artLink.props.onPress());
+    act(() => copyLink.props.onPress());
+    expect(onOpenRestaurant).toHaveBeenCalledWith('restaurant-1');
+});
+
+it('falls back to the same pure-type layout when the photo fails to load', () => {
+    const { renderer, onOpenRestaurant } = renderQuickTakes(PHOTO_TAKE);
+    const image = renderer.root.findByType('Image');
+
+    act(() => image.props.onError());
+
+    const mediaRow = renderer.root.findByProps({ testID: 'quick-take-detail-media-row' });
+    const copyLink = pressableWith(renderer, 'testID', 'quick-take-restaurant-copy-link');
+
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(pressableWith(renderer, 'testID', 'quick-take-restaurant-art-link')).toBeUndefined();
+    expect(mediaRow.findAllByType('Pressable').map((node: any) => node.props.testID)).toEqual([
+        'quick-take-restaurant-copy-link',
+    ]);
+
+    act(() => copyLink.props.onPress());
     expect(onOpenRestaurant).toHaveBeenCalledWith('restaurant-1');
 });

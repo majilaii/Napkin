@@ -1,3 +1,6 @@
+const restaurantPeekCardForRestaurant = (viewerId: string, restaurantId: string) =>
+    ['restaurantPeekCard', viewerId, restaurantId] as const;
+
 /**
  * Centralized React Query cache keys.
  * All hooks import from here instead of hardcoding keys.
@@ -189,6 +192,14 @@ export const queryKeys = {
         /** TICKET-156: On Socials rail — social clippings for a restaurant. */
         clippings: (restaurantId: string) =>
             ['restaurantClippings', restaurantId] as const,
+        /** TICKET-190: every layer-context peek for one viewer + restaurant. */
+        peekCardForRestaurant: restaurantPeekCardForRestaurant,
+        /** Viewer + restaurant + layer context is the private-media cache fence. */
+        peekCard: (viewerId: string, restaurantId: string, contextToken: string) =>
+            [
+                ...restaurantPeekCardForRestaurant(viewerId, restaurantId),
+                contextToken,
+            ] as const,
     },
 
     // Misc per-entry caches (entry-detail screen ad-hoc queries)

@@ -502,6 +502,7 @@ describe('mergeDiscoverItems (TICKET-138 overlap-beats-network dedupe)', () => {
 
 function mapPin(over: Partial<TableMapPin> & { restaurant_id: string }): TableMapPin {
     return {
+        table_id: 'table-1',
         name: 'Kono',
         city: 'Tokyo',
         cuisine: 'Japanese',
@@ -556,6 +557,13 @@ describe('supperPinsToMapItems (TICKET-139)', () => {
             mapPin({ restaurant_id: 'r1', gathered_on: '2026-07-01T00:00:00Z', suppers_count: 3 }),
         ]);
         expect(items[0].gathered).toMatchObject({ on: '2026-07-01T00:00:00Z', suppersCount: 3 });
+    });
+
+    it('threads the enclosing table id into gathered enrichment context', () => {
+        const [item] = supperPinsToMapItems([
+            mapPin({ restaurant_id: 'r1', table_id: 'table-context' }),
+        ]);
+        expect(item.gathered?.tableId).toBe('table-context');
     });
 
     it('overlapToMapItems at minCount:1 keeps a count===1 single (139 saved-layer shared path)', () => {

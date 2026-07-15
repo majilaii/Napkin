@@ -6,7 +6,11 @@ import {
     deriveSavesClause,
 } from '../listHeaderUtils';
 
-function entry(photoUrl: string | null): Pick<ListEntry, 'restaurant'> {
+function entry(
+    photoUrl: string | null,
+    photoSource: ListEntry['restaurant']['photo_source'] = 'user',
+    attributionHtml: string | null = null,
+): Pick<ListEntry, 'restaurant'> {
     return {
         restaurant: {
             id: 'r',
@@ -15,6 +19,8 @@ function entry(photoUrl: string | null): Pick<ListEntry, 'restaurant'> {
             city: null,
             country: null,
             photo_url: photoUrl,
+            photo_source: photoSource,
+            places_photo_attribution_html: attributionHtml,
             cuisine: null,
             google_rating: null,
             price_level: null,
@@ -38,8 +44,28 @@ function owner(overrides: Partial<OwnerProfile> = {}): OwnerProfile {
 }
 
 describe('deriveCover (A4)', () => {
-    it('takes the first entry restaurant photo', () => {
-        expect(deriveCover([entry('a.jpg'), entry('b.jpg')])).toBe('a.jpg');
+    it('takes a known non-Places restaurant hero without a credit', () => {
+        expect(deriveCover([entry('a.jpg'), entry('b.jpg')])).toEqual({
+            photoUrl: 'a.jpg',
+            attributionLabel: null,
+        });
+    });
+
+    it('passes the parsed label with an attributed Places restaurant hero', () => {
+        expect(deriveCover([
+            entry('places.jpg', 'places', '<a href="https://maps.example/jane">Jane Doe</a>'),
+        ])).toEqual({
+            photoUrl: 'places.jpg',
+            attributionLabel: 'Jane Doe',
+        });
+    });
+
+    it('suppresses an uncredited Places hero and stale source-less payloads', () => {
+        const stale = entry('stale.jpg');
+        delete stale.restaurant.photo_source;
+        expect(deriveCover([entry('places.jpg', 'places', null)])).toBeNull();
+        expect(deriveCover([entry('places.jpg', 'places', '<a href="https://x.test"></a>')])).toBeNull();
+        expect(deriveCover([stale])).toBeNull();
     });
 
     it('is null when the first entry has no photo or the list is empty', () => {

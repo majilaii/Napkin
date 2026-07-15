@@ -406,7 +406,8 @@ export default function ListDetailScreen() {
                             headerProps={{
                                 list,
                                 ownerProfile,
-                                cover,
+                                cover: cover?.photoUrl ?? null,
+                                coverAttribution: cover?.attributionLabel ?? null,
                                 metadata,
                                 contextLine,
                                 isOwner,

@@ -3,13 +3,20 @@ import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Spacing } from '@/constants/theme';
+import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SwipeToDeleteRow } from '@/components/common';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { ListEntry } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
+
+const THUMBNAIL_SIZE = 54;
+const RANK_COLUMN_WIDTH = 17;
+const ACTION_VISUAL_SIZE = IconSize.xxl;
+const ACTION_MIN_TARGET = 44;
+const ACTION_HIT_SLOP = (ACTION_MIN_TARGET - ACTION_VISUAL_SIZE) / 2;
+const ACTION_GAP = ACTION_HIT_SLOP * 2;
 
 interface Props {
     entry: ListEntry;
@@ -78,30 +85,19 @@ export function ListEntryRow({
     }, [commitNote, editingNote, isEditing]);
 
     const row = (
-        <View style={[styles.row, { borderBottomColor: palette.dividerSoft }]}>
+        <View testID="list-entry-row" style={[styles.row, { borderBottomColor: palette.dividerSoft }]}>
             {isRanked && rank !== undefined ? (
                 <View style={styles.rankColumn}>
-                    <Text style={[styles.rank, { color: palette.primary }]}>{String(rank).padStart(2, '0')}</Text>
-                    {isEditing && isOwner && drag ? (
-                        <PressableScale
-                            onLongPress={drag}
-                            disabled={isDragDisabled}
-                            hitSlop={8}
-                            haptic="selection"
-                            style={[styles.editTarget, { opacity: isDragDisabled ? 0.3 : 1 }]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Move ${restaurant.name}`}
-                            accessibilityHint="Long press, then drag to change its position"
-                        >
-                            <Ionicons name="reorder-three-outline" size={20} color={palette.textMuted} />
-                        </PressableScale>
-                    ) : null}
+                    <Text style={[styles.rank, { color: palette.terracottaWarm }]}>{rank}</Text>
                 </View>
             ) : null}
 
             <View style={styles.content}>
                 <PressableScale onPress={onPress} haptic="light" style={styles.placeTap}>
-                    <View style={[styles.photo, { backgroundColor: palette.surfaceContainerHigh }]}>
+                    <View
+                        testID="list-row-thumbnail"
+                        style={[styles.photo, { backgroundColor: palette.surfaceContainerHigh }]}
+                    >
                         {restaurant.photo_url ? (
                             <Image
                                 source={{ uri: restaurant.photo_url }}
@@ -109,9 +105,7 @@ export function ListEntryRow({
                                 contentFit="cover"
                                 transition={180}
                             />
-                        ) : (
-                            <Ionicons name="restaurant-outline" size={21} color={palette.textMuted} />
-                        )}
+                        ) : null}
                         <View
                             pointerEvents="none"
                             style={[StyleSheet.absoluteFillObject, styles.imageOutline, { borderColor: palette.imageOutline }]}
@@ -119,11 +113,21 @@ export function ListEntryRow({
                     </View>
 
                     <View style={styles.copy}>
-                        <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
+                        <Text
+                            testID="list-row-name"
+                            style={[styles.name, { color: palette.text }]}
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
+                        >
                             {restaurant.name}
                         </Text>
                         {meta ? (
-                            <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={2}>
+                            <Text
+                                testID="list-row-meta"
+                                style={[styles.meta, { color: palette.textSecondary }]}
+                                numberOfLines={1}
+                                ellipsizeMode="tail"
+                            >
                                 {meta}
                             </Text>
                         ) : null}
@@ -167,59 +171,63 @@ export function ListEntryRow({
                 ) : null}
             </View>
 
-            <View style={styles.trailing}>
-                <PressableScale
-                    onPress={canShowOnMap ? onShowOnMap : undefined}
-                    disabled={!canShowOnMap}
-                    haptic="selection"
-                    style={[
-                        styles.iconButton,
-                        {
-                            backgroundColor: palette.surfaceContainerLow,
-                            opacity: canShowOnMap ? 1 : 0.4,
-                        },
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel={canShowOnMap ? `Show ${restaurant.name} on map` : `${restaurant.name} has no map location`}
-                    accessibilityState={{ disabled: !canShowOnMap }}
-                >
-                    <Ionicons name="locate-outline" size={19} color={palette.primary} />
-                </PressableScale>
+            <View testID="list-row-actions" style={styles.actions}>
+                {isEditing && isOwner && drag ? (
+                    <PressableScale
+                        onLongPress={drag}
+                        disabled={isDragDisabled}
+                        hitSlop={ACTION_HIT_SLOP}
+                        haptic="selection"
+                        style={[styles.actionButton, { opacity: isDragDisabled ? 0.3 : 1 }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Move ${restaurant.name}`}
+                        accessibilityHint="Long press, then drag to change its position"
+                    >
+                        <Ionicons name="reorder-three-outline" size={IconSize.md} color={palette.textMuted} />
+                    </PressableScale>
+                ) : (
+                    <PressableScale
+                        onPress={canShowOnMap ? onShowOnMap : undefined}
+                        disabled={!canShowOnMap}
+                        hitSlop={ACTION_HIT_SLOP}
+                        haptic="selection"
+                        style={[styles.actionButton, { opacity: canShowOnMap ? 1 : 0.4 }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={canShowOnMap ? `Show ${restaurant.name} on map` : `${restaurant.name} has no map location`}
+                        accessibilityState={{ disabled: !canShowOnMap }}
+                    >
+                        <Ionicons name="locate-outline" size={IconSize.md} color={palette.secondary} />
+                    </PressableScale>
+                )}
 
                 {isEditing && isOwner ? (
                     <PressableScale
                         onPress={onRemove}
+                        hitSlop={ACTION_HIT_SLOP}
                         haptic="medium"
-                        style={[styles.iconButton, { backgroundColor: palette.primaryMuted }]}
+                        style={styles.actionButton}
                         accessibilityRole="button"
                         accessibilityLabel={`Remove ${restaurant.name} from this list`}
                     >
-                        <Ionicons name="trash-outline" size={18} color={palette.error} />
+                        <Ionicons name="trash-outline" size={IconSize.md} color={palette.error} />
                     </PressableScale>
                 ) : onToggleWishlist ? (
                     <PressableScale
                         onPress={onToggleWishlist}
                         disabled={isWishlistPending}
+                        hitSlop={ACTION_HIT_SLOP}
                         haptic="medium"
-                        style={[
-                            styles.iconButton,
-                            {
-                                backgroundColor: isWishlisted
-                                    ? palette.primaryMuted
-                                    : palette.surfaceContainerLow,
-                                opacity: isWishlistPending ? 0.5 : 1,
-                            },
-                        ]}
+                        style={[styles.actionButton, { opacity: isWishlistPending ? 0.5 : 1 }]}
                         accessibilityRole="button"
                         accessibilityLabel={isWishlisted
                             ? `Remove ${restaurant.name} from Wishlist`
                             : `Save ${restaurant.name} to Wishlist`}
-                        accessibilityState={{ selected: isWishlisted, disabled: isWishlistPending }}
+                        accessibilityState={{ selected: !!isWishlisted, disabled: isWishlistPending }}
                     >
                         <Ionicons
                             name={isWishlisted ? 'heart' : 'heart-outline'}
-                            size={18}
-                            color={isWishlisted ? palette.primary : palette.textMuted}
+                            size={IconSize.md}
+                            color={palette.primary}
                         />
                     </PressableScale>
                 ) : null}
@@ -236,46 +244,39 @@ export function ListEntryRow({
 
 const styles = StyleSheet.create({
     row: {
-        minHeight: 104,
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: Spacing.sm,
         paddingHorizontal: Spacing.md,
-        paddingVertical: 8,
+        paddingVertical: Spacing.sm,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     rankColumn: {
-        width: 28,
-        alignItems: 'center',
-        gap: 4,
-        paddingTop: 2,
+        width: RANK_COLUMN_WIDTH,
+        height: THUMBNAIL_SIZE,
+        alignItems: 'flex-end',
+        justifyContent: 'center',
     },
     rank: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
+        ...Type.label,
+        lineHeight: 16,
+        letterSpacing: 0,
+        textTransform: 'none',
         fontVariant: ['tabular-nums'],
-    },
-    editTarget: {
-        width: 44,
-        height: 44,
-        marginHorizontal: -8,
-        borderRadius: 22,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     content: {
         flex: 1,
         minWidth: 0,
     },
     placeTap: {
-        minHeight: 72,
+        minHeight: THUMBNAIL_SIZE,
         flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 10,
+        alignItems: 'center',
+        gap: Spacing.sm,
     },
     photo: {
-        width: 64,
-        height: 72,
+        width: THUMBNAIL_SIZE,
+        height: THUMBNAIL_SIZE,
         borderRadius: Radius.md,
         overflow: 'hidden',
         alignItems: 'center',
@@ -289,26 +290,25 @@ const styles = StyleSheet.create({
     copy: {
         flex: 1,
         minWidth: 0,
-        paddingTop: 2,
+        minHeight: THUMBNAIL_SIZE,
+        justifyContent: 'center',
     },
     name: {
-        fontFamily: 'Newsreader_700Bold',
-        fontSize: 18,
-        lineHeight: 21,
-        letterSpacing: -0.15,
+        ...Type.editorialBody,
+        fontSize: 16.5,
+        lineHeight: 20,
+        letterSpacing: -0.1,
     },
     meta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        lineHeight: 16,
-        marginTop: 4,
+        ...Type.metadata,
+        marginTop: 2,
     },
     noteTarget: {
         minHeight: 40,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 5,
-        marginLeft: 74,
+        marginLeft: THUMBNAIL_SIZE + Spacing.sm,
     },
     noteText: {
         fontFamily: 'Newsreader_400Regular_Italic',
@@ -319,7 +319,7 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     readNote: {
-        marginLeft: 74,
+        marginLeft: THUMBNAIL_SIZE + Spacing.sm,
         marginTop: 4,
     },
     noteInput: {
@@ -328,19 +328,23 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10,
         paddingVertical: 8,
         marginTop: 6,
-        marginLeft: 74,
+        marginLeft: THUMBNAIL_SIZE + Spacing.sm,
         fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        fontSize: 13,
     },
-    trailing: {
-        width: 44,
+    actions: {
+        minHeight: ACTION_MIN_TARGET,
+        flexDirection: 'row',
         alignItems: 'center',
-        gap: 0,
+        gap: ACTION_GAP,
+        paddingHorizontal: ACTION_HIT_SLOP,
+        paddingVertical: ACTION_HIT_SLOP,
+        marginHorizontal: -ACTION_HIT_SLOP,
+        marginTop: (THUMBNAIL_SIZE - ACTION_MIN_TARGET) / 2,
     },
-    iconButton: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+    actionButton: {
+        width: ACTION_VISUAL_SIZE,
+        height: ACTION_VISUAL_SIZE,
         alignItems: 'center',
         justifyContent: 'center',
     },

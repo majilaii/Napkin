@@ -1,10 +1,11 @@
 /**
  * ListDetailHeader — the fixed header block at the top of `ListDetailSheet`
- * (TICKET-186). This is the peek-visible identity: cover + title + metadata +
- * the mutually-exclusive primary action (+ share) + the conditional context
- * line. The old "map" chip, top-bar back chevron, "List" eyebrow, and byline
- * avatar row are gone — the map is always behind now, and back is a floating
- * chevron the host owns. The list description moved to the sheet body.
+ * (TICKET-186). This is the peek-visible identity: cover + title + metadata in
+ * row one, then context + the mutually-exclusive text action in row two. Share
+ * stays available as identity-row chrome. The old "map" chip, top-bar back
+ * chevron, "List" eyebrow, and byline avatar row are gone — the map is always
+ * behind now, and back is a floating chevron the host owns. The list
+ * description moved to the sheet body.
  */
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
@@ -12,7 +13,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, IconSize, Radius, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { tintFor } from '@/lib/engraving';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
@@ -21,12 +22,19 @@ import type { ContextLine } from './listHeaderUtils';
 
 type Palette = typeof Colors.light;
 
+const HEADER_ACTION_SIZE = IconSize.xxl;
+const HEADER_ACTION_MIN_TARGET = 44;
+const HEADER_ACTION_HIT_SLOP = (HEADER_ACTION_MIN_TARGET - HEADER_ACTION_SIZE) / 2;
+const HEADER_ACTION_GAP = HEADER_ACTION_HIT_SLOP * 2;
+
 export interface ListDetailHeaderProps {
     list: ListDetail;
     /** Nullable (review F5a): a missing profile renders without the byline. */
     ownerProfile: OwnerProfile | null;
-    /** deriveCover(entries) — first entry photo, else the emoji plate. */
+    /** deriveCover(entries).photoUrl — attributed restaurant hero, else tint plate. */
     cover: string | null;
+    /** deriveCover(entries).attributionLabel — null for non-Places covers. */
+    coverAttribution: string | null;
     /** deriveMetadataLine(...) — "{n} places" + optional " · saved {m} times". */
     metadata: string;
     /** deriveContextLine(...) — table / private / byline, or null. */
@@ -50,6 +58,7 @@ export function ListDetailHeader({
     list,
     ownerProfile,
     cover,
+    coverAttribution,
     metadata,
     contextLine,
     isOwner,
@@ -69,35 +78,44 @@ export function ListDetailHeader({
     const palette = Colors[scheme] as Palette;
     const router = useRouter();
 
-    // Codex #13: the failed-image state resets when the derived cover changes, so
-    // a reorder/add that swaps the first entry re-attempts loading the new cover.
-    const [imageFailed, setImageFailed] = useState(false);
-    useEffect(() => setImageFailed(false), [cover]);
+    // Bind failures to the URI that emitted them. A late onError from cover A
+    // must not suppress cover B after a reorder/refetch swaps the first entry.
+    const [failedCover, setFailedCover] = useState<string | null>(null);
+    useEffect(() => setFailedCover(null), [cover]);
 
-    const primaryAction = canEditEntries && onAddSpots
-        ? { label: 'Add spots', icon: 'add' as const, onPress: onAddSpots, saved: false }
+    const captionAction = canEditEntries && onAddSpots
+        ? {
+            kind: 'add' as const,
+            label: '+ add spots',
+            accessibilityLabel: 'Add spots',
+            onPress: onAddSpots,
+            selected: false,
+        }
         : canSave && onToggleSaved
             ? {
-                label: isSaved ? 'Saved' : 'Save list',
-                icon: isSaved ? 'bookmark' as const : 'bookmark-outline' as const,
+                kind: 'save' as const,
+                label: isSaved ? 'saved' : 'save list',
+                accessibilityLabel: isSaved ? 'Remove saved list' : 'Save list',
                 onPress: onToggleSaved,
-                saved: isSaved,
+                selected: isSaved,
             }
             : null;
 
-    const showCoverImage = !!cover && !imageFailed;
+    const showCoverImage = !!cover && failedCover !== cover;
 
     return (
         <View style={styles.header}>
-            <View style={styles.identityRow}>
+            <View testID="list-detail-header-identity" style={styles.identityRow}>
                 <View style={[styles.cover, { backgroundColor: tintFor(list.id, palette) }]}>
                     {showCoverImage ? (
                         <Image
+                            key={cover}
                             source={{ uri: cover! }}
                             style={StyleSheet.absoluteFillObject}
                             contentFit="cover"
+                            recyclingKey={cover!}
                             transition={180}
-                            onError={() => setImageFailed(true)}
+                            onError={() => setFailedCover(cover!)}
                         />
                     ) : list.emoji ? (
                         <Text style={styles.coverEmoji}>{list.emoji}</Text>
@@ -111,29 +129,63 @@ export function ListDetailHeader({
                 </View>
 
                 <View style={styles.identityCopy}>
-                    <Text style={[styles.title, { color: palette.text }]} numberOfLines={1}>
+                    <Text
+                        testID="list-detail-header-title"
+                        style={[styles.title, { color: palette.text }]}
+                        numberOfLines={2}
+                        ellipsizeMode="tail"
+                    >
                         {list.title}
                     </Text>
                     <Text style={[styles.metadata, { color: palette.textMuted }]} numberOfLines={1}>
                         {metadata}
                     </Text>
+                    {showCoverImage && coverAttribution ? (
+                        <Text
+                            testID="list-detail-cover-attribution"
+                            style={[styles.coverCredit, { color: palette.textMuted }]}
+                            numberOfLines={1}
+                        >
+                            {coverAttribution}
+                        </Text>
+                    ) : null}
                 </View>
 
                 <View style={styles.identityActions}>
+                    {onShare ? (
+                        <PressableScale
+                            onPress={onShare}
+                            disabled={isSharePending}
+                            hitSlop={HEADER_ACTION_HIT_SLOP}
+                            haptic="light"
+                            style={[styles.iconButton, { opacity: isSharePending ? 0.5 : 1 }]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Share ${list.title}`}
+                            accessibilityState={{ busy: !!isSharePending, disabled: !!isSharePending }}
+                        >
+                            {isSharePending ? (
+                                <ActivityIndicator size="small" color={palette.text} />
+                            ) : (
+                                <Ionicons name="share-outline" size={IconSize.md} color={palette.text} />
+                            )}
+                        </PressableScale>
+                    ) : null}
                     {isOwner ? (
                         <PressableScale
                             onPress={onEditSettings}
+                            hitSlop={HEADER_ACTION_HIT_SLOP}
                             haptic="selection"
                             style={styles.iconButton}
                             accessibilityRole="button"
                             accessibilityLabel="List settings"
                         >
-                            <Ionicons name="ellipsis-horizontal" size={20} color={palette.text} />
+                            <Ionicons name="ellipsis-horizontal" size={IconSize.md} color={palette.text} />
                         </PressableScale>
                     ) : null}
                     {canEditEntries ? (
                         <PressableScale
                             onPress={onToggleEditingPlaces}
+                            hitSlop={HEADER_ACTION_HIT_SLOP}
                             haptic="selection"
                             style={isEditingPlaces
                                 ? [styles.iconButton, { backgroundColor: palette.secondaryContainer }]
@@ -143,7 +195,7 @@ export function ListDetailHeader({
                         >
                             <Ionicons
                                 name={isEditingPlaces ? 'checkmark' : 'create-outline'}
-                                size={19}
+                                size={IconSize.md}
                                 color={isEditingPlaces ? palette.text : palette.textMuted}
                             />
                         </PressableScale>
@@ -151,70 +203,45 @@ export function ListDetailHeader({
                 </View>
             </View>
 
-            {primaryAction || onShare ? (
-                <View style={styles.actionsRow}>
-                    {primaryAction ? (
-                        <PressableScale
-                            onPress={primaryAction.onPress}
-                            disabled={isSavePending}
-                            haptic="medium"
-                            style={[
-                                styles.primaryButton,
-                                Shadow.subtle,
-                                { backgroundColor: primaryAction.saved ? palette.secondaryContainer : palette.primary },
-                            ]}
-                            accessibilityRole="button"
-                            accessibilityLabel={primaryAction.label}
-                        >
-                            {isSavePending ? (
-                                <ActivityIndicator
-                                    size="small"
-                                    color={primaryAction.saved ? palette.text : palette.textInverse}
-                                />
-                            ) : (
-                                <Ionicons
-                                    name={primaryAction.icon}
-                                    size={19}
-                                    color={primaryAction.saved ? palette.text : palette.textInverse}
-                                />
-                            )}
-                            <Text
-                                style={[
-                                    styles.primaryLabel,
-                                    { color: primaryAction.saved ? palette.text : palette.textInverse },
-                                ]}
-                            >
-                                {primaryAction.label}
-                            </Text>
-                        </PressableScale>
-                    ) : null}
+            {contextLine || captionAction ? (
+                <View testID="list-detail-header-caption-row" style={styles.captionRow}>
+                    <View style={styles.contextSlot}>
+                        {contextLine ? (
+                            <ContextLineRow
+                                line={contextLine}
+                                palette={palette}
+                                onOpenProfile={(handle) => router.push(`/u/${handle}`)}
+                                ownerName={ownerProfile?.display_name ?? ownerProfile?.username ?? 'Unknown'}
+                            />
+                        ) : null}
+                    </View>
 
-                    {onShare ? (
+                    {captionAction ? (
                         <PressableScale
-                            onPress={onShare}
-                            disabled={isSharePending}
-                            haptic="light"
-                            style={[styles.shareButton, { backgroundColor: palette.surfaceContainerHigh }]}
+                            onPress={captionAction.onPress}
+                            disabled={captionAction.kind === 'save' && isSavePending}
+                            haptic="medium"
+                            style={styles.captionAction}
                             accessibilityRole="button"
-                            accessibilityLabel={`Share ${list.title}`}
+                            accessibilityLabel={captionAction.accessibilityLabel}
+                            accessibilityState={captionAction.kind === 'save'
+                                ? {
+                                    selected: captionAction.selected,
+                                    busy: !!isSavePending,
+                                    disabled: !!isSavePending,
+                                }
+                                : undefined}
                         >
-                            {isSharePending ? (
-                                <ActivityIndicator size="small" color={palette.text} />
+                            {captionAction.kind === 'save' && isSavePending ? (
+                                <ActivityIndicator size="small" color={palette.primary} />
                             ) : (
-                                <Ionicons name="share-outline" size={20} color={palette.text} />
+                                <Text style={[styles.captionActionLabel, { color: palette.primary }]}>
+                                    {captionAction.label}
+                                </Text>
                             )}
                         </PressableScale>
                     ) : null}
                 </View>
-            ) : null}
-
-            {contextLine ? (
-                <ContextLineRow
-                    line={contextLine}
-                    palette={palette}
-                    onOpenProfile={(handle) => router.push(`/u/${handle}`)}
-                    ownerName={ownerProfile?.display_name ?? ownerProfile?.username ?? 'Unknown'}
-                />
             ) : null}
         </View>
     );
@@ -262,12 +289,11 @@ const styles = StyleSheet.create({
     header: {
         paddingHorizontal: Spacing.md,
         paddingBottom: Spacing.sm,
-        gap: 10,
     },
     identityRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: Spacing.sm,
     },
     cover: {
         width: 44,
@@ -299,47 +325,52 @@ const styles = StyleSheet.create({
         marginTop: 2,
         fontVariant: ['tabular-nums'],
     },
+    coverCredit: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        lineHeight: 14,
+        marginTop: 2,
+        opacity: 0.85,
+    },
     identityActions: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 2,
+        gap: HEADER_ACTION_GAP,
+        paddingHorizontal: HEADER_ACTION_HIT_SLOP,
+        paddingVertical: HEADER_ACTION_HIT_SLOP,
+        marginHorizontal: -HEADER_ACTION_HIT_SLOP,
         flexShrink: 0,
     },
     iconButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: HEADER_ACTION_SIZE,
+        height: HEADER_ACTION_SIZE,
+        borderRadius: HEADER_ACTION_SIZE / 2,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    actionsRow: {
+    captionRow: {
+        minHeight: HEADER_ACTION_MIN_TARGET,
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.sm,
     },
-    primaryButton: {
+    contextSlot: {
         flex: 1,
-        minHeight: 48,
-        borderRadius: Radius.lg,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        paddingHorizontal: Spacing.md,
+        minWidth: 0,
     },
-    primaryLabel: {
+    captionAction: {
+        minHeight: HEADER_ACTION_MIN_TARGET,
+        flexShrink: 0,
+        justifyContent: 'center',
+        paddingHorizontal: Spacing.xs,
+    },
+    captionActionLabel: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 14,
-    },
-    shareButton: {
-        width: 48,
-        height: 48,
-        borderRadius: Radius.lg,
-        alignItems: 'center',
-        justifyContent: 'center',
+        fontSize: 13,
+        lineHeight: 18,
     },
     contextRow: {
-        minHeight: 24,
+        minHeight: HEADER_ACTION_MIN_TARGET,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 5,
