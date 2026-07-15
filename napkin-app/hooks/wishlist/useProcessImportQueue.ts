@@ -122,6 +122,8 @@ function isTransientError(err: unknown): boolean {
     return s === 429 || (typeof s === 'number' && s >= 500);
 }
 
+// TICKET-187: no photo fields — the server ignores client photo fields and
+// mirrors the hero server-side (post-response) by the DB-derived external_id.
 function buildPlace(c: ResolvedCandidate): unknown {
     const r = c.restaurant;
     if (!r) return null;
@@ -135,7 +137,6 @@ function buildPlace(c: ResolvedCandidate): unknown {
         },
         latitude: r.latitude ?? null,
         longitude: r.longitude ?? null,
-        photoReference: r.photoReference ?? null,
         googleRating: r.googleRating ?? null,
         googleRatingCount: r.googleRatingCount ?? null,
         priceLevel: r.priceLevel ?? null,

@@ -448,6 +448,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                     : null,
                 // Fix-pass-2 item 3: forward full place payload so the server upserts
                 // restaurants with all metadata, not just name+city.
+                // TICKET-187: NO photo fields — the server ignores client photo
+                // fields entirely and mirrors the hero server-side, post-response,
+                // by the DB-derived external_id.
                 place: {
                     external_id: c.restaurant.external_id ?? null,
                     name: c.restaurant.name ?? null,
@@ -458,8 +461,6 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                     },
                     latitude: c.restaurant.latitude ?? null,
                     longitude: c.restaurant.longitude ?? null,
-                    photoReference: c.restaurant.photoReference ?? null,
-                    photoAttributionHtml: null, // not available on client candidate type
                     googleRating: c.restaurant.googleRating ?? null,
                     googleRatingCount: c.restaurant.googleRatingCount ?? null,
                     priceLevel: c.restaurant.priceLevel ?? null,
