@@ -31,8 +31,10 @@ export interface ListDetailHeaderProps {
     list: ListDetail;
     /** Nullable (review F5a): a missing profile renders without the byline. */
     ownerProfile: OwnerProfile | null;
-    /** deriveCover(entries) — first entry photo, else the emoji plate. */
+    /** deriveCover(entries).photoUrl — attributed restaurant hero, else tint plate. */
     cover: string | null;
+    /** deriveCover(entries).attributionLabel — null for non-Places covers. */
+    coverAttribution: string | null;
     /** deriveMetadataLine(...) — "{n} places" + optional " · saved {m} times". */
     metadata: string;
     /** deriveContextLine(...) — table / private / byline, or null. */
@@ -56,6 +58,7 @@ export function ListDetailHeader({
     list,
     ownerProfile,
     cover,
+    coverAttribution,
     metadata,
     contextLine,
     isOwner,
@@ -75,10 +78,10 @@ export function ListDetailHeader({
     const palette = Colors[scheme] as Palette;
     const router = useRouter();
 
-    // Codex #13: the failed-image state resets when the derived cover changes, so
-    // a reorder/add that swaps the first entry re-attempts loading the new cover.
-    const [imageFailed, setImageFailed] = useState(false);
-    useEffect(() => setImageFailed(false), [cover]);
+    // Bind failures to the URI that emitted them. A late onError from cover A
+    // must not suppress cover B after a reorder/refetch swaps the first entry.
+    const [failedCover, setFailedCover] = useState<string | null>(null);
+    useEffect(() => setFailedCover(null), [cover]);
 
     const captionAction = canEditEntries && onAddSpots
         ? {
@@ -98,7 +101,7 @@ export function ListDetailHeader({
             }
             : null;
 
-    const showCoverImage = !!cover && !imageFailed;
+    const showCoverImage = !!cover && failedCover !== cover;
 
     return (
         <View style={styles.header}>
@@ -106,11 +109,13 @@ export function ListDetailHeader({
                 <View style={[styles.cover, { backgroundColor: tintFor(list.id, palette) }]}>
                     {showCoverImage ? (
                         <Image
+                            key={cover}
                             source={{ uri: cover! }}
                             style={StyleSheet.absoluteFillObject}
                             contentFit="cover"
+                            recyclingKey={cover!}
                             transition={180}
-                            onError={() => setImageFailed(true)}
+                            onError={() => setFailedCover(cover!)}
                         />
                     ) : list.emoji ? (
                         <Text style={styles.coverEmoji}>{list.emoji}</Text>
@@ -135,6 +140,15 @@ export function ListDetailHeader({
                     <Text style={[styles.metadata, { color: palette.textMuted }]} numberOfLines={1}>
                         {metadata}
                     </Text>
+                    {showCoverImage && coverAttribution ? (
+                        <Text
+                            testID="list-detail-cover-attribution"
+                            style={[styles.coverCredit, { color: palette.textMuted }]}
+                            numberOfLines={1}
+                        >
+                            {coverAttribution}
+                        </Text>
+                    ) : null}
                 </View>
 
                 <View style={styles.identityActions}>
@@ -310,6 +324,13 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginTop: 2,
         fontVariant: ['tabular-nums'],
+    },
+    coverCredit: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        lineHeight: 14,
+        marginTop: 2,
+        opacity: 0.85,
     },
     identityActions: {
         flexDirection: 'row',

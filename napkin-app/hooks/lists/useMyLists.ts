@@ -30,6 +30,13 @@ export interface MyList {
      */
     verified_count?: number;
     cover_photo_url: string | null;
+    /**
+     * TICKET-194: source + Places attribution for the derived shelf cover.
+     * Optional so an in-memory response from a pre-194 edge deployment fails
+     * closed to the tint plate instead of guessing whether a photo needs credit.
+     */
+    cover_photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    cover_attribution_html?: string | null;
     created_at: string;
     updated_at: string;
 }
