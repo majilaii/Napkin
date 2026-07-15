@@ -2,15 +2,19 @@
  * ProfileScreenBody — shared body between (tabs)/profile.tsx and u/[identifier].tsx.
  * TICKET-025, rebuilt for TICKET-092 (the Letterboxd/Beli revamp).
  *
- * One profile grammar for self AND public — the own tab no longer auto-expands
- * the journal; everything lives behind the index:
+ * One profile grammar for self AND public — identity → taste → collections →
+ * the record → tables, seven sections in one scroll (TICKET-191 rev 2:
+ * imports live up top — a header tray affordance + an attention-only card —
+ * while the hub owns history):
  *
- *   ProfileHeader (identity + ScoreBand stats strip)
+ *   ProfileHeader (identity + stats; self actions row carries the imports tray)
+ *   → ImportAttentionCard (self, ONLY when the import slot owes an action)
  *   → TopFour (self: editable; public: read view)
  *   → QuickTakes (prompt-led, owner-curated opinions)
- *   → TasteSignature (cuisines · geography · overall rating distribution)
- *   → DiningMapPreview (been-pins → /dining-map — Beli)
- *   → ProfileIndex (Journal · Spots · Reviews · Lists · Wishlist · Likes)
+ *   → TasteSignature (cuisines · geography · overall rating distribution —
+ *     the sole carrier of eating-geography since the dining map was removed)
+ *   → ListsShelf (the "Lists" section — cover-plate rail + see-all)
+ *   → ProfileIndex (Journal · Spots · Reviews · Wishlist[self])
  *   → TablesInCommonSection
  *
  * Doctrine: Tables never public; logs surface publicly only with real review
@@ -39,12 +43,12 @@ import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account'
 import { useImportSlot } from '@/hooks/imports/useImportSlot';
 
 import { ProfileHeader } from './ProfileHeader';
+import { ImportAttentionCard } from './ImportAttentionCard';
 import { TopFour } from './TopFour';
 import { ProfileTopFourSheet } from './ProfileTopFourSheet';
 import { QuickTakes } from './QuickTakes';
 import { QuickTakesSheet } from './QuickTakesSheet';
 import { TasteSignature } from './TasteSignature';
-import { DiningMapPreview } from './DiningMapPreview';
 import { ListsShelf } from './ListsShelf';
 import { ProfileIndex } from './ProfileIndex';
 import { TablesInCommonSection } from './TablesInCommonSection';
@@ -83,12 +87,15 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         relationship === 'public_only' ||
         relationship === 'public_and_tables';
 
-    // Spots feed the quiet taste signature + map preview (server-gated same as regulars).
+    // Spots feed the quiet taste signature (server-gated same as regulars).
     const { data: spots, refetch: refetchSpots } = useUserSpots(
         hasPalateAccess ? profileData?.profile.user_id : null,
     );
     const taste = useMemo(() => deriveTaste(spots ?? []), [spots]);
-    // Live import state for the self-only Explore "Imports" row (TICKET-185).
+    // Live import slot (TICKET-191 rev 2) — powers the header tray affordance
+    // + the attention-only card. RENDER-gated on isSelf below: useActiveImports
+    // reads the viewer's own queue regardless of the userId arg, so the value
+    // must never reach a stranger-profile surface.
     const importSlot = useImportSlot(isSelf ? profileUserId : null);
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
     const [editQuickTakesOpen, setEditQuickTakesOpen] = useState(false);
@@ -275,8 +282,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             hint: 'The written ones',
             route: `/reviews?userId=${targetUserId}`,
         });
-        // Lists now live in the ListsShelf rail above the index (TICKET-185) —
-        // no text TOC row here, for self or stranger.
+        // Lists + Imports live in the Collections rails above the index
+        // (TICKET-185/191) — no text TOC rows here, for self or stranger.
     }
 
     if (isSelf) {
@@ -286,23 +293,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
             hint: 'Places saving for later',
             route: '/wishlist',
         });
-
-        // Imports — the durable home for the imports hub (was map-tab-only).
-        // Hint + count reflect the live import slot; idle shows the sources.
-        indexSections.push({
-            title: 'Imports',
-            count: importSlot?.kind === 'review' ? importSlot.count : null,
-            hint: importSlot ? importSlot.title : 'From TikTok, IG and Maps',
-            route: '/import-progress',
-        });
     }
-
-    indexSections.push({
-        title: 'Likes',
-        count: null,
-        hint: '— coming soon',
-        disabled: true,
-    });
 
     const isColdStart = totalLogs === 0;
 
@@ -335,7 +326,12 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 onSafetyMenu={!isSelf ? handleSafetyMenu : undefined}
                 onAddPhoto={isSelf ? handleAddProfilePhoto : undefined}
                 isAddingPhoto={profilePhotoWorking}
+                importSlot={isSelf ? importSlot : null}
             />
+
+            {/* Imports, above the fold (TICKET-191 rev 2): the card renders ONLY
+                when the slot owes an action; calm states leave the body clean. */}
+            {isSelf && <ImportAttentionCard slot={importSlot} />}
 
             {/* Top 4 — identity leads (Letterboxd: favorites before any feed).
                 FRIEND_TEST.hideTopFours deliberately bypassed on the profile
@@ -388,20 +384,8 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                     }
                 />
             )}
-            {hasPalateAccess && (
-                <DiningMapPreview
-                    spots={spots ?? []}
-                    palette={palette}
-                    onPress={() =>
-                        router.push({
-                            pathname: '/dining-map',
-                            params: isSelf ? {} : { userId: targetUserId },
-                        } as never)
-                    }
-                />
-            )}
-
-            {/* Lists shelf — cover-plate rail (replaces the old Lists TOC row) */}
+            {/* Lists — cover-plate rail with its own "Lists" header (rev 2
+                un-merged Collections); hides for a stranger with no public lists */}
             {hasPalateAccess && (
                 <ListsShelf
                     isSelf={isSelf}

@@ -419,10 +419,6 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
-            name="dining-map"
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
             name="settings"
             options={{ headerShown: false }}
           />

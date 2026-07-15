@@ -51,7 +51,9 @@ export default function ImportProgressScreen() {
     const { user } = useAuth();
     const active = useActiveImports();
     // Completed batches — every import stays reachable here for fix/prune.
-    const { data: recent } = useRecentImports(user?.id, 10);
+    // Canonical fetch (TICKET-191) is RECENT_IMPORTS_FETCH_LIMIT = 10 rows —
+    // exactly what this hub shows, so no local slice.
+    const { data: recent } = useRecentImports(user?.id);
     const recentBatches = recent ?? [];
     // Full activation hub until a first import lands, then the compact standing row.
     const hasImported = useHasImported(user?.id);
