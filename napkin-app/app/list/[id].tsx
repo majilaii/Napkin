@@ -1,19 +1,13 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import {
-    ActivityIndicator,
-    FlatList,
-    Share,
-    StyleSheet,
-    Text,
-    View,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Share, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import {
     useList,
     useToggleListSave,
@@ -30,12 +24,25 @@ import { useCreateHandoff } from '@/hooks/wishlist/useCreateHandoff';
 import { useToast } from '@/providers/ToastProvider';
 import {
     ImportToListSheet,
-    ListDetailHeader,
-    ListEntryRow,
+    ListDetailSheet,
+    ScopedListMap,
+    type ListDetailSheetHandle,
 } from '@/components/lists';
+import { ListEntryRow } from '@/components/lists/ListEntryRow';
+import { deriveContextLine, deriveCover, deriveMetadataLine } from '@/components/lists/listHeaderUtils';
+import { HALF, PEEK, resolveSheetMode, visibleHeight, type Snap } from '@/components/lists/listSheetMath';
+import { mintFocusRequest, resolveSettleFocus, type FocusRequest } from '@/components/lists/focusRequest';
 import { derivePinnedIds } from '@/components/lists/pinnedLookupUtils';
+import {
+    countUnmappableListEntries,
+    hasValidCoordinates,
+    listEntriesToWishlistMapItems,
+} from '@/components/wishlist/listMapScope';
 import { HandoffSheet } from '@/components/wishlist';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
+
+const NO_FILTERS = { city: null, cuisine: null, price: null } as const;
+type Overlay = 'none' | 'share' | 'import';
 
 export default function ListDetailScreen() {
     const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
@@ -56,13 +63,9 @@ export default function ListDetailScreen() {
     const createPublicShare = useCreateHandoff();
     const toast = useToast();
 
-    const [dragDisabled, setDragDisabled] = useState(false);
-    const [shareVisible, setShareVisible] = useState(false);
-    const [importVisible, setImportVisible] = useState(false);
-    const [isEditingPlaces, setIsEditingPlaces] = useState(false);
-    const [wishlistOverrides, setWishlistOverrides] = useState<Map<string, boolean>>(() => new Map());
-    const wishlistPendingRef = useRef<Set<string>>(new Set());
-    const [wishlistPendingIds, setWishlistPendingIds] = useState<Set<string>>(() => new Set());
+    // A11: silent, granted-only location — NEVER prompt from list detail.
+    const { coords, status: locationStatus, requestIfGranted } = useNearbyLocation();
+    useEffect(() => { void requestIfGranted(); }, [requestIfGranted]);
 
     const detail = result?.data ?? null;
     const list = detail?.list ?? null;
@@ -75,11 +78,48 @@ export default function ListDetailScreen() {
     const saveCount = detail?.save_count ?? 0;
     const canSave = detail?.can_save
         ?? (!!user && !!list && !isOwner && !list.table_id && list.privacy === 'public');
+
+    const [containerH, setContainerH] = useState(0);
+    const H = Math.max(0, containerH - insets.top);
+
+    // ── Sheet ↔ map coordination ────────────────────────────────────────────────
+    const sheetRef = useRef<ListDetailSheetHandle>(null);
+    const reframeRef = useRef<() => void>(() => {});
+    const pendingFocusRef = useRef<string | null>(null);
+    // F4: the seq counter lives for the whole screen and NEVER resets — the
+    // map's handled marker persists across restaurant round-trips.
+    const focusSeqRef = useRef(0);
+    // True when the latest settle consumed a pendingFocus (owns its own camera).
+    const focusDrivenSettleRef = useRef(false);
+    const [settledSnap, setSettledSnap] = useState<Snap>(HALF);
+    const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+    const [isEditingPlaces, setIsEditingPlaces] = useState(false);
+    // F3: the edit lock ignores `ranked`; ranked only picks the reorder list.
+    const sheetMode = resolveSheetMode(isEditingPlaces, canEditEntries, !!list?.ranked);
+
+    // ── Overlays (one discriminated state + a present lock; Codex #10) ────────────
+    const [overlay, setOverlay] = useState<Overlay>('none');
+    const presentLockRef = useRef(0);
+    const canPresent = useCallback(() => {
+        const now = Date.now();
+        if (now - presentLockRef.current < 350) return false;
+        presentLockRef.current = now;
+        return true;
+    }, []);
+    const openOverlay = useCallback((kind: Exclude<Overlay, 'none'>) => {
+        if (overlay !== 'none' || !canPresent()) return;
+        setOverlay(kind);
+    }, [overlay, canPresent]);
+
+    const [dragDisabled, setDragDisabled] = useState(false);
+    const [wishlistOverrides, setWishlistOverrides] = useState<Map<string, boolean>>(() => new Map());
+    const wishlistPendingRef = useRef<Set<string>>(new Set());
+    const [wishlistPendingIds, setWishlistPendingIds] = useState<Set<string>>(() => new Set());
+
     const existingRestaurantIds = useMemo(
         () => entries.map((entry) => entry.restaurant_id),
         [entries],
     );
-
     const { data: myWishlistPages } = useMyWishlist(user?.id);
     const pinnedIds = useMemo(() => {
         const ids = derivePinnedIds(myWishlistPages?.pages);
@@ -94,6 +134,83 @@ export default function ListDetailScreen() {
         () => entries.filter((entry) => entry.restaurant?.verification === 'verified').length,
         [entries],
     );
+
+    // ── Map inputs ────────────────────────────────────────────────────────────────
+    const mapItems = useMemo(
+        () => (list
+            ? listEntriesToWishlistMapItems(entries, { ...NO_FILTERS, emoji: list.emoji, ranked: list.ranked })
+            : []),
+        [entries, list],
+    );
+    const unmappableCount = useMemo(
+        () => countUnmappableListEntries(entries, NO_FILTERS),
+        [entries],
+    );
+    const sheetVisibleHeight = H > 0 ? visibleHeight(H, settledSnap) : 0;
+
+    // ── Header derivations ──────────────────────────────────────────────────────────
+    const cover = useMemo(() => deriveCover(entries), [entries]);
+    const metadata = list ? deriveMetadataLine(entries.length, saveCount, list.privacy, list.table_id) : '';
+    const contextLine = useMemo(
+        () => (list ? deriveContextLine(list, isOwner, ownerProfile) : null),
+        [list, ownerProfile, isOwner],
+    );
+
+    // ── Handlers ────────────────────────────────────────────────────────────────────
+    const handleBack = useCallback(() => {
+        if (router.canGoBack()) router.back();
+        else router.replace('/lists');
+    }, [router]);
+
+    const openRestaurant = useCallback((restaurantId: string) => {
+        pendingFocusRef.current = null;
+        setFocusRequest(null);
+        router.push({ pathname: '/restaurant/[id]', params: { id: restaurantId } });
+    }, [router]);
+
+    // Row-locate / pin-tap → snap to peek, then fire the focus from the settle.
+    // G1: rejected outright while the edit lock holds (the locate icons are
+    // also disabled then; the sheet's snapTo clamps to FULL as a backstop).
+    const focusPin = useCallback((restaurantId: string) => {
+        if (sheetMode.locked) return;
+        pendingFocusRef.current = restaurantId;
+        sheetRef.current?.snapTo(PEEK);
+    }, [sheetMode.locked]);
+
+    // G1: a real drag supersedes an in-flight focus transition — including one
+    // already emitted but not yet handled (map not ready), which would
+    // otherwise fire a late camera jump after the user changed modes.
+    const handlePanStart = useCallback(() => {
+        pendingFocusRef.current = null;
+        setFocusRequest(null);
+    }, []);
+
+    // Entering the edit lock supersedes any in-flight or emitted focus too.
+    useEffect(() => {
+        if (!sheetMode.locked) return;
+        pendingFocusRef.current = null;
+        setFocusRequest(null);
+    }, [sheetMode.locked]);
+
+    const handleSnapSettle = useCallback((snap: Snap) => {
+        // G1: every settle consumes the pending focus — fired only at PEEK,
+        // discarded on any other snap (superseded transition).
+        const { fire } = resolveSettleFocus(pendingFocusRef.current, snap, PEEK);
+        pendingFocusRef.current = null;
+        focusDrivenSettleRef.current = fire != null;
+        if (fire) setFocusRequest(mintFocusRequest(focusSeqRef, fire));
+        setSettledSnap(snap);
+    }, []);
+
+    // F1: re-frame only AFTER the settle's mapPadding has committed —
+    // settledSnap drives sheetVisibleHeight, which is the map's padding prop,
+    // so a synchronous reframe inside the settle callback would fit against
+    // stale occlusion. Focus-driven settles own their camera via focusRequest.
+    useEffect(() => {
+        if (focusDrivenSettleRef.current) return;
+        if (settledSnap > HALF || sheetMode.locked) return;
+        reframeRef.current?.();
+    }, [settledSnap, sheetMode.locked]);
 
     const handleRemove = useCallback((entry: ListEntry) => {
         removeFromList.mutate({ list_id: entry.list_id, restaurant_id: entry.restaurant_id });
@@ -152,7 +269,7 @@ export default function ListDetailScreen() {
     const handleShare = useCallback(() => {
         if (!list) return;
         if (isOwner) {
-            setShareVisible(true);
+            openOverlay('share');
             return;
         }
         if (createPublicShare.isPending) return;
@@ -161,9 +278,7 @@ export default function ListDetailScreen() {
             {
                 onSuccess: async ({ share_url }) => {
                     try {
-                        await Share.share({
-                            message: `${list.title} on Napkin — ${share_url}`,
-                        });
+                        await Share.share({ message: `${list.title} on Napkin — ${share_url}` });
                     } catch {
                         toast.show('Could not open sharing');
                     }
@@ -171,7 +286,12 @@ export default function ListDetailScreen() {
                 onError: () => toast.show('Could not create that share link'),
             },
         );
-    }, [list, isOwner, createPublicShare, toast]);
+    }, [list, isOwner, openOverlay, createPublicShare, toast]);
+
+    const handleEditSettings = useCallback(() => {
+        if (!list || overlay !== 'none' || !canPresent()) return;
+        router.push({ pathname: '/list/[id]/edit', params: { id: list.id } });
+    }, [list, overlay, canPresent, router]);
 
     const handleDragEnd = useCallback(
         ({ data: reordered, to }: { data: ListEntry[]; from: number; to: number }) => {
@@ -187,24 +307,7 @@ export default function ListDetailScreen() {
         [id, entries, reorderEntry],
     );
 
-    const openRestaurant = useCallback((restaurantId: string) => {
-        router.push({ pathname: '/restaurant/[id]', params: { id: restaurantId } });
-    }, [router]);
-
-    const openListMap = useCallback((restaurantId?: string) => {
-        if (!id) return;
-        router.push({
-            pathname: '/wishlist',
-            params: {
-                view: 'map',
-                listId: id,
-                fromList: '1',
-                ...(restaurantId ? { restaurantId } : {}),
-            },
-        });
-    }, [id, router]);
-
-    const renderEntry = useCallback(
+    const renderRow = useCallback(
         (entry: ListEntry, index: number, drag?: () => void) => (
             <ListEntryRow
                 key={entry.id}
@@ -216,18 +319,10 @@ export default function ListDetailScreen() {
                 isDragDisabled={dragDisabled || reorderEntry.isPending}
                 isWishlisted={pinnedIds.has(entry.restaurant_id)}
                 isWishlistPending={wishlistPendingIds.has(entry.restaurant_id)}
-                canShowOnMap={
-                    typeof entry.restaurant.lat === 'number'
-                    && Number.isFinite(entry.restaurant.lat)
-                    && entry.restaurant.lat >= -90
-                    && entry.restaurant.lat <= 90
-                    && typeof entry.restaurant.lng === 'number'
-                    && Number.isFinite(entry.restaurant.lng)
-                    && entry.restaurant.lng >= -180
-                    && entry.restaurant.lng <= 180
-                }
+                // G1: locate is quiet-disabled while the edit lock holds.
+                canShowOnMap={hasValidCoordinates(entry) && !sheetMode.locked}
                 onPress={() => openRestaurant(entry.restaurant_id)}
-                onShowOnMap={() => openListMap(entry.restaurant_id)}
+                onShowOnMap={() => focusPin(entry.restaurant_id)}
                 onRemove={() => handleRemove(entry)}
                 onNoteChange={(note) => handleNoteChange(entry, note)}
                 onToggleWishlist={user
@@ -236,45 +331,17 @@ export default function ListDetailScreen() {
                 drag={drag}
             />
         ),
-        [list, canEditEntries, isEditingPlaces, dragDisabled, reorderEntry.isPending, pinnedIds, wishlistPendingIds, user, openRestaurant, openListMap, handleRemove, handleNoteChange, handleToggleWishlist],
+        [list, canEditEntries, isEditingPlaces, sheetMode.locked, dragDisabled, reorderEntry.isPending, pinnedIds, wishlistPendingIds, user, openRestaurant, focusPin, handleRemove, handleNoteChange, handleToggleWishlist],
     );
 
-    const header = list && ownerProfile ? (
-        <ListDetailHeader
-            list={list}
-            entryCount={entries.length}
-            saveCount={saveCount}
-            ownerProfile={ownerProfile}
-            isOwner={isOwner}
-            canEditEntries={canEditEntries}
-            isSaved={isSaved}
-            canSave={canSave}
-            isEditingPlaces={isEditingPlaces}
-            topInset={insets.top}
-            isSavePending={toggleListSave.isPending}
-            isSharePending={!isOwner && createPublicShare.isPending}
-            onBack={() => router.back()}
-            onOpenMap={() => openListMap()}
-            onToggleEditingPlaces={() => setIsEditingPlaces((current) => !current)}
-            onEdit={() => router.push({ pathname: '/list/[id]/edit', params: { id: list.id } })}
-            onShare={
-                !list.table_id
-                && verifiedCount > 0
-                && (isOwner || list.privacy === 'public')
-                    ? handleShare
-                    : undefined
-            }
-            onAddSpots={canEditEntries ? () => setImportVisible(true) : undefined}
-            onToggleSaved={canSave ? handleToggleSaved : undefined}
-        />
-    ) : null;
+    const canShareList = !!list && !list.table_id && verifiedCount > 0 && (isOwner || list.privacy === 'public');
 
     const empty = (
         <View style={styles.emptyState}>
             <Text style={[styles.emptyTitle, { color: palette.text }]}>No places yet</Text>
             {canEditEntries ? (
                 <PressableScale
-                    onPress={() => setImportVisible(true)}
+                    onPress={() => openOverlay('import')}
                     haptic="medium"
                     style={[styles.emptyButton, { backgroundColor: palette.primaryMuted }]}
                 >
@@ -285,78 +352,121 @@ export default function ListDetailScreen() {
     );
 
     return (
-        <>
+        <View
+            style={[styles.container, { backgroundColor: palette.background }]}
+            onLayout={(e) => setContainerH(e.nativeEvent.layout.height)}
+        >
             <Stack.Screen options={{ headerShown: false }} />
-            <View style={[styles.container, { backgroundColor: palette.background }]}>
-                {isLoading ? (
-                    <View style={styles.center}><ActivityIndicator color={palette.primary} /></View>
-                ) : isError ? (
-                    <View style={styles.center}>
-                        <Text style={[Type.headlineMedium, { color: palette.text, textAlign: 'center' }]}>Couldn’t open this list</Text>
-                        <Text style={[styles.errorCopy, { color: palette.textMuted }]}>Check your connection and try once more.</Text>
-                        <PressableScale
-                            onPress={() => void refetch()}
-                            haptic="light"
-                            style={[styles.retryButton, { backgroundColor: palette.primaryMuted }]}
-                        >
-                            <Text style={[styles.retryLabel, { color: palette.primary }]}>Try again</Text>
-                        </PressableScale>
+
+            {isLoading ? (
+                <View style={styles.center}><ActivityIndicator color={palette.primary} /></View>
+            ) : isError ? (
+                <View style={styles.center}>
+                    <Text style={[Type.headlineMedium, { color: palette.text, textAlign: 'center' }]}>Couldn’t open this list</Text>
+                    <Text style={[styles.errorCopy, { color: palette.textMuted }]}>Check your connection and try once more.</Text>
+                    <PressableScale
+                        onPress={() => void refetch()}
+                        haptic="light"
+                        style={[styles.retryButton, { backgroundColor: palette.primaryMuted }]}
+                    >
+                        <Text style={[styles.retryLabel, { color: palette.primary }]}>Try again</Text>
+                    </PressableScale>
+                </View>
+            ) : isNotFound ? (
+                <View style={styles.center}>
+                    <Text style={[Type.headlineMedium, { color: palette.text, textAlign: 'center' }]}>Not found</Text>
+                    <Text style={[styles.errorCopy, { color: palette.textMuted }]}>This list is private or no longer exists.</Text>
+                    <PressableScale onPress={handleBack} style={styles.retryButton}>
+                        <Text style={[styles.retryLabel, { color: palette.primary }]}>Go back</Text>
+                    </PressableScale>
+                </View>
+            ) : list ? (
+                <>
+                    <View style={StyleSheet.absoluteFill}>
+                        <ScopedListMap
+                            items={mapItems}
+                            unmappableCount={unmappableCount}
+                            userCoords={coords}
+                            locationStatus={locationStatus}
+                            focusRequest={focusRequest}
+                            collectionScopeKey={`list:${list.id}`}
+                            sheetVisibleHeight={sheetVisibleHeight}
+                            settledSnap={settledSnap}
+                            reframeRef={reframeRef}
+                            onPinFocus={focusPin}
+                            onOpenRestaurant={openRestaurant}
+                            palette={palette}
+                        />
                     </View>
-                ) : isNotFound ? (
-                    <View style={styles.center}>
-                        <Text style={[Type.headlineMedium, { color: palette.text, textAlign: 'center' }]}>Not found</Text>
-                        <Text style={[styles.errorCopy, { color: palette.textMuted }]}>This list is private or no longer exists.</Text>
-                        <PressableScale onPress={() => router.back()} style={styles.retryButton}>
-                            <Text style={[styles.retryLabel, { color: palette.primary }]}>Go back</Text>
-                        </PressableScale>
-                    </View>
-                ) : list && ownerProfile ? (
-                    canEditEntries && list.ranked ? (
-                        <DraggableFlatList
-                            data={entries}
-                            keyExtractor={(item) => item.id}
+
+                    {H > 0 ? (
+                        <ListDetailSheet
+                            sheetRef={sheetRef}
+                            H={H}
+                            headerProps={{
+                                list,
+                                ownerProfile,
+                                cover,
+                                metadata,
+                                contextLine,
+                                isOwner,
+                                canEditEntries,
+                                isEditingPlaces,
+                                isSaved,
+                                canSave,
+                                isSavePending: toggleListSave.isPending,
+                                isSharePending: !isOwner && createPublicShare.isPending,
+                                onToggleEditingPlaces: () => setIsEditingPlaces((current) => !current),
+                                onEditSettings: handleEditSettings,
+                                onShare: canShareList ? handleShare : undefined,
+                                onAddSpots: canEditEntries ? () => openOverlay('import') : undefined,
+                                onToggleSaved: canSave ? handleToggleSaved : undefined,
+                            }}
+                            description={list.description}
+                            entries={entries}
+                            renderRow={renderRow}
+                            editing={sheetMode.locked}
+                            reorder={sheetMode.reorder}
                             onDragEnd={handleDragEnd}
-                            ListHeaderComponent={header}
-                            renderItem={({ item, getIndex, drag }: RenderItemParams<ListEntry>) => renderEntry(item, getIndex() ?? 0, drag)}
-                            contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xxl }}
-                            ListEmptyComponent={empty}
-                            showsVerticalScrollIndicator={false}
+                            onSnapSettle={handleSnapSettle}
+                            onPanStart={handlePanStart}
+                            emptyComponent={entries.length === 0 ? empty : null}
                         />
-                    ) : (
-                        <FlatList
-                            data={entries}
-                            keyExtractor={(item) => item.id}
-                            ListHeaderComponent={header}
-                            renderItem={({ item, index }) => renderEntry(item, index)}
-                            contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xxl }}
-                            ListEmptyComponent={empty}
-                            showsVerticalScrollIndicator={false}
+                    ) : null}
+
+                    <PressableScale
+                        onPress={handleBack}
+                        haptic="selection"
+                        style={[styles.backChevron, { top: insets.top + 8, backgroundColor: palette.scrimFrost }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Back"
+                    >
+                        <Ionicons name="chevron-back" size={20} color={palette.text} />
+                    </PressableScale>
+
+                    {isOwner && !list.table_id ? (
+                        <HandoffSheet
+                            visible={overlay === 'share'}
+                            onDismiss={() => setOverlay('none')}
+                            pinnedCount={verifiedCount}
+                            listId={list.id}
+                            listName={list.title}
                         />
-                    )
-                ) : null}
+                    ) : null}
 
-                {list && isOwner && !list.table_id ? (
-                    <HandoffSheet
-                        visible={shareVisible}
-                        onDismiss={() => setShareVisible(false)}
-                        pinnedCount={verifiedCount}
-                        listId={list.id}
-                        listName={list.title}
-                    />
-                ) : null}
-
-                {list && canEditEntries ? (
-                    <ImportToListSheet
-                        visible={importVisible}
-                        onClose={() => setImportVisible(false)}
-                        userId={user?.id}
-                        listId={list.id}
-                        listTitle={list.title}
-                        existingRestaurantIds={existingRestaurantIds}
-                    />
-                ) : null}
-            </View>
-        </>
+                    {canEditEntries ? (
+                        <ImportToListSheet
+                            visible={overlay === 'import'}
+                            onClose={() => setOverlay('none')}
+                            userId={user?.id}
+                            listId={list.id}
+                            listTitle={list.title}
+                            existingRestaurantIds={existingRestaurantIds}
+                        />
+                    ) : null}
+                </>
+            ) : null}
+        </View>
     );
 }
 
@@ -387,6 +497,15 @@ const styles = StyleSheet.create({
     retryLabel: {
         fontFamily: 'Manrope_700Bold',
         fontSize: 13,
+    },
+    backChevron: {
+        position: 'absolute',
+        left: 14,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     emptyState: {
         alignItems: 'center',

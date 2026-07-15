@@ -75,90 +75,23 @@ import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/
 import { cuisineGlyph, tintIndex } from '@/lib/engraving';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { describePeekWho } from './peekWho';
-import { isCityScaleCollection, listCollectionFrameKey } from './listMapScope';
+import { listCollectionFrameKey } from './listMapScope';
+import {
+    chooseCollectionCamera,
+    CITY_DELTA,
+    CREAM,
+    NEAR_ME_DELTA,
+    SPOT_DELTA,
+    type LocationStatus,
+    type WishlistMapItem,
+} from './mapShared';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface WishlistMapItem {
-    id: string;
-    name: string;
-    city: string | null;
-    cuisine: string | null;
-    lat: number;
-    lng: number;
-    /**
-     * TICKET-108: owning-list emoji, rendered in place of the pin's cream dot.
-     * OPTIONAL — logged-spot mappers omit it, so their pins stay plain
-     * teardrops. Absent/null → the default cream dot.
-     */
-    emoji?: string | null;
-    /**
-     * TICKET-131: a spot the user has LOGGED (wishlist "Been" layer, dining-map
-     * "Mine") — renders the bubble ring in olive (`palette.secondary`) instead
-     * of terracotta. Set by the shared mappers in mapItems.ts; absent on saves.
-     */
-    been?: boolean;
-    /** Google Places price tier (0–4) → "$$" token on the peek card meta. */
-    priceLevel?: number | null;
-    /** Viewer's own avg rating at this spot (been/mine layers) — the card's
-     * rating numeral + the loved (≥ LOVED_MIN) heart badge on the pin. */
-    myRating?: number | null;
-    /** Viewer's visit count (been/mine layers) — quiet card meta when > 1. */
-    visitCount?: number;
-    /**
-     * TICKET-124 (network layer): when present, this pin is a followee's LOG,
-     * not one of the viewer's own saves — the pin becomes an avatar pin and the
-     * peek card switches to the network variant (whose pin · rating · note
-     * snippet, tap → their review). All four are OPTIONAL and gated on
-     * `entryId`: mine-mode pins omit them entirely and render the existing
-     * directions-first card, fully backward-compatible.
-     */
-    author?: { id: string; name: string; avatar: string | null };
-    rating?: number | null;
-    /** Short note snippet; may be null/absent — the peek degrades gracefully. */
-    note?: string | null;
-    /** Selected-List context. Presence keeps the authored carousel order and
-     * lets the shared peek surface show rank + curator note. */
-    listContext?: {
-        listId: string;
-        rank: number | null;
-    };
-    /** The followee's entry id → entry-detail. Presence = network pin. */
-    entryId?: string;
-    /**
-     * TICKET-124: does the primary entry clear the public-engagement gate (rating
-     * + >=20-char content)? Routes the peek tap — true → the followee's review
-     * (entry-detail, viewAs public); false/absent → the restaurant page. Keeps the
-     * one body affordance while never dead-ending on a thin log entry-detail's
-     * public view can't render. Also drives the avatar pin's terracotta dot badge.
-     */
-    hasReview?: boolean;
-    /** Other distinct followees who also logged here; >0 → "+N others". */
-    othersCount?: number;
-    /**
-     * TICKET-138: a restaurant saved by 2+ members of one of the viewer's tables
-     * (table-inclusive count). Presence ranks ABOVE network in BubblePin: amber
-     * count bubble, no avatar chip, no loved heart. `members` is the ≤5 stack the
-     * peek renders. `count===1` (TICKET-139 saved layer) renders as a plain
-     * terracotta save bubble; `count>=2` is the amber count face.
-     */
-    overlap?: {
-        count: number;
-        tableId: string;
-        tableName: string;
-        members: { user_id: string; display_name: string | null; avatar_url: string | null }[];
-    } | null;
-    /**
-     * TICKET-139 been-together: a group meal (supper / legacy round) at this
-     * restaurant. Set with `been: true` (olive glyph pin — no new BubblePin
-     * variant); only the peek branches on `gathered`.
-     */
-    gathered?: {
-        on: string; // ISO — "gathered 12 jun"
-        participants: { user_id: string; display_name: string; avatar_url: string | null }[];
-        suppersCount: number;
-    } | null;
-}
+// The pin shape + LocationStatus now live in the neutral `mapShared` module
+// (shared with ScopedListMap, no type cycle). Re-exported so existing importers
+// (`@/components/wishlist/WishlistMapView`) keep resolving unchanged.
+export type { WishlistMapItem };
 
 /**
  * The layer discriminant qualifying each marker key: `o` overlap · `n` network ·
@@ -168,8 +101,6 @@ export interface WishlistMapItem {
 function pinVariant(item: WishlistMapItem): 'o' | 'n' | 'b' | 's' {
     return item.overlap != null ? 'o' : item.entryId != null ? 'n' : item.been ? 'b' : 's';
 }
-
-type LocationStatus = 'idle' | 'pending' | 'granted' | 'denied';
 
 interface Props {
     /** Spots WITH valid coordinates (parent filters these). */
@@ -292,8 +223,9 @@ interface Props {
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+// CREAM + the framing deltas (NEAR_ME_DELTA / CITY_DELTA / SPOT_DELTA) now live
+// in the neutral `mapShared` module, shared with ScopedListMap.
 
-const CREAM = '#fdf6ec';
 /** Clearance so bottom chrome + peek sit above the floating nav pill (TICKET-130). */
 const NAV_CLEARANCE = 92;
 /** Corner law v2 (TICKET-137): the locate FAB stacks directly ABOVE the List
@@ -309,17 +241,8 @@ const FROST_DARK = 'rgba(42,39,36,0.92)';
 const LOVED_MIN = 4.5;
 
 // ── Framing deltas ──────────────────────────────────────────────────────────────
-// ONE region API for all camera moves: Camera.zoom is GOOGLE-ONLY — Apple Maps
-// keys on altitude and silently ignores zoom, which is why the locate FAB
-// centered without ever zooming (founder, 2026-07-08). animateToRegion behaves
-// identically on both providers. latitudeDelta ≈ 360 / 2^zoom.
-/** Locate FAB — zoom IN to a walkable radius (≈ zoom 15); pins stay legible. */
-const NEAR_ME_DELTA = 0.013;
-/** First frame on open — the "near me" city view (≈ zoom 13, the original
- * framing intent that the zoom param never actually applied on Apple). */
-const CITY_DELTA = 0.045;
-/** Layer switch landing on a single spot (≈ zoom 14). */
-const SPOT_DELTA = 0.022;
+// NEAR_ME_DELTA / CITY_DELTA / SPOT_DELTA are imported from `mapShared` (one
+// region API for all camera moves; latitudeDelta ≈ 360 / 2^zoom).
 /** Network pin ring — warm ink, deliberately NOT a third accent color
  * (terracotta + olive are this screen's two; network stays neutral). */
 const INK_RING_LIGHT = 'rgba(28,28,25,0.32)';
@@ -724,48 +647,31 @@ export function WishlistMapView({
         framedCollectionRef.current = collectionFrameKey;
         setSelectedId(null);
         const timer = setTimeout(() => {
-            if (items.length === 1) {
-                mapRef.current?.animateToRegion(
-                    {
-                        latitude: items[0].lat,
-                        longitude: items[0].lng,
-                        latitudeDelta: SPOT_DELTA,
-                        longitudeDelta: SPOT_DELTA,
-                    },
-                    320,
-                );
+            // The shared collection-framing algorithm (mapShared). This map has
+            // never deferred, so `defer` collapses to its historical fallback —
+            // items[0] at CITY_DELTA — keeping behavior byte-identical.
+            const action = chooseCollectionCamera(items, userCoords, locationStatus);
+            if (action.kind === 'fit') {
+                mapRef.current?.fitToCoordinates(action.coords, {
+                    edgePadding: { top: 150, right: 56, bottom: 250, left: 56 },
+                    animated: true,
+                });
                 return;
             }
-            if (isCityScaleCollection(items)) {
-                mapRef.current?.fitToCoordinates(
-                    items.map((item) => ({ latitude: item.lat, longitude: item.lng })),
-                    {
-                        edgePadding: { top: 150, right: 56, bottom: 250, left: 56 },
-                        animated: true,
-                    },
-                );
-                return;
-            }
-
-            const target = userCoords
-                ? [...items].sort(
-                    (a, b) =>
-                        haversineMiles(userCoords, { latitude: a.lat, longitude: a.lng })
-                        - haversineMiles(userCoords, { latitude: b.lat, longitude: b.lng }),
-                )[0]
-                : items[0];
-            mapRef.current?.animateToRegion(
-                {
-                    latitude: target.lat,
-                    longitude: target.lng,
+            const region = action.kind === 'region'
+                ? action.region
+                : {
+                    latitude: items[0].lat,
+                    longitude: items[0].lng,
                     latitudeDelta: CITY_DELTA,
                     longitudeDelta: CITY_DELTA,
-                },
-                320,
-            );
+                };
+            mapRef.current?.animateToRegion(region, 320);
         }, 260);
         return () => clearTimeout(timer);
-    }, [collectionFrameKey, collectionScopeKey, focusItemId, items, userCoords]);
+        // locationStatus feeds chooseCollectionCamera; the framedCollectionRef
+        // guard keeps re-runs a no-op, so adding it never re-frames.
+    }, [collectionFrameKey, collectionScopeKey, focusItemId, items, userCoords, locationStatus]);
 
     // Frame the map ONCE per open. This is a "near me" map, so prefer centering on
     // the user at city zoom — fitting ALL pins zooms way out for a globally-spread

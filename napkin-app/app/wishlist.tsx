@@ -68,8 +68,8 @@ import { buildMapPins } from '@/components/wishlist/mapPinsUtils';
 import {
     countUnmappableListEntries,
     listEntriesToWishlistMapItems,
+    resolveSwitchToPlaces,
     routeParamValue,
-    shouldReturnToListOrigin,
 } from '@/components/wishlist/listMapScope';
 import {
     spotsToMapItems,
@@ -294,7 +294,6 @@ export default function WishlistScreen() {
         view?: string | string[];
         listId?: string | string[];
         restaurantId?: string | string[];
-        fromList?: string | string[];
     }>();
     const { user } = useAuth();
     const insets = useSafeAreaInsets();
@@ -327,7 +326,6 @@ export default function WishlistScreen() {
     const routeView = routeParamValue(params.view);
     const routeListId = routeParamValue(params.listId);
     const routeRestaurantId = routeParamValue(params.restaurantId);
-    const routeFromList = routeParamValue(params.fromList);
     const [selectedListId, setSelectedListId] = useState<string | null>(routeListId);
     const [focusRestaurantId, setFocusRestaurantId] = useState<string | null>(routeRestaurantId);
     const [listsSheetOpen, setListsSheetOpen] = useState(false);
@@ -456,7 +454,7 @@ export default function WishlistScreen() {
         if (!selectedListId || !selectedListResult?.isNotFound) return;
         setSelectedListId(null);
         setFocusRestaurantId(null);
-        router.setParams({ listId: '', restaurantId: '', fromList: '' });
+        router.setParams({ listId: '', restaurantId: '' });
         toast.show('That List is no longer available');
     }, [router, selectedListId, selectedListResult?.isNotFound, toast]);
     // TICKET-138: "gather here" on an overlap peek → GatherSheet, prefilled with
@@ -833,22 +831,20 @@ export default function WishlistScreen() {
             view: 'map',
             listId: nextListId ?? '',
             restaurantId: '',
-            fromList: '',
         });
         requestLocation();
     }, [requestLocation, router]);
 
     const handleSwitchToPlaces = useCallback(() => {
-        if (selectedListId) {
-            if (shouldReturnToListOrigin(routeFromList, routeListId, selectedListId)) {
-                router.back();
-                return;
-            }
-            router.push({ pathname: '/list/[id]', params: { id: selectedListId } });
+        // A scoped List pushes to its own sheet-over-map route (TICKET-186);
+        // the unscoped map returns to the in-tab list overlay.
+        const target = resolveSwitchToPlaces(selectedListId);
+        if (target.kind === 'push-list') {
+            router.push({ pathname: '/list/[id]', params: { id: target.listId } });
             return;
         }
         handleSelectView('list');
-    }, [handleSelectView, routeFromList, routeListId, router, selectedListId]);
+    }, [handleSelectView, router, selectedListId]);
 
     const totalPinned = pinnedRows.length;
     const listsCount = (myLists?.length ?? 0) + (savedLists?.length ?? 0);
