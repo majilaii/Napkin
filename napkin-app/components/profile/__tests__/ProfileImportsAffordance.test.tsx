@@ -1,9 +1,13 @@
+/* eslint-disable @typescript-eslint/no-require-imports, import/first */
 /**
  * ProfileImportsAffordance tests (TICKET-191 rev 2) — the header tray badge
  * states. Slots come from the REAL deriveImportSlot so the badge logic is
  * proven against the actual ladder: attention-with-count (review) shows the
  * headline count, attention-without-count (failed) shows a dot, calm shows
  * nothing, and every tap routes via the hub.
+ *
+ * Component imports sit below the mocks: the expo-router factory reads
+ * mockPush, so importing first would hit its TDZ.
  */
 import React from 'react';
 // @ts-expect-error react-test-renderer ships no types in this project.
@@ -48,7 +52,7 @@ function slotFor(imports: ActiveImport[]): ImportSlot | null {
 }
 
 function render(slot: ImportSlot | null) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(<ProfileImportsAffordance slot={slot} />);
@@ -56,11 +60,10 @@ function render(slot: ImportSlot | null) {
     return renderer;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function byTestId(renderer: any, testID: string) {
+function byTestId(renderer: ReturnType<typeof render>, testID: string) {
     // Host nodes only — the react-native mock's function components carry the
     // same props, so an untyped match would double-count every element.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     return renderer.root.findAll(
         (node: any) => typeof node.type === 'string' && node.props?.testID === testID,
     );

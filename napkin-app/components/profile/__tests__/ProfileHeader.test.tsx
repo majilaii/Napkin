@@ -134,7 +134,7 @@ describe('ProfileHeader add-photo affordance', () => {
 describe('ProfileHeader imports affordance gate', () => {
     it('renders the tray in the self actions row and passes the slot through', () => {
         const slot = { kind: 'failed', accent: 'attention' };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const renderer = renderHeader({ importSlot: slot as any });
         const nodes = renderer.root.findAllByType('ProfileImportsAffordance');
         expect(nodes).toHaveLength(1);

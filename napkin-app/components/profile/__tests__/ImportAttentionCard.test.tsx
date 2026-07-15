@@ -1,9 +1,13 @@
+/* eslint-disable @typescript-eslint/no-require-imports, import/first */
 /**
  * ImportAttentionCard tests (TICKET-191 rev 2) — the render matrix against the
  * REAL deriveImportSlot ladder: the four attention tiers (review / failed /
  * kickoff / digest-with-needsLook) render the card, the calm tiers (running /
  * digest-clean / recent) and idle render nothing, and the tap routes via the
  * hub.
+ *
+ * Component imports sit below the mocks: the expo-router factory reads
+ * mockPush, so importing first would hit its TDZ.
  */
 import React from 'react';
 // @ts-expect-error react-test-renderer ships no types in this project.
@@ -77,7 +81,7 @@ function recentBatch(): RecentImport {
 }
 
 function render(slot: ImportSlot | null) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(<ImportAttentionCard slot={slot} />);
@@ -88,14 +92,14 @@ function render(slot: ImportSlot | null) {
 describe('ImportAttentionCard', () => {
     beforeEach(() => mockPush.mockReset());
 
-    const attentionSlots: Array<[string, ImportSlot | null]> = [
+    const attentionSlots: [string, ImportSlot | null][] = [
         ['review', deriveImportSlot([active('review', 4)], [], NOW)],
         ['failed', deriveImportSlot([active('failed')], [], NOW)],
         ['kickoff', deriveImportSlot([largeJob('kickoff', { listCount: 117 })], [], NOW)],
         ['digest-needsLook', deriveImportSlot([largeJob('done', { imported: 20, needsLook: 3 })], [], NOW)],
     ];
 
-    const calmSlots: Array<[string, ImportSlot | null]> = [
+    const calmSlots: [string, ImportSlot | null][] = [
         ['running', deriveImportSlot([active('reading')], [], NOW)],
         ['digest-clean', deriveImportSlot([largeJob('done', { imported: 12, needsLook: 0 })], [], NOW)],
         ['recent', deriveImportSlot([], [recentBatch()], NOW)],

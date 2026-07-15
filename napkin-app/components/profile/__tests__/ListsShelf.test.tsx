@@ -1,9 +1,13 @@
+/* eslint-disable @typescript-eslint/no-require-imports, import/first */
 /**
  * ListsShelf section-header tests (TICKET-191 rev 2) — after the Collections
  * un-merge, the shelf owns its "Lists" section again: exactly ONE
  * SectionHeader renders per variant (self with lists, self empty/ghost,
  * stranger with public lists), and none while lists are unresolved or for a
  * stranger with no public lists.
+ *
+ * Component imports sit below the mocks: the useMyLists factory reads
+ * mockMyLists, so importing first would hit its TDZ.
  */
 import React from 'react';
 // @ts-expect-error react-test-renderer ships no types in this project.
@@ -78,7 +82,7 @@ const PUBLIC_LIST: ProfileListSummary = {
 };
 
 function render(props: Partial<React.ComponentProps<typeof ListsShelf>> = {}) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(
@@ -88,7 +92,7 @@ function render(props: Partial<React.ComponentProps<typeof ListsShelf>> = {}) {
     return renderer;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function headers(renderer: any) {
     return renderer.root.findAllByType('SectionHeader');
 }
