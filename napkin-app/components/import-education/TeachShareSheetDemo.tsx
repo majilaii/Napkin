@@ -271,6 +271,7 @@ export function TeachShareSheetDemo({
         footage && decisionReady && stage
             ? computeOverlayGeometry(footage, stage, topInset)
             : null;
+    const mediaFrame = footage && stage ? mediaFrameStyle(footage, stage) : null;
     const holdPreviousFrame = footage && !decisionReady && liveVideoBeat !== beat;
 
     return (
@@ -283,22 +284,22 @@ export function TeachShareSheetDemo({
                     pointerEvents="none"
                     onLayout={(event) => setStage(event.nativeEvent.layout)}
                 >
-                    {!stillOnly && footage ? (
+                    {!stillOnly && footage && mediaFrame ? (
                         <VideoView
                             player={player}
-                            style={StyleSheet.absoluteFill}
-                            contentFit="cover"
+                            style={mediaFrame}
+                            contentFit="fill"
                             nativeControls={false}
                             onFirstFrameRender={revealPendingVideo}
                         />
                     ) : null}
-                    {footage ? (
+                    {footage && mediaFrame ? (
                         // Decode from beat start, but reveal only once both playback
                         // has frozen and this exact beat's still has loaded.
                         <Image
                             key={beat}
                             source={footage.still}
-                            resizeMode="cover"
+                            resizeMode="stretch"
                             onLoad={() => {
                                 if (activeBeat.current === beat) setLoadedStillBeat(beat);
                             }}
@@ -307,13 +308,12 @@ export function TeachShareSheetDemo({
                                 // shut - degrade to overlaying the paused final frame.
                                 if (activeBeat.current === beat) setLoadedStillBeat(beat);
                             }}
-                            style={[
-                                StyleSheet.absoluteFill,
-                                { opacity: decisionReady ? 1 : 0 },
-                            ]}
+                            style={[mediaFrame, { opacity: decisionReady ? 1 : 0 }]}
                         />
                     ) : null}
-                    {holdPreviousFrame ? <PlaybackCover beat={beat} /> : null}
+                    {holdPreviousFrame ? (
+                        <PlaybackCover beat={beat} stage={stage} />
+                    ) : null}
                 </View>
             ) : null}
 
@@ -428,6 +428,28 @@ interface OverlayGeometry {
  * cover-transform of the footage into the stage. Pure math lives in
  * teachDemoUtils; this only assembles styles.
  */
+/**
+ * Explicit cover rect for the footage layers. Image resizeMode="cover" /
+ * VideoView contentFit="cover" are deliberately NOT trusted: on the New
+ * Architecture the freeze still rendered at intrinsic pixel size (646pt wide
+ * on a 390pt screen), which is the founder-visible "ring on the wrong row"
+ * bug. Deriving an exact rect from the same coverTransform the spotlight uses
+ * makes footage and overlay share one source of truth - they cannot desync.
+ */
+function mediaFrameStyle(
+    footage: (typeof TEACH_FOOTAGE)[number],
+    stage: StageSize,
+): { position: 'absolute'; left: number; top: number; width: number; height: number } {
+    const t = coverTransform(footage.videoWidth, footage.videoHeight, stage.width, stage.height);
+    return {
+        position: 'absolute',
+        left: t.offsetX,
+        top: t.offsetY,
+        width: t.displayedWidth,
+        height: t.displayedHeight,
+    };
+}
+
 function computeOverlayGeometry(
     footage: (typeof TEACH_FOOTAGE)[number],
     stage: StageSize,
@@ -556,14 +578,14 @@ function TypewriterText({ text, instant }: { text: string; instant: boolean }) {
     );
 }
 
-function PlaybackCover({ beat }: { beat: number }) {
+function PlaybackCover({ beat, stage }: { beat: number; stage: StageSize | null }) {
     const previousFootage = footageForBeat(beat - 1);
-    if (previousFootage) {
+    if (previousFootage && stage) {
         return (
             <Image
                 source={previousFootage.still}
-                resizeMode="cover"
-                style={StyleSheet.absoluteFill}
+                resizeMode="stretch"
+                style={mediaFrameStyle(previousFootage, stage)}
             />
         );
     }
