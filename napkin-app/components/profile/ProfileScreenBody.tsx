@@ -3,14 +3,17 @@
  * TICKET-025, rebuilt for TICKET-092 (the Letterboxd/Beli revamp).
  *
  * One profile grammar for self AND public — identity → taste → collections →
- * the record → tables, seven sections in one scroll (TICKET-191):
+ * the record → tables, seven sections in one scroll (TICKET-191 rev 2:
+ * imports live up top — a header tray affordance + an attention-only card —
+ * while the hub owns history):
  *
- *   ProfileHeader (identity + ScoreBand stats strip)
+ *   ProfileHeader (identity + stats; self actions row carries the imports tray)
+ *   → ImportAttentionCard (self, ONLY when the import slot owes an action)
  *   → TopFour (self: editable; public: read view)
  *   → QuickTakes (prompt-led, owner-curated opinions)
  *   → TasteSignature (cuisines · geography · overall rating distribution —
  *     the sole carrier of eating-geography since the dining map was removed)
- *   → CollectionsSection (one header over the Lists rail + self-only Imports strip)
+ *   → ListsShelf (the "Lists" section — cover-plate rail + see-all)
  *   → ProfileIndex (Journal · Spots · Reviews · Wishlist[self])
  *   → TablesInCommonSection
  *
@@ -37,14 +40,16 @@ import { useUserProfile } from '@/hooks/users/useUserProfile';
 import { useUpdateProfile } from '@/hooks/users/useUpdateProfile';
 import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
 import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account';
+import { useImportSlot } from '@/hooks/imports/useImportSlot';
 
 import { ProfileHeader } from './ProfileHeader';
+import { ImportAttentionCard } from './ImportAttentionCard';
 import { TopFour } from './TopFour';
 import { ProfileTopFourSheet } from './ProfileTopFourSheet';
 import { QuickTakes } from './QuickTakes';
 import { QuickTakesSheet } from './QuickTakesSheet';
 import { TasteSignature } from './TasteSignature';
-import { CollectionsSection } from './CollectionsSection';
+import { ListsShelf } from './ListsShelf';
 import { ProfileIndex } from './ProfileIndex';
 import { TablesInCommonSection } from './TablesInCommonSection';
 import { NotFoundState } from './NotFoundState';
@@ -87,6 +92,11 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
         hasPalateAccess ? profileData?.profile.user_id : null,
     );
     const taste = useMemo(() => deriveTaste(spots ?? []), [spots]);
+    // Live import slot (TICKET-191 rev 2) — powers the header tray affordance
+    // + the attention-only card. RENDER-gated on isSelf below: useActiveImports
+    // reads the viewer's own queue regardless of the userId arg, so the value
+    // must never reach a stranger-profile surface.
+    const importSlot = useImportSlot(isSelf ? profileUserId : null);
     const [editTopFourOpen, setEditTopFourOpen] = useState(false);
     const [editQuickTakesOpen, setEditQuickTakesOpen] = useState(false);
     const [isAddingProfilePhoto, setIsAddingProfilePhoto] = useState(false);
@@ -316,7 +326,12 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 onSafetyMenu={!isSelf ? handleSafetyMenu : undefined}
                 onAddPhoto={isSelf ? handleAddProfilePhoto : undefined}
                 isAddingPhoto={profilePhotoWorking}
+                importSlot={isSelf ? importSlot : null}
             />
+
+            {/* Imports, above the fold (TICKET-191 rev 2): the card renders ONLY
+                when the slot owes an action; calm states leave the body clean. */}
+            {isSelf && <ImportAttentionCard slot={importSlot} />}
 
             {/* Top 4 — identity leads (Letterboxd: favorites before any feed).
                 FRIEND_TEST.hideTopFours deliberately bypassed on the profile
@@ -369,10 +384,10 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                     }
                 />
             )}
-            {/* Collections — one header over the Lists rail + self-only Imports
-                strip (TICKET-191); hides itself for a stranger with no public lists */}
+            {/* Lists — cover-plate rail with its own "Lists" header (rev 2
+                un-merged Collections); hides for a stranger with no public lists */}
             {hasPalateAccess && (
-                <CollectionsSection
+                <ListsShelf
                     isSelf={isSelf}
                     userId={targetUserId}
                     publicLists={profileData.public_lists ?? []}

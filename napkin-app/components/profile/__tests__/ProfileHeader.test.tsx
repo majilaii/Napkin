@@ -46,6 +46,10 @@ jest.mock('../CalibrationChip', () => ({ CalibrationChip: 'CalibrationChip' }));
 jest.mock('../RateMoreToUnlockPrompt', () => ({
     RateMoreToUnlockPrompt: 'RateMoreToUnlockPrompt',
 }));
+jest.mock('../ProfileImportsAffordance', () => ({
+    ProfileImportsAffordance: (props: Record<string, unknown>) =>
+        require('react').createElement('ProfileImportsAffordance', props),
+}));
 jest.mock('@/components/ui/napkin', () => ({
     PressableScale: (props: Record<string, unknown>) =>
         require('react').createElement('PressableScale', props, props.children),
@@ -121,6 +125,26 @@ describe('ProfileHeader add-photo affordance', () => {
         expect(button.props.disabled).toBe(true);
         expect(button.props.accessibilityState).toEqual({ busy: true, disabled: true });
         expect(renderer.root.findAllByType('ActivityIndicator')).toHaveLength(1);
+        act(() => renderer.unmount());
+    });
+});
+
+// TICKET-191 rev 2: the imports tray lives in the SELF actions row only —
+// a stranger's header (follow + safety row) never carries it.
+describe('ProfileHeader imports affordance gate', () => {
+    it('renders the tray in the self actions row and passes the slot through', () => {
+        const slot = { kind: 'failed', accent: 'attention' };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const renderer = renderHeader({ importSlot: slot as any });
+        const nodes = renderer.root.findAllByType('ProfileImportsAffordance');
+        expect(nodes).toHaveLength(1);
+        expect(nodes[0].props.slot).toBe(slot);
+        act(() => renderer.unmount());
+    });
+
+    it('renders no tray for a stranger', () => {
+        const renderer = renderHeader({ isSelf: false, relationship: 'public_only' });
+        expect(renderer.root.findAllByType('ProfileImportsAffordance')).toHaveLength(0);
         act(() => renderer.unmount());
     });
 });

@@ -40,6 +40,8 @@ import type {
 import { FollowButton } from './FollowButton';
 import { CalibrationChip } from './CalibrationChip';
 import { RateMoreToUnlockPrompt } from './RateMoreToUnlockPrompt';
+import { ProfileImportsAffordance } from './ProfileImportsAffordance';
+import type { ImportSlot } from '@/hooks/imports/importSlotUtils';
 import { NotifBell } from '@/components/notifications/NotifBell';
 import { useUnreadCount } from '@/hooks/notifications';
 import { useAuth } from '@/providers/AuthProvider';
@@ -87,6 +89,12 @@ interface Props {
     onAddPhoto?: () => void;
     /** Covers source picker presentation, compression, upload, and profile save. */
     isAddingPhoto?: boolean;
+    /**
+     * TICKET-191 rev 2: live import slot for the self-only tray affordance in
+     * the actions row (badge on attention, plain tray otherwise). Only the
+     * isSelf branch renders it — pass null/omit for strangers.
+     */
+    importSlot?: ImportSlot | null;
 }
 
 function initials(displayName: string): string {
@@ -109,6 +117,7 @@ export function ProfileHeader({
     countsInteractive = true,
     onAddPhoto,
     isAddingPhoto = false,
+    importSlot = null,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -265,6 +274,8 @@ export function ProfileHeader({
                             onPress={() => router.push('/notifications')}
                             ringColor={palette.background}
                         />
+                        {/* TICKET-191 rev 2: imports reachable with zero scroll */}
+                        <ProfileImportsAffordance slot={importSlot} />
                         <Pressable
                             onPress={() => router.push('/settings')}
                             hitSlop={10}

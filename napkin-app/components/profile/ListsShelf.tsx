@@ -1,13 +1,14 @@
 /**
  * ListsShelf — the profile's Lists presence (TICKET-185).
  *
- * A horizontal rail of cover-plate cards. HEADERLESS since TICKET-191: it
- * renders inside CollectionsSection, which owns the single "Collections"
- * SectionHeader — the shelf carries only a subordinate RailSubLabel ("Lists" +
- * self-only "see all"). Self reads useMyLists (all lists incl. private +
- * Table); a stranger reads the profile payload's public lists. Cards route to
- * the list; the shelf hides entirely for a stranger with no public lists, and
- * shows a single ghost "new list" card when you have none.
+ * A horizontal rail of cover-plate cards — the profile's "Lists" section,
+ * owning its single SectionHeader ("Lists" + self-only "see all"). TICKET-191
+ * rev 2 un-merged the short-lived Collections wrapper: imports moved up to the
+ * header affordance + attention card, so the shelf is a plain section again.
+ * Self reads useMyLists (all lists incl. private + Table); a stranger reads
+ * the profile payload's public lists. Cards route to the list; the shelf hides
+ * entirely for a stranger with no public lists, and shows a single ghost
+ * "new list" card when you have none.
  *
  * Doctrine (founder-directed 2026-07-14): list cards carry imagery. cover_photo_url
  * is always ToS-safe (own-bucket Places mirror or a user entry photo); most
@@ -27,7 +28,7 @@ import { useMyLists } from '@/hooks/lists/useMyLists';
 import { tintFor } from '@/lib/engraving';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { ProfileListSummary } from '@/hooks/users/useUserProfile';
-import { RailSubLabel } from './RailSubLabel';
+import { SectionHeader } from './SectionHeader';
 import { myListsToShelf, publicListsToShelf, type ShelfList } from './listsShelfUtils';
 
 type Palette = typeof Colors.light;
@@ -126,7 +127,7 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
         const hasLists = items.length > 0;
         return (
             <View>
-                <RailSubLabel
+                <SectionHeader
                     title="Lists"
                     rightLabel={hasLists ? 'see all' : undefined}
                     onRightLabelPress={hasLists ? () => router.push('/lists') : undefined}
@@ -157,7 +158,7 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
     if (items.length === 0) return null;
     return (
         <View>
-            <RailSubLabel title="Lists" />
+            <SectionHeader title="Lists" />
             <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
