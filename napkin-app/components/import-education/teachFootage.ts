@@ -2,13 +2,14 @@
  * Footage manifest for the import walkthrough.
  *
  * Each beat plays a bundled clip of the REAL flow (TikTok -> iOS share sheet ->
- * Napkin), freezes on its decision frame, and spotlights the tap target at the
- * normalized coordinates below.
+ * Napkin -> share-extension confirm), freezes on its decision frame, and
+ * spotlights the tap target at the normalized coordinates below.
  *
- * The clips currently in assets/onboarding/teach/ are generated PLACEHOLDERS
- * (dark frames with the step label and a marker drawn exactly at the target
- * coordinates, so overlay alignment is verifiable end to end). Swapping in the
- * real screen recording is file-for-file: see assets/onboarding/teach/FOOTAGE.md.
+ * The clips were cut from a real recording (July 2026, iPhone Pro Max) with the
+ * status bar cropped off and privacy blur baked into the two bands that showed
+ * real contacts (TikTok drawer recipients, iOS AirDrop row). Cut points, blur
+ * bands, and the coordinate-measurement method are documented in
+ * assets/onboarding/teach/FOOTAGE.md - a re-record is file-for-file.
  *
  * Kept separate from teachDemoUtils.ts so jest never resolves asset requires.
  */
@@ -45,11 +46,11 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         still: require('../../assets/onboarding/teach/teach-1-share-still.png'),
         videoWidth: 646,
         videoHeight: 1344,
-        durationMs: 2400,
+        durationMs: 3850,
         caption: TEACH_COPY.shareCaption,
         hint: TEACH_COPY.shareHint,
         pill: 'left',
-        shape: { kind: 'circle', x: 0.925, y: 0.55, r: 0.055 },
+        shape: { kind: 'circle', x: 0.927, y: 0.748, r: 0.055 },
     },
     {
         target: 'tiktokMore',
@@ -57,11 +58,11 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         still: require('../../assets/onboarding/teach/teach-2-tiktok-more-still.png'),
         videoWidth: 646,
         videoHeight: 1344,
-        durationMs: 2400,
+        durationMs: 1550,
         caption: TEACH_COPY.tiktokMoreCaption,
         hint: TEACH_COPY.tiktokMoreHint,
         pill: 'left',
-        shape: { kind: 'circle', x: 0.9, y: 0.735, r: 0.06 },
+        shape: { kind: 'circle', x: 0.893, y: 0.79, r: 0.055 },
     },
     {
         target: 'iosMore',
@@ -69,13 +70,13 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         still: require('../../assets/onboarding/teach/teach-3-ios-more-still.png'),
         videoWidth: 646,
         videoHeight: 1344,
-        durationMs: 2400,
+        durationMs: 2650,
         caption: TEACH_COPY.iosMoreCaption,
         hint: TEACH_COPY.iosMoreHint,
         pill: 'left',
-        shape: { kind: 'circle', x: 0.865, y: 0.63, r: 0.065 },
+        shape: { kind: 'circle', x: 0.822, y: 0.757, r: 0.055 },
         // The app-icon row is tiny on frame; echo it enlarged above the spotlight.
-        magnifier: { focusX: 0.62, focusY: 0.63, focusW: 0.72 },
+        magnifier: { focusX: 0.51, focusY: 0.757, focusW: 0.78 },
     },
     {
         target: 'napkin',
@@ -83,15 +84,27 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         still: require('../../assets/onboarding/teach/teach-4-apps-napkin-still.png'),
         videoWidth: 646,
         videoHeight: 1344,
-        durationMs: 2400,
+        durationMs: 1950,
         caption: TEACH_COPY.napkinCaption,
         hint: TEACH_COPY.napkinHint,
         pill: 'above',
-        shape: { kind: 'rect', x: 0.5, y: 0.475, w: 0.94, h: 0.052 },
+        shape: { kind: 'rect', x: 0.495, y: 0.432, w: 0.905, h: 0.057 },
+    },
+    {
+        target: 'addForReview',
+        video: require('../../assets/onboarding/teach/teach-5-add-review.mp4'),
+        still: require('../../assets/onboarding/teach/teach-5-add-review-still.png'),
+        videoWidth: 646,
+        videoHeight: 1344,
+        durationMs: 1650,
+        caption: TEACH_COPY.addForReviewCaption,
+        hint: TEACH_COPY.addForReviewHint,
+        pill: 'above',
+        shape: { kind: 'rect', x: 0.499, y: 0.898, w: 0.85, h: 0.058 },
     },
 ];
 
-/** Footage for beats 1..4; null for the intro (0) and the native result (5). */
+/** Footage for beats 1..5; null for the intro (0) and the native result (6). */
 export function footageForBeat(beat: number): TeachFootageBeat | null {
     return beat >= 1 && beat <= TEACH_FOOTAGE.length ? TEACH_FOOTAGE[beat - 1] : null;
 }

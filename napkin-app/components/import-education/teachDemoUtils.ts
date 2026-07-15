@@ -10,10 +10,16 @@
  * without loading any native module or asset.
  */
 
-export const BEAT_COUNT = 6;
+export const BEAT_COUNT = 7;
 export const LAST_BEAT = BEAT_COUNT - 1;
 
-export type TeachTarget = 'start' | 'share' | 'tiktokMore' | 'iosMore' | 'napkin';
+export type TeachTarget =
+    | 'start'
+    | 'share'
+    | 'tiktokMore'
+    | 'iosMore'
+    | 'napkin'
+    | 'addForReview';
 
 /** The only accepted target at each non-terminal beat. */
 export const REQUIRED_TARGETS: readonly TeachTarget[] = [
@@ -22,6 +28,7 @@ export const REQUIRED_TARGETS: readonly TeachTarget[] = [
     'tiktokMore',
     'iosMore',
     'napkin',
+    'addForReview',
 ];
 
 /** Advance only when the intended control was tapped; every other tap is ignored. */
@@ -38,10 +45,12 @@ export const TEACH_COPY = {
     tiktokMoreCaption: "TikTok's own drawer comes up first.",
     iosMoreCaption: 'Now the iOS share sheet.',
     napkinCaption: 'There we are.',
+    addForReviewCaption: 'Nothing saves until you say so.',
     shareHint: 'Tap Share',
     tiktokMoreHint: 'Tap More',
     iosMoreHint: 'Tap More',
     napkinHint: 'Tap Napkin',
+    addForReviewHint: 'Tap add for review',
     resultTitle: 'Saved from the whole video',
     resultBody: 'We watch the whole video, not just the caption.',
     doneCta: 'Start saving',

@@ -11,24 +11,26 @@ import {
 } from '../teachDemoUtils';
 
 describe('TikTok tutorial state machine', () => {
-    it('has five required interactions and one terminal result', () => {
-        expect(BEAT_COUNT).toBe(6);
-        expect(LAST_BEAT).toBe(5);
+    it('has six required interactions and one terminal result', () => {
+        expect(BEAT_COUNT).toBe(7);
+        expect(LAST_BEAT).toBe(6);
         expect(REQUIRED_TARGETS).toEqual([
             'start',
             'share',
             'tiktokMore',
             'iosMore',
             'napkin',
+            'addForReview',
         ]);
     });
 
-    it('requires the authentic TikTok → iOS → Napkin sequence', () => {
+    it('requires the authentic TikTok → iOS → Napkin → confirm sequence', () => {
         expect(advanceOnTarget(0, 'start')).toBe(1);
         expect(advanceOnTarget(1, 'share')).toBe(2);
         expect(advanceOnTarget(2, 'tiktokMore')).toBe(3);
         expect(advanceOnTarget(3, 'iosMore')).toBe(4);
         expect(advanceOnTarget(4, 'napkin')).toBe(5);
+        expect(advanceOnTarget(5, 'addForReview')).toBe(6);
     });
 
     it.each([
@@ -36,15 +38,16 @@ describe('TikTok tutorial state machine', () => {
         [1, 'tiktokMore'],
         [2, 'iosMore'],
         [3, 'napkin'],
-        [4, 'share'],
+        [4, 'addForReview'],
+        [5, 'share'],
     ] as const)('ignores the wrong target at beat %s', (beat, target) => {
         expect(advanceOnTarget(beat, target)).toBe(beat);
     });
 
     it('clamps before the first and after the terminal beat', () => {
         expect(advanceOnTarget(-2, 'start')).toBe(0);
-        expect(advanceOnTarget(5, 'napkin')).toBe(5);
-        expect(advanceOnTarget(9, 'start')).toBe(5);
+        expect(advanceOnTarget(6, 'addForReview')).toBe(6);
+        expect(advanceOnTarget(9, 'start')).toBe(6);
     });
 });
 
@@ -55,6 +58,7 @@ describe('copy', () => {
         expect(TEACH_COPY.tiktokMoreHint).toBe('Tap More');
         expect(TEACH_COPY.iosMoreHint).toBe('Tap More');
         expect(TEACH_COPY.napkinHint).toBe('Tap Napkin');
+        expect(TEACH_COPY.addForReviewHint).toBe('Tap add for review');
     });
 
     it('carries a caption for every footage beat', () => {
@@ -62,6 +66,7 @@ describe('copy', () => {
         expect(TEACH_COPY.tiktokMoreCaption.length).toBeGreaterThan(0);
         expect(TEACH_COPY.iosMoreCaption.length).toBeGreaterThan(0);
         expect(TEACH_COPY.napkinCaption.length).toBeGreaterThan(0);
+        expect(TEACH_COPY.addForReviewCaption.length).toBeGreaterThan(0);
     });
 
     it('keeps the whole-video differentiator and carries no emoji', () => {
