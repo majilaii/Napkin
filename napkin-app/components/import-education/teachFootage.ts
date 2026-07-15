@@ -31,6 +31,9 @@ export interface TeachFootageBeat {
     caption: string;
     /** Coach pill text on the frozen frame. */
     hint: string;
+    /** Screen-reader label/hint for the gated target (visible hints repeat "Tap More"). */
+    a11yLabel: string;
+    a11yHint: string;
     /** Where the coach pill sits relative to the spotlight. */
     pill: 'left' | 'above';
     /** Tap target on the frame, normalized 0..1 (see FOOTAGE.md for measuring). */
@@ -49,6 +52,8 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         durationMs: 3850,
         caption: TEACH_COPY.shareCaption,
         hint: TEACH_COPY.shareHint,
+        a11yLabel: 'Share this TikTok',
+        a11yHint: 'Opens TikTok\'s sharing options',
         pill: 'left',
         shape: { kind: 'circle', x: 0.927, y: 0.748, r: 0.055 },
     },
@@ -61,6 +66,8 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         durationMs: 1550,
         caption: TEACH_COPY.tiktokMoreCaption,
         hint: TEACH_COPY.tiktokMoreHint,
+        a11yLabel: 'More sharing options',
+        a11yHint: 'Opens the iOS share sheet',
         pill: 'left',
         shape: { kind: 'circle', x: 0.893, y: 0.79, r: 0.055 },
     },
@@ -73,6 +80,8 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         durationMs: 2650,
         caption: TEACH_COPY.iosMoreCaption,
         hint: TEACH_COPY.iosMoreHint,
+        a11yLabel: 'Show all apps',
+        a11yHint: 'Opens the full list of share targets',
         pill: 'left',
         shape: { kind: 'circle', x: 0.822, y: 0.757, r: 0.055 },
         // The app-icon row is tiny on frame; echo it enlarged above the spotlight.
@@ -87,6 +96,8 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         durationMs: 1950,
         caption: TEACH_COPY.napkinCaption,
         hint: TEACH_COPY.napkinHint,
+        a11yLabel: 'Share to Napkin',
+        a11yHint: 'Sends this TikTok to Napkin',
         pill: 'above',
         shape: { kind: 'rect', x: 0.495, y: 0.432, w: 0.905, h: 0.057 },
     },
@@ -99,6 +110,8 @@ export const TEACH_FOOTAGE: readonly TeachFootageBeat[] = [
         durationMs: 1650,
         caption: TEACH_COPY.addForReviewCaption,
         hint: TEACH_COPY.addForReviewHint,
+        a11yLabel: 'Add for review',
+        a11yHint: 'Queues the found spots for review in Napkin',
         pill: 'above',
         shape: { kind: 'rect', x: 0.499, y: 0.898, w: 0.85, h: 0.058 },
     },

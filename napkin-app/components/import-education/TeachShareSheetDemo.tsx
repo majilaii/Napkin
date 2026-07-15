@@ -100,13 +100,29 @@ export function TeachShareSheetDemo({
         instance.loop = false;
     });
 
-    useEventListener(player, 'playToEnd', () => setPhase('ready'));
+    useEventListener(player, 'playToEnd', () => {
+        // A genuine end leaves the playhead at the end of the CURRENT clip. A
+        // stale event from a just-replaced (or watchdog-recovered) source finds
+        // the new clip near zero and must not mark the new beat ready.
+        if (player.duration > 0 && player.currentTime >= player.duration - 0.3) {
+            setPhase('ready');
+        }
+    });
     useEventListener(player, 'statusChange', ({ status }) => {
         if (status === 'error') setVideoFailed(true);
     });
 
     useEffect(() => {
-        if (!footage) return;
+        if (!footage) {
+            // Intro and result beats render no video; a watchdog-recovered clip
+            // must not keep playing invisibly behind them.
+            try {
+                player.pause();
+            } catch {
+                // player already released during teardown
+            }
+            return;
+        }
         if (stillOnly) {
             setPhase('ready');
             return;
@@ -130,6 +146,11 @@ export function TeachShareSheetDemo({
         return () => {
             cancelled = true;
             clearTimeout(watchdog);
+            try {
+                player.pause();
+            } catch {
+                // player already released during teardown
+            }
         };
     }, [beat, footage, player, stillOnly]);
 
@@ -166,7 +187,14 @@ export function TeachShareSheetDemo({
     }));
 
     const completeTarget = (target: TeachTarget) => {
-        setBeat((current) => advanceOnTarget(current, target));
+        // Reset phase in the same batch as the beat change: leaving phase
+        // 'ready' until the playback effect runs would flash the NEXT beat's
+        // freeze state (still + spotlight + gate) and fire its ready haptic
+        // for a frame before the clip starts.
+        const next = advanceOnTarget(beat, target);
+        if (next === beat) return;
+        setPhase(stillOnly ? 'ready' : 'playing');
+        setBeat(next);
     };
 
     const overlayGeometry =
@@ -243,8 +271,8 @@ export function TeachShareSheetDemo({
                     <Pressable
                         onPress={() => completeTarget(footage.target)}
                         accessibilityRole="button"
-                        accessibilityLabel={footage.hint}
-                        accessibilityHint="Advances the import walkthrough"
+                        accessibilityLabel={footage.a11yLabel}
+                        accessibilityHint={footage.a11yHint}
                         style={overlayGeometry.hitbox}
                     />
                 </View>
