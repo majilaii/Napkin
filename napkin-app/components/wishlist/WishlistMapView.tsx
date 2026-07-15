@@ -2,8 +2,7 @@
  * WishlistMapView — full-bleed warm map of spots, "what's near me right now."
  *
  * TICKET-131 (rec'd-shaped chrome): one map surface grammar shared by the
- * wishlist tab's map mode (Saved · Been · Network) and /dining-map
- * (Mine · Network):
+ * wishlist tab's map mode and the table-map gathered surface:
  *   - source pills float top-LEFT on the glass (frosted segmented)
  *   - optional Filter chip top-RIGHT (opens the screen-owned FilterTabsSheet)
  *   - locate FAB stacked above the List pill, both bottom-RIGHT (corner law v2,
@@ -15,12 +14,9 @@
  *     warm ink = network), an avatar chip carries the WHO (network pins), and
  *     a terracotta heart badge = loved (rating ≥ LOVED_MIN). No more
  *     initials-as-pins: discovery reads from the pin itself.
- *   - peek = a swipeable CAROUSEL of cards (nearest-first), synced with pin
- *     selection both ways; each card: glyph/emoji plate (typographic — NO
- *     restaurant photos: restaurants.photo_url is always a Places hero, banned
- *     on our surfaces), name + rating, cuisine · $$ · distance meta, saved-by
- *     row (network), note pull-quote, explicit CTAs (view restaurant / directions
- *     / save — save opens the shared save sheet, TICKET-137).
+ *   - peek = a swipeable CAROUSEL of uniform cards (nearest-first), synced with
+ *     pin selection both ways; v2 lazily fills an authorized media tile, honest
+ *     rating/hours/context slots, and three literal actions without reflow.
  *   - tiles (TICKET-134): MapTiler `landscape` raster via UrlTile on BOTH
  *     platforms — cream land, butter roads, warm-brown labels. iOS replaces the
  *     Apple base (shouldReplaceMapContent — kills the grey dark tiles ⑧);
@@ -44,6 +40,8 @@ import {
     View,
     Text,
     Pressable,
+    ActivityIndicator,
+    Alert,
     StyleSheet,
     Platform,
     Linking,
@@ -67,15 +65,32 @@ import MapView, {
     type Region,
 } from 'react-native-maps';
 import type MapViewType from 'react-native-maps';
+import { useQueryClient } from '@tanstack/react-query';
 
-import { Colors, Shadow } from '@/constants/theme';
+import { Colors, Radius, Shadow } from '@/constants/theme';
 import { heirloomMapStyle } from '@/constants/mapStyle';
 import { tileUrlTemplate, MAPTILER_ATTRIBUTION, MAP_TILE_MODE } from '@/lib/maptiler';
 import { haversineMiles, formatDistance, type LatLng as GeoLatLng } from '@/lib/geo';
 import { cuisineGlyph, tintIndex } from '@/lib/engraving';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { describePeekWho } from './peekWho';
+import { peekActionsForPresentation, type PeekActionId } from './peekActions';
+import { PEEK_MAX_FONT_SCALE, peekRailCardHeight } from './peekLayout';
 import { listCollectionFrameKey } from './listMapScope';
+import { useAuth } from '@/providers/AuthProvider';
+import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
+import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
+import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
+import {
+    peekCardContextForItem,
+    peekCardContextToken,
+    usePeekCard,
+    type PeekCardData,
+    type PeekCardMediaCandidate,
+} from '@/hooks/restaurants/usePeekCard';
+import { queryKeys } from '@/lib/queryKeys';
+import { todaysHoursLine } from '@/lib/restaurantHours';
+import { AddToListSheet } from '@/components/lists/AddToListSheet';
 import {
     chooseCollectionCamera,
     CITY_DELTA,
@@ -175,18 +190,6 @@ interface Props {
         onChange: (k: string) => void;
     };
     /**
-     * Save-from-the-map (map-card-pin pass): network cards render a Save pill
-     * so a followee's spot can be pinned without leaving the map (the rec'd
-     * card's core affordance). `savedIds` = restaurants already on the viewer's
-     * wishlist (partial is fine — the add action is idempotent server-side);
-     * `onSave` fires the screen-owned useWishlistAdd mutation. Absent → no
-     * Save pill (nothing breaks).
-     */
-    save?: {
-        savedIds: ReadonlySet<string>;
-        onSave: (item: WishlistMapItem) => void;
-    };
-    /**
      * TICKET-138: "gather here" on an overlap peek card. Fired only by overlap
      * cards (the peek gates the pill on `item.overlap`); the screen mounts the
      * existing GatherSheet prefilled with the restaurant + the overlap's table.
@@ -258,7 +261,6 @@ const PEEK_PAD_L = 18;
 const PEEK_CARD_W = SCREEN_W - 56;
 const PEEK_GAP = 10;
 const PEEK_SNAP = PEEK_CARD_W + PEEK_GAP;
-const PEEK_MAX_FONT_SCALE = 2;
 
 // ── Directions deep-link (mirrors InfoMapPreview / MetaActions) ─────────────────
 
@@ -576,7 +578,6 @@ export function WishlistMapView({
     onImport,
     importStatus,
     sources,
-    save,
     onGather,
     onOpenFilters,
     filtersActive,
@@ -1279,7 +1280,6 @@ export function WishlistMapView({
                     onClose={() => setSelectedId(null)}
                     onOpenRestaurant={onOpenRestaurant}
                     onOpenReview={onOpenReview}
-                    save={save}
                     onGather={onGather}
                 />
             ) : null}
@@ -1304,7 +1304,6 @@ interface PeekCarouselProps {
     onOpenRestaurant: (restaurantId: string) => void;
     /** TICKET-124: review-eligible network cards tap through to the review. */
     onOpenReview?: (entryId: string) => void;
-    save?: Props['save'];
     /** TICKET-138: overlap cards' "gather here". */
     onGather?: Props['onGather'];
 }
@@ -1319,10 +1318,11 @@ function PeekCarousel({
     onClose,
     onOpenRestaurant,
     onOpenReview,
-    save,
     onGather,
 }: PeekCarouselProps) {
+    const { user } = useAuth();
     const { fontScale } = useWindowDimensions();
+    const [listSheetItem, setListSheetItem] = useState<WishlistMapItem | null>(null);
     const listRef = useRef<FlatList<WishlistMapItem>>(null);
     const slide = useRef(new Animated.Value(48)).current;
     const fade = useRef(new Animated.Value(0)).current;
@@ -1333,44 +1333,9 @@ function PeekCarousel({
         ]).start();
     }, [slide, fade]);
 
-    // Layers never mix in one items array, so the card height is uniform per
-    // open: network cards carry a saved-by row + note line, mine cards don't.
-    // TICKET-137: heights tightened to the content (was 178/136) — the founder's
-    // "too much empty white space" was the card being taller than its plate.
-    // Uniform explicit heights are structural (the wrap's fixed height carries
-    // the ✕ headroom + the rail animates as one block), so the network value is
-    // sized to its content sum — pad 18 + plate row 46 + gaps/who/note 43 +
-    // actions 43 = 150 — plus 2px slack for device font metrics (review P2-5;
-    // 146 measured ~4px under and bled into the action gap).
-    // TICKET-138/139: overlap + been-together (gathered) cards carry a who-row +
-    // actions like network cards, so they take the taller 152 height. Discover
-    // MIXES overlap + network in one array → the height must be uniform across the
-    // whole rail (a per-item height would desync the snap math).
-    const isTallLayer = items.some(
-        (i) => i.entryId != null || i.overlap != null || i.gathered != null || i.listContext != null,
-    );
-    const maxActionCount = items.reduce((maximum, item) => {
-        const isNetwork = item.entryId != null;
-        const isOverlap = item.overlap != null;
-        const isGathered = item.gathered != null;
-        const isListSpot = item.listContext != null;
-        const count = (
-            (isListSpot ? 0 : 1)
-            + (isOverlap && onGather ? 1 : 0)
-            + ((isNetwork || isListSpot) && save ? 1 : 0)
-            + (!isNetwork && !isOverlap && !isGathered ? 1 : 0)
-        );
-        return Math.max(maximum, count);
-    }, 0);
-    const stackActions = fontScale > 1 && maxActionCount > 1;
-    const baseCardH = isTallLayer ? 160 : 116;
-    const fontScaleProgress = Math.max(0, Math.min(fontScale, PEEK_MAX_FONT_SCALE) - 1);
-    const stackedActionsExtra = stackActions ? (maxActionCount - 1) * 52 : 0;
-    const cardH = Math.round(
-        baseCardH
-        + fontScaleProgress * (isTallLayer ? 56 : 32)
-        + stackedActionsExtra,
-    );
+    // One explicit height for every card in every layer. Enrichment data is not
+    // an input, so photos/hours/counts cannot reflow the rail or its snap math.
+    const cardH = peekRailCardHeight(fontScale);
 
     // Mount at the tapped pin's card (getItemLayout makes initialScrollIndex
     // cheap). Captured once — later selection changes scroll, not remount.
@@ -1399,114 +1364,358 @@ function PeekCarousel({
     };
 
     const isDark = palette !== Colors.light;
+    const selectedIndex = Math.max(0, items.findIndex((item) => item.id === selectedId));
 
     return (
-        <Animated.View
-            style={[
-                styles.peekWrap,
-                {
-                    bottom: bottomInset,
-                    // 16px headroom so the ✕ (overlapping the card's top-right
-                    // corner) stays fully INSIDE the wrap — iOS hit-testing
-                    // ignores touches outside a parent's bounds.
-                    height: cardH + 16,
-                    opacity: fade,
-                    transform: [{ translateY: slide }],
-                },
-            ]}
-            pointerEvents="box-none"
-        >
-            {/* One frosted ✕ above the rail — stays put while cards swipe. */}
-            <Pressable
-                onPress={onClose}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel="close"
+        <>
+            <Animated.View
                 style={[
-                    styles.peekCloseFab,
-                    { backgroundColor: isDark ? FROST_DARK : palette.scrimFrost },
-                    Shadow.ambient,
+                    styles.peekWrap,
+                    {
+                        bottom: bottomInset,
+                        height: cardH + 16,
+                        opacity: fade,
+                        transform: [{ translateY: slide }],
+                    },
                 ]}
+                pointerEvents="box-none"
             >
-                <Ionicons name="close" size={16} color={palette.textSecondary} />
-            </Pressable>
+                <Pressable
+                    onPress={onClose}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel="close"
+                    style={[
+                        styles.peekCloseFab,
+                        { backgroundColor: isDark ? FROST_DARK : palette.scrimFrost },
+                        Shadow.ambient,
+                    ]}
+                >
+                    <Ionicons name="close" size={16} color={palette.textSecondary} />
+                </Pressable>
 
-            <FlatList
-                ref={listRef}
-                data={items}
-                keyExtractor={(i) => i.id}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                initialScrollIndex={initialIndexRef.current}
-                getItemLayout={(_, index) => ({ length: PEEK_SNAP, offset: PEEK_SNAP * index, index })}
-                onScrollToIndexFailed={({ index }) =>
-                    listRef.current?.scrollToOffset({ offset: PEEK_SNAP * index, animated: false })
-                }
-                snapToInterval={PEEK_SNAP}
-                snapToAlignment="start"
-                decelerationRate="fast"
-                disableIntervalMomentum
-                onMomentumScrollEnd={handleMomentumEnd}
-                contentContainerStyle={{
-                    paddingLeft: PEEK_PAD_L,
-                    paddingRight: Math.max(0, SCREEN_W - PEEK_CARD_W - PEEK_PAD_L),
-                    paddingTop: 16,
-                }}
-                // Shadows bleed past cell bounds — don't clip them away.
-                removeClippedSubviews={false}
-                initialNumToRender={3}
-                windowSize={5}
-                renderItem={({ item }) => (
-                    <PeekCardBody
-                        item={item}
-                        userCoords={userCoords}
-                        palette={palette}
-                        height={cardH}
-                        stackActions={stackActions}
-                        onOpenRestaurant={onOpenRestaurant}
-                        onOpenReview={onOpenReview}
-                        save={save}
-                        onGather={onGather}
-                    />
-                )}
+                <FlatList
+                    ref={listRef}
+                    data={items}
+                    extraData={selectedId}
+                    keyExtractor={(i) => i.id}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    initialScrollIndex={initialIndexRef.current}
+                    getItemLayout={(_, index) => ({ length: PEEK_SNAP, offset: PEEK_SNAP * index, index })}
+                    onScrollToIndexFailed={({ index }) =>
+                        listRef.current?.scrollToOffset({ offset: PEEK_SNAP * index, animated: false })
+                    }
+                    snapToInterval={PEEK_SNAP}
+                    snapToAlignment="start"
+                    decelerationRate="fast"
+                    disableIntervalMomentum
+                    onMomentumScrollEnd={handleMomentumEnd}
+                    contentContainerStyle={{
+                        paddingLeft: PEEK_PAD_L,
+                        paddingRight: Math.max(0, SCREEN_W - PEEK_CARD_W - PEEK_PAD_L),
+                        paddingTop: 16,
+                    }}
+                    removeClippedSubviews={false}
+                    initialNumToRender={3}
+                    windowSize={5}
+                    renderItem={({ item, index }) => (
+                        <PeekCardBody
+                            item={item}
+                            viewerId={user?.id}
+                            isSelected={index === selectedIndex}
+                            userCoords={userCoords}
+                            palette={palette}
+                            height={cardH}
+                            fontScale={fontScale}
+                            onOpenRestaurant={onOpenRestaurant}
+                            onOpenReview={onOpenReview}
+                            onOpenListSheet={setListSheetItem}
+                            onGather={onGather}
+                        />
+                    )}
+                />
+            </Animated.View>
+            <AddToListSheet
+                visible={listSheetItem !== null}
+                onClose={() => setListSheetItem(null)}
+                userId={user?.id}
+                restaurantId={listSheetItem?.id}
+                restaurantName={listSheetItem?.name}
             />
-        </Animated.View>
+        </>
     );
 }
 
-// ── PeekCardBody — one card in the rail ─────────────────────────────────────────
-// Anatomy (rec'd parity, Heirloom voice): leading GLYPH PLATE (cuisine glyph /
-// list emoji on a seeded tint — typographic identity; restaurants.photo_url is
-// always a Places hero photo, banned on our surfaces, and lists already killed
-// thumbnails in TICKET-084), name + rating numeral, cuisine · $$ · distance
-// meta, saved-by row (network), — note pull-quote (network), then explicit
-// CTAs: view restaurant everywhere; directions (mine) / save (network — the pill
-// opens the shared save sheet, TICKET-137). Compact plate density (TICKET-137).
+// ── PeekCardBody v2 — fixed media + reserved context + literal action slots ─────
 
 interface PeekCardBodyProps {
     item: WishlistMapItem;
+    viewerId: string | null | undefined;
+    isSelected: boolean;
     userCoords: GeoLatLng | null;
     palette: typeof Colors.light;
     height: number;
-    stackActions: boolean;
+    fontScale: number;
     onOpenRestaurant: (restaurantId: string) => void;
     onOpenReview?: (entryId: string) => void;
-    save?: Props['save'];
+    onOpenListSheet: (item: WishlistMapItem) => void;
     onGather?: Props['onGather'];
+}
+
+function formatGoogleCount(value: number | null): string | null {
+    if (value == null) return null;
+    if (value < 1000) return String(value);
+    return `${(value / 1000).toFixed(1)}k`;
+}
+
+function PeekMediaTile({
+    item,
+    candidate,
+    palette,
+    onError,
+}: {
+    item: WishlistMapItem;
+    candidate: PeekCardMediaCandidate | undefined;
+    palette: typeof Colors.light;
+    onError: () => void;
+}) {
+    const plateTints = [palette.surfaceJournal, palette.oliveCream, palette.tertiaryFixed] as const;
+    const plateTint = plateTints[tintIndex(item.id)];
+
+    return (
+        <View style={[styles.peekMedia, { backgroundColor: plateTint }]}>
+            {candidate ? (
+                <>
+                    <ExpoImage
+                        source={{ uri: candidate.url }}
+                        recyclingKey={candidate.url}
+                        contentFit="cover"
+                        transition={120}
+                        style={StyleSheet.absoluteFill}
+                        onError={onError}
+                    />
+                    <View
+                        pointerEvents="none"
+                        style={[styles.peekMediaOutline, { borderColor: palette.imageOutline }]}
+                    />
+                    {candidate.kind === 'places' ? (
+                        <>
+                            <View
+                                pointerEvents="none"
+                                style={[
+                                    StyleSheet.absoluteFill,
+                                    {
+                                        backgroundColor: palette.placesOverlayTint,
+                                        opacity: palette.placesOverlayOpacity,
+                                    },
+                                ]}
+                            />
+                            <Text
+                                pointerEvents="none"
+                                maxFontSizeMultiplier={1}
+                                numberOfLines={1}
+                                style={[styles.peekAttribution, { color: palette.textOnImage }]}
+                            >
+                                {`Photo · ${candidate.attribution ?? 'Google'}`}
+                            </Text>
+                        </>
+                    ) : null}
+                </>
+            ) : (
+                <>
+                    <View
+                        pointerEvents="none"
+                        style={[styles.peekPlateInset, { borderColor: palette.terracottaBorderStrong }]}
+                    />
+                    {item.emoji ? (
+                        <Text maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE} style={styles.peekPlateEmoji}>
+                            {item.emoji}
+                        </Text>
+                    ) : (
+                        <Ionicons
+                            name={cuisineGlyph(item.cuisine)}
+                            size={25}
+                            color={palette.primary}
+                            style={styles.peekPlateGlyph}
+                        />
+                    )}
+                </>
+            )}
+        </View>
+    );
+}
+
+function actionLabel(action: PeekActionId, saved: boolean | undefined): string {
+    switch (action) {
+        case 'log_visit': return 'log a visit';
+        case 'log_again': return 'log again';
+        case 'directions': return 'directions';
+        case 'wishlist': return saved === undefined ? 'wishlist' : saved ? 'saved' : 'save';
+        case 'reserve': return 'reserve';
+        case 'view_restaurant': return 'view restaurant';
+        case 'gather_here': return 'gather here';
+    }
+}
+
+function actionIcon(
+    action: PeekActionId,
+    saved: boolean | undefined,
+): keyof typeof Ionicons.glyphMap {
+    switch (action) {
+        case 'log_visit': return 'create-outline';
+        case 'log_again': return 'refresh-outline';
+        case 'directions': return 'navigate-outline';
+        case 'wishlist': return saved ? 'heart' : 'heart-outline';
+        case 'reserve': return 'calendar-outline';
+        case 'view_restaurant': return 'arrow-forward';
+        case 'gather_here': return 'people-outline';
+    }
+}
+
+function PeekActionButton({
+    action,
+    emphasized,
+    saved,
+    pending,
+    disabled,
+    height,
+    palette,
+    onPress,
+    onLongPress,
+    onPressIn,
+}: {
+    action: PeekActionId;
+    emphasized: boolean;
+    saved: boolean | undefined;
+    pending: boolean;
+    disabled: boolean;
+    height: number;
+    palette: typeof Colors.light;
+    onPress: () => void;
+    onLongPress?: () => void;
+    onPressIn?: () => void;
+}) {
+    const label = actionLabel(action, saved);
+    const isSelectedHeart = action === 'wishlist' && saved === true;
+    const heartUnknown = action === 'wishlist' && saved === undefined;
+    const foreground = emphasized
+        ? disabled ? palette.textMuted : palette.textInverse
+        : isSelectedHeart ? palette.primary : palette.textSecondary;
+
+    return (
+        <Pressable
+            onPress={onPress}
+            onLongPress={onLongPress}
+            onPressIn={onPressIn}
+            delayLongPress={350}
+            disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel={
+                action === 'wishlist'
+                    ? saved === undefined
+                        ? 'Checking wishlist'
+                        : saved
+                          ? 'Remove from wishlist'
+                          : 'Add to wishlist'
+                    : label
+            }
+            accessibilityState={{
+                disabled,
+                busy: pending || heartUnknown,
+                selected: action === 'wishlist' ? saved === true : undefined,
+            }}
+            style={({ pressed }) => [
+                emphasized ? styles.peekPrimaryAction : styles.peekIconAction,
+                {
+                    height,
+                    backgroundColor: emphasized
+                        ? disabled ? palette.surfaceContainerHigh : palette.primary
+                        : isSelectedHeart ? palette.primaryMuted : palette.surfaceContainerHigh,
+                    opacity: disabled && !pending ? 0.72 : 1,
+                    transform: [{ scale: pressed ? 0.96 : 1 }],
+                },
+            ]}
+        >
+            {pending || heartUnknown ? (
+                <ActivityIndicator size="small" color={foreground} />
+            ) : (
+                <Ionicons name={actionIcon(action, saved)} size={18} color={foreground} />
+            )}
+            {emphasized ? (
+                <Text
+                    maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                    numberOfLines={1}
+                    style={[styles.peekPrimaryActionLabel, { color: foreground }]}
+                >
+                    {label}
+                </Text>
+            ) : null}
+        </Pressable>
+    );
 }
 
 function PeekCardBody({
     item,
+    viewerId,
+    isSelected,
     userCoords,
     palette,
     height,
-    stackActions,
+    fontScale,
     onOpenRestaurant,
     onOpenReview,
-    save,
+    onOpenListSheet,
     onGather,
 }: PeekCardBodyProps) {
     const router = useRouter();
+    const queryClient = useQueryClient();
+    const context = useMemo(() => peekCardContextForItem(item), [item]);
+    const contextToken = useMemo(() => peekCardContextToken(context), [context]);
+    const peekKey = useMemo(
+        () => queryKeys.restaurants.peekCard(viewerId ?? '', item.id, contextToken),
+        [contextToken, item.id, viewerId],
+    );
+    const presentationIdentity = `${viewerId ?? ''}:${item.id}:${contextToken}`;
+    // The selector only reads the layer discriminant. Pin that input to the
+    // context token so unrelated parent object churn cannot resnapshot a live
+    // presentation when enrichment lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const actionContextItem = useMemo(() => item, [contextToken]);
+    const presentationBoundary = `${presentationIdentity}:${isSelected ? 'selected' : 'neighbor'}`;
+    const presentation = useMemo(() => {
+        // Reading the boundary inside the memo makes the false→true transition
+        // explicit while keeping async enrichment out of the dependency set.
+        void presentationBoundary;
+        const reserveUrl = queryClient.getQueryData<PeekCardData>(peekKey)?.reserve_url ?? null;
+        return {
+            actions: peekActionsForPresentation(actionContextItem, {
+                reserveResolved: reserveUrl != null,
+            }),
+            reserveUrl,
+        };
+        // isSelected is deliberately a dependency: false→true is the exact
+        // synchronous presentation boundary. Async query data is not.
+    }, [actionContextItem, peekKey, presentationBoundary, queryClient]);
+
+    const { data: enrichment } = usePeekCard({
+        viewerId,
+        restaurantId: item.id,
+        context,
+        isSelected,
+    });
+    const media = enrichment?.media ?? [];
+    const mediaIdentity = `${contextToken}:${media.map((candidate) => `${candidate.kind}:${candidate.url}`).join('|')}`;
+    const [mediaIndex, setMediaIndex] = useState(0);
+    useEffect(() => setMediaIndex(0), [mediaIdentity]);
+    const mediaCandidate = media[mediaIndex];
+
+    const saved = useIsWishlisted(item.id, viewerId);
+    const wishlistAdd = useWishlistAdd(viewerId);
+    const wishlistRemove = useWishlistRemove(viewerId);
+    const wishlistPending = wishlistAdd.isPending || wishlistRemove.isPending;
+    const longPressHandledRef = useRef(false);
+
     // TICKET-140: tapping a single-author who-row opens that person's profile.
     // /u/[identifier] takes a raw user id (see app/follows.tsx) — works off any
     // layer without a table context (Discover isn't table-scoped).
@@ -1517,49 +1726,30 @@ function PeekCardBody({
         },
         [router],
     );
-    const isNetwork = item.entryId != null;
+    const isNetwork = context.layer === 'network';
     // TICKET-138 overlap card ("N of you saved this" + gather here) / TICKET-139
     // been-together card ("gathered <date>"). Additive variants — 135's card
     // architecture + 137's density stay.
-    const isOverlap = item.overlap != null;
-    const isGathered = item.gathered != null;
-    const isListSpot = item.listContext != null;
-    // TICKET-137: the Save pill now OPENS the shared save sheet (AddToListSheet —
-    // wishlist / list / unsave), so the button no longer owns an optimistic flip.
-    // Saved state reads straight from the screen's wishlist set, which the sheet's
-    // own mutation cache-patches keep current.
-    const alreadySaved = !!save?.savedIds.has(item.id);
+    const isOverlap = context.layer === 'overlap';
+    const isGathered = context.layer === 'gathered';
+    const isListSpot = context.layer === 'list';
 
     const distanceLabel = userCoords
         ? formatDistance(haversineMiles(userCoords, { latitude: item.lat, longitude: item.lng }))
         : null;
-    const price = priceTierLabel(item.priceLevel);
-    const visits =
-        !isNetwork && item.been && (item.visitCount ?? 0) > 1 ? `${item.visitCount} visits` : null;
-    const meta = (
-        isOverlap
-            ? [item.cuisine, price, distanceLabel ?? item.city]
-            : isGathered
-              ? [
-                    item.cuisine,
-                    distanceLabel ?? item.city,
-                    item.gathered!.suppersCount > 1 ? `×${item.gathered!.suppersCount}` : null,
-                ]
-              : isNetwork
-                ? [item.cuisine, distanceLabel ?? item.city]
-                : [
-                    item.listContext?.rank ? `#${item.listContext.rank}` : null,
-                    item.cuisine,
-                    price,
-                    distanceLabel ?? item.city,
-                    visits,
-                ]
-    )
+    const price = priceTierLabel(item.priceLevel ?? enrichment?.price_level);
+    const hasPersonalRatingLayer = isNetwork || context.layer === 'been';
+    const googleCount = formatGoogleCount(enrichment?.google_rating_count ?? null);
+    const googleRating = !hasPersonalRatingLayer && enrichment?.google_rating != null
+        ? `${enrichment.google_rating.toFixed(1)}${googleCount ? ` (${googleCount})` : ''}`
+        : null;
+    const googleSignal = googleRating ? `${googleRating} · Google` : null;
+    const meta = [item.cuisine, price, distanceLabel ?? item.city, googleSignal]
         .filter(Boolean)
         .join(' · ');
 
     // No numeral on overlap (no rating) or gathered (group meal, no personal avg).
-    const rating = isNetwork ? item.rating : item.been && !isGathered ? item.myRating : null;
+    const rating = isNetwork ? item.rating : context.layer === 'been' ? item.myRating : null;
 
     // Body tap keeps the TICKET-124 routing: review-eligible network log → the
     // followee's review; everything else → the restaurant page.
@@ -1571,247 +1761,250 @@ function PeekCardBody({
     const authorName = item.author?.name ?? 'Someone';
     // TICKET-140: who-row contract (words + tap target) — see peekWho.ts.
     const who = describePeekWho(item);
-    const note = isNetwork || isListSpot ? item.note?.trim() || null : null;
+    const note = item.note?.trim() || null;
+    const todayLine = todaysHoursLine(enrichment?.hours, new Date());
+    const contextLine = isNetwork && note ? `— ${note}` : enrichment?.address_short;
+    const savesLine = !isOverlap
+        && enrichment?.visible_saves_count != null
+        && enrichment.visible_saves_count >= 3
+        ? `saved by ${enrichment.visible_saves_count}`
+        : null;
+    const effectiveScale = Math.max(1, Math.min(fontScale, PEEK_MAX_FONT_SCALE));
+    const nameLineHeight = Math.round(24 * effectiveScale);
+    const metaLineHeight = Math.round(18 * effectiveScale);
+    const auxiliaryLineHeight = Math.round(19 * effectiveScale);
+    const actionHeight = Math.round(44 + (effectiveScale - 1) * 14);
 
-    // Plate tint — GlyphChip's seeded triple (feed ledger ↔ map speak the same).
-    const plateTints = [palette.surfaceJournal, palette.oliveCream, palette.tertiaryFixed] as const;
-    const plateTint = plateTints[tintIndex(item.id)];
+    const toggleWishlist = useCallback(() => {
+        if (!viewerId || saved === undefined || wishlistPending) return;
+        if (longPressHandledRef.current) {
+            longPressHandledRef.current = false;
+            return;
+        }
+        if (saved) {
+            wishlistRemove.mutate(item.id, {
+                onError: () => Alert.alert("Couldn't remove", 'Try again'),
+            });
+        } else {
+            wishlistAdd.mutate(
+                { restaurant_id: item.id },
+                { onError: () => Alert.alert("Couldn't save", 'Try again') },
+            );
+        }
+    }, [item.id, saved, viewerId, wishlistAdd, wishlistPending, wishlistRemove]);
+
+    const handleAction = useCallback((action: PeekActionId) => {
+        switch (action) {
+            case 'wishlist':
+                toggleWishlist();
+                return;
+            case 'log_visit':
+            case 'log_again':
+                router.push({ pathname: '/create-entry', params: { restaurantId: item.id } });
+                return;
+            case 'directions':
+                openDirections(item);
+                return;
+            case 'reserve':
+                if (presentation.reserveUrl) Linking.openURL(presentation.reserveUrl).catch(() => {});
+                return;
+            case 'view_restaurant':
+                onOpenRestaurant(item.id);
+                return;
+            case 'gather_here':
+                onGather?.(item);
+                return;
+        }
+    }, [item, onGather, onOpenRestaurant, presentation.reserveUrl, router, toggleWishlist]);
+
+    const actionDisabled = useCallback((action: PeekActionId) => {
+        if (action === 'wishlist') {
+            return !viewerId || saved === undefined || wishlistPending;
+        }
+        if (action === 'reserve') return presentation.reserveUrl == null;
+        if (action === 'gather_here') return onGather == null;
+        return false;
+    }, [onGather, presentation.reserveUrl, saved, viewerId, wishlistPending]);
+
+    const renderAction = (action: PeekActionId, emphasized: boolean) => (
+        <PeekActionButton
+            key={action}
+            action={action}
+            emphasized={emphasized}
+            saved={saved}
+            pending={action === 'wishlist' && wishlistPending}
+            disabled={actionDisabled(action)}
+            height={actionHeight}
+            palette={palette}
+            onPress={() => handleAction(action)}
+            onPressIn={action === 'wishlist' ? () => { longPressHandledRef.current = false; } : undefined}
+            onLongPress={
+                action === 'wishlist' && viewerId
+                    ? () => {
+                        longPressHandledRef.current = true;
+                        onOpenListSheet(item);
+                    }
+                    : undefined
+            }
+        />
+    );
 
     return (
-        <View style={[styles.peekCard, { backgroundColor: palette.surfaceContainerLow, height }]}>
+        <View style={[styles.peekCard, { backgroundColor: palette.card, height }]}>
             <Pressable
-                style={styles.peekBody}
+                style={styles.peekMain}
                 onPress={onPressBody}
                 accessibilityLabel={
                     opensReview ? `Open ${authorName}'s review of ${item.name}` : `Open ${item.name}`
                 }
             >
-                <View style={styles.peekTopRow}>
-                    <View style={[styles.peekPlate, { backgroundColor: plateTint }]}>
-                        <View style={styles.peekPlateInset} />
-                        {item.emoji ? (
-                            <Text maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE} style={styles.peekPlateEmoji}>
-                                {item.emoji}
-                            </Text>
-                        ) : (
-                            <Ionicons
-                                name={cuisineGlyph(item.cuisine)}
-                                size={20}
-                                color={palette.primary}
-                                style={styles.peekPlateGlyph}
-                            />
-                        )}
-                    </View>
-                    <View style={styles.peekTitleCol}>
+                <PeekMediaTile
+                    item={item}
+                    candidate={mediaCandidate}
+                    palette={palette}
+                    onError={() => setMediaIndex((index) => Math.min(index + 1, media.length))}
+                />
+
+                <View style={styles.peekContent}>
+                    <View style={[styles.peekNameRow, { height: nameLineHeight }]}>
                         <Text
                             maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.peekName, { color: palette.text }]}
+                            style={[styles.peekName, { color: palette.text, lineHeight: nameLineHeight }]}
                             numberOfLines={1}
                         >
                             {item.name}
                         </Text>
+                        {rating != null ? (
+                            <Text
+                                maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                style={[styles.peekRating, { color: palette.primary, lineHeight: nameLineHeight }]}
+                                numberOfLines={1}
+                            >
+                                {rating.toFixed(1)}
+                            </Text>
+                        ) : null}
+                    </View>
+                    <View style={{ height: metaLineHeight, justifyContent: 'center' }}>
                         {meta ? (
                             <Text
                                 maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                                style={[styles.peekMeta, { color: palette.textMuted }]}
+                                style={[styles.peekMeta, { color: palette.textMuted, lineHeight: metaLineHeight }]}
                                 numberOfLines={1}
                             >
                                 {meta}
                             </Text>
                         ) : null}
                     </View>
-                    {rating != null ? (
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.peekRating, { color: palette.primary }]}
-                        >
-                            {rating.toFixed(1)}
-                        </Text>
-                    ) : null}
+
+                    <View style={[styles.peekReservedSlot, { height: auxiliaryLineHeight }]}>
+                        {who.variant === 'network' ? (
+                            <Pressable
+                                style={({ pressed }) => [styles.peekWhoRow, { opacity: pressed ? 0.6 : 1 }]}
+                                onPress={() => openProfile(who.tapUserId)}
+                                disabled={!who.tapUserId}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Open ${who.name}'s profile`}
+                            >
+                                <PeekWhoAvatar author={item.author} palette={palette} />
+                                <Text
+                                    maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                    style={[styles.peekWhoText, { color: palette.textSecondary }]}
+                                    numberOfLines={1}
+                                >
+                                    <Text style={[styles.peekWhoName, { color: palette.text }]}>{who.name}</Text>
+                                    {who.othersSuffix}
+                                </Text>
+                            </Pressable>
+                        ) : who.variant === 'saved-by' ? (
+                            <Pressable
+                                style={({ pressed }) => [styles.peekWhoRow, { opacity: pressed ? 0.6 : 1 }]}
+                                onPress={() => openProfile(who.tapUserId)}
+                                disabled={!who.tapUserId}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Open ${who.name}'s profile`}
+                            >
+                                <PeekAvatarStack members={item.overlap!.members} palette={palette} />
+                                <Text
+                                    maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                    style={[styles.peekWhoText, { color: palette.textSecondary }]}
+                                    numberOfLines={1}
+                                >
+                                    {'saved by '}
+                                    <Text style={[styles.peekWhoName, { color: palette.text }]}>{who.name}</Text>
+                                </Text>
+                            </Pressable>
+                        ) : who.variant === 'overlap-many' ? (
+                            <View style={styles.peekWhoRow}>
+                                <PeekAvatarStack members={item.overlap!.members} palette={palette} />
+                                <Text
+                                    maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                    style={[styles.peekWhoText, { color: palette.textSecondary }]}
+                                    numberOfLines={1}
+                                >
+                                    {who.label}
+                                </Text>
+                            </View>
+                        ) : isGathered ? (
+                            <View style={styles.peekWhoRow}>
+                                <PeekAvatarStack members={item.gathered!.participants} palette={palette} />
+                                <Text
+                                    maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                    style={[styles.peekWhoText, { color: palette.textSecondary }]}
+                                    numberOfLines={1}
+                                >
+                                    {`gathered ${fmtShortDate(item.gathered!.on)}`}
+                                </Text>
+                            </View>
+                        ) : isListSpot && note ? (
+                            <Text
+                                maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                style={[styles.peekNote, { color: palette.textSecondary }]}
+                                numberOfLines={1}
+                            >
+                                {`— ${note}`}
+                            </Text>
+                        ) : null}
+                    </View>
+                    <View style={[styles.peekReservedSlot, { height: auxiliaryLineHeight }]}>
+                        {todayLine ? (
+                            <Text
+                                maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                style={[styles.peekAuxText, { color: palette.textSecondary }]}
+                                numberOfLines={1}
+                            >
+                                {`today ${todayLine}`}
+                            </Text>
+                        ) : null}
+                    </View>
+                    <View style={[styles.peekReservedSlot, { height: auxiliaryLineHeight }]}>
+                        {contextLine ? (
+                            <Text
+                                maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                style={[styles.peekNote, { color: palette.textSecondary }]}
+                                numberOfLines={1}
+                            >
+                                {contextLine}
+                            </Text>
+                        ) : null}
+                    </View>
+                    <View style={[styles.peekReservedSlot, { height: auxiliaryLineHeight }]}>
+                        {savesLine ? (
+                            <Text
+                                maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
+                                style={[styles.peekSaves, { color: palette.textMuted }]}
+                                numberOfLines={1}
+                            >
+                                {savesLine}
+                            </Text>
+                        ) : null}
+                    </View>
                 </View>
-
-                {/* Who-row — network (followee's log) + overlap (table saves).
-                    TICKET-140: single-author rows tap → that person's profile and
-                    read the name bold (700, ink) as the affordance. Network verb
-                    stays a log ("+N others"); a single save reads "saved by «Name»".
-                    The 2+ overlap ("N of you saved this") has no single person, so
-                    it stays flat + untappable. The pull-quote/gathered rows below
-                    are unchanged. */}
-                {who.variant === 'network' ? (
-                    <Pressable
-                        style={({ pressed }) => [styles.peekWhoRow, { opacity: pressed ? 0.6 : 1 }]}
-                        onPress={() => openProfile(who.tapUserId)}
-                        disabled={!who.tapUserId}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Open ${who.name}'s profile`}
-                    >
-                        <PeekWhoAvatar author={item.author} palette={palette} />
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.peekWhoText, { color: palette.textSecondary }]}
-                            numberOfLines={1}
-                        >
-                            <Text style={[styles.peekWhoName, { color: palette.text }]}>
-                                {who.name}
-                            </Text>
-                            {who.othersSuffix}
-                        </Text>
-                    </Pressable>
-                ) : who.variant === 'saved-by' ? (
-                    <Pressable
-                        style={({ pressed }) => [styles.peekWhoRow, { opacity: pressed ? 0.6 : 1 }]}
-                        onPress={() => openProfile(who.tapUserId)}
-                        disabled={!who.tapUserId}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Open ${who.name}'s profile`}
-                    >
-                        <PeekAvatarStack members={item.overlap!.members} palette={palette} />
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.peekWhoText, { color: palette.textSecondary }]}
-                            numberOfLines={1}
-                        >
-                            {'saved by '}
-                            <Text style={[styles.peekWhoName, { color: palette.text }]}>
-                                {who.name}
-                            </Text>
-                        </Text>
-                    </Pressable>
-                ) : who.variant === 'overlap-many' ? (
-                    <View style={styles.peekWhoRow}>
-                        <PeekAvatarStack members={item.overlap!.members} palette={palette} />
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.peekWhoText, { color: palette.textSecondary }]}
-                            numberOfLines={1}
-                        >
-                            {who.label}
-                        </Text>
-                    </View>
-                ) : null}
-
-                {/* Been together: "gathered 12 jun" + participant stack. */}
-                {isGathered ? (
-                    <View style={styles.peekWhoRow}>
-                        <PeekAvatarStack members={item.gathered!.participants} palette={palette} />
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.peekWhoText, { color: palette.textSecondary }]}
-                            numberOfLines={1}
-                        >
-                            {`gathered ${fmtShortDate(item.gathered!.on)}`}
-                        </Text>
-                    </View>
-                ) : null}
-                {note ? (
-                    <Text
-                        maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                        style={[styles.peekNote, { color: palette.textSecondary }]}
-                        numberOfLines={1}
-                    >
-                        {`— ${note}`}
-                    </Text>
-                ) : null}
             </Pressable>
 
-            <View style={[styles.peekActions, stackActions && styles.peekActionsStacked]}>
-                {!isListSpot ? (
-                    <Pressable
-                        onPress={() => onOpenRestaurant(item.id)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`View ${item.name}`}
-                        style={({ pressed }) => [
-                            styles.viewVenueBtn,
-                            stackActions && styles.stackedAction,
-                            { backgroundColor: palette.surfaceContainerHigh, opacity: pressed ? 0.7 : 1 },
-                        ]}
-                    >
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.viewVenueLabel, { color: palette.text }]}
-                        >
-                            view restaurant
-                        </Text>
-                        <Ionicons name="arrow-forward" size={13} color={palette.text} />
-                    </Pressable>
-                ) : null}
-
-                {/* Overlap card: "gather here" (terracotta, lowercase verb) →
-                    the screen's GatherSheet, prefilled with the overlap's table. */}
-                {isOverlap && onGather ? (
-                    <Pressable
-                        onPress={() => onGather(item)}
-                        accessibilityRole="button"
-                        accessibilityLabel="gather here"
-                        style={({ pressed }) => [
-                            styles.sidePill,
-                            stackActions && styles.stackedAction,
-                            { backgroundColor: palette.primary, opacity: pressed ? 0.9 : 1 },
-                        ]}
-                    >
-                        <Ionicons name="calendar-outline" size={15} color="#fff" />
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.sidePillLabel, { color: '#fff' }]}
-                        >
-                            gather here
-                        </Text>
-                    </Pressable>
-                ) : null}
-
-                {(isNetwork || isListSpot) && save ? (
-                    <Pressable
-                        onPress={() => save.onSave(item)}
-                        accessibilityRole="button"
-                        accessibilityLabel={alreadySaved ? 'saved — open save options' : 'save'}
-                        style={({ pressed }) => [
-                            styles.sidePill,
-                            stackActions && styles.stackedAction,
-                            alreadySaved
-                                ? { backgroundColor: palette.primaryMuted }
-                                : { borderWidth: 1.5, borderColor: 'rgba(160,63,40,0.35)' },
-                            { opacity: pressed ? 0.7 : 1 },
-                        ]}
-                    >
-                        <Ionicons
-                            name={alreadySaved ? 'heart' : 'heart-outline'}
-                            size={15}
-                            color={palette.primary}
-                        />
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.sidePillLabel, { color: palette.primary }]}
-                        >
-                            {alreadySaved ? 'saved' : 'save'}
-                        </Text>
-                    </Pressable>
-                ) : null}
-
-                {/* Directions — mine layer only (not network / overlap / gathered). */}
-                {!isNetwork && !isOverlap && !isGathered ? (
-                    <Pressable
-                        onPress={() => openDirections(item)}
-                        accessibilityRole="button"
-                        accessibilityLabel="directions"
-                        style={({ pressed }) => [
-                            styles.sidePill,
-                            stackActions && styles.stackedAction,
-                            {
-                                borderWidth: 1.5,
-                                borderColor: 'rgba(160,63,40,0.35)',
-                                opacity: pressed ? 0.7 : 1,
-                            },
-                        ]}
-                    >
-                        <Ionicons name="navigate-outline" size={15} color={palette.primary} />
-                        <Text
-                            maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                            style={[styles.sidePillLabel, { color: palette.primary }]}
-                        >
-                            directions
-                        </Text>
-                    </Pressable>
-                ) : null}
+            <View style={styles.peekActions}>
+                {renderAction(presentation.actions.slot1, true)}
+                {presentation.actions.slot2 ? renderAction(presentation.actions.slot2, false) : null}
+                {presentation.actions.slot3 ? renderAction(presentation.actions.slot3, false) : null}
             </View>
         </View>
     );
@@ -2080,94 +2273,108 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
     },
-    // Frosted ✕ overlapping the rail's top-right corner — one, not per-card.
     peekCloseFab: {
         position: 'absolute',
         top: 0,
         right: 16,
-        width: 30,
-        height: 30,
-        borderRadius: 15,
+        width: 36,
+        height: 36,
+        borderRadius: Radius.full,
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 2,
     },
-    // Compact plate density (TICKET-137): tighter paddings/gaps (~30% off the
-    // vertical), smaller plate — the card reads as a plate, not a stretched sheet.
     peekCard: {
         width: PEEK_CARD_W,
         marginRight: PEEK_GAP,
-        borderRadius: 16,
-        paddingVertical: 9,
-        paddingHorizontal: 14,
-        justifyContent: 'space-between',
+        borderRadius: Radius.lg,
+        padding: 12,
         shadowColor: '#1c1c19',
         shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.12,
+        shadowOpacity: 0.1,
         shadowRadius: 24,
-        elevation: 10,
+        elevation: 8,
     },
-    peekBody: {
+    peekMain: {
         flex: 1,
-        gap: 3,
-    },
-    peekTopRow: {
+        minHeight: 0,
         flexDirection: 'row',
-        alignItems: 'center',
         gap: 10,
     },
-    // Leading plate — glyph/emoji on a seeded tint (GlyphChip idiom: engraved
-    // inset rule). Typographic by doctrine — never a restaurant photo.
-    peekPlate: {
-        width: 46,
-        height: 46,
-        borderRadius: 11,
+    peekMedia: {
+        width: 108,
+        alignSelf: 'stretch',
+        borderRadius: Radius.md,
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'hidden',
     },
+    peekMediaOutline: {
+        ...StyleSheet.absoluteFillObject,
+        borderWidth: 1,
+        borderRadius: Radius.md,
+    },
+    peekAttribution: {
+        position: 'absolute',
+        left: 6,
+        right: 6,
+        bottom: 5,
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 11,
+        letterSpacing: 0.1,
+        textShadowColor: 'rgba(28,28,25,0.52)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
+    },
     peekPlateInset: {
         position: 'absolute',
-        top: 3,
-        left: 3,
-        right: 3,
-        bottom: 3,
-        borderRadius: 8,
+        top: 4,
+        left: 4,
+        right: 4,
+        bottom: 4,
+        borderRadius: 9,
         borderWidth: 1,
-        borderColor: 'rgba(160,63,40,0.22)',
     },
     peekPlateGlyph: {
-        opacity: 0.8,
+        opacity: 0.82,
     },
     peekPlateEmoji: {
-        fontSize: 21,
+        fontSize: 25,
         includeFontPadding: false,
     },
-    peekTitleCol: {
+    peekContent: {
         flex: 1,
-        gap: 2,
+        minWidth: 0,
+        minHeight: 0,
+    },
+    peekNameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
     },
     peekName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
-        lineHeight: 22,
+        flex: 1,
+        fontFamily: 'Newsreader_600SemiBold',
+        fontSize: 19,
     },
-    // Rating numeral — the brand's italic-serif rating moment, terracotta.
     peekRating: {
         fontFamily: 'Newsreader_500Medium_Italic',
         fontSize: 19,
-        lineHeight: 23,
     },
     peekMeta: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        fontSize: 13,
     },
-    // Saved-by row — avatar + "{name} +N others" (network cards).
+    peekReservedSlot: {
+        minWidth: 0,
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
     peekWhoRow: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        marginTop: 2,
     },
     peekWhoAvatar: {
         width: 16,
@@ -2175,7 +2382,6 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         overflow: 'hidden',
     },
-    // Overlapping ≤5 avatar stack (overlap / been-together who-rows).
     peekStack: {
         height: 16,
         position: 'relative',
@@ -2202,61 +2408,50 @@ const styles = StyleSheet.create({
     peekWhoText: {
         flex: 1,
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
+        fontSize: 13,
     },
-    // TICKET-140: the tappable name in a single-author who-row — the weight shift
-    // (700, ink) is the affordance (no chevron / underline).
     peekWhoName: {
         fontFamily: 'Manrope_700Bold',
     },
-    // Followee's note snippet — em-dash pull-quote, italic serif.
     peekNote: {
         fontFamily: 'Newsreader_400Regular_Italic',
         fontSize: 13.5,
-        lineHeight: 18,
+    },
+    peekAuxText: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+    },
+    peekSaves: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
     },
     peekActions: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginTop: 7,
+        marginTop: 8,
     },
-    peekActionsStacked: {
-        flexDirection: 'column',
-        alignItems: 'stretch',
-    },
-    stackedAction: {
-        width: '100%',
-        flex: 0,
-    },
-    viewVenueBtn: {
+    peekPrimaryAction: {
         flex: 1,
+        minWidth: 0,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
-        height: 44,
-        borderRadius: 12,
+        gap: 7,
+        borderRadius: Radius.md,
+        paddingHorizontal: 12,
     },
-    viewVenueLabel: {
+    peekPrimaryActionLabel: {
+        flexShrink: 1,
         fontFamily: 'Manrope_700Bold',
-        fontSize: 12.5,
-        letterSpacing: 0.2,
+        fontSize: 13,
+        letterSpacing: 0.1,
     },
-    // Side pill — directions (mine) / Save (network), same footprint.
-    sidePill: {
-        flexDirection: 'row',
+    peekIconAction: {
+        width: 44,
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 5,
-        height: 44,
-        borderRadius: 12,
-        paddingHorizontal: 13,
-    },
-    sidePillLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
-        letterSpacing: 0.2,
+        borderRadius: Radius.md,
     },
 });
 

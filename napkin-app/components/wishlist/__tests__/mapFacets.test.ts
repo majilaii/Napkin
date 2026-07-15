@@ -97,7 +97,7 @@ describe('sortGatheredRecent', () => {
                 id,
                 been: true,
                 gathered: on
-                    ? { on, participants: [], suppersCount: 1 }
+                    ? { tableId: 'table-1', on, participants: [], suppersCount: 1 }
                     : (null as WishlistMapItem['gathered']),
             });
         const rows = [
@@ -111,8 +111,8 @@ describe('sortGatheredRecent', () => {
 
     it('does not mutate the input', () => {
         const rows = [
-            item({ id: 'x', gathered: { on: '2026-01-01', participants: [], suppersCount: 1 } }),
-            item({ id: 'y', gathered: { on: '2026-02-01', participants: [], suppersCount: 1 } }),
+            item({ id: 'x', gathered: { tableId: 'table-1', on: '2026-01-01', participants: [], suppersCount: 1 } }),
+            item({ id: 'y', gathered: { tableId: 'table-1', on: '2026-02-01', participants: [], suppersCount: 1 } }),
         ];
         const before = rows.map((r) => r.id);
         sortGatheredRecent(rows);

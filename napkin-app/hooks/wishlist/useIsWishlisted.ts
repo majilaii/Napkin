@@ -1,5 +1,5 @@
 /**
- * Returns true if the given restaurant is in the user's personal wishlist.
+ * Returns true/false once resolved, and undefined while the server check is unknown.
  *
  * Accepts either a persisted restaurant_id (UUID) or a Places external_id.
  *
@@ -27,7 +27,7 @@ async function checkWishlisted(restaurantId: string): Promise<boolean> {
 export function useIsWishlisted(
     restaurantIdOrExternalId: string | null | undefined,
     userId: string | null | undefined,
-): boolean {
+): boolean | undefined {
     const queryClient = useQueryClient();
     const id = restaurantIdOrExternalId ?? null;
     const isUuid = !!id && UUID_RE.test(id);
@@ -37,8 +37,7 @@ export function useIsWishlisted(
             ? queryKeys.wishlist.check(userId, id)
             : ['wishlist', 'check', 'disabled'],
         // For UUIDs, fetch from server. For external_ids, the cache value
-        // (set by useWishlistAdd dual-write) is the source of truth — initial
-        // value false until the user saves the ghost in this session.
+        // (set by useWishlistAdd dual-write) is the source of truth.
         queryFn: isUuid
             ? () => checkWishlisted(id!)
             : () => Promise.resolve(
@@ -47,5 +46,7 @@ export function useIsWishlisted(
         enabled: !!id && !!userId,
         staleTime: 1000 * 60 * 5,
     });
-    return !!data;
+    // Undefined is an intentional third state. Callers must not treat a
+    // not-yet-checked persisted restaurant as unsaved and fire the wrong toggle.
+    return data;
 }

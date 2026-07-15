@@ -411,7 +411,7 @@ export default function RestaurantScreen() {
         user?.id,
         persistedRestaurantId,
     );
-    const bookmarkDisabled = !user?.id || !restaurant;
+    const bookmarkDisabled = !user?.id || !restaurant || bookmarked === undefined;
     // Pin reads "saved" when the restaurant is wishlisted OR in any curated list.
     const isSaved = bookmarked || containingListIds.length > 0;
     const [saveSheetOpen, setSaveSheetOpen] = useState(false);

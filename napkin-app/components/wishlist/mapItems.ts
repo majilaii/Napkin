@@ -205,6 +205,7 @@ export function supperPinsToMapItems(rows: TableMapPin[] | null | undefined): Wi
         lng: row.lng,
         been: true,
         gathered: {
+            tableId: row.table_id,
             on: row.gathered_on,
             participants: row.participants,
             suppersCount: row.suppers_count,

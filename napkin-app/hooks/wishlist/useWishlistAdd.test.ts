@@ -46,7 +46,9 @@ describe('useWishlistAdd', () => {
         const { result, client } = renderHookWithClient(() => useWishlistAdd(USER_ID));
 
         const checkKey = queryKeys.wishlist.check(USER_ID, RESTAURANT_ID);
+        const peekKey = queryKeys.restaurants.peekCard(USER_ID, RESTAURANT_ID, 'saved:::');
         client.setQueryData(checkKey, false);
+        client.setQueryData(peekKey, { media: [] });
 
         act(() => {
             result.current.mutate({ restaurant_id: RESTAURANT_ID });
@@ -56,6 +58,7 @@ describe('useWishlistAdd', () => {
 
         // Check key should be true after success
         expect(client.getQueryData<boolean>(checkKey)).toBe(true);
+        expect(client.getQueryState(peekKey)?.isInvalidated).toBe(true);
     });
 
     it('(a) sets both persisted-id and external-id check keys on ghost restaurant', async () => {

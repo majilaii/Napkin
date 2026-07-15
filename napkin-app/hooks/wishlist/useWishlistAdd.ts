@@ -121,6 +121,15 @@ export function useWishlistAdd(userId: string | null | undefined) {
             queryClient.invalidateQueries({
                 queryKey: queryKeys.wishlist.personal(userId),
             });
+            if (item?.restaurant_id) {
+                // invalidate: saves count + visible clip candidate are server-derived.
+                queryClient.invalidateQueries({
+                    queryKey: queryKeys.restaurants.peekCardForRestaurant(
+                        userId,
+                        item.restaurant_id,
+                    ),
+                });
+            }
             // TICKET-036 P1-2: do NOT invalidate every cached Table wishlist nor
             // every Atlas city. Both have their own staleTime and refetch on focus;
             // a single heart tap shouldn't cause N+M refetches across the app.

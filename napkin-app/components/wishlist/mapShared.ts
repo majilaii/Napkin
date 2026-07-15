@@ -90,6 +90,8 @@ export interface WishlistMapItem {
      * variant); only the peek branches on `gathered`.
      */
     gathered?: {
+        /** Exact enclosing Table used to authorize the gathered media context. */
+        tableId: string;
         on: string; // ISO — "gathered 12 jun"
         participants: { user_id: string; display_name: string; avatar_url: string | null }[];
         suppersCount: number;
