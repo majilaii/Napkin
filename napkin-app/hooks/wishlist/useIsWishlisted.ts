@@ -27,6 +27,7 @@ async function checkWishlisted(restaurantId: string): Promise<boolean> {
 export function useIsWishlisted(
     restaurantIdOrExternalId: string | null | undefined,
     userId: string | null | undefined,
+    options: { enabled?: boolean } = {},
 ): boolean | undefined {
     const queryClient = useQueryClient();
     const id = restaurantIdOrExternalId ?? null;
@@ -43,7 +44,7 @@ export function useIsWishlisted(
             : () => Promise.resolve(
                   queryClient.getQueryData<boolean>(queryKeys.wishlist.check(userId!, id!)) ?? false,
               ),
-        enabled: !!id && !!userId,
+        enabled: !!id && !!userId && (options.enabled ?? true),
         staleTime: 1000 * 60 * 5,
     });
     // Undefined is an intentional third state. Callers must not treat a

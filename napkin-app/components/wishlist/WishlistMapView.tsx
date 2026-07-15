@@ -78,6 +78,7 @@ import { peekActionsForPresentation, type PeekActionId } from './peekActions';
 import { PEEK_MAX_FONT_SCALE, peekRailCardHeight } from './peekLayout';
 import { listCollectionFrameKey } from './listMapScope';
 import { useAuth } from '@/providers/AuthProvider';
+import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import { useWishlistAdd } from '@/hooks/wishlist/useWishlistAdd';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
@@ -588,6 +589,19 @@ export function WishlistMapView({
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapViewType>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const { user } = useAuth();
+    const { data: wishlistPages } = useMyWishlist(user?.id);
+    // One screen-level seed replaces per-card checks. The selected card alone
+    // refines this deliberately partial (loaded-pages) view against the server.
+    const savedRestaurantIds = useMemo<ReadonlySet<string> | undefined>(() => {
+        if (!wishlistPages) return undefined;
+        return new Set(
+            wishlistPages.pages
+                .flatMap((page) => page.data ?? [])
+                .map((row) => row.restaurant?.id)
+                .filter((id): id is string => !!id),
+        );
+    }, [wishlistPages]);
 
     // Scheme follows the palette the parent passed (the app's use-color-scheme
     // hook is hard-forced to 'light', so a hook call here can't see dark; the
@@ -1273,6 +1287,8 @@ export function WishlistMapView({
                 <PeekCarousel
                     items={orderedItems}
                     selectedId={selected.id}
+                    viewerId={user?.id}
+                    savedRestaurantIds={savedRestaurantIds}
                     userCoords={userCoords}
                     palette={palette}
                     bottomInset={insets.bottom + NAV_CLEARANCE}
@@ -1296,6 +1312,8 @@ export function WishlistMapView({
 interface PeekCarouselProps {
     items: WishlistMapItem[];
     selectedId: string;
+    viewerId: string | null | undefined;
+    savedRestaurantIds: ReadonlySet<string> | undefined;
     userCoords: GeoLatLng | null;
     palette: typeof Colors.light;
     bottomInset: number;
@@ -1311,6 +1329,8 @@ interface PeekCarouselProps {
 function PeekCarousel({
     items,
     selectedId,
+    viewerId,
+    savedRestaurantIds,
     userCoords,
     palette,
     bottomInset,
@@ -1320,7 +1340,6 @@ function PeekCarousel({
     onOpenReview,
     onGather,
 }: PeekCarouselProps) {
-    const { user } = useAuth();
     const { fontScale } = useWindowDimensions();
     const [listSheetItem, setListSheetItem] = useState<WishlistMapItem | null>(null);
     const listRef = useRef<FlatList<WishlistMapItem>>(null);
@@ -1422,7 +1441,8 @@ function PeekCarousel({
                     renderItem={({ item, index }) => (
                         <PeekCardBody
                             item={item}
-                            viewerId={user?.id}
+                            viewerId={viewerId}
+                            seedSaved={savedRestaurantIds?.has(item.id)}
                             isSelected={index === selectedIndex}
                             userCoords={userCoords}
                             palette={palette}
@@ -1439,7 +1459,7 @@ function PeekCarousel({
             <AddToListSheet
                 visible={listSheetItem !== null}
                 onClose={() => setListSheetItem(null)}
-                userId={user?.id}
+                userId={viewerId}
                 restaurantId={listSheetItem?.id}
                 restaurantName={listSheetItem?.name}
             />
@@ -1452,6 +1472,7 @@ function PeekCarousel({
 interface PeekCardBodyProps {
     item: WishlistMapItem;
     viewerId: string | null | undefined;
+    seedSaved: boolean | undefined;
     isSelected: boolean;
     userCoords: GeoLatLng | null;
     palette: typeof Colors.light;
@@ -1658,6 +1679,7 @@ function PeekActionButton({
 function PeekCardBody({
     item,
     viewerId,
+    seedSaved,
     isSelected,
     userCoords,
     palette,
@@ -1710,7 +1732,11 @@ function PeekCardBody({
     useEffect(() => setMediaIndex(0), [mediaIdentity]);
     const mediaCandidate = media[mediaIndex];
 
-    const saved = useIsWishlisted(item.id, viewerId);
+    // Neighbor cards render from the already-loaded personal wishlist and never
+    // issue a check. Selection enables one precise freshness request; cache and
+    // optimistic mutation values take precedence over the screen-level seed.
+    const checkedSaved = useIsWishlisted(item.id, viewerId, { enabled: isSelected });
+    const saved = checkedSaved ?? seedSaved;
     const wishlistAdd = useWishlistAdd(viewerId);
     const wishlistRemove = useWishlistRemove(viewerId);
     const wishlistPending = wishlistAdd.isPending || wishlistRemove.isPending;
@@ -1781,6 +1807,13 @@ function PeekCardBody({
             longPressHandledRef.current = false;
             return;
         }
+        // The screen seed is intentionally not cached. Prime the canonical key
+        // before mutation so its optimistic snapshot can restore this exact
+        // value on rollback even when no selected-card check has resolved yet.
+        const checkKey = queryKeys.wishlist.check(viewerId, item.id);
+        if (queryClient.getQueryData<boolean>(checkKey) === undefined) {
+            queryClient.setQueryData(checkKey, saved);
+        }
         if (saved) {
             wishlistRemove.mutate(item.id, {
                 onError: () => Alert.alert("Couldn't remove", 'Try again'),
@@ -1791,7 +1824,7 @@ function PeekCardBody({
                 { onError: () => Alert.alert("Couldn't save", 'Try again') },
             );
         }
-    }, [item.id, saved, viewerId, wishlistAdd, wishlistPending, wishlistRemove]);
+    }, [item.id, queryClient, saved, viewerId, wishlistAdd, wishlistPending, wishlistRemove]);
 
     const handleAction = useCallback((action: PeekActionId) => {
         switch (action) {

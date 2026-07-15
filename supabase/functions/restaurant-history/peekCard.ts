@@ -262,6 +262,7 @@ async function authorizedGatheredPhoto(
     ];
     if (sharedEntryIds.length === 0) return null;
 
+    // Doctrine: the Table share is itself the visibility grant, so there is deliberately no entry-visibility filter here.
     // A table spans many restaurants; constrain the shared entries to this one.
     const { data: entries, error: entriesError } = await client
         .from('entries')
