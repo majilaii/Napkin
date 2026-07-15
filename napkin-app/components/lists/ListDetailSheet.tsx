@@ -82,7 +82,10 @@ export interface ListDetailSheetProps {
     H: number;
 }
 
-const SPRING = { damping: 22, stiffness: 220 } as const;
+// mass must be explicit: Reanimated's withSpring defaults it to 4 (not 1 like
+// RN Animated), which turns this (22, 220) pair from ζ≈0.74 into ζ≈0.37 —
+// a second of visible ring, and settle-gated map focus waits all of it out.
+const SPRING = { damping: 22, stiffness: 220, mass: 1 } as const;
 
 export function ListDetailSheet({
     headerProps,
