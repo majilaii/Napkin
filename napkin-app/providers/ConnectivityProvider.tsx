@@ -28,6 +28,7 @@ import {
     resolveConnectivityStatus,
     type ConnectivityStatus,
 } from '@/lib/connectivity';
+import { bindQueryFocusToAppState } from '@/lib/focusBridge';
 import { PressableScale } from '@/components/ui/napkin';
 
 // Keep the reachability probe on a small, public Napkin-owned resource rather
@@ -170,6 +171,14 @@ export function ConnectivityProvider({ children }: Props) {
             for (const settle of [...pendingDefinitiveWaitersRef.current]) settle();
         };
     }, [applySnapshot, assumeOnlineAfterDetectorFailure]);
+
+    // TICKET-189: AppState → TanStack focusManager bridge. Without it,
+    // refetchOnWindowFocus is inert on RN (no browser visibilitychange), and
+    // focus-revalidated queries — the socials module's per-viewer privacy pass
+    // above all — would never re-run on foreground. Lives here as the app's
+    // one connectivity/lifecycle → query-manager seam (NetInfo → onlineManager
+    // is already wired above).
+    useEffect(() => bindQueryFocusToAppState(), []);
 
     const refresh = useCallback(async () => {
         if (refreshInFlightRef.current) return;

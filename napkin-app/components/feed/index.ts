@@ -35,6 +35,9 @@ export { FollowingEmptyState } from './FollowingEmptyState';
 export { PublicListsBrowseBlock } from './PublicListsBrowseBlock';
 export { PeopleToFollowBlock } from './PeopleToFollowBlock';
 
+// TICKET-189 — "on socials" module (flag FOR_YOU_SOCIALS)
+export { OnSocialsBlock } from './OnSocialsBlock';
+
 // TICKET-115 Table lists — quiet ledger line for table-list adds
 export { ListAddLedgerLine } from './ListAddLedgerLine';
 

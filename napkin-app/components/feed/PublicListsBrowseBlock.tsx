@@ -6,6 +6,14 @@
  * places; otherwise every list stays in the smaller rail. That protects the
  * screen from presenting a newly generated or thin list as something Napkin
  * itself has endorsed.
+ *
+ * Covers (TICKET-189, public-safe chain only): `cover_photo_url` arrives from
+ * the server ALREADY gated — the author's own cover, or the list's first
+ * restaurant's mirrored Places hero (in which case `attribution_html` rides
+ * along and the credit renders over the image) — else null → emoji/tint
+ * plate. NO member/entry-photo lookup happens here, ever: a user/table hero
+ * as a derived cover on the public feed is banned (the server returns null
+ * for those; this component must never re-derive one).
  */
 import React, { useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
@@ -16,6 +24,7 @@ import { useRouter } from 'expo-router';
 
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
 import type { PublicListResult } from '@/hooks/lists/useSearchPublicLists';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import { SectionKicker } from './SectionKicker';
@@ -30,6 +39,12 @@ function authorName(list: PublicListResult) {
 
 function spotLabel(list: PublicListResult) {
     return `${list.entry_count} ${list.entry_count === 1 ? 'spot' : 'spots'}`;
+}
+
+/** Places credit label when the cover is an attributed Places hero. */
+function coverCredit(list: PublicListResult): string | null {
+    if (!list.cover_photo_url || list.photo_source !== 'places') return null;
+    return parsePlacesAttribution(list.attribution_html)?.label ?? null;
 }
 
 function imageOutline(scheme: 'light' | 'dark') {
@@ -48,6 +63,7 @@ function ListFeature({
     onPress: (list: PublicListResult) => void;
 }) {
     const hasCover = !!list.cover_photo_url;
+    const credit = coverCredit(list);
 
     return (
         <PressableScale
@@ -97,6 +113,14 @@ function ListFeature({
                             — {list.description}
                         </Text>
                     )}
+                    {!!credit && (
+                        <Text
+                            style={[styles.coverCredit, { color: palette.textOnImage }]}
+                            numberOfLines={1}
+                        >
+                            {credit}
+                        </Text>
+                    )}
                 </View>
             </View>
         </PressableScale>
@@ -115,6 +139,7 @@ function ListRailCard({
     onPress: (list: PublicListResult) => void;
 }) {
     const hasCover = !!list.cover_photo_url;
+    const credit = coverCredit(list);
 
     return (
         <PressableScale
@@ -141,6 +166,21 @@ function ListRailCard({
                 ) : list.emoji ? (
                     <Text style={styles.emoji}>{list.emoji}</Text>
                 ) : null}
+                {hasCover && !!credit && (
+                    <>
+                        <LinearGradient
+                            colors={['rgba(28, 28, 25, 0)', 'rgba(28, 28, 25, 0.55)']}
+                            locations={[0.55, 1]}
+                            style={StyleSheet.absoluteFillObject}
+                        />
+                        <Text
+                            style={[styles.railCredit, { color: palette.textOnImage }]}
+                            numberOfLines={1}
+                        >
+                            {credit}
+                        </Text>
+                    </>
+                )}
             </View>
             <View style={styles.railCopy}>
                 <Text style={[styles.railTitle, { color: palette.text }]} numberOfLines={2}>
@@ -238,6 +278,23 @@ const styles = StyleSheet.create({
         fontSize: 14,
         lineHeight: 19,
         marginTop: 7,
+    },
+    coverCredit: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        lineHeight: 14,
+        marginTop: 7,
+        opacity: 0.85,
+    },
+    railCredit: {
+        position: 'absolute',
+        bottom: 4,
+        left: 8,
+        right: 8,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        lineHeight: 14,
+        opacity: 0.9,
     },
     railContent: {
         paddingHorizontal: Spacing.lg,

@@ -13,9 +13,15 @@ type Snapshot = {
 };
 
 let mockNetworkListener: ((snapshot: Snapshot) => void) | undefined;
-let mockAppStateListener: ((state: string) => void) | undefined;
+// TICKET-189: the provider now registers TWO AppState listeners — the NetInfo
+// foreground refresh AND the focusManager bridge (lib/focusBridge). Track all
+// of them; `emitAppState` fans an event out to every registered listener.
+let mockAppStateListeners: Array<(state: string) => void> = [];
 const mockUnsubscribe = jest.fn();
 const mockRemoveAppStateListener = jest.fn();
+function emitAppState(state: string) {
+    for (const listener of [...mockAppStateListeners]) listener(state);
+}
 const mockFetch = jest.fn();
 const mockRefresh = jest.fn();
 let mockTopInset = 0;
@@ -36,7 +42,7 @@ jest.mock('react-native', () => {
         Pressable: host('Pressable'),
         AppState: {
             addEventListener: jest.fn((_event: string, listener: (state: string) => void) => {
-                mockAppStateListener = listener;
+                mockAppStateListeners.push(listener);
                 return { remove: mockRemoveAppStateListener };
             }),
         },
@@ -144,7 +150,7 @@ function viewWithTestId(renderer: ReturnType<typeof renderProvider>, testID: str
 describe('ConnectivityProvider', () => {
     beforeEach(() => {
         mockNetworkListener = undefined;
-        mockAppStateListener = undefined;
+        mockAppStateListeners = [];
         mockUnsubscribe.mockClear();
         mockRemoveAppStateListener.mockClear();
         mockFetch.mockReset().mockReturnValue(new Promise(() => {}));
@@ -185,7 +191,9 @@ describe('ConnectivityProvider', () => {
 
         act(() => renderer.unmount());
         expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
-        expect(mockRemoveAppStateListener).toHaveBeenCalledTimes(1);
+        // One removal per registered AppState listener (NetInfo refresh +
+        // TICKET-189 focus bridge) — nothing leaks past unmount.
+        expect(mockRemoveAppStateListener).toHaveBeenCalledTimes(mockAppStateListeners.length);
         expect(onlineManager.isOnline()).toBe(false);
     });
 
@@ -317,7 +325,7 @@ describe('ConnectivityProvider', () => {
         mockRefresh.mockResolvedValueOnce(online);
 
         await act(async () => {
-            mockAppStateListener?.('active');
+            emitAppState('active');
             await Promise.resolve();
         });
 
