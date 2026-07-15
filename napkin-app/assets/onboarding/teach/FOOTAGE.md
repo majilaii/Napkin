@@ -60,18 +60,20 @@ ffmpeg -i clip5-raw.mp4 -loop 1 -t 1.66 -i bg5.png -filter_complex \
 # clip5-raw = master cut at 14.65 for 1.65s with the standard crop/scale (no blur band needed)
 ```
 
-Every clip: crop the 110px status bar, halve resolution, H.264:
+Every clip: crop the 110px status bar, keep NATIVE resolution, light compression.
+(2026-07-15 founder verdict: the original 646x1344/crf-26 exports read as
+low-quality once stretched over a 3x display — never downscale these again.)
 
 ```bash
 ffmpeg -ss <in> -i master.mov -t <dur> \
-  -vf "crop=1290:2686:0:110,scale=646:1344" \
-  -c:v libx264 -preset slow -crf 26 -pix_fmt yuv420p -movflags +faststart -an out.mp4
+  -vf "crop=1290:2686:0:110" \
+  -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart -an out.mp4
 ```
 
 Blurred clips insert this before the crop (band coords above):
 
 ```bash
--filter_complex "[0:v]split[a][b];[b]crop=<w>:<h>:<x>:<y>,gblur=sigma=28:steps=2[blur];[a][blur]overlay=<x>:<y>,crop=1290:2686:0:110,scale=646:1344[out]" -map "[out]"
+-filter_complex "[0:v]split[a][b];[b]crop=<w>:<h>:<x>:<y>,gblur=sigma=28:steps=2[blur];[a][blur]overlay=<x>:<y>,crop=1290:2686:0:110[out]" -map "[out]"
 ```
 
 Stills are the exact final frame: `ffmpeg -sseof -0.05 -i clip.mp4 -frames:v 1 clip-still.png`
@@ -79,7 +81,7 @@ Stills are the exact final frame: `ffmpeg -sseof -0.05 -i clip.mp4 -frames:v 1 c
 ## Measuring targets
 
 Open the `-still.png`, find the tap target center, normalize by the still's
-646x1344: `x = px_x / 646`, `y = px_y / 1344`, circle `r = radius_px / 646`.
+1290x2686: `x = px_x / 1290`, `y = px_y / 2686`, circle `r = radius_px / 1290`.
 Rect targets (`napkin` row, `addForReview` button) use centered `w`/`h`. Values
 live in `TEACH_FOOTAGE` in `components/import-education/teachFootage.ts`, along
 with `durationMs` (stall watchdog only) and per-beat `videoWidth`/`videoHeight`
