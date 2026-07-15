@@ -9,8 +9,9 @@
  * deterministic, offline, and replayable. The hand-built share-sheet replica
  * this replaced lives in git history.
  *
- * Footage assets are placeholders until the real recording lands - see
- * assets/onboarding/teach/FOOTAGE.md for the file-for-file swap.
+ * Footage is real recorded flow (July 2026) with privacy blur baked in - see
+ * assets/onboarding/teach/FOOTAGE.md for cut points, the every-frame scan
+ * rule, and the file-for-file re-record procedure.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
