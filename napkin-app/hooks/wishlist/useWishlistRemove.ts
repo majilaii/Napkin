@@ -39,6 +39,10 @@ export function useWishlistRemove(userId: string | null | undefined) {
             queryClient.invalidateQueries({
                 queryKey: queryKeys.wishlist.personal(userId),
             });
+            // invalidate: saves count + visible clip candidate are server-derived.
+            queryClient.invalidateQueries({
+                queryKey: queryKeys.restaurants.peekCardForRestaurant(userId, restaurantId),
+            });
             // TICKET-036 P1-2: do NOT invalidate every cached Table wishlist or
             // Atlas city. They refetch on focus.
         },

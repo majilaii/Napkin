@@ -37,6 +37,7 @@ import { isInstagramUrl } from '../_shared/socialHost.ts';
 // SAME normalizer the capture action and backfill import, so read/capture/
 // backfill keys never diverge.
 import { contentKey } from '../_shared/videoUrlKey.ts';
+import { isPeekCardContext, loadPeekCard } from './peekCard.ts';
 
 type Visit = {
     kind: 'round' | 'solo';
@@ -262,12 +263,17 @@ serve(async (req) => {
         const action = url.searchParams.get('action');
         const restaurantId = url.searchParams.get('restaurant_id');
 
-        // GET for the classic read actions; POST only for action=reviews
+        // GET for the classic read actions; POST only for body-routed actions
         // (paginated — cursor strings don't belong in query params).
         if (req.method !== 'GET' && req.method !== 'POST') {
             return fail('Method not allowed', 405);
         }
-        if (req.method === 'POST' && action !== 'reviews' && action !== 'social_clippings') {
+        if (
+            req.method === 'POST'
+            && action !== 'reviews'
+            && action !== 'social_clippings'
+            && action !== 'peek_card'
+        ) {
             return fail('Method not allowed', 405);
         }
 
@@ -664,6 +670,25 @@ serve(async (req) => {
             });
 
             return json({ data: { rows } });
+        }
+
+        // ── Map pin peek-card enrichment (TICKET-190) ────────────────────────
+        // Body-POST action: MUST remain above the global restaurantId guard.
+        // Every media URL is authorized for this viewer + exact layer context
+        // before it enters the response; the client only walks this safe list.
+        if (action === 'peek_card') {
+            const body = await req.json().catch(() => ({}));
+            const rid = (body?.restaurant_id ?? restaurantId) as string | null;
+            if (!rid) return fail('restaurant_id is required');
+            if (!isPeekCardContext(body?.context)) return fail('valid context is required');
+
+            const data = await loadPeekCard(supabase, {
+                viewerId: user.id,
+                restaurantId: rid,
+                context: body.context,
+                supabaseUrl: supabaseUrl ?? '',
+            });
+            return json({ data });
         }
 
 

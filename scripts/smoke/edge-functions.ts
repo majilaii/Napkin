@@ -208,6 +208,36 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-190: lazy map-card enrichment. Body is canonical and restaurant_id
+    // is mirrored in the query so this specifically guards the POST allow-list +
+    // above-global-guard routing trap. Values are fixture-dependent; every
+    // required nullable key must still be present.
+    {
+        name: 'restaurant-history?action=peek_card (TICKET-190 map pin card)',
+        method: 'POST',
+        fn: 'restaurant-history',
+        query: `action=peek_card&restaurant_id=${RESTAURANT_ID}`,
+        body: { restaurant_id: RESTAURANT_ID, context: { layer: 'saved' } },
+        shape: (json) => {
+            const data = (json as { data?: Record<string, unknown> }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.media)) return 'data.media is not an array';
+            for (const key of [
+                'google_rating',
+                'google_rating_count',
+                'price_level',
+                'address_short',
+                'reserve_url',
+                'hours',
+            ]) {
+                if (!(key in data)) return `missing data.${key}`;
+            }
+            if (data.hours !== null && typeof data.hours !== 'object') {
+                return 'data.hours is neither object nor null';
+            }
+            return null;
+        },
+    },
     // TICKET-149: booking-page resolver behind the Reserve pill. Value is
     // fixture-dependent (usually null, cached on the row after first run) —
     // assert the envelope key only.
