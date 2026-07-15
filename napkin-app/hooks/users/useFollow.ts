@@ -1,14 +1,24 @@
 /**
- * useFollow / useUnfollow — optimistic follow-graph mutations (TICKET-028).
+ * useFollow / useUnfollow — optimistic follow-graph mutations (TICKET-028;
+ * candidate caches TICKET-189).
  *
  * Mirrors useToggleReaction pattern:
  *   onMutate: cancel + snapshot, flip is_following in search + profile caches,
  *             increment/decrement followers_count on the target's profile and
  *             following_count on the viewer's profile (TICKET-036 P1-8).
- *   onError:  restore snapshots
- *   onSuccess: narrow refetch of follow-list pages only — every other surface
- *              (search, both profiles) is already correct from the optimistic
- *              patch and shouldn't trigger a refetch.
+ *             TICKET-189: also snapshot + optimistically REMOVE the target
+ *             from the For You candidate caches (feed.followCandidates +
+ *             feed.coDiners) — the removal is optimistic, per the canonical
+ *             mutations.md lifecycle (Codex P2: "remove on success + rollback"
+ *             is contradictory). Centralizing here keeps the candidate caches
+ *             warm-correct no matter which FollowButton consumer fires.
+ *   onError:  restore the profile/search snapshots. Candidate caches use a
+ *             target-scoped inverse patch so one failed follow cannot undo a
+ *             different target's concurrent successful removal.
+ *   onSuccess: narrow reconciliation only — follow-list pages + the target's
+ *              single-id profile + feed.friends(viewerId) (the newly-followed
+ *              author's reviews belong in Following now). The candidate
+ *              patches stand; no blanket invalidation.
  *
  * Edge function: user-profile action=follow | action=unfollow
  */
@@ -16,6 +26,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useAuth } from '@/providers/AuthProvider';
+import type { FollowCandidate } from '@/hooks/feed/useFollowCandidates';
+import type { CoDinerCandidate } from '@/hooks/feed/useCoDiners';
 import type { UserProfileResult } from './useUserProfile';
 import type { UserSearchResult } from './useUserSearch';
 
@@ -74,6 +86,33 @@ function patchViewerProfile(
                 : prev.data.stats,
         },
     };
+}
+
+interface CandidateRemoval<T> {
+    candidate: T;
+    index: number;
+}
+
+function captureCandidateRemoval<T extends { user_id: string }>(
+    candidates: T[] | undefined,
+    targetUserId: string,
+): CandidateRemoval<T> | undefined {
+    const index = candidates?.findIndex((candidate) => candidate.user_id === targetUserId) ?? -1;
+    if (!candidates || index < 0) return undefined;
+    return { candidate: candidates[index], index };
+}
+
+function reinsertCandidate<T extends { user_id: string }>(
+    candidates: T[] | undefined,
+    removal: CandidateRemoval<T>,
+): T[] | undefined {
+    if (!candidates) return [removal.candidate];
+    if (candidates.some((candidate) => candidate.user_id === removal.candidate.user_id)) {
+        return candidates;
+    }
+    const next = [...candidates];
+    next.splice(Math.min(removal.index, next.length), 0, removal.candidate);
+    return next;
 }
 
 // ── useFollow ─────────────────────────────────────────────────────────────────
@@ -135,7 +174,53 @@ export function useFollow() {
                 );
             }
 
-            return { searchSnapshots, targetProfileSnapshot, viewerProfileSnapshot };
+            // TICKET-189: For You candidate caches — cancel, capture the
+            // target row, and optimistically remove it from BOTH (the
+            // v2 mixed rail AND the co-diner rail; whichever is live). The
+            // arbiter then drops the whole people block when the last
+            // candidate goes — no orphan header/separator.
+            let followCandidatesRemoval: CandidateRemoval<FollowCandidate> | undefined;
+            let coDinersRemoval: CandidateRemoval<CoDinerCandidate> | undefined;
+            if (viewerId) {
+                await queryClient.cancelQueries({
+                    queryKey: queryKeys.feed.followCandidates(viewerId),
+                });
+                await queryClient.cancelQueries({ queryKey: queryKeys.feed.coDiners(viewerId) });
+
+                followCandidatesRemoval = captureCandidateRemoval(
+                    queryClient.getQueryData<FollowCandidate[]>(
+                        queryKeys.feed.followCandidates(viewerId),
+                    ),
+                    targetUserId,
+                );
+                if (followCandidatesRemoval) {
+                    queryClient.setQueryData<FollowCandidate[]>(
+                        queryKeys.feed.followCandidates(viewerId),
+                        (prev) => prev?.filter((c) => c.user_id !== targetUserId),
+                    );
+                }
+
+                coDinersRemoval = captureCandidateRemoval(
+                    queryClient.getQueryData<CoDinerCandidate[]>(
+                        queryKeys.feed.coDiners(viewerId),
+                    ),
+                    targetUserId,
+                );
+                if (coDinersRemoval) {
+                    queryClient.setQueryData<CoDinerCandidate[]>(
+                        queryKeys.feed.coDiners(viewerId),
+                        (prev) => prev?.filter((c) => c.user_id !== targetUserId),
+                    );
+                }
+            }
+
+            return {
+                searchSnapshots,
+                targetProfileSnapshot,
+                viewerProfileSnapshot,
+                followCandidatesRemoval,
+                coDinersRemoval,
+            };
         },
 
         onError: (_err, { targetUserId }, context) => {
@@ -159,14 +244,31 @@ export function useFollow() {
                     context.viewerProfileSnapshot
                 );
             }
+            // TICKET-189: target-scoped inverse patches. Never restore a whole
+            // array: another target may have completed successfully meanwhile.
+            const followCandidatesRemoval = context?.followCandidatesRemoval;
+            if (viewerId && followCandidatesRemoval) {
+                queryClient.setQueryData<FollowCandidate[]>(
+                    queryKeys.feed.followCandidates(viewerId),
+                    (prev) => reinsertCandidate(prev, followCandidatesRemoval),
+                );
+            }
+            const coDinersRemoval = context?.coDinersRemoval;
+            if (viewerId && coDinersRemoval) {
+                queryClient.setQueryData<CoDinerCandidate[]>(
+                    queryKeys.feed.coDiners(viewerId),
+                    (prev) => reinsertCandidate(prev, coDinersRemoval),
+                );
+            }
         },
 
         onSuccess: (_data, { targetUserId }) => {
             // P1-8: cache is already correct from the optimistic patch (search +
-            // both profiles + counts). Refetch only the follow-list pages, since
-            // those carry server-side ordering / cursors we can't reproduce
-            // client-side. Never invalidate the ['users', 'profile'] PREFIX —
-            // that nukes every cached profile across the session.
+            // both profiles + counts + candidate removals). Refetch only the
+            // follow-list pages, since those carry server-side ordering /
+            // cursors we can't reproduce client-side. Never invalidate the
+            // ['users', 'profile'] PREFIX — that nukes every cached profile
+            // across the session.
             //
             // Narrow exception (Scope B): re-fetch ONLY the target's own profile
             // by its single-id key. The optimistic patch flips is_following_viewer
@@ -176,6 +278,12 @@ export function useFollow() {
             queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
+            // TICKET-189: the newly-followed author's reviews belong in
+            // Following now — narrow, viewer-scoped refetch. The candidate
+            // patches above stand (no blanket invalidation).
+            if (viewerId) {
+                queryClient.invalidateQueries({ queryKey: queryKeys.feed.friends(viewerId) });
+            }
         },
     });
 }

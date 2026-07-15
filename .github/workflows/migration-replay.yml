@@ -94,3 +94,9 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/user_taste_privacy.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/socials_privacy.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/people_lists_discovery.spec.sql

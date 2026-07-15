@@ -25,9 +25,15 @@ export interface PublicListResult {
     /**
      * First restaurant photo in the list. Present for the Feed browse response;
      * optional so search results from an older deployed edge function remain
-     * compatible while the function rolls out.
+     * compatible while the function rolls out. TICKET-189: on the browse
+     * response this is null unless the cover is a Places hero WITH attribution
+     * (user/table heroes never back a public-feed cover).
      */
     cover_photo_url?: string | null;
+    /** TICKET-189 (browse only): 'places' when cover_photo_url is set, else null. */
+    photo_source?: string | null;
+    /** TICKET-189 (browse only): Places attribution html for the credit overlay. */
+    attribution_html?: string | null;
 }
 
 async function fetchPublicListsPage(

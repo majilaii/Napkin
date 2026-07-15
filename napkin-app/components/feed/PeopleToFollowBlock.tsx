@@ -1,26 +1,24 @@
 /**
- * PeopleToFollowBlock — the For You feed's "taste buds" people block
- * (TICKET-125 + TICKET-130 "Gazette mix" re-dress: slab rows → AVATAR RAIL on
- * the page ground, no slab background).
+ * PeopleToFollowBlock — the For You feed's people block (TICKET-125 +
+ * TICKET-130 avatar-rail re-dress; v2 mixed rail TICKET-189).
  *
- *   people you've eaten with
- *   ( avatar )  ( avatar )  ( avatar )   → horizontal scroll
- *     Clara       Thomas      Julian
- *   3 meals together  ·  [ follow ] pill under each
+ * TWO PATHS, chosen by the FOR_YOU_PEOPLE_V2 flag (compile-time constant):
  *
- * v1 source: co-diners — people the viewer has actually eaten with on Napkin but
- * doesn't follow yet (useCoDiners, ranked by meals-together). Taste-calibrated
- * stranger suggestions (Ring-2) are DEFERRED (decision 3) — this block is
- * co-diners only.
+ *   OFF (store build) — the existing co-diner-only path, unchanged: people
+ *   the viewer has actually eaten with (useCoDiners, ranked meals-together),
+ *   local followed/removed sets for instant tap feedback.
  *
- * Mechanics are UNCHANGED from TICKET-125 (restyle only): one tap follows via
- * the shipped useFollow (optimistic snapshot→patch→rollback); the block owns
- * local followed/removed sets so the tap "does something" instantly, then the
- * card is removed on success and queryKeys.feed.friends(viewerId) is
- * invalidated so a switch to Following shows the newly-followed author.
- * PersonRailCard is a rail-shaped SIBLING of CoDinerFollowCard — the row card
- * stays untouched for its other consumers (TICKET-126 onboarding). Self-hides
- * (renders null) when there are no co-diners left to show.
+ *   ON — the v2 mixed rail: co-diners FIRST, then recently-active public
+ *   authors (useFollowCandidates, server-merged + deduped, cap 8). Kicker
+ *   `people to follow`. Context lines stay honest and relationship-free for
+ *   publics: co-diner `{N} meals together`, public `{N} places logged`
+ *   (public-eligible logs only). NO local removal state — useFollow owns the
+ *   candidate-cache lifecycle (optimistic removal in onMutate, rollback in
+ *   onError), so this block simply renders whatever the query cache holds and
+ *   the ForYouFeed arbiter drops the whole block (kicker included — no orphan
+ *   header/separator) when the last candidate is followed.
+ *
+ * Self-hides (renders null) when there is nobody to show.
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
@@ -32,7 +30,9 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { queryKeys } from '@/lib/queryKeys';
+import { FOR_YOU_PEOPLE_V2 } from '@/constants/flags';
 import { useCoDiners, type CoDinerCandidate } from '@/hooks/feed/useCoDiners';
+import { useFollowCandidates, type FollowCandidate } from '@/hooks/feed/useFollowCandidates';
 import { useFollow } from '@/hooks/users/useFollow';
 import { resolveEmptyState } from './feedEmptyStateGate';
 import { SectionKicker } from './SectionKicker';
@@ -41,6 +41,85 @@ import { Avatar } from './Avatar';
 type Palette = typeof Colors.light;
 
 export function PeopleToFollowBlock() {
+    if (FOR_YOU_PEOPLE_V2) return <PeopleToFollowV2 />;
+    return <PeopleToFollowV1 />;
+}
+
+/** Honest, relationship-free-for-publics context line. */
+export function candidateMetaLine(candidate: FollowCandidate): string {
+    if (candidate.kind === 'co_diner') {
+        const meals = candidate.meals_together ?? 0;
+        return `${meals} ${meals === 1 ? 'meal' : 'meals'} together`;
+    }
+    const logs = candidate.logs_30d ?? 0;
+    return `${logs} ${logs === 1 ? 'place' : 'places'} logged`;
+}
+
+// ── v2 — mixed rail (flag ON) ─────────────────────────────────────────────────
+
+function PeopleToFollowV2() {
+    const scheme = useColorScheme() ?? 'light';
+    const palette = Colors[scheme];
+    const router = useRouter();
+    const { user } = useAuth();
+    const viewerId = user?.id ?? null;
+
+    const { data: candidates } = useFollowCandidates(viewerId);
+    const follow = useFollow();
+
+    const handleFollow = useCallback(
+        (targetUserId: string) => {
+            // useFollow owns the candidate caches: optimistic removal in
+            // onMutate (the card exits immediately), rollback in onError,
+            // feed.friends invalidation in onSuccess. Nothing local here.
+            follow.mutate({ targetUserId });
+        },
+        [follow],
+    );
+
+    const handleOpenProfile = useCallback(
+        (targetUserId: string) => {
+            router.push({ pathname: '/u/[identifier]', params: { identifier: targetUserId } });
+        },
+        [router],
+    );
+
+    const visible = candidates ?? [];
+    if (visible.length === 0) return null;
+
+    return (
+        <View>
+            <SectionKicker>people to follow</SectionKicker>
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.railContent}
+            >
+                {visible.map((candidate) => (
+                    <Animated.View
+                        key={candidate.user_id}
+                        exiting={FadeOut.duration(200)}
+                        layout={LinearTransition.duration(200)}
+                    >
+                        <PersonRailCard
+                            name={candidate.display_name}
+                            avatarUrl={candidate.avatar_url}
+                            metaLine={candidateMetaLine(candidate)}
+                            palette={palette}
+                            followed={false}
+                            onFollow={() => handleFollow(candidate.user_id)}
+                            onOpenProfile={() => handleOpenProfile(candidate.user_id)}
+                        />
+                    </Animated.View>
+                ))}
+            </ScrollView>
+        </View>
+    );
+}
+
+// ── v1 — co-diners only (flag OFF; mechanics unchanged from TICKET-125) ──────
+
+function PeopleToFollowV1() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -115,7 +194,9 @@ export function PeopleToFollowBlock() {
                         layout={LinearTransition.duration(200)}
                     >
                         <PersonRailCard
-                            candidate={candidate}
+                            name={candidate.display_name}
+                            avatarUrl={candidate.avatar_url}
+                            metaLine={coDinerMetaLine(candidate)}
                             palette={palette}
                             followed={followedIds.has(candidate.user_id)}
                             onFollow={() => handleFollow(candidate.user_id)}
@@ -128,31 +209,37 @@ export function PeopleToFollowBlock() {
     );
 }
 
+function coDinerMetaLine(candidate: CoDinerCandidate): string {
+    const meals = candidate.meals_together;
+    return `${meals} ${meals === 1 ? 'meal' : 'meals'} together`;
+}
+
 /**
- * PersonRailCard — vertical rail item (avatar over name over meals-count over
+ * PersonRailCard — vertical rail item (avatar over name over context line over
  * an outline follow pill). Same contract as CoDinerFollowCard, rail-shaped.
  */
 function PersonRailCard({
-    candidate,
+    name,
+    avatarUrl,
+    metaLine,
     palette,
     followed,
     onFollow,
     onOpenProfile,
 }: {
-    candidate: CoDinerCandidate;
+    name: string;
+    avatarUrl: string | null;
+    metaLine: string;
     palette: Palette;
     followed: boolean;
     onFollow: () => void;
     onOpenProfile: () => void;
 }) {
-    const meals = candidate.meals_together;
-    const metaLine = `${meals} ${meals === 1 ? 'meal' : 'meals'} together`;
-
     return (
         <View style={styles.person}>
             <Avatar
-                name={candidate.display_name}
-                url={candidate.avatar_url}
+                name={name}
+                url={avatarUrl}
                 size={54}
                 palette={palette}
                 onPress={onOpenProfile}
@@ -160,10 +247,10 @@ function PersonRailCard({
             <Pressable
                 onPress={onOpenProfile}
                 accessibilityRole="button"
-                accessibilityLabel={`Open ${candidate.display_name}'s profile`}
+                accessibilityLabel={`Open ${name}'s profile`}
             >
                 <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
-                    {candidate.display_name}
+                    {name}
                 </Text>
                 <Text style={[styles.meals, { color: palette.textMuted }]} numberOfLines={1}>
                     {metaLine}
@@ -180,11 +267,7 @@ function PersonRailCard({
                         : { borderColor: palette.terracottaBorderStrong, opacity: pressed ? 0.7 : 1 },
                 ]}
                 accessibilityRole="button"
-                accessibilityLabel={
-                    followed
-                        ? `Following ${candidate.display_name}`
-                        : `Follow ${candidate.display_name}`
-                }
+                accessibilityLabel={followed ? `Following ${name}` : `Follow ${name}`}
             >
                 <Text
                     style={[
