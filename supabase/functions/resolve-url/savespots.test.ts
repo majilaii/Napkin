@@ -539,3 +539,102 @@ Deno.test('isWebExtractionSource: tiktok/maps/instagram/screenshot do NOT take t
     assertEquals(isWebExtractionSource('screenshot'), false);
     assertEquals(isWebExtractionSource('vision'), false);
 });
+
+// ── TICKET-187: client photo fields are NEVER read by save_spots ──────────────
+//
+// The import-path hero photo is acquired server-side, post-response, by the
+// DB-derived external_id (acquireAndMirrorHeroPhotos). buildVerifiedUpsertInput
+// is the ONE mapping both handleSaveSpots upsert sites use; these tests pin the
+// invariant that a client payload — even a forged one — cannot smuggle a
+// photoReference/attribution into the restaurant upsert (the Place-B-photo →
+// Restaurant-A attack).
+
+import {
+    buildVerifiedUpsertInput,
+    dedupeSuccessfulRestaurantIds,
+    type SaveSpotPlacePayload,
+} from './_helpers.ts';
+
+Deno.test('buildVerifiedUpsertInput: forged client photo fields are dropped', () => {
+    const forged = {
+        external_id: 'ChIJ-forged-target',
+        name: 'Innocent Restaurant',
+        photoReference: 'places/ChIJ-someone-else/photos/stolen',
+        photoAttributionHtml: '<a href="https://evil.example">Not The Author</a>',
+    } as unknown as SaveSpotPlacePayload;
+
+    const input = buildVerifiedUpsertInput('ChIJ-forged-target', {
+        restaurant_name: 'Innocent Restaurant',
+        restaurant_city: 'London',
+        place: forged,
+    });
+
+    assertEquals('photoReference' in input, false,
+        'client photoReference must never reach upsertRestaurant');
+    assertEquals('photoAttributionHtml' in input, false,
+        'client attribution must never reach upsertRestaurant');
+    // The legit metadata still flows.
+    assertEquals(input.external_id, 'ChIJ-forged-target');
+    assertEquals(input.name, 'Innocent Restaurant');
+    assertEquals(input.verification, 'verified');
+});
+
+Deno.test('buildVerifiedUpsertInput: full place payload maps all metadata (fix-pass-2 item 3 preserved)', () => {
+    const input = buildVerifiedUpsertInput('ChIJ-full', {
+        restaurant_name: 'Fallback Name',
+        restaurant_city: 'Fallback City',
+        place: {
+            external_id: 'ChIJ-full',
+            name: 'Berenjak',
+            location: { address: '27 Romilly St', locality: 'London', country: 'UK' },
+            latitude: 51.5,
+            longitude: -0.13,
+            googleRating: 4.6,
+            googleRatingCount: 2100,
+            priceLevel: 2,
+            cuisine: 'Persian',
+            phone: '+44 20 1234 5678',
+            website: 'https://berenjak.example',
+            google_maps_uri: 'https://maps.google.com/?cid=1',
+            hours: { weekdayDescriptions: ['Monday: 12–10'] },
+        },
+    });
+    assertEquals(input.name, 'Berenjak');
+    assertEquals(input.location?.locality, 'London');
+    assertEquals(input.latitude, 51.5);
+    assertEquals(input.googleRating, 4.6);
+    assertEquals(input.cuisine, 'Persian');
+    assertEquals(input.phone, '+44 20 1234 5678');
+    assertEquals(input.googleMapsUri, 'https://maps.google.com/?cid=1');
+    assertEquals(input.hours, { weekdayDescriptions: ['Monday: 12–10'] });
+    assertEquals(input.verification, 'verified');
+});
+
+Deno.test('buildVerifiedUpsertInput: no place payload → name/city fallbacks, still no photo keys', () => {
+    const input = buildVerifiedUpsertInput('ChIJ-sparse', {
+        restaurant_name: 'Kono',
+        restaurant_city: 'New York',
+        place: null,
+    });
+    assertEquals(input.name, 'Kono');
+    assertEquals(input.location?.locality, 'New York');
+    assertEquals('photoReference' in input, false);
+    assertEquals('photoAttributionHtml' in input, false);
+});
+
+Deno.test('dedupeSuccessfulRestaurantIds: dedupes, keeps ghost/already_pinned, drops failed + null', () => {
+    const ids = dedupeSuccessfulRestaurantIds([
+        { status: 'saved', restaurant_id: 'r1' },
+        { status: 'saved', restaurant_id: 'r1' },            // duplicate → one entry
+        { status: 'already_pinned', restaurant_id: 'r2' },    // repeat import → id still flows
+        { status: 'ghost', restaurant_id: 'r3' },             // ghost — job's verification filter skips it pre-token
+        { status: 'failed', restaurant_id: 'r4' },            // failed → excluded
+        { status: 'saved', restaurant_id: null },             // no id → excluded
+        { status: 'saved' },                                  // missing id → excluded
+    ]);
+    assertEquals(ids.sort(), ['r1', 'r2', 'r3']);
+});
+
+Deno.test('dedupeSuccessfulRestaurantIds: empty results → empty (deferred job not scheduled)', () => {
+    assertEquals(dedupeSuccessfulRestaurantIds([]), []);
+});
