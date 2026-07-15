@@ -14,6 +14,13 @@ export interface ListEntryRestaurant {
     city: string | null;
     country: string | null;
     photo_url: string | null;
+    /**
+     * TICKET-194: the restaurant hero provenance + Places credit used by the
+     * list-detail cover. Optional for stale cached payloads; absent values
+     * deliberately fail closed to the list's tint/emoji plate.
+     */
+    photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    places_photo_attribution_html?: string | null;
     cuisine: string | null;
     google_rating: number | null;
     price_level: number | null;

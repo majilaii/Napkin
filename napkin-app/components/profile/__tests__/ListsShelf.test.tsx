@@ -97,7 +97,95 @@ function headers(renderer: any) {
     return renderer.root.findAllByType('SectionHeader');
 }
 
+function attributionCredits(renderer: any) {
+    return renderer.root.findAllByType('Text').filter(
+        (node: any) => node.props.testID === 'list-cover-attribution',
+    );
+}
+
 describe('ListsShelf section header (rev 2 un-merge)', () => {
+    it('renders the parsed credit over an attributed Places cover', () => {
+        mockMyLists = [{
+            ...MY_LIST,
+            cover_photo_url: 'https://cdn.example/places.jpg',
+            cover_photo_source: 'places',
+            cover_attribution_html: '<a href="https://maps.example/jane">Jane Doe</a>',
+        }];
+        const renderer = render();
+        const credits = attributionCredits(renderer);
+
+        expect(renderer.root.findAllByType('Image')).toHaveLength(1);
+        expect(credits).toHaveLength(1);
+        expect(credits[0].children.join('')).toBe('Jane Doe');
+        expect(credits[0].props.numberOfLines).toBe(1);
+
+        const image = renderer.root.findByType('Image');
+        act(() => image.props.onError());
+        expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+        expect(attributionCredits(renderer)).toHaveLength(0);
+
+        act(() => renderer.unmount());
+    });
+
+    it('renders a known non-Places cover without a credit', () => {
+        mockMyLists = [{
+            ...MY_LIST,
+            cover_photo_url: 'https://cdn.example/user.jpg',
+            cover_photo_source: 'user',
+            cover_attribution_html: null,
+        }];
+        const renderer = render();
+
+        expect(renderer.root.findAllByType('Image')).toHaveLength(1);
+        expect(attributionCredits(renderer)).toHaveLength(0);
+
+        act(() => renderer.unmount());
+    });
+
+    it('suppresses a Places cover when attribution is missing', () => {
+        mockMyLists = [{
+            ...MY_LIST,
+            cover_photo_url: 'https://cdn.example/uncredited.jpg',
+            cover_photo_source: 'places',
+            cover_attribution_html: null,
+        }];
+        const renderer = render();
+
+        expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+        expect(attributionCredits(renderer)).toHaveLength(0);
+
+        act(() => renderer.unmount());
+    });
+
+    it('ignores a late image error from a shelf cover that was already replaced', () => {
+        mockMyLists = [{
+            ...MY_LIST,
+            cover_photo_url: 'https://cdn.example/old.jpg',
+            cover_photo_source: 'places',
+            cover_attribution_html: '<a href="https://maps.example/old">Old credit</a>',
+        }];
+        const renderer = render();
+        const failOldCover = renderer.root.findByType('Image').props.onError;
+
+        mockMyLists = [{
+            ...MY_LIST,
+            cover_photo_url: 'https://cdn.example/new.jpg',
+            cover_photo_source: 'places',
+            cover_attribution_html: '<a href="https://maps.example/new">New credit</a>',
+        }];
+        act(() => {
+            renderer.update(<ListsShelf isSelf userId="user-1" publicLists={[]} />);
+        });
+        act(() => failOldCover());
+
+        expect(renderer.root.findByType('Image').props.source).toEqual({
+            uri: 'https://cdn.example/new.jpg',
+        });
+        expect(attributionCredits(renderer)[0].children.join('')).toBe('New credit');
+
+        act(() => renderer.unmount());
+    });
+
     it('renders exactly one "Lists" header for self with lists (+ see all)', () => {
         mockMyLists = [MY_LIST];
         const renderer = render();

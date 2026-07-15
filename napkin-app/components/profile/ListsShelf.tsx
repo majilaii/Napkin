@@ -10,22 +10,23 @@
  * entirely for a stranger with no public lists, and shows a single ghost
  * "new list" card when you have none.
  *
- * Doctrine (founder-directed 2026-07-14): list cards carry imagery. cover_photo_url
- * is always ToS-safe (own-bucket Places mirror or a user entry photo); most
- * imported lists have NULL covers, so the deterministic emoji/teardrop plate must
- * read first-class, never degraded. Titles are UPRIGHT Newsreader — the profile
- * typography guard reserves italic serif for ratings/quotes only.
+ * Doctrine (founder-directed 2026-07-14): list cards carry imagery. A derived
+ * cover only renders when its source metadata proves it is a user/Table photo,
+ * or an attributed Places mirror; stale/unattributed payloads fail closed to
+ * the deterministic emoji/teardrop plate. Titles are UPRIGHT Newsreader — the
+ * profile typography guard reserves italic serif for ratings/quotes only.
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Radius } from '@/constants/theme';
+import { Colors, Radius, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { tintFor } from '@/lib/engraving';
+import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { ProfileListSummary } from '@/hooks/users/useUserProfile';
 import { SectionHeader } from './SectionHeader';
@@ -54,6 +55,16 @@ function ShelfCard({
     palette: Palette;
     onPress: () => void;
 }) {
+    // Bind failures to the URI that emitted them. A stale failure from the old
+    // first restaurant must not suppress a newly derived cover on this card.
+    const [failedCover, setFailedCover] = useState<string | null>(null);
+    useEffect(() => setFailedCover(null), [item.coverPhotoUrl]);
+
+    const showCoverImage = !!item.coverPhotoUrl && failedCover !== item.coverPhotoUrl;
+    const placesAttribution = showCoverImage && item.coverPhotoSource === 'places'
+        ? parsePlacesAttribution(item.coverAttributionHtml)
+        : null;
+
     return (
         <PressableScale
             onPress={onPress}
@@ -68,13 +79,30 @@ function ShelfCard({
                 ) : (
                     <Ionicons name="location-outline" size={30} color={palette.primary} />
                 )}
-                {item.coverPhotoUrl ? (
+                {showCoverImage ? (
                     <Image
-                        source={{ uri: item.coverPhotoUrl }}
+                        key={item.coverPhotoUrl}
+                        source={{ uri: item.coverPhotoUrl! }}
                         style={StyleSheet.absoluteFill}
                         contentFit="cover"
+                        recyclingKey={item.coverPhotoUrl!}
                         transition={180}
+                        onError={() => setFailedCover(item.coverPhotoUrl!)}
                     />
+                ) : null}
+                {placesAttribution ? (
+                    <View
+                        pointerEvents="none"
+                        style={[styles.creditScrim, { backgroundColor: palette.scrimDark }]}
+                    >
+                        <Text
+                            testID="list-cover-attribution"
+                            style={[styles.coverCredit, { color: palette.textOnImage }]}
+                            numberOfLines={1}
+                        >
+                            {placesAttribution.label}
+                        </Text>
+                    </View>
                 ) : null}
                 <View
                     pointerEvents="none"
@@ -200,6 +228,20 @@ const styles = StyleSheet.create({
     plateOutline: {
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: Radius.lg,
+    },
+    creditScrim: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: Spacing.xs,
+    },
+    coverCredit: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 11,
+        lineHeight: 14,
+        opacity: 0.9,
     },
     ghostPlate: {
         borderWidth: 1.5,

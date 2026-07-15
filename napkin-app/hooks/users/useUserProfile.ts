@@ -79,6 +79,12 @@ export type ProfileListSummary = {
     privacy: 'public' | 'private';
     updated_at: string;
     cover_photo_url: string | null;
+    /**
+     * TICKET-194: attribution pair for the derived list cover. Optional for a
+     * stale profile payload; missing source degrades to the tint plate.
+     */
+    cover_photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    cover_attribution_html?: string | null;
 };
 
 export type RestaurantTile = {

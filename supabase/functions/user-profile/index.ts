@@ -32,6 +32,7 @@ import { reportError } from '../_shared/report.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { buildPage, decodeCursor, type Page } from '../_shared/pagination.ts';
 import { projectRound } from '../_shared/round_projection.ts';
+import { projectListSummary, type ListSummary } from './listSummary.ts';
 import { hydrateProfileTakes, type QuickTake } from './profileTakes.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -97,16 +98,6 @@ type SpotSummary = {
     visit_count: number;
     avg_rating: number | null;
     last_visited_at: string | null;
-};
-
-type ListSummary = {
-    id: string;
-    title: string;
-    entry_count: number;
-    ranked: boolean;
-    privacy: 'public' | 'private';
-    updated_at: string;
-    cover_photo_url: string | null;
 };
 
 type RestaurantTile = {
@@ -383,21 +374,19 @@ async function fetchPublicLists(supabase: any, targetId: string): Promise<ListSu
         const orderCol = list.ranked ? 'position' : 'created_at';
         const { data: firstEntry } = await supabase
             .from('list_entries')
-            .select('restaurant:restaurants(photo_url)')
+            .select(
+                'restaurant:restaurants(photo_url, photo_source, places_photo_attribution_html)',
+            )
             .eq('list_id', list.id)
             .order(orderCol, { ascending: !!list.ranked })
             .limit(1)
             .maybeSingle();
 
-        enriched.push({
-            id: list.id,
-            title: list.title,
-            entry_count: count ?? 0,
-            ranked: list.ranked,
-            privacy: list.privacy,
-            updated_at: list.updated_at,
-            cover_photo_url: (firstEntry?.restaurant as any)?.photo_url ?? null,
-        });
+        enriched.push(projectListSummary(
+            list,
+            count ?? 0,
+            firstEntry?.restaurant as any,
+        ));
     }
     return enriched;
 }

@@ -4,18 +4,40 @@
  * directly; the header component renders the results.
  */
 import type { ListDetail, ListEntry, OwnerProfile } from '@/hooks/lists/useList';
+import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
 
 type CoverEntry = Pick<ListEntry, 'restaurant'>;
 type HeaderList = Pick<ListDetail, 'table_id' | 'privacy'>;
 type HeaderOwner = Pick<OwnerProfile, 'display_name' | 'username' | 'account_privacy'>;
 
+export interface DerivedListCover {
+    photoUrl: string;
+    /** Parsed display label only; raw HTML never reaches the header component. */
+    attributionLabel: string | null;
+}
+
 /**
- * A4 (Codex #13): the header cover derives from the server-returned order —
- * first entry's restaurant photo, else null (→ the emoji plate on tintFor).
- * Matches `list_mine`'s authored-first-entry derivation so shelf/detail agree.
+ * A4 (Codex #13): derive from the first entry's restaurant hero
+ * (`restaurants.photo_url`) — not from an entry/user photo. A Places hero only
+ * leaves this boundary with a parseable credit; missing source metadata from a
+ * stale payload also fails closed to the list's emoji/tint plate.
  */
-export function deriveCover(entries: readonly CoverEntry[]): string | null {
-    return entries[0]?.restaurant.photo_url ?? null;
+export function deriveCover(entries: readonly CoverEntry[]): DerivedListCover | null {
+    const restaurant = entries[0]?.restaurant;
+    if (!restaurant?.photo_url) return null;
+
+    if (restaurant.photo_source === 'places') {
+        const attribution = parsePlacesAttribution(restaurant.places_photo_attribution_html);
+        return attribution
+            ? { photoUrl: restaurant.photo_url, attributionLabel: attribution.label }
+            : null;
+    }
+
+    if (restaurant.photo_source === 'user' || restaurant.photo_source === 'table') {
+        return { photoUrl: restaurant.photo_url, attributionLabel: null };
+    }
+
+    return null;
 }
 
 /**

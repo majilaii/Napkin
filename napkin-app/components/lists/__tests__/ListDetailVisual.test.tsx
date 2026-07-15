@@ -207,13 +207,18 @@ function list(title: string): ListDetail {
     };
 }
 
-function renderHeader(title: string) {
+function renderHeader(
+    title: string,
+    coverAttribution: string | null = null,
+    cover: string | null = null,
+) {
     const onAddSpots = jest.fn();
     const onShare = jest.fn();
     const props: ListDetailHeaderProps = {
         list: list(title),
         ownerProfile,
-        cover: null,
+        cover,
+        coverAttribution,
         metadata: '12 places',
         contextLine: { kind: 'table', text: 'Shared with everyone at this Table' },
         isOwner: true,
@@ -230,10 +235,67 @@ function renderHeader(title: string) {
     act(() => {
         renderer = TestRenderer.create(<ListDetailHeader {...props} />);
     });
-    return { renderer, onAddSpots, onShare };
+    return { renderer, props, onAddSpots, onShare };
 }
 
 describe('ListDetailHeader design AA overlap guard', () => {
+    it('renders the Places credit as a legible ghosted line outside the 44pt thumbnail', () => {
+        const { renderer } = renderHeader(
+            'Dinner ideas',
+            'Jane Doe',
+            'https://cdn.example/places.jpg',
+        );
+        const identity = renderer.root.findByProps({ testID: 'list-detail-header-identity' });
+        const credit = renderer.root.findByProps({ testID: 'list-detail-cover-attribution' });
+
+        expect(identity.findAllByProps({ testID: 'list-detail-cover-attribution' })).toHaveLength(1);
+        expect(credit.children.join('')).toBe('Jane Doe');
+        expect(credit.props.numberOfLines).toBe(1);
+        expect(flattenStyle(credit.props.style)).toMatchObject({
+            fontFamily: 'Manrope_500Medium',
+            fontSize: 11,
+            lineHeight: 14,
+            opacity: 0.85,
+            color: Colors.light.textMuted,
+        });
+
+        const image = renderer.root.findByType('ExpoImage');
+        act(() => image.props.onError());
+        expect(renderer.root.findAllByType('ExpoImage')).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ testID: 'list-detail-cover-attribution' })).toHaveLength(0);
+
+        act(() => renderer.unmount());
+    });
+
+    it('ignores a late image error from a cover that was already replaced', () => {
+        const { renderer, props } = renderHeader(
+            'Dinner ideas',
+            'Old credit',
+            'https://cdn.example/old.jpg',
+        );
+        const failOldCover = renderer.root.findByType('ExpoImage').props.onError;
+
+        act(() => {
+            renderer.update(
+                <ListDetailHeader
+                    {...props}
+                    cover="https://cdn.example/new.jpg"
+                    coverAttribution="New credit"
+                />,
+            );
+        });
+        act(() => failOldCover());
+
+        expect(renderer.root.findByType('ExpoImage').props.source).toEqual({
+            uri: 'https://cdn.example/new.jpg',
+        });
+        expect(
+            renderer.root.findByProps({ testID: 'list-detail-cover-attribution' }).children.join(''),
+        ).toBe('New credit');
+
+        act(() => renderer.unmount());
+    });
+
     it.each([
         'Dinner ideas',
         'A deliberately long list title that must occupy two lines without reaching the caption action',
