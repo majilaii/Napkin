@@ -135,7 +135,13 @@ describe('ProfileHeader avatar swap badge', () => {
         expect(button.props.disabled).toBe(true);
         expect(button.props.accessibilityState).toEqual({ busy: true, disabled: true });
         expect(renderer.root.findAllByType('ActivityIndicator')).toHaveLength(1);
-        expect(renderer.root.findAllByProps({ testID: 'profile-avatar-dimmer' })).toHaveLength(1);
+        // findAllByProps matches both the composite and host node for one testID;
+        // filter to the host View so the count means "one dimmer rendered".
+        expect(
+            renderer.root.findAll(
+                (node) => typeof node.type === 'string' && node.props.testID === 'profile-avatar-dimmer',
+            ),
+        ).toHaveLength(1);
         act(() => renderer.unmount());
     });
 });
