@@ -1,20 +1,23 @@
 /**
- * FeedHeader — the shared Feed masthead + mode tabs (TICKET-125).
+ * FeedHeader — the shared Feed masthead + mode tabs (TICKET-125; type fixed
+ * TICKET-189).
  *
- *   [italic serif "Feed"]
+ *   [Manrope "Feed" — Type.screenTitle]
  *   [For You | Following]   ← only once mode is resolved
  *
- * Rendered as the ListHeaderComponent of BOTH bodies (For You and Following) so
- * the masthead reads continuous across a mode switch. While `mode === null` (the
- * default is still resolving off the first friends-feed page) the tabs are
- * withheld — this is the anti-flicker mechanism: tabs never paint in a
- * provisional active state.
+ * The masthead is functional chrome, so it reads in `Type.screenTitle`
+ * (Manrope 700 — locked 2026-07-10); the old hardcoded italic-serif 26pt
+ * predated the lock. Rendered as the ListHeaderComponent of BOTH bodies (For
+ * You and Following) so the masthead reads continuous across a mode switch.
+ * While `mode === null` (the default is still resolving off the first
+ * friends-feed page) the tabs are withheld — this is the anti-flicker
+ * mechanism: tabs never paint in a provisional active state.
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { FeedModeTabs, type FeedMode } from './FeedModeTabs';
 
@@ -45,9 +48,7 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.sm,
     },
     title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 26,
-        lineHeight: 30,
+        ...Type.screenTitle,
         paddingTop: Spacing.sm,
     },
 });

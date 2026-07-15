@@ -26,6 +26,10 @@ import type { ResolvedCandidate } from './useResolveUrl';
  * Mirrors TopFourPlacePayload shape pattern (fix-pass-2 item 3).
  * When present, the server upserts the restaurant with ALL fields rather than
  * name+city only — prevents metadata regression on first-time saves.
+ *
+ * TICKET-187: NO photoReference/photoAttributionHtml — the server ignores
+ * client photo fields; the hero photo is mirrored server-side, post-response,
+ * from the DB-derived external_id.
  */
 export interface SaveImportPlacePayload {
     external_id?: string | null;
@@ -33,8 +37,6 @@ export interface SaveImportPlacePayload {
     location?: { address?: string; locality?: string; country?: string };
     latitude?: number | null;
     longitude?: number | null;
-    photoReference?: string | null;
-    photoAttributionHtml?: string | null;
     googleRating?: number | null;
     googleRatingCount?: number | null;
     priceLevel?: number | null;

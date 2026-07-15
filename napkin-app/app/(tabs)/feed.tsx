@@ -81,7 +81,7 @@ export default function FeedScreen() {
                     onSwitchToForYou={() => setMode('for-you')}
                 />
             ) : (
-                <ForYouFeed ListHeaderComponent={header} onSwitchToFollowing={() => setMode('following')} />
+                <ForYouFeed ListHeaderComponent={header} />
             )}
         </View>
     );

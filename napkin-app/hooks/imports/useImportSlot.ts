@@ -14,7 +14,9 @@ import { deriveImportSlot, type ImportSlot } from './importSlotUtils';
 export type { ImportSlot };
 
 export function useImportSlot(userId: string | null | undefined): ImportSlot | null {
-    const { data: recentImports } = useRecentImports(userId, 4);
+    // Canonical limit-free fetch (TICKET-191) — the derivation only `.find`s
+    // the latest-within-48h, so the full shared array is fine.
+    const { data: recentImports } = useRecentImports(userId);
     const activeImports = useActiveImports();
     return useMemo(
         () => deriveImportSlot(activeImports, recentImports),

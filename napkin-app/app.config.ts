@@ -160,6 +160,9 @@ export default ({ config }: ConfigContext): ExpoConfig =>
             },
         ],
         'expo-web-browser',
+        // Teach-flow footage playback (components/import-education). Bundled local
+        // clips only: no PiP, no background audio, so no plugin options needed.
+        'expo-video',
         // TICKET-120: device-LOCAL import-completion notifications (no APNs/remote
         // push, no token). Defaults — no custom notification icon/sound/color.
         'expo-notifications',

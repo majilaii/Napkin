@@ -25,9 +25,9 @@ export function useHasImported(userId: string | null | undefined): boolean {
     // prior import (no full→compact flash).
     const [flag, setFlag] = useState<boolean>(() => getImportCompletedCached());
 
-    // Default page size on purpose: the query key is limit-agnostic, so a limit-1
-    // fetch here could replace (truncate) the cached list other consumers render.
-    // Sharing the default keeps one cache entry; one row is still proof enough.
+    // Canonical shared fetch (TICKET-191): the query key is limit-agnostic, so
+    // every consumer fetches RECENT_IMPORTS_FETCH_LIMIT and slices locally —
+    // one cache entry, no mount-order truncation. One row is still proof enough.
     const { data: recent } = useRecentImports(userId);
 
     useEffect(() => {

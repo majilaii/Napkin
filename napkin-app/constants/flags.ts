@@ -5,6 +5,21 @@
  * Routes stay registered and deep-linkable; this is a curtain, not a demolition.
  * Data hooks are never gated here — only JSX render paths.
  */
+/**
+ * TICKET-189 rollout flags — the two NEW For You discovery surfaces ship
+ * FLAG-GATED OFF in the store build (Codex P1 rollout posture): the endpoints
+ * deploy dark and soak in CI/prod smoke; flipping these to true lights the
+ * client surfaces with no further deploy. With both OFF the build is a
+ * complete, shippable slice (Manrope masthead + fixed lists block + existing
+ * co-diner people block + empty-vs-error contract, no trending rail).
+ *
+ * Unlike FRIEND_TEST below these are ENABLE flags, not curtains.
+ */
+/** "on socials this week" For You module (feed-socials + OnSocialsBlock). */
+export const FOR_YOU_SOCIALS = false;
+/** People-to-follow v2 mixed rail (follow_candidates + public authors). */
+export const FOR_YOU_PEOPLE_V2 = false;
+
 export const FRIEND_TEST = {
     /** Hide Lists screen entry points (profile index + settings row).
      *  Flipped false 2026-07-03 (TICKET-092 profile revamp) — lists have been

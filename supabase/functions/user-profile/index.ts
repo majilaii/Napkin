@@ -2163,6 +2163,94 @@ serve(async (req) => {
             });
         }
 
+        // ── follow_candidates ─────────────────────────────────────────────
+        // TICKET-189: the people-to-follow v2 mixed rail — co-diners FIRST
+        // (Ring 1 > Ring-2-lite), then recently-active public authors, one
+        // capped list. The two RPCs stay separately testable; this handler
+        // owns only the trivial merge/dedup/cap presentation logic:
+        //   1. fn_co_diner_candidates(p_viewer, 8)      — people actually eaten
+        //      with, minus follows/blocks/self.
+        //   2. fn_recently_active_public_authors(p_viewer, co_diner_ids, 8) —
+        //      public accounts with ≥1 publicly-eligible log in 30d; the
+        //      co-diner id set is excluded INSIDE the RPC before its LIMIT so
+        //      the publics are genuinely beyond co-diners (a co-diner never
+        //      re-appears as a "public").
+        // Request: { action: 'follow_candidates' }
+        // Response: { data: FollowCandidate[] } — FollowCandidate =
+        //   { user_id, display_name, avatar_url, kind: 'co_diner' | 'public',
+        //     meals_together?, logs_30d? }. Cap 8 total. Empty is legitimate.
+        // `co_diners` above stays unchanged (onboarding still uses it).
+        if (action === 'follow_candidates') {
+            const CANDIDATE_CAP = 8;
+
+            const { data: coDiners, error: coErr } = await supabase.rpc(
+                'fn_co_diner_candidates',
+                { p_viewer: user.id, p_limit: CANDIDATE_CAP },
+            );
+            if (coErr) throw coErr;
+            const coRows = (coDiners ?? []) as { co_diner_id: string; meals_together: number }[];
+
+            const { data: publics, error: pubErr } = await supabase.rpc(
+                'fn_recently_active_public_authors',
+                {
+                    p_viewer: user.id,
+                    p_exclude_ids: coRows.map((r) => r.co_diner_id),
+                    p_limit: CANDIDATE_CAP,
+                },
+            );
+            if (pubErr) throw pubErr;
+            const pubRows = (publics ?? []) as { author_id: string; logs_30d: number }[];
+
+            const orderedIds = [
+                ...coRows.map((r) => r.co_diner_id),
+                ...pubRows.map((r) => r.author_id),
+            ];
+            if (orderedIds.length === 0) return json({ data: [] });
+
+            // Flat profile lookup — NOT a PostgREST embed (entries/RPCs have no
+            // FK to profiles; same shape as co_diners above).
+            const { data: profiles, error: profErr } = await supabase
+                .from('profiles')
+                .select('user_id, display_name, avatar_url')
+                .in('user_id', orderedIds);
+            if (profErr) throw profErr;
+
+            const byId = new Map(
+                ((profiles ?? []) as {
+                    user_id: string;
+                    display_name: string;
+                    avatar_url: string | null;
+                }[]).map((p) => [p.user_id, p]),
+            );
+
+            const candidates = [
+                ...coRows.map((r) => {
+                    const p = byId.get(r.co_diner_id);
+                    if (!p) return null;
+                    return {
+                        user_id: p.user_id,
+                        display_name: p.display_name,
+                        avatar_url: p.avatar_url ?? null,
+                        kind: 'co_diner' as const,
+                        meals_together: Number(r.meals_together ?? 0),
+                    };
+                }),
+                ...pubRows.map((r) => {
+                    const p = byId.get(r.author_id);
+                    if (!p) return null;
+                    return {
+                        user_id: p.user_id,
+                        display_name: p.display_name,
+                        avatar_url: p.avatar_url ?? null,
+                        kind: 'public' as const,
+                        logs_30d: Number(r.logs_30d ?? 0),
+                    };
+                }),
+            ].filter(Boolean).slice(0, CANDIDATE_CAP);
+
+            return json({ data: candidates });
+        }
+
         // ── following_list ────────────────────────────────────────────────
         // Returns the list of users the caller is following (with profile data).
         // Request: { action: 'following_list', limit?: number }

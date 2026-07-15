@@ -80,7 +80,10 @@ import {
     type ParsedMapsList,
 } from './mapsList.ts';
 import { resizeImageToLimit } from '../_shared/imageResize.ts';
-import { upsertRestaurant } from '../_shared/restaurant.ts';
+// TICKET-187: acquireAndMirrorHeroPhotos is the deferred (post-response) hero-
+// photo job save_spots schedules via EdgeRuntime.waitUntil — the save critical
+// path carries ZERO Google calls and never reads client photo fields.
+import { upsertRestaurant, acquireAndMirrorHeroPhotos } from '../_shared/restaurant.ts';
 // TICKET-077: the handoff pin path re-reads the share LIVE (single source of truth,
 // shared with handoff/share-page) so it pins against the CURRENT spot set, never a
 // stale client-sent list.
@@ -512,6 +515,11 @@ import {
     normalizePinWishlist,
     listOnlySaveKind,
     isGhostOnlyMode,
+    // TICKET-187: photo-field quarantine — the one upsert-input mapping (no
+    // photo fields, ever) + the deferred-job id collection.
+    buildVerifiedUpsertInput,
+    dedupeSuccessfulRestaurantIds,
+    type SaveSpotPlacePayload,
     type SourceType,
 } from './_helpers.ts';
 export { isGhostExternalId, buildGhostExternalId, filterUnauthorizedTableIds };
@@ -1203,29 +1211,10 @@ async function upsertRestaurantFromExtracted(
 }
 
 // ── save_spots action (ARCH-REVIEW-2 #1 — lives in resolve-url) ───────────────
-
-/** Full place payload forwarded by the client for metadata-complete upserts (fix-pass-2 item 3). */
-interface SaveSpotPlacePayload {
-    external_id?: string | null;
-    name?: string | null;
-    location?: { address?: string; locality?: string; country?: string };
-    latitude?: number | null;
-    longitude?: number | null;
-    photoReference?: string | null;
-    photoAttributionHtml?: string | null;
-    googleRating?: number | null;
-    googleRatingCount?: number | null;
-    priceLevel?: number | null;
-    cuisine?: string | null;
-    // TICKET-081: optional restaurant-page metadata forwarded from the client.
-    // hours carries weekdayDescriptions only — no openNow (stale once cached; the page
-    // derives "today" by matching the weekday name, not array position).
-    phone?: string | null;
-    website?: string | null;
-    googleMapsUri?: string | null;
-    google_maps_uri?: string | null;
-    hours?: { weekdayDescriptions: string[] } | null;
-}
+// TICKET-187: SaveSpotPlacePayload moved to _helpers.ts (imported above) so the
+// deno test can assert client photo fields never reach an upsert. The interface
+// deliberately carries NO photoReference / photoAttributionHtml — client photo
+// fields are ignored; the deferred job re-derives everything from the DB row.
 
 interface SaveSpotInput {
     candidate_id: string;
@@ -1410,33 +1399,15 @@ async function handleSaveSpots(
         // Fix-pass-2 item 3: when the client forwards a full `place` payload, use ALL
         // metadata fields so first-time saves get the complete restaurant record rather
         // than name+city only (metadata regression fix).
+        // TICKET-187: the upsert carries NO photo fields (buildVerifiedUpsertInput) —
+        // the hero photo is acquired post-response by the deferred job below.
         let resolvedRestaurantId = spot.restaurant_id ?? null;
         if (!resolvedRestaurantId && safeExternalId) {
             try {
-                const p = spot.place;
-                resolvedRestaurantId = await upsertRestaurant(supabase, {
-                    external_id: safeExternalId,
-                    name: p?.name ?? spot.restaurant_name ?? 'Unknown',
-                    location: {
-                        address: p?.location?.address ?? undefined,
-                        locality: p?.location?.locality ?? spot.restaurant_city ?? undefined,
-                        country: p?.location?.country ?? undefined,
-                    },
-                    latitude: p?.latitude ?? undefined,
-                    longitude: p?.longitude ?? undefined,
-                    photoReference: p?.photoReference ?? undefined,
-                    photoAttributionHtml: p?.photoAttributionHtml ?? null,
-                    googleRating: p?.googleRating ?? undefined,
-                    googleRatingCount: p?.googleRatingCount ?? undefined,
-                    priceLevel: p?.priceLevel ?? undefined,
-                    cuisine: p?.cuisine ?? undefined,
-                    // TICKET-081: forward metadata too when present (additive).
-                    phone: p?.phone ?? undefined,
-                    website: p?.website ?? undefined,
-                    googleMapsUri: p?.googleMapsUri ?? p?.google_maps_uri ?? undefined,
-                    hours: p?.hours ?? undefined,
-                    verification: 'verified',
-                });
+                resolvedRestaurantId = await upsertRestaurant(
+                    supabase,
+                    buildVerifiedUpsertInput(safeExternalId, spot),
+                );
             } catch {
                 // Non-fatal: fall through to the RPC's external_id branch
                 // (it will retry the upsert there as verified as well).
@@ -1458,29 +1429,11 @@ async function handleSaveSpots(
                 let listRestaurantId = resolvedRestaurantId;
                 if (kind === 'verified') {
                     // Real external_id but FIX#4 didn't already produce an id — upsert now.
-                    const p = spot.place;
-                    listRestaurantId = await upsertRestaurant(supabase, {
-                        external_id: safeExternalId!,
-                        name: p?.name ?? spot.restaurant_name ?? 'Unknown',
-                        location: {
-                            address: p?.location?.address ?? undefined,
-                            locality: p?.location?.locality ?? spot.restaurant_city ?? undefined,
-                            country: p?.location?.country ?? undefined,
-                        },
-                        latitude: p?.latitude ?? undefined,
-                        longitude: p?.longitude ?? undefined,
-                        photoReference: p?.photoReference ?? undefined,
-                        photoAttributionHtml: p?.photoAttributionHtml ?? null,
-                        googleRating: p?.googleRating ?? undefined,
-                        googleRatingCount: p?.googleRatingCount ?? undefined,
-                        priceLevel: p?.priceLevel ?? undefined,
-                        cuisine: p?.cuisine ?? undefined,
-                        phone: p?.phone ?? undefined,
-                        website: p?.website ?? undefined,
-                        googleMapsUri: p?.googleMapsUri ?? p?.google_maps_uri ?? undefined,
-                        hours: p?.hours ?? undefined,
-                        verification: 'verified',
-                    });
+                    // TICKET-187: same no-photo-fields mapping as FIX#4.
+                    listRestaurantId = await upsertRestaurant(
+                        supabase,
+                        buildVerifiedUpsertInput(safeExternalId!, spot),
+                    );
                 } else if (kind === 'ghost') {
                     // Mint a DETERMINISTIC unverified ghost row keyed on (user, nonce),
                     // matching fn_save_import_spot's own 'ghost_{user}_{nonce}' convention
@@ -1608,7 +1561,14 @@ async function handleSaveSpots(
         });
     }
 
-    return jsonResponse({
+    // ── TICKET-187: deferred hero-photo acquisition ───────────────────────────
+    // Build the response FIRST, then schedule the ENTIRE photo workflow
+    // (Details → decide → mirror) via EdgeRuntime.waitUntil — zero Google calls
+    // on the save critical path; a slow/failing Google response can never delay
+    // or fail a save. The job receives ONLY deduplicated successful
+    // restaurant_ids + the requester's user id (never client-paired external ids
+    // or client photo fields); everything else is re-derived from the DB.
+    const response = jsonResponse({
         data: {
             results,
             summary: {
@@ -1620,6 +1580,36 @@ async function handleSaveSpots(
             job_id: batchJobId,
         },
     });
+
+    const mirrorIds = dedupeSuccessfulRestaurantIds(results);
+    if (mirrorIds.length > 0) {
+        // .catch first: an unhandled rejection must never crash the isolate.
+        // acquireAndMirrorHeroPhotos reports its own failures to Sentry
+        // internally (its outer catch swallows, so this .catch is a dead-code
+        // last resort today) — the reportError here only fires if a future
+        // refactor lets the job reject.
+        const photoJob = acquireAndMirrorHeroPhotos(supabase, mirrorIds, user.id)
+            .catch((e) => {
+                console.error('deferred hero-photo job failed (non-fatal):', e);
+                reportError(e, {
+                    fn: 'resolve-url',
+                    action: 'photo-mirror',
+                    extra: { user_id: user.id },
+                });
+            });
+        try {
+            // Supabase's edge runtime keeps the isolate alive until the job
+            // settles WITHOUT delaying the response. Not available everywhere
+            // (local deno, tests) — fall back silently to fire-and-forget
+            // (same pattern as _shared/report.ts).
+            // deno-lint-ignore no-explicit-any
+            (globalThis as any).EdgeRuntime?.waitUntil?.(photoJob);
+        } catch {
+            // ignore — plain fire-and-forget still stands.
+        }
+    }
+
+    return response;
 }
 
 // ── cache_clip_thumb action (TICKET-156 — On Socials rail thumbnail cache) ────

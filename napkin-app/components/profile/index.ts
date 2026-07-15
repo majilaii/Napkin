@@ -1,7 +1,8 @@
 export { ProfileScreenBody } from './ProfileScreenBody';
 export { ProfileHeader } from './ProfileHeader';
 export { TasteBand } from './TasteBand';
-export { DiningMapPreview } from './DiningMapPreview';
+export { ImportAttentionCard } from './ImportAttentionCard';
+export { ProfileImportsAffordance } from './ProfileImportsAffordance';
 export { ListsShelf } from './ListsShelf';
 export { ProfileIndex } from './ProfileIndex';
 export { SectionHeader } from './SectionHeader';

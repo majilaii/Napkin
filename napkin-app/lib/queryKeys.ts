@@ -87,8 +87,10 @@ export const queryKeys = {
             ['lists', 'containing', userId, restaurantId] as const,
         /** TICKET-106: public-list search results (keyset-paginated). */
         searchPublic: (q: string) => ['lists', 'searchPublic', q] as const,
-        /** TICKET-125: For You browse block — recent public lists, global (not per-viewer). */
-        browsePublic: () => ['lists', 'browsePublic'] as const,
+        /** TICKET-125 → TICKET-189: For You browse block — VIEWER-KEYED (the
+         * server self-excludes the viewer's own lists, so the result differs
+         * per viewer; a global key would leak one viewer's slice to another). */
+        browsePublic: (userId: string) => ['lists', 'browsePublic', userId] as const,
     },
 
     // Users (public / merged profile surface — TICKET-020, TICKET-025)
@@ -135,10 +137,15 @@ export const queryKeys = {
          * cache sync in usePostInteractions [ARCH-REVIEW-2]. */
         friendsAll: () => ['feed', 'friends'] as const,
         friends: (userId: string) => ['feed', 'friends', userId] as const,
-        /** Trending rail — global (not per-viewer), 1h server cache. */
-        trending: () => ['feed', 'trending'] as const,
+        // (feed.trending removed in TICKET-189 §7 with the TrendingRail render —
+        //  the feed-trending BACKEND + {rows,fallback} wire shape stay intact.)
         /** TICKET-101: co-diner follow candidates for the zero-follow empty state. */
         coDiners: (userId: string) => ['feed', 'coDiners', userId] as const,
+        /** TICKET-189: "on socials" module — VIEWER-KEYED (stage-2 privacy pass
+         * is per-viewer: blocks, flips, self-exclusion). Never share across users. */
+        socials: (userId: string) => ['feed', 'socials', userId] as const,
+        /** TICKET-189: people-to-follow v2 mixed candidates (co-diners + publics). */
+        followCandidates: (userId: string) => ['feed', 'followCandidates', userId] as const,
     },
 
     // Atlas (geographic lens on a Table's dining history)

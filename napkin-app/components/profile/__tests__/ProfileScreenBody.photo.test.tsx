@@ -109,8 +109,10 @@ jest.mock('../ProfileTopFourSheet', () => ({ ProfileTopFourSheet: 'ProfileTopFou
 jest.mock('../QuickTakes', () => ({ QuickTakes: 'QuickTakes' }));
 jest.mock('../QuickTakesSheet', () => ({ QuickTakesSheet: 'QuickTakesSheet' }));
 jest.mock('../TasteSignature', () => ({ TasteSignature: 'TasteSignature' }));
-jest.mock('../DiningMapPreview', () => ({ DiningMapPreview: 'DiningMapPreview' }));
+// Host-string mocks — ListsShelf's useMyLists and ImportAttentionCard's
+// PressableScale/router chains never run.
 jest.mock('../ListsShelf', () => ({ ListsShelf: 'ListsShelf' }));
+jest.mock('../ImportAttentionCard', () => ({ ImportAttentionCard: 'ImportAttentionCard' }));
 jest.mock('../ProfileIndex', () => ({ ProfileIndex: 'ProfileIndex' }));
 jest.mock('../TablesInCommonSection', () => ({
     TablesInCommonSection: 'TablesInCommonSection',

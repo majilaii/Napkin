@@ -249,3 +249,95 @@ export function isGhostOnlyMode(envValue: string | null | undefined): boolean {
     const v = envValue.trim().toLowerCase();
     return v !== '' && v !== '0' && v !== 'false' && v !== 'off';
 }
+
+// ── TICKET-187: save_spots photo-field quarantine ─────────────────────────────
+
+import type { RestaurantInput } from '../_shared/restaurant.ts';
+
+/**
+ * Full place payload forwarded by the client for metadata-complete upserts
+ * (fix-pass-2 item 3). TICKET-187: photoReference / photoAttributionHtml are
+ * DELIBERATELY absent — the server never reads client photo fields. The hero
+ * photo is acquired server-side, post-response, by the DB-derived external_id
+ * (acquireAndMirrorHeroPhotos), so a client cannot pair a foreign photo with a
+ * restaurant row.
+ */
+export interface SaveSpotPlacePayload {
+    external_id?: string | null;
+    name?: string | null;
+    location?: { address?: string; locality?: string; country?: string };
+    latitude?: number | null;
+    longitude?: number | null;
+    googleRating?: number | null;
+    googleRatingCount?: number | null;
+    priceLevel?: number | null;
+    cuisine?: string | null;
+    // TICKET-081: optional restaurant-page metadata forwarded from the client.
+    // hours carries weekdayDescriptions only — no openNow (stale once cached; the page
+    // derives "today" by matching the weekday name, not array position).
+    phone?: string | null;
+    website?: string | null;
+    googleMapsUri?: string | null;
+    google_maps_uri?: string | null;
+    hours?: { weekdayDescriptions: string[] } | null;
+}
+
+/**
+ * Build the verified-restaurant upsert input for a save_spots spot (TICKET-187).
+ *
+ * The ONE mapping both handleSaveSpots upsert sites (FIX#4 + the list-only
+ * 'verified' branch) use — extracted so the deno test can assert the invariant
+ * that closed the review finding: NO photo field (photoReference /
+ * photoAttributionHtml) ever reaches upsertRestaurant from a client payload,
+ * even a forged one. Zero Google calls happen on the save critical path; the
+ * deferred acquireAndMirrorHeroPhotos job owns ALL photo work.
+ */
+export function buildVerifiedUpsertInput(
+    externalId: string,
+    spot: {
+        restaurant_name?: string | null;
+        restaurant_city?: string | null;
+        place?: SaveSpotPlacePayload | null;
+    },
+): RestaurantInput {
+    const p = spot.place;
+    return {
+        external_id: externalId,
+        name: p?.name ?? spot.restaurant_name ?? 'Unknown',
+        location: {
+            address: p?.location?.address ?? undefined,
+            locality: p?.location?.locality ?? spot.restaurant_city ?? undefined,
+            country: p?.location?.country ?? undefined,
+        },
+        latitude: p?.latitude ?? undefined,
+        longitude: p?.longitude ?? undefined,
+        googleRating: p?.googleRating ?? undefined,
+        googleRatingCount: p?.googleRatingCount ?? undefined,
+        priceLevel: p?.priceLevel ?? undefined,
+        cuisine: p?.cuisine ?? undefined,
+        // TICKET-081: forward metadata too when present (additive).
+        phone: p?.phone ?? undefined,
+        website: p?.website ?? undefined,
+        googleMapsUri: p?.googleMapsUri ?? p?.google_maps_uri ?? undefined,
+        hours: p?.hours ?? undefined,
+        verification: 'verified',
+    };
+}
+
+/**
+ * Collect the DEDUPLICATED successful restaurant_ids from a save_spots result
+ * list — the exact input the deferred photo job receives (TICKET-187). Failed
+ * spots and rows without a restaurant_id are excluded; ghost/list-only rows may
+ * pass through (they carry an id) — the job's verification filter skips them
+ * before any rate token. Works identically for the request-supplied-
+ * restaurant_id branch: the id is still known from the result row.
+ */
+export function dedupeSuccessfulRestaurantIds(
+    results: Array<{ status: string; restaurant_id?: string | null }>,
+): string[] {
+    const ids = new Set<string>();
+    for (const r of results) {
+        if (r.status !== 'failed' && r.restaurant_id) ids.add(r.restaurant_id);
+    }
+    return [...ids];
+}
