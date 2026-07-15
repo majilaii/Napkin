@@ -341,7 +341,7 @@ const styles = StyleSheet.create({
     likeRow: { flexDirection: 'row' },
     likePill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, minHeight: 34 },
     likeCount: { fontFamily: 'Manrope_600SemiBold', fontSize: 12, fontVariant: ['tabular-nums'] },
-    commentsWrap: { borderTopWidth: 1, borderTopColor: 'rgba(28,28,25,0.06)', paddingTop: Spacing.sm },
+    commentsWrap: { borderTopWidth: 1, borderTopColor: 'rgba(28,28,25,0.06)', paddingTop: Spacing.sm, paddingHorizontal: 14 },
     removeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: Spacing.lg, paddingVertical: Spacing.md },
     removeLabel: { fontFamily: 'Manrope_500Medium', fontSize: 13 },
     replyChip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginHorizontal: 14, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.sm, marginBottom: 4 },
