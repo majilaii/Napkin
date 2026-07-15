@@ -65,7 +65,17 @@ export function ImportsStrip({ userId }: Props) {
                 <PressableScale
                     onPress={openHub}
                     haptic="selection"
-                    style={[styles.slotCard, { backgroundColor: palette.surfaceJournalLow }]}
+                    // Action-owed states carry a terracotta edge; calm states stay flat
+                    // (founder-approved design pass, 2026-07-15).
+                    style={
+                        attention
+                            ? [
+                                  styles.slotCard,
+                                  { backgroundColor: palette.surfaceJournalLow },
+                                  { borderLeftWidth: 3, borderLeftColor: palette.primary },
+                              ]
+                            : [styles.slotCard, { backgroundColor: palette.surfaceJournalLow }]
+                    }
                     accessibilityRole="button"
                     accessibilityLabel={slot.title}
                 >
