@@ -213,6 +213,63 @@ describe('useFollow candidate caches (TICKET-189)', () => {
         expect(client.getQueryData(candidatesKey)).toBeUndefined();
         expect(client.getQueryData(coDinersKey)).toBeUndefined();
     });
+
+    it('(d) A fails after concurrent B succeeds: only A returns to both caches', async () => {
+        let rejectA!: (error: Error) => void;
+        let resolveB!: (value: { following: boolean }) => void;
+        const requestA = new Promise<never>((_resolve, reject) => {
+            rejectA = reject;
+        });
+        const requestB = new Promise<{ following: boolean }>((resolve) => {
+            resolveB = resolve;
+        });
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const edgeMock = require('@/lib/edgeInvoke').callEdgeFn as jest.Mock;
+        edgeMock
+            .mockImplementationOnce(() => requestA)
+            .mockImplementationOnce(() => requestB);
+
+        const targetB = 'user-target-2';
+        const { result, client } = renderHookWithClient(() => useFollow());
+        client.setQueryData(candidatesKey, [
+            followCandidates[0],
+            { user_id: targetB, display_name: 'Target B', avatar_url: null, kind: 'public', logs_30d: 2 },
+            followCandidates[1],
+        ]);
+        client.setQueryData(coDinersKey, [
+            coDiners[0],
+            { user_id: targetB, display_name: 'Target B', avatar_url: null, meals_together: 4 },
+            coDiners[1],
+        ]);
+
+        act(() => result.current.mutate({ targetUserId: TARGET_ID }));
+        await waitFor(() => {
+            expect(client.getQueryData<typeof followCandidates>(candidatesKey)?.map((c) => c.user_id))
+                .toEqual([targetB, 'user-other']);
+        });
+
+        act(() => result.current.mutate({ targetUserId: targetB }));
+        await waitFor(() => {
+            expect(client.getQueryData<typeof followCandidates>(candidatesKey)?.map((c) => c.user_id))
+                .toEqual(['user-other']);
+        });
+
+        await act(async () => {
+            resolveB({ following: true });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        await act(async () => {
+            rejectA(new Error('follow A failed'));
+        });
+        await waitFor(() => {
+            expect(client.getQueryData<typeof followCandidates>(candidatesKey)?.map((c) => c.user_id))
+                .toEqual([TARGET_ID, 'user-other']);
+            expect(client.getQueryData<typeof coDiners>(coDinersKey)?.map((c) => c.user_id))
+                .toEqual([TARGET_ID, 'user-other']);
+        });
+        edgeMock.mockReset();
+    });
 });
 
 // ── useUnfollow ───────────────────────────────────────────────────────────────

@@ -12,7 +12,9 @@
  *             mutations.md lifecycle (Codex P2: "remove on success + rollback"
  *             is contradictory). Centralizing here keeps the candidate caches
  *             warm-correct no matter which FollowButton consumer fires.
- *   onError:  restore ALL snapshots (candidates included).
+ *   onError:  restore the profile/search snapshots. Candidate caches use a
+ *             target-scoped inverse patch so one failed follow cannot undo a
+ *             different target's concurrent successful removal.
  *   onSuccess: narrow reconciliation only — follow-list pages + the target's
  *              single-id profile + feed.friends(viewerId) (the newly-followed
  *              author's reviews belong in Following now). The candidate
@@ -86,6 +88,33 @@ function patchViewerProfile(
     };
 }
 
+interface CandidateRemoval<T> {
+    candidate: T;
+    index: number;
+}
+
+function captureCandidateRemoval<T extends { user_id: string }>(
+    candidates: T[] | undefined,
+    targetUserId: string,
+): CandidateRemoval<T> | undefined {
+    const index = candidates?.findIndex((candidate) => candidate.user_id === targetUserId) ?? -1;
+    if (!candidates || index < 0) return undefined;
+    return { candidate: candidates[index], index };
+}
+
+function reinsertCandidate<T extends { user_id: string }>(
+    candidates: T[] | undefined,
+    removal: CandidateRemoval<T>,
+): T[] | undefined {
+    if (!candidates) return [removal.candidate];
+    if (candidates.some((candidate) => candidate.user_id === removal.candidate.user_id)) {
+        return candidates;
+    }
+    const next = [...candidates];
+    next.splice(Math.min(removal.index, next.length), 0, removal.candidate);
+    return next;
+}
+
 // ── useFollow ─────────────────────────────────────────────────────────────────
 
 export function useFollow() {
@@ -145,33 +174,39 @@ export function useFollow() {
                 );
             }
 
-            // TICKET-189: For You candidate caches — cancel, snapshot, and
-            // optimistically remove the just-followed target from BOTH (the
+            // TICKET-189: For You candidate caches — cancel, capture the
+            // target row, and optimistically remove it from BOTH (the
             // v2 mixed rail AND the co-diner rail; whichever is live). The
             // arbiter then drops the whole people block when the last
             // candidate goes — no orphan header/separator.
-            let followCandidatesSnapshot: FollowCandidate[] | undefined;
-            let coDinersSnapshot: CoDinerCandidate[] | undefined;
+            let followCandidatesRemoval: CandidateRemoval<FollowCandidate> | undefined;
+            let coDinersRemoval: CandidateRemoval<CoDinerCandidate> | undefined;
             if (viewerId) {
                 await queryClient.cancelQueries({
                     queryKey: queryKeys.feed.followCandidates(viewerId),
                 });
                 await queryClient.cancelQueries({ queryKey: queryKeys.feed.coDiners(viewerId) });
 
-                followCandidatesSnapshot = queryClient.getQueryData<FollowCandidate[]>(
-                    queryKeys.feed.followCandidates(viewerId),
+                followCandidatesRemoval = captureCandidateRemoval(
+                    queryClient.getQueryData<FollowCandidate[]>(
+                        queryKeys.feed.followCandidates(viewerId),
+                    ),
+                    targetUserId,
                 );
-                if (followCandidatesSnapshot) {
+                if (followCandidatesRemoval) {
                     queryClient.setQueryData<FollowCandidate[]>(
                         queryKeys.feed.followCandidates(viewerId),
                         (prev) => prev?.filter((c) => c.user_id !== targetUserId),
                     );
                 }
 
-                coDinersSnapshot = queryClient.getQueryData<CoDinerCandidate[]>(
-                    queryKeys.feed.coDiners(viewerId),
+                coDinersRemoval = captureCandidateRemoval(
+                    queryClient.getQueryData<CoDinerCandidate[]>(
+                        queryKeys.feed.coDiners(viewerId),
+                    ),
+                    targetUserId,
                 );
-                if (coDinersSnapshot) {
+                if (coDinersRemoval) {
                     queryClient.setQueryData<CoDinerCandidate[]>(
                         queryKeys.feed.coDiners(viewerId),
                         (prev) => prev?.filter((c) => c.user_id !== targetUserId),
@@ -183,8 +218,8 @@ export function useFollow() {
                 searchSnapshots,
                 targetProfileSnapshot,
                 viewerProfileSnapshot,
-                followCandidatesSnapshot,
-                coDinersSnapshot,
+                followCandidatesRemoval,
+                coDinersRemoval,
             };
         },
 
@@ -209,17 +244,20 @@ export function useFollow() {
                     context.viewerProfileSnapshot
                 );
             }
-            // TICKET-189: restore both candidate caches (the card returns).
-            if (viewerId && context?.followCandidatesSnapshot) {
-                queryClient.setQueryData(
+            // TICKET-189: target-scoped inverse patches. Never restore a whole
+            // array: another target may have completed successfully meanwhile.
+            const followCandidatesRemoval = context?.followCandidatesRemoval;
+            if (viewerId && followCandidatesRemoval) {
+                queryClient.setQueryData<FollowCandidate[]>(
                     queryKeys.feed.followCandidates(viewerId),
-                    context.followCandidatesSnapshot,
+                    (prev) => reinsertCandidate(prev, followCandidatesRemoval),
                 );
             }
-            if (viewerId && context?.coDinersSnapshot) {
-                queryClient.setQueryData(
+            const coDinersRemoval = context?.coDinersRemoval;
+            if (viewerId && coDinersRemoval) {
+                queryClient.setQueryData<CoDinerCandidate[]>(
                     queryKeys.feed.coDiners(viewerId),
-                    context.coDinersSnapshot,
+                    (prev) => reinsertCandidate(prev, coDinersRemoval),
                 );
             }
         },

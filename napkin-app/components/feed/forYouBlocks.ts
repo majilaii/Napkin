@@ -41,6 +41,14 @@ export interface ForYouFlags {
     hasPeople: boolean;
 }
 
+export interface ForYouModuleQueryState {
+    isLoading: boolean;
+    isError: boolean;
+    data: unknown;
+}
+
+export type ForYouZeroVisibleState = 'loading' | 'retry' | 'empty';
+
 /** Fixed order; only visible blocks are included. Empty array ⇒ §6 branch. */
 export function visibleForYouBlocks(f: ForYouFlags): ForYouBlock[] {
     const out: ForYouBlock[] = [];
@@ -48,4 +56,13 @@ export function visibleForYouBlocks(f: ForYouFlags): ForYouBlock[] {
     if (f.hasPublicLists) out.push({ _type: 'public_lists' });
     if (f.hasPeople) out.push({ _type: 'people' });
     return out;
+}
+
+/** §6 whole-surface state, evaluated only when no discovery block is visible. */
+export function resolveForYouZeroVisibleState(
+    queries: ForYouModuleQueryState[],
+): ForYouZeroVisibleState {
+    if (queries.some((query) => query.isLoading)) return 'loading';
+    if (queries.some((query) => query.isError)) return 'retry';
+    return 'empty';
 }

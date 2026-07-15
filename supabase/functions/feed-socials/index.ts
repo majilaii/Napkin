@@ -49,6 +49,12 @@ import {
 
 const RAIL_CAP = 6;
 
+type FeedSocialsClient = ReturnType<typeof createClient<any>>;
+type FeedSocialsClientFactory = (
+    supabaseUrl: string,
+    serviceRoleKey: string,
+) => FeedSocialsClient;
+
 interface ViewerPassRow {
     restaurant_id: string;
     k7: number;
@@ -96,7 +102,10 @@ function fail(code: string, message: string, status = 400) {
     );
 }
 
-serve(async (req) => {
+async function handleFeedSocialsRequest(
+    req: Request,
+    createSupabase: FeedSocialsClientFactory,
+): Promise<Response> {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
     }
@@ -110,7 +119,7 @@ serve(async (req) => {
         if (!authHeader) return fail('UNAUTHORIZED', 'Missing Authorization header', 401);
 
         const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-        const supabase = createClient(
+        const supabase = createSupabase(
             supabaseUrl,
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
         );
@@ -222,6 +231,9 @@ serve(async (req) => {
             if (!r || !r.name) continue; // restaurant vanished mid-flight
             const key = keyByRestaurant.get(s.row.restaurant_id) ?? null;
             const storagePath = key ? thumbByKey.get(key) ?? null : null;
+            const hasAttributedPlacesPhoto =
+                r.photo_source === 'places'
+                && typeof r.places_photo_attribution_html === 'string';
             rows.push({
                 restaurant_id: s.row.restaurant_id,
                 name: r.name,
@@ -237,9 +249,11 @@ serve(async (req) => {
                 thumb_url: storagePath
                     ? `${supabaseUrl}/storage/v1/object/public/clip-thumbs/${storagePath}`
                     : null,
-                photo_url: r.photo_url ?? null,
-                photo_source: r.photo_source ?? null,
-                attribution_html: r.places_photo_attribution_html ?? null,
+                photo_url: hasAttributedPlacesPhoto ? r.photo_url ?? null : null,
+                photo_source: hasAttributedPlacesPhoto ? 'places' : null,
+                attribution_html: hasAttributedPlacesPhoto
+                    ? r.places_photo_attribution_html
+                    : null,
             });
         }
 
@@ -258,4 +272,15 @@ serve(async (req) => {
             { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         );
     }
-});
+}
+
+/** Import-safe handler factory: endpoint tests inject a seeded Supabase client. */
+export function createFeedSocialsHandler(
+    createSupabase: FeedSocialsClientFactory = (url, key) => createClient(url, key),
+) {
+    return (req: Request) => handleFeedSocialsRequest(req, createSupabase);
+}
+
+if (import.meta.main) {
+    serve(createFeedSocialsHandler());
+}

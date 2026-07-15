@@ -6,7 +6,12 @@
  * are included; all-false ⇒ [] (⇒ the §6 whole-surface branch in ForYouFeed).
  * Trending is GONE from the roster (§5).
  */
-import { visibleForYouBlocks, type ForYouFlags } from '../forYouBlocks';
+import {
+    resolveForYouZeroVisibleState,
+    visibleForYouBlocks,
+    type ForYouFlags,
+    type ForYouModuleQueryState,
+} from '../forYouBlocks';
 
 const NONE: ForYouFlags = {
     hasSocials: false,
@@ -98,5 +103,39 @@ describe('visibleForYouBlocks', () => {
             ].filter(Boolean).length;
             expect(out).toHaveLength(trueCount);
         }
+    });
+});
+
+describe('resolveForYouZeroVisibleState (§6 state matrix)', () => {
+    const state = (
+        overrides: Partial<ForYouModuleQueryState> = {},
+    ): ForYouModuleQueryState => ({
+        isLoading: false,
+        isError: false,
+        data: [],
+        ...overrides,
+    });
+
+    it('prioritizes loading while any active query is loading', () => {
+        expect(resolveForYouZeroVisibleState([
+            state({ isLoading: true }),
+            state(),
+        ])).toBe('loading');
+    });
+
+    it('routes a cold-load error to retry', () => {
+        expect(resolveForYouZeroVisibleState([
+            state({ isError: true, data: undefined }),
+        ])).toBe('retry');
+    });
+
+    it('routes a refetch error retaining data=[] to retry, never invite', () => {
+        expect(resolveForYouZeroVisibleState([
+            state({ isError: true, data: [] }),
+        ])).toBe('retry');
+    });
+
+    it('routes only settled successful empties to the invite', () => {
+        expect(resolveForYouZeroVisibleState([state(), state()])).toBe('empty');
     });
 });

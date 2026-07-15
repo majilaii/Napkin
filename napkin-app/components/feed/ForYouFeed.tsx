@@ -22,7 +22,7 @@
  *     its module visible.
  *   - zero blocks visible → branch the whole-surface state:
  *       (a) any active module query still loading      → spinner
- *       (b) any settled query errored without cache    → compact retry row
+ *       (b) any active module query errored             → compact retry row
  *           (NEVER the invite — it would lie about the community being empty)
  *       (c) every query settled successfully and empty → ForYouEmpty invite
  *
@@ -44,7 +44,13 @@ import { useSocials } from '@/hooks/feed/useSocials';
 import { useCoDiners } from '@/hooks/feed/useCoDiners';
 import { useFollowCandidates } from '@/hooks/feed/useFollowCandidates';
 import { useBrowsePublicLists } from '@/hooks/lists/useBrowsePublicLists';
-import { visibleForYouBlocks, type ForYouBlock, type ForYouFlags } from './forYouBlocks';
+import {
+    resolveForYouZeroVisibleState,
+    visibleForYouBlocks,
+    type ForYouBlock,
+    type ForYouFlags,
+    type ForYouModuleQueryState,
+} from './forYouBlocks';
 import { OnSocialsBlock } from './OnSocialsBlock';
 import { PublicListsBrowseBlock } from './PublicListsBrowseBlock';
 import { PeopleToFollowBlock } from './PeopleToFollowBlock';
@@ -99,10 +105,7 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
     // query reports isPending forever and would wedge the spinner branch).
     // Structural type: the queries carry heterogeneous row types; §6 only
     // reads lifecycle facts.
-    type ModuleQueryState = {
-        isLoading: boolean;
-        isError: boolean;
-        data: unknown;
+    type ModuleQueryState = ForYouModuleQueryState & {
         refetch: () => Promise<unknown>;
     };
     const activeQueries = useMemo<ModuleQueryState[]>(() => {
@@ -111,10 +114,7 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
         return qs;
     }, [browse, followCandidates, coDiners, socials]);
 
-    const anyLoading = activeQueries.some((q) => q.isLoading);
-    // Errored WITHOUT cached data — an errored query whose cache still holds
-    // rows keeps its block visible above and never reaches this branch.
-    const anyErrorWithoutCache = activeQueries.some((q) => q.isError && q.data === undefined);
+    const zeroVisibleState = resolveForYouZeroVisibleState(activeQueries);
 
     const handleRetry = useCallback(() => {
         for (const q of activeQueries) {
@@ -147,9 +147,9 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
             ListHeaderComponent={ListHeaderComponent}
             ListEmptyComponent={
                 // Zero visible modules — branch the whole-surface state (§6).
-                anyLoading ? (
+                zeroVisibleState === 'loading' ? (
                     <ActivityIndicator style={{ marginTop: Spacing.xl }} color={palette.primary} />
-                ) : anyErrorWithoutCache ? (
+                ) : zeroVisibleState === 'retry' ? (
                     <ForYouRetry onRetry={handleRetry} />
                 ) : (
                     <ForYouEmpty />
@@ -166,8 +166,8 @@ function BlockSeparator() {
 }
 
 /**
- * ForYouRetry — the §6 compact retry state: something failed and nothing has
- * cache. Never the invite (which would claim the community is empty).
+ * ForYouRetry — the §6 compact retry state: something failed and no module is
+ * visible. Never the invite (which would claim the community is empty).
  */
 function ForYouRetry({ onRetry }: { onRetry: () => void }) {
     const scheme = useColorScheme() ?? 'light';

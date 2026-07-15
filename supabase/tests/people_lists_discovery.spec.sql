@@ -8,7 +8,7 @@
 --   • self / already-followed / either-direction blocks / p_exclude_ids
 --     (co-diners) are excluded BEFORE the LIMIT — a viewer whose top public is
 --     a co-diner still gets beyond-co-diner rows at p_limit=1.
---   • grouped counts + deterministic order (logs_30d DESC, author_id ASC).
+--   • distinct-place counts + deterministic order (logs_30d DESC, author_id ASC).
 --
 -- fn_browse_public_lists:
 --   • triple gate (public list + non-Table + public owner) + viewer
@@ -69,7 +69,8 @@ ON CONFLICT (user_id) DO UPDATE SET
 
 -- ── Restaurants ───────────────────────────────────────────────────────────────
 INSERT INTO public.restaurants (id, name, city) VALUES
-  ('18910000-aaaa-4000-8000-0000000000a1', 'People Test Kitchen', 'Testville')
+  ('18910000-aaaa-4000-8000-0000000000a1', 'People Test Kitchen',       'Testville'),
+  ('18910000-aaaa-4000-8000-0000000000a2', 'People Test Kitchen Annex', 'Testville')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.restaurants (id, name, city, photo_url, photo_source, places_photo_attribution_html) VALUES
@@ -83,7 +84,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- ── People: entries (visibility 'table' = publicly eligible ring) ─────────────
 INSERT INTO public.entries (user_id, restaurant_id, rating, content, visibility, created_at) VALUES
-  -- A1: three eligible logs → logs_30d = 3.
+  -- A1: three eligible logs at ONE restaurant → logs_30d = 1 place.
   ('18910000-0000-4000-8000-000000000002', '18910000-aaaa-4000-8000-0000000000a1', 4.0,
      'A perfectly lovely meal, would return for the noodles.', 'table', now() - interval '2 days'),
   ('18910000-0000-4000-8000-000000000002', '18910000-aaaa-4000-8000-0000000000a1', 4.5,
@@ -114,10 +115,11 @@ INSERT INTO public.entries (user_id, restaurant_id, rating, content, visibility,
      'Viewer blocked this author, excluded from candidates.', 'table', now() - interval '2 days'),
   ('18910000-0000-4000-8000-000000000008', '18910000-aaaa-4000-8000-0000000000a1', 4.0,
      'This author blocked the viewer, excluded from candidates.', 'table', now() - interval '2 days'),
-  -- A8: FIVE eligible logs — the top candidate by volume, but a co-diner.
+  -- A8: five eligible logs across TWO restaurants — the top candidate by
+  -- distinct-place breadth, but a co-diner.
   ('18910000-0000-4000-8000-000000000009', '18910000-aaaa-4000-8000-0000000000a1', 4.0,
      'Co-diner log number one with plenty of characters here.', 'table', now() - interval '1 day'),
-  ('18910000-0000-4000-8000-000000000009', '18910000-aaaa-4000-8000-0000000000a1', 4.0,
+  ('18910000-0000-4000-8000-000000000009', '18910000-aaaa-4000-8000-0000000000a2', 4.0,
      'Co-diner log number two with plenty of characters here.', 'table', now() - interval '2 days'),
   ('18910000-0000-4000-8000-000000000009', '18910000-aaaa-4000-8000-0000000000a1', 4.0,
      'Co-diner log number three with plenty of characters too.', 'table', now() - interval '3 days'),
@@ -202,7 +204,8 @@ DECLARE
   v_text text;
 BEGIN
   -- ── fn_recently_active_public_authors ─────────────────────────────────────
-  -- With A8 excluded as a co-diner: exactly A1 (3 logs) then A2 (1 log).
+  -- With A8 excluded as a co-diner: A1 and A2 each have one distinct place;
+  -- author_id ASC puts A1 first.
   SELECT count(*) INTO v_int
   FROM public.fn_recently_active_public_authors(p_v, ARRAY[a8], 8);
   ASSERT v_int = 2,
@@ -212,17 +215,17 @@ BEGIN
   FROM public.fn_recently_active_public_authors(p_v, ARRAY[a8], 8) r
   LIMIT 1;
   ASSERT v_uuid = a1, format('FAIL [people order]: expected A1 first, got %s', v_uuid);
-  ASSERT v_int = 3,  format('FAIL [people A1 logs]: expected 3 eligible logs, got %s', v_int);
+  ASSERT v_int = 1,  format('FAIL [people A1 places]: 3 logs at one restaurant must count as 1 place, got %s', v_int);
 
   SELECT r.logs_30d INTO v_int
   FROM public.fn_recently_active_public_authors(p_v, ARRAY[a8], 8) r
   WHERE r.author_id = a2;
   ASSERT v_int = 1,
-    format('FAIL [people A2 logs]: ineligible variants (no-restaurant / unrated / short / private) must not count — expected 1, got %s', v_int);
+    format('FAIL [people A2 places]: ineligible variants (no-restaurant / unrated / short / private) must not count — expected 1, got %s', v_int);
 
-  -- BEFORE-LIMIT proof: at p_limit=1 with A8 (the top author by volume)
-  -- excluded, the single row is A1 — if exclusion ran after the LIMIT, A8
-  -- would consume the slot and the result would be empty.
+  -- BEFORE-LIMIT proof: at p_limit=1 with A8 (the top author by distinct-place
+  -- count) excluded, the single row is A1 — if exclusion ran after the LIMIT,
+  -- A8 would consume the slot and the result would be empty.
   SELECT count(*) INTO v_int
   FROM public.fn_recently_active_public_authors(p_v, ARRAY[a8], 1);
   ASSERT v_int = 1, format('FAIL [people before-limit]: expected 1 row at p_limit=1, got %s', v_int);
@@ -231,13 +234,13 @@ BEGIN
   ASSERT v_uuid = a1,
     'FAIL [people before-limit pick]: exclusions must apply BEFORE the LIMIT (expected A1)';
 
-  -- Without the exclusion, A8 leads (5 logs) — and a NULL exclude array is
-  -- treated as empty.
+  -- Without the exclusion, A8 leads (2 distinct places) — and a NULL exclude
+  -- array is treated as empty.
   SELECT r.author_id, r.logs_30d INTO v_uuid, v_int
   FROM public.fn_recently_active_public_authors(p_v, '{}'::uuid[], 8) r
   LIMIT 1;
-  ASSERT v_uuid = a8 AND v_int = 5,
-    format('FAIL [people no-exclude]: expected A8 with 5 logs first, got %s with %s', v_uuid, v_int);
+  ASSERT v_uuid = a8 AND v_int = 2,
+    format('FAIL [people no-exclude]: expected A8 with 2 places first, got %s with %s', v_uuid, v_int);
   SELECT count(*) INTO v_int
   FROM public.fn_recently_active_public_authors(p_v, NULL, 8);
   ASSERT v_int = 3,

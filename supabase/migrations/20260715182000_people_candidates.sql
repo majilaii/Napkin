@@ -22,8 +22,8 @@
 -- zero out discovery (Codex P1).
 --
 -- Only (author_id, logs_30d) leaves — the honest relationship-free context
--- line ("N places logged", public-eligible logs only). Ring-2 taste
--- calibration stays deferred.
+-- line ("N places logged", distinct restaurants among public-eligible logs).
+-- Ring-2 taste calibration stays deferred.
 --
 -- Replay-from-zero: references entries / follows / blocked_users /
 -- fn_public_account — all pre-2026-07-15. No toggle needed.
@@ -44,7 +44,7 @@ set search_path = public
 as $fn$
     select
         e.user_id as author_id,
-        count(*)::int as logs_30d
+        count(distinct e.restaurant_id)::int as logs_30d
     from public.entries e
     where e.created_at >= now() - interval '30 days'
       -- the friends-feed public-eligibility predicate, clause-for-clause
@@ -75,7 +75,8 @@ comment on function public.fn_recently_active_public_authors(uuid, uuid[], int) 
     'publicly-eligible log (restaurant_id NOT NULL + visibility<>private + '
     'rating + >=20-char note + public account) in 30d, minus self / follows / '
     'either-direction blocks / p_exclude_ids (co-diners), all BEFORE LIMIT. '
-    'Returns (author_id, logs_30d) only. Service-role only; the user-profile '
+    'Returns (author_id, logs_30d), where logs_30d counts distinct restaurants. '
+    'Service-role only; the user-profile '
     'edge fn authenticates and passes p_viewer.';
 
 revoke all on function public.fn_recently_active_public_authors(uuid, uuid[], int)
