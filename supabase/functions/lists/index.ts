@@ -40,6 +40,10 @@ import {
     parseListMutationId,
     parseSavedListsPageRequest,
 } from './savedLists.ts';
+import {
+    buildMyListSummary,
+    normalizeMyListCoverRestaurant,
+} from './myLists.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -457,7 +461,9 @@ serve(async (req) => {
                 }
             }
 
-            // For each list, fetch entry_count and cover_photo_url (first entry's restaurant.photo_url)
+            // For each list, fetch the entry count and first restaurant's cover
+            // triplet. Source + attribution are additive fields used to credit
+            // Places photos without changing the existing response envelope.
             const enriched = await Promise.all(
                 (lists ?? []).map(async (list: ListRow) => {
                     const { count } = await supabase
@@ -470,23 +476,28 @@ serve(async (req) => {
                     const orderAsc = list.ranked ? true : false;
                     const { data: firstEntry } = await supabase
                         .from('list_entries')
-                        .select('restaurant:restaurants(photo_url)')
+                        .select(`
+                            restaurant:restaurants(
+                                photo_url,
+                                photo_source,
+                                places_photo_attribution_html
+                            )
+                        `)
                         .eq('list_id', list.id)
                         .order(orderCol, { ascending: orderAsc })
                         .limit(1)
                         .maybeSingle();
 
-                    const coverPhotoUrl =
-                        (firstEntry?.restaurant as any)?.photo_url ?? null;
-
-                    return {
-                        ...list,
-                        entry_count: count ?? 0,
-                        verified_count: verifiedCounts.get(list.id) ?? 0,
-                        cover_photo_url: coverPhotoUrl,
+                    return buildMyListSummary({
+                        list,
+                        entryCount: count,
+                        verifiedCount: verifiedCounts.get(list.id) ?? 0,
+                        coverRestaurant: normalizeMyListCoverRestaurant(firstEntry?.restaurant),
                         // TICKET-115: badge for shared Table lists (null on personal lists).
-                        table_name: list.table_id ? (tableNameById.get(list.table_id) ?? null) : null,
-                    };
+                        tableName: list.table_id
+                            ? (tableNameById.get(list.table_id) ?? null)
+                            : null,
+                    });
                 }),
             );
 
@@ -681,6 +692,8 @@ serve(async (req) => {
                         city,
                         country,
                         photo_url,
+                        photo_source,
+                        places_photo_attribution_html,
                         cuisine,
                         google_rating,
                         price_level,
