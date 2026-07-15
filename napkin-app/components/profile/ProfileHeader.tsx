@@ -13,7 +13,9 @@
  * No centering. The avatar shape stays a rounded square (radius 10), NOT a circle.
  * When `profile.avatar_url` is set, the photo layers absolutely OVER the monogram
  * plate (same 72x72 footprint) — a broken/absent image falls through to the
- * initials with no state to track. Gear renders inline, not floating.
+ * initials with no state to track. The owner always gets a quiet camera badge
+ * overlapping the bottom-right edge for adding or swapping the photo. Gear
+ * renders inline, not floating.
  */
 import React from 'react';
 import {
@@ -28,7 +30,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Shadow, Spacing, Type } from '@/constants/theme';
+import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type {
     Calibration,
@@ -85,10 +87,10 @@ interface Props {
      * so a tappable count would dead-end. Defaults to true (every other tier).
      */
     countsInteractive?: boolean;
-    /** Own profile: add an avatar without navigating through Settings. */
-    onAddPhoto?: () => void;
+    /** Own profile: add or swap the avatar without navigating through Settings. */
+    onChangePhoto?: () => void;
     /** Covers source picker presentation, compression, upload, and profile save. */
-    isAddingPhoto?: boolean;
+    isChangingPhoto?: boolean;
     /**
      * TICKET-191 rev 2: live import slot for the self-only tray affordance in
      * the actions row (badge on attention, plain tray otherwise). Only the
@@ -115,8 +117,8 @@ export function ProfileHeader({
     viewerRatedEntryCount,
     onSafetyMenu,
     countsInteractive = true,
-    onAddPhoto,
-    isAddingPhoto = false,
+    onChangePhoto,
+    isChangingPhoto = false,
     importSlot = null,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';
@@ -189,52 +191,74 @@ export function ProfileHeader({
     return (
         <View style={styles.container}>
             <View style={[styles.row, stacksIdentity ? styles.rowAccessible : null]}>
-                <View style={[styles.avatar, { backgroundColor: palette.primaryContainer }]}>
-                    <Text style={styles.avatarInitials} maxFontSizeMultiplier={1.4}>
-                        {initials(profile.display_name)}
-                    </Text>
-                    {profile.avatar_url ? (
-                        // Layer the photo OVER the monogram so a failed load falls
-                        // through to the initials — no error state to track.
-                        <Image
-                            source={{ uri: profile.avatar_url }}
-                            style={styles.avatarPhoto}
-                        />
-                    ) : null}
-                    {isSelf && !profile.avatar_url && onAddPhoto ? (
+                <View style={styles.avatar}>
+                    <View
+                        style={[
+                            styles.avatarArtwork,
+                            { backgroundColor: palette.primaryContainer },
+                        ]}
+                    >
+                        <Text
+                            style={[styles.avatarInitials, { color: palette.textOnImage }]}
+                            maxFontSizeMultiplier={1.4}
+                        >
+                            {initials(profile.display_name)}
+                        </Text>
+                        {profile.avatar_url ? (
+                            // Layer the photo OVER the monogram so a failed load falls
+                            // through to the initials — no error state to track.
+                            <Image
+                                source={{ uri: profile.avatar_url }}
+                                style={[
+                                    styles.avatarPhoto,
+                                    { borderColor: palette.imageOutline },
+                                ]}
+                            />
+                        ) : null}
+                        {isChangingPhoto ? (
+                            <View
+                                pointerEvents="none"
+                                testID="profile-avatar-dimmer"
+                                style={[
+                                    styles.avatarDimmer,
+                                    { backgroundColor: palette.overlayPhoto },
+                                ]}
+                            />
+                        ) : null}
+                    </View>
+                    {isSelf && onChangePhoto ? (
                         <View style={styles.cameraHitTarget}>
                             <PressableScale
-                                onPress={onAddPhoto}
-                                disabled={isAddingPhoto}
+                                onPress={onChangePhoto}
+                                disabled={isChangingPhoto}
                                 haptic="selection"
                                 hitSlop={8}
                                 accessibilityRole="button"
-                                accessibilityLabel="Add a profile photo"
+                                accessibilityLabel="change profile photo"
                                 accessibilityHint="Opens camera or photo library"
                                 accessibilityState={{
-                                    busy: isAddingPhoto,
-                                    disabled: isAddingPhoto,
+                                    busy: isChangingPhoto,
+                                    disabled: isChangingPhoto,
                                 }}
-                                testID="profile-add-photo"
+                                testID="profile-avatar-swap"
                                 style={[
                                     styles.cameraBadge,
-                                    Shadow.clip,
                                     {
-                                        backgroundColor: palette.primary,
-                                        borderColor: palette.background,
+                                        backgroundColor: palette.card,
+                                        borderColor: palette.imageOutline,
                                     },
                                 ]}
                             >
-                                {isAddingPhoto ? (
+                                {isChangingPhoto ? (
                                     <ActivityIndicator
                                         size="small"
-                                        color={palette.textInverse}
+                                        color={palette.textSecondary}
                                     />
                                 ) : (
                                     <Ionicons
                                         name="camera-outline"
-                                        size={14}
-                                        color={palette.textInverse}
+                                        size={IconSize.sm}
+                                        color={palette.textSecondary}
                                     />
                                 )}
                             </PressableScale>
@@ -389,14 +413,18 @@ const styles = StyleSheet.create({
     avatar: {
         width: 72,
         height: 72,
+        position: 'relative',
+        flexShrink: 0,
+    },
+    avatarArtwork: {
+        width: 72,
+        height: 72,
         borderRadius: 10,
         justifyContent: 'center',
         alignItems: 'center',
-        flexShrink: 0,
     },
     avatarInitials: {
         fontFamily: 'Newsreader_600SemiBold',
-        color: 'rgba(255,255,255,0.92)',
         fontSize: 22,
         letterSpacing: 0.5,
     },
@@ -406,12 +434,15 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: 'rgba(0, 0, 0, 0.08)',
+    },
+    avatarDimmer: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 10,
     },
     cameraHitTarget: {
         position: 'absolute',
-        right: 0,
-        bottom: 0,
+        right: -14,
+        bottom: -14,
         width: 44,
         height: 44,
         alignItems: 'center',
@@ -420,8 +451,8 @@ const styles = StyleSheet.create({
     cameraBadge: {
         width: 28,
         height: 28,
-        borderRadius: 14,
-        borderWidth: 2,
+        borderRadius: Radius.full,
+        borderWidth: 1,
         alignItems: 'center',
         justifyContent: 'center',
     },

@@ -2,8 +2,9 @@ import { chooseAvatarAsset } from '@/lib/avatarPicker';
 import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
 import type { ConnectivityStatus } from '@/lib/connectivity';
 
-interface AddProfilePhotoOptions {
+interface SaveProfilePhotoOptions {
     userId: string;
+    previousAvatarUrl: string | null;
     onSourceChosen: () => void;
     saveAvatarUrl: (url: string) => Promise<unknown>;
 }
@@ -31,15 +32,17 @@ export function shouldBlockProfilePhotoPicker(status: ConnectivityStatus): boole
 
 /**
  * Shared transaction for the Profile-tab shortcut: pick → crop/upload → save.
- * Returns false for a harmless picker cancellation. If the profile save fails
- * after upload, the fresh orphan is removed best-effort before the error is
- * handed back to the UI.
+ * Returns false for a harmless picker cancellation. A successful replacement
+ * removes the previous upload best-effort. If the profile save fails after
+ * upload, only the fresh orphan is removed before the error is handed back to
+ * the UI, leaving the previous avatar untouched for the mutation rollback.
  */
 export async function chooseAndSaveNewProfilePhoto({
     userId,
+    previousAvatarUrl,
     onSourceChosen,
     saveAvatarUrl,
-}: AddProfilePhotoOptions): Promise<boolean> {
+}: SaveProfilePhotoOptions): Promise<boolean> {
     const asset = await chooseAvatarAsset(onSourceChosen);
     if (!asset) return false;
 
@@ -47,6 +50,9 @@ export async function chooseAndSaveNewProfilePhoto({
     try {
         uploaded = await compressAndUploadAvatar(asset.uri, userId);
         await saveAvatarUrl(uploaded);
+        if (previousAvatarUrl && previousAvatarUrl !== uploaded) {
+            void removeUploadedAvatar(previousAvatarUrl).catch(() => {});
+        }
         return true;
     } catch (error) {
         if (uploaded) await removeOrphanBestEffort(uploaded);
