@@ -3,7 +3,7 @@
  *
  * v3: plays bundled screen-recording footage of the REAL flow full-bleed and
  * draws the coaching layer on top - dim scrim with a spotlight hole, a pulsing
- * ring, a coach pill, a magnified callout for small targets, and typewriter
+ * ring, a coach pill, a magnified callout for small targets, and authored
  * captions. Each clip freezes on its decision frame and only a tap on the real
  * target advances the flow (advanceOnTarget), so the walkthrough remains
  * deterministic, offline, and replayable. The hand-built share-sheet replica
@@ -33,8 +33,10 @@ import Animated, {
     useAnimatedStyle,
     useReducedMotion,
     useSharedValue,
+    withDelay,
     withRepeat,
     withSequence,
+    withSpring,
     withTiming,
 } from 'react-native-reanimated';
 
@@ -226,25 +228,43 @@ export function TeachShareSheetDemo({
         Haptics.selectionAsync().catch(() => undefined);
     }, [decisionReady, footage]);
 
-    const ringPulse = useSharedValue(0);
-    useEffect(() => {
-        cancelAnimation(ringPulse);
-        ringPulse.value = 0;
-        if (reduced || !decisionReady || !footage) return;
-        ringPulse.value = withRepeat(
-            withSequence(
-                withTiming(1, { duration: 850, easing: Easing.inOut(Easing.quad) }),
-                withTiming(0, { duration: 850, easing: Easing.inOut(Easing.quad) }),
-            ),
-            -1,
-            false,
-        );
-        return () => cancelAnimation(ringPulse);
-    }, [decisionReady, footage, reduced, ringPulse]);
+    const overlayGeometry = footage && stage
+        ? computeOverlayGeometry(footage, stage, topInset)
+        : null;
+    const mediaFrame = footage && stage ? mediaFrameStyle(footage, stage) : null;
+    const playbackCoverVisible = Boolean(
+        footage && !decisionReady && liveVideoBeat !== beat,
+    );
+    const playbackCoverFadeOut = Boolean(
+        footage && !decisionReady && liveVideoBeat === beat,
+    );
 
-    const ringPulseStyle = useAnimatedStyle(() => ({
-        opacity: 0.75 + ringPulse.value * 0.25,
-        transform: [{ scale: 1 + ringPulse.value * 0.045 }],
+    const freezePush = useSharedValue(1);
+    useEffect(() => {
+        cancelAnimation(freezePush);
+        freezePush.value = 1;
+        if (reduced || !decisionReady || !footage) return;
+        freezePush.value = withTiming(1.04, {
+            duration: 450,
+            easing: Easing.out(Easing.cubic),
+        });
+        return () => cancelAnimation(freezePush);
+    }, [beat, decisionReady, footage, freezePush, reduced]);
+
+    const pivotX = overlayGeometry && stage
+        ? overlayGeometry.spotlightCenter.x - stage.width / 2
+        : 0;
+    const pivotY = overlayGeometry && stage
+        ? overlayGeometry.spotlightCenter.y - stage.height / 2
+        : 0;
+    const sharedStageMotionStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateX: pivotX },
+            { translateY: pivotY },
+            { scale: freezePush.value },
+            { translateX: -pivotX },
+            { translateY: -pivotY },
+        ],
     }));
 
     const completeTarget = (target: TeachTarget) => {
@@ -261,18 +281,13 @@ export function TeachShareSheetDemo({
             clearTimeout(firstFrameFallback.current);
             firstFrameFallback.current = null;
         }
+        cancelAnimation(freezePush);
+        freezePush.value = 1;
         setPhase(stillOnly ? 'ready' : 'playing');
         setLoadedStillBeat(null);
         setLiveVideoBeat(null);
         setBeat(next);
     };
-
-    const overlayGeometry =
-        footage && decisionReady && stage
-            ? computeOverlayGeometry(footage, stage, topInset)
-            : null;
-    const mediaFrame = footage && stage ? mediaFrameStyle(footage, stage) : null;
-    const holdPreviousFrame = footage && !decisionReady && liveVideoBeat !== beat;
 
     return (
         <View style={styles.root} accessibilityViewIsModal>
@@ -281,38 +296,65 @@ export function TeachShareSheetDemo({
             {beat < LAST_BEAT ? (
                 <View
                     style={StyleSheet.absoluteFill}
-                    pointerEvents="none"
+                    pointerEvents="box-none"
                     onLayout={(event) => setStage(event.nativeEvent.layout)}
                 >
-                    {!stillOnly && footage && mediaFrame ? (
-                        <VideoView
-                            player={player}
-                            style={mediaFrame}
-                            contentFit="fill"
-                            nativeControls={false}
-                            onFirstFrameRender={revealPendingVideo}
-                        />
-                    ) : null}
-                    {footage && mediaFrame ? (
-                        // Decode from beat start, but reveal only once both playback
-                        // has frozen and this exact beat's still has loaded.
-                        <Image
-                            key={beat}
-                            source={footage.still}
-                            resizeMode="stretch"
-                            onLoad={() => {
-                                if (activeBeat.current === beat) setLoadedStillBeat(beat);
-                            }}
-                            onError={() => {
-                                // A still that fails to decode must not gate the walkthrough
-                                // shut - degrade to overlaying the paused final frame.
-                                if (activeBeat.current === beat) setLoadedStillBeat(beat);
-                            }}
-                            style={[mediaFrame, { opacity: decisionReady ? 1 : 0 }]}
-                        />
-                    ) : null}
-                    {holdPreviousFrame ? (
-                        <PlaybackCover beat={beat} stage={stage} />
+                    {footage && mediaFrame && stage ? (
+                        // Media, coaching chrome, and the hitbox share this transform.
+                        // The freeze push-in therefore cannot move them out of alignment.
+                        <Animated.View
+                            pointerEvents="box-none"
+                            style={[StyleSheet.absoluteFill, sharedStageMotionStyle]}
+                        >
+                            <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                                {!stillOnly ? (
+                                    <VideoView
+                                        player={player}
+                                        style={mediaFrame}
+                                        contentFit="fill"
+                                        nativeControls={false}
+                                        onFirstFrameRender={revealPendingVideo}
+                                    />
+                                ) : null}
+                                <PlaybackCover
+                                    key={beat}
+                                    beat={beat}
+                                    stage={stage}
+                                    visible={playbackCoverVisible}
+                                    fadeOut={playbackCoverFadeOut}
+                                    reduced={reduced}
+                                />
+                                {/* Decode from beat start, then cover every fallback with
+                                    this exact still before coaching chrome can mount. */}
+                                <Image
+                                    key={`still-${beat}`}
+                                    source={footage.still}
+                                    resizeMode="stretch"
+                                    onLoad={() => {
+                                        if (activeBeat.current === beat) {
+                                            setLoadedStillBeat(beat);
+                                        }
+                                    }}
+                                    onError={() => {
+                                        // A still that fails to decode must not gate the walkthrough
+                                        // shut - degrade to overlaying the paused final frame.
+                                        if (activeBeat.current === beat) {
+                                            setLoadedStillBeat(beat);
+                                        }
+                                    }}
+                                    style={[mediaFrame, { opacity: decisionReady ? 1 : 0 }]}
+                                />
+                            </View>
+                            {decisionReady && overlayGeometry ? (
+                                <FreezeOverlay
+                                    key={`freeze-${beat}`}
+                                    footage={footage}
+                                    geometry={overlayGeometry}
+                                    reduced={reduced}
+                                    onTarget={() => completeTarget(footage.target)}
+                                />
+                            ) : null}
+                        </Animated.View>
                     ) : null}
                 </View>
             ) : null}
@@ -322,43 +364,10 @@ export function TeachShareSheetDemo({
                     pointerEvents="none"
                     style={[styles.captionWrap, { top: topInset + 34 }]}
                 >
-                    <TypewriterText
+                    <FadeRiseCaption
                         key={beat}
                         text={footage.caption}
-                        instant={reduced || phase === 'ready'}
-                    />
-                </View>
-            ) : null}
-
-            {footage && overlayGeometry ? (
-                <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-                    <View pointerEvents="none" style={overlayGeometry.scrim} />
-                    <Animated.View
-                        pointerEvents="none"
-                        style={[overlayGeometry.ring, ringPulseStyle]}
-                    />
-                    {overlayGeometry.magnifier ? (
-                        <View pointerEvents="none" style={overlayGeometry.magnifier.box}>
-                            <Image
-                                source={footage.still}
-                                resizeMode="stretch"
-                                style={overlayGeometry.magnifier.image}
-                            />
-                        </View>
-                    ) : null}
-                    {footage.pill === 'left' ? (
-                        <CoachMark text={footage.hint} style={overlayGeometry.pill} />
-                    ) : (
-                        <View pointerEvents="none" style={overlayGeometry.pill}>
-                            <CoachMark text={footage.hint} direction="down" />
-                        </View>
-                    )}
-                    <Pressable
-                        onPress={() => completeTarget(footage.target)}
-                        accessibilityRole="button"
-                        accessibilityLabel={footage.a11yLabel}
-                        accessibilityHint={footage.a11yHint}
-                        style={overlayGeometry.hitbox}
+                        reduced={reduced}
                     />
                 </View>
             ) : null}
@@ -416,6 +425,7 @@ export function TeachShareSheetDemo({
 }
 
 interface OverlayGeometry {
+    spotlightCenter: { x: number; y: number };
     scrim: object;
     ring: object;
     hitbox: object;
@@ -550,46 +560,269 @@ function computeOverlayGeometry(
         };
     }
 
-    return { scrim, ring, hitbox, pill, magnifier };
+    return {
+        spotlightCenter: {
+            x: box.x + box.width / 2,
+            y: box.y + box.height / 2,
+        },
+        scrim,
+        ring,
+        hitbox,
+        pill,
+        magnifier,
+    };
 }
 
-function TypewriterText({ text, instant }: { text: string; instant: boolean }) {
-    const [count, setCount] = useState(instant ? text.length : 0);
+function FreezeOverlay({
+    footage,
+    geometry,
+    reduced,
+    onTarget,
+}: {
+    footage: (typeof TEACH_FOOTAGE)[number];
+    geometry: OverlayGeometry;
+    reduced: boolean;
+    onTarget: () => void;
+}) {
+    const scrimOpacity = useSharedValue(reduced ? 1 : 0);
+    const ringOpacity = useSharedValue(reduced ? 1 : 0);
+    const ringScale = useSharedValue(reduced ? 1 : 1.35);
+    const ringPulse = useSharedValue(0);
+    const coachOpacity = useSharedValue(reduced ? 1 : 0);
+    const coachTranslateY = useSharedValue(reduced ? 0 : 8);
 
     useEffect(() => {
-        if (instant) {
-            setCount(text.length);
+        cancelAnimation(scrimOpacity);
+        cancelAnimation(ringOpacity);
+        cancelAnimation(ringScale);
+        cancelAnimation(ringPulse);
+        cancelAnimation(coachOpacity);
+        cancelAnimation(coachTranslateY);
+        ringPulse.value = 0;
+
+        if (reduced) {
+            scrimOpacity.value = 1;
+            ringOpacity.value = 1;
+            ringScale.value = 1;
+            coachOpacity.value = 1;
+            coachTranslateY.value = 0;
             return;
         }
-        setCount(0);
-        let shown = 0;
-        const timer = setInterval(() => {
-            shown += 1;
-            setCount(shown);
-            if (shown >= text.length) clearInterval(timer);
-        }, 26);
-        return () => clearInterval(timer);
-    }, [text, instant]);
+
+        scrimOpacity.value = 0;
+        ringOpacity.value = 0;
+        ringScale.value = 1.35;
+        coachOpacity.value = 0;
+        coachTranslateY.value = 8;
+
+        scrimOpacity.value = withTiming(1, {
+            duration: 200,
+            easing: Easing.out(Easing.cubic),
+        });
+        ringOpacity.value = withTiming(1, {
+            duration: 180,
+            easing: Easing.out(Easing.cubic),
+        });
+        ringScale.value = withSpring(
+            1,
+            { damping: 14, stiffness: 170, mass: 0.8 },
+            (finished) => {
+                if (!finished) return;
+                ringPulse.value = withRepeat(
+                    withSequence(
+                        withTiming(1, {
+                            duration: 850,
+                            easing: Easing.inOut(Easing.quad),
+                        }),
+                        withTiming(0, {
+                            duration: 850,
+                            easing: Easing.inOut(Easing.quad),
+                        }),
+                    ),
+                    -1,
+                    false,
+                );
+            },
+        );
+        coachOpacity.value = withDelay(
+            120,
+            withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) }),
+        );
+        coachTranslateY.value = withDelay(
+            120,
+            withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) }),
+        );
+
+        return () => {
+            cancelAnimation(scrimOpacity);
+            cancelAnimation(ringOpacity);
+            cancelAnimation(ringScale);
+            cancelAnimation(ringPulse);
+            cancelAnimation(coachOpacity);
+            cancelAnimation(coachTranslateY);
+        };
+    }, [
+        coachOpacity,
+        coachTranslateY,
+        reduced,
+        ringOpacity,
+        ringPulse,
+        ringScale,
+        scrimOpacity,
+    ]);
+
+    const scrimMotionStyle = useAnimatedStyle(() => ({
+        opacity: scrimOpacity.value,
+    }));
+    const ringMotionStyle = useAnimatedStyle(() => ({
+        opacity: ringOpacity.value * (1 - ringPulse.value * 0.25),
+        transform: [
+            { scale: ringScale.value * (1 + ringPulse.value * 0.045) },
+        ],
+    }));
+    const coachMotionStyle = useAnimatedStyle(() => ({
+        opacity: coachOpacity.value,
+        transform: [{ translateY: coachTranslateY.value }],
+    }));
+    const magnifierMotionStyle = useAnimatedStyle(() => ({
+        opacity: coachOpacity.value,
+        transform: [{ translateY: coachTranslateY.value }],
+    }));
 
     return (
-        <Text style={styles.caption} accessibilityLiveRegion="polite">
-            {text.slice(0, count)}
-        </Text>
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+            <Animated.View
+                pointerEvents="none"
+                style={[geometry.scrim, scrimMotionStyle]}
+            />
+            <Animated.View
+                pointerEvents="none"
+                style={[geometry.ring, ringMotionStyle]}
+            />
+            {geometry.magnifier ? (
+                <Animated.View
+                    pointerEvents="none"
+                    style={[geometry.magnifier.box, magnifierMotionStyle]}
+                >
+                    <Image
+                        source={footage.still}
+                        resizeMode="stretch"
+                        style={geometry.magnifier.image}
+                    />
+                </Animated.View>
+            ) : null}
+            {footage.pill === 'left' ? (
+                <CoachMark
+                    text={footage.hint}
+                    style={[geometry.pill, coachMotionStyle]}
+                />
+            ) : (
+                <Animated.View
+                    pointerEvents="none"
+                    style={[geometry.pill, coachMotionStyle]}
+                >
+                    <CoachMark text={footage.hint} direction="down" />
+                </Animated.View>
+            )}
+            <Pressable
+                onPress={onTarget}
+                accessibilityRole="button"
+                accessibilityLabel={footage.a11yLabel}
+                accessibilityHint={footage.a11yHint}
+                style={geometry.hitbox}
+            />
+        </View>
     );
 }
 
-function PlaybackCover({ beat, stage }: { beat: number; stage: StageSize | null }) {
+function FadeRiseCaption({ text, reduced }: { text: string; reduced: boolean }) {
+    const opacity = useSharedValue(reduced ? 1 : 0);
+    const translateY = useSharedValue(reduced ? 0 : 8);
+
+    useEffect(() => {
+        cancelAnimation(opacity);
+        cancelAnimation(translateY);
+        if (reduced) {
+            opacity.value = 1;
+            translateY.value = 0;
+            return;
+        }
+        opacity.value = 0;
+        translateY.value = 8;
+        opacity.value = withTiming(1, {
+            duration: 350,
+            easing: Easing.out(Easing.cubic),
+        });
+        translateY.value = withTiming(0, {
+            duration: 350,
+            easing: Easing.out(Easing.cubic),
+        });
+        return () => {
+            cancelAnimation(opacity);
+            cancelAnimation(translateY);
+        };
+    }, [opacity, reduced, text, translateY]);
+
+    const motionStyle = useAnimatedStyle(() => ({
+        opacity: opacity.value,
+        transform: [{ translateY: translateY.value }],
+    }));
+
+    return (
+        <Animated.Text
+            style={[styles.caption, motionStyle]}
+            accessibilityLiveRegion="polite"
+        >
+            {text}
+        </Animated.Text>
+    );
+}
+
+function PlaybackCover({
+    beat,
+    stage,
+    visible,
+    fadeOut,
+    reduced,
+}: {
+    beat: number;
+    stage: StageSize;
+    visible: boolean;
+    fadeOut: boolean;
+    reduced: boolean;
+}) {
+    const opacity = useSharedValue(visible ? 1 : 0);
+    useEffect(() => {
+        cancelAnimation(opacity);
+        if (reduced || (!visible && !fadeOut)) {
+            opacity.value = visible ? 1 : 0;
+            return;
+        }
+        opacity.value = withTiming(visible ? 1 : 0, {
+            duration: 180,
+            easing: Easing.out(Easing.cubic),
+        });
+        return () => cancelAnimation(opacity);
+    }, [fadeOut, opacity, reduced, visible]);
+
+    const motionStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
     const previousFootage = footageForBeat(beat - 1);
-    if (previousFootage && stage) {
-        return (
-            <Image
-                source={previousFootage.still}
-                resizeMode="stretch"
-                style={mediaFrameStyle(previousFootage, stage)}
-            />
-        );
-    }
-    return <IntroBackdrop />;
+    return (
+        <Animated.View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, motionStyle]}
+        >
+            {previousFootage ? (
+                <Image
+                    source={previousFootage.still}
+                    resizeMode="stretch"
+                    style={mediaFrameStyle(previousFootage, stage)}
+                />
+            ) : (
+                <IntroBackdrop />
+            )}
+        </Animated.View>
+    );
 }
 
 function IntroBackdrop() {
@@ -778,14 +1011,14 @@ function CoachMark({
     style?: object | object[];
 }) {
     return (
-        <View style={[styles.coachMark, style]} pointerEvents="none">
+        <Animated.View style={[styles.coachMark, style]} pointerEvents="none">
             <Text style={styles.coachText}>{text}</Text>
             <Ionicons
                 name={direction === 'right' ? 'arrow-forward' : 'arrow-down'}
                 size={17}
                 color="#111"
             />
-        </View>
+        </Animated.View>
     );
 }
 
