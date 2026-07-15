@@ -1,10 +1,12 @@
 export { ProfileScreenBody } from './ProfileScreenBody';
 export { ProfileHeader } from './ProfileHeader';
 export { TasteBand } from './TasteBand';
-export { DiningMapPreview } from './DiningMapPreview';
+export { CollectionsSection } from './CollectionsSection';
+export { ImportsStrip } from './ImportsStrip';
 export { ListsShelf } from './ListsShelf';
 export { ProfileIndex } from './ProfileIndex';
 export { SectionHeader } from './SectionHeader';
+export { RailSubLabel } from './RailSubLabel';
 export { Rating } from './Rating';
 export { TopFour } from './TopFour';
 export { QuickTakes } from './QuickTakes';
