@@ -43,8 +43,9 @@ it('gates the Places proxy and renders its minimized credit beside, never on, th
     }).find((node: any) => node.type === 'Text');
 
     expect(credit).toBeDefined();
-    expect(JSON.stringify(credit.children)).toContain('photo');
-    expect(JSON.stringify(credit.children)).toContain('Osteria Romana');
+    expect(credit.children.filter((child: unknown) => typeof child === 'string').join(''))
+        .toContain('photo');
+    expect(author.children).toEqual(['Osteria Romana']);
     expect(image.parent.findAllByProps({ testID: 'composer-masthead-places-credit' }))
         .toHaveLength(0);
     expect(author.props.style).not.toEqual(expect.arrayContaining([

@@ -41,6 +41,12 @@ function hostTextByTestId(root: any, testID: string) {
     return root.findAllByProps({ testID }).find((node: any) => node.type === 'Text')!;
 }
 
+function textContent(node: any): string {
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (!node?.children) return '';
+    return node.children.map(textContent).join('');
+}
+
 function entry(
     photoUrl: string | null,
     photoSource: ListEntry['restaurant']['photo_source'] = 'user',
@@ -283,8 +289,7 @@ describe('ListDetailHeader design AA overlap guard', () => {
 
         expect(identity.findAllByProps({ testID: 'list-detail-cover-attribution' })
             .filter((node: any) => node.type === 'Text')).toHaveLength(1);
-        expect(JSON.stringify(credit.children)).toContain('photo');
-        expect(JSON.stringify(credit.children)).toContain('Jane Doe');
+        expect(textContent(credit)).toBe('photo · Jane Doe');
         expect(credit.props.numberOfLines).toBe(1);
         expect(flattenStyle(credit.props.style)).toMatchObject({
             fontFamily: 'Manrope_500Medium',
@@ -331,9 +336,9 @@ describe('ListDetailHeader design AA overlap guard', () => {
         expect(renderer.root.findByType('ExpoImage').props.source).toEqual({
             uri: 'https://cdn.example/new.jpg',
         });
-        expect(JSON.stringify(
-            hostTextByTestId(renderer.root, 'list-detail-cover-attribution').children,
-        )).toContain('New credit');
+        expect(textContent(
+            hostTextByTestId(renderer.root, 'list-detail-cover-attribution'),
+        )).toBe('photo · New credit');
 
         act(() => renderer.unmount());
     });

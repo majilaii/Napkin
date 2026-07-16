@@ -104,6 +104,12 @@ function attributionCredits(renderer: any) {
     );
 }
 
+function textContent(node: any): string {
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (!node?.children) return '';
+    return node.children.map(textContent).join('');
+}
+
 describe('ListsShelf section header (rev 2 un-merge)', () => {
     it('renders one parsed credit adjacent to an attributed Places cover', () => {
         mockMyLists = [{
@@ -117,8 +123,7 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(1);
         expect(credits).toHaveLength(1);
-        expect(JSON.stringify(credits[0].children)).toContain('photo');
-        expect(JSON.stringify(credits[0].children)).toContain('Jane Doe');
+        expect(textContent(credits[0])).toBe('photo · Jane Doe');
         expect(credits[0].props.numberOfLines).toBe(1);
         expect(renderer.root.findByType('Image').parent.findAllByProps({
             testID: 'list-cover-attribution',
@@ -161,9 +166,7 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(3);
         expect(credits).toHaveLength(1);
-        expect(JSON.stringify(credits[0].children)).toContain('photos');
-        expect(JSON.stringify(credits[0].children)).toContain('Jane Doe');
-        expect(JSON.stringify(credits[0].children)).toContain('Marco');
+        expect(textContent(credits[0])).toBe('photos · Jane Doe, Marco');
         for (const image of renderer.root.findAllByType('Image')) {
             expect(image.parent.findAllByProps({ testID: 'list-cover-attribution' }))
                 .toHaveLength(0);
@@ -208,9 +211,7 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
         const [credit] = attributionCredits(renderer);
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(2);
-        expect(JSON.stringify(credit.children)).toContain('photo');
-        expect(JSON.stringify(credit.children)).not.toContain('photos');
-        expect(JSON.stringify(credit.children)).toContain('Jane Doe');
+        expect(textContent(credit)).toBe('photo · Jane Doe');
 
         act(() => renderer.unmount());
     });
@@ -254,7 +255,7 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
         expect(renderer.root.findByType('Image').props.source).toEqual({
             uri: 'https://cdn.example/new.jpg',
         });
-        expect(JSON.stringify(attributionCredits(renderer)[0].children)).toContain('New credit');
+        expect(textContent(attributionCredits(renderer)[0])).toBe('photo · New credit');
 
         act(() => renderer.unmount());
     });

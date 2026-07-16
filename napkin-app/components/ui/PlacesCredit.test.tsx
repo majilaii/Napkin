@@ -5,7 +5,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const openURL = jest.fn((_url: string) => Promise.resolve());
+const mockOpenURL = jest.fn((_url: string) => Promise.resolve());
 
 jest.mock('react-native', () => {
     const ReactModule = require('react');
@@ -13,7 +13,7 @@ jest.mock('react-native', () => {
         ReactModule.createElement('Text', props, props.children);
     return {
         Text,
-        Linking: { openURL: (url: string) => openURL(url) },
+        Linking: { openURL: (url: string) => mockOpenURL(url) },
         StyleSheet: { create: (styles: unknown) => styles },
         Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios },
     };
@@ -113,7 +113,7 @@ describe('PlacesCredit', () => {
         const author = textByTestId(interactive, 'places-credit-author-0');
 
         act(() => author.props.onPress());
-        expect(openURL).toHaveBeenCalledWith('https://maps.example/Jane%20Doe');
+        expect(mockOpenURL).toHaveBeenCalledWith('https://maps.example/Jane%20Doe');
 
         const nestedCard = render(<PlacesCredit credits={[jane.credit]} interactive={false} />);
         const nestedAuthor = textByTestId(nestedCard, 'places-credit-author-0');

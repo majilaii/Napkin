@@ -130,7 +130,7 @@ it('shows one adjacent, deduped credit line for every gated draft thumbnail', ()
     expect(images).toHaveLength(3);
     expect(creditLines).toHaveLength(1);
     expect(authors.map((node: any) => node.children.join(''))).toEqual(['Jane Doe', 'Marco']);
-    expect(JSON.stringify(renderer.toJSON())).toContain('photos');
+    expect(textContent(credit)).toBe('photos · Jane Doe, Marco');
     for (const image of images) {
         expect(image.parent.findAllByProps({ testID: 'quick-takes-sheet-places-credit' })).toHaveLength(0);
     }

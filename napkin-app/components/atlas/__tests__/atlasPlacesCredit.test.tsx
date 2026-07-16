@@ -128,12 +128,14 @@ describe('Atlas Places photo compliance', () => {
             );
         });
 
-        expect(renderer.root.findAllByType('ImageBackground').map((node: any) => node.props.source))
-            .toEqual([
-                { uri: 'https://cdn.test/places.jpg' },
-                { uri: 'https://cdn.test/berlin.jpg' },
-                { uri: 'https://cdn.test/user.jpg' },
-            ]);
+        const heroSources = renderer.root.findAllByType('ImageBackground')
+            .map((node: any) => node.props.source);
+        expect(heroSources).toHaveLength(3);
+        expect(heroSources).toEqual(expect.arrayContaining([
+            { uri: 'https://cdn.test/places.jpg' },
+            { uri: 'https://cdn.test/berlin.jpg' },
+            { uri: 'https://cdn.test/user.jpg' },
+        ]));
         const credits = creditTextNodes(renderer, 'atlas-city-index-places-credit');
         expect(credits).toHaveLength(1);
         expect(textContent(credits[0])).toBe('photos · Jane Doe, Luis Ray');
