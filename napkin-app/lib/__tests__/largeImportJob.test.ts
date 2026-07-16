@@ -413,7 +413,7 @@ describe('buildResolvedSpots / ghostSpot / buildGhostSpots', () => {
     it('missing resolve result → ghost spot input (external_id null), never a drop', () => {
         const chunk = mkItems(2);
         const spots = buildResolvedSpots([mkResolveResult(0)], chunk);
-        expect(spots).toHaveLength(2); // one per chunk item — always
+        expect(spots).toHaveLength(2); // one per chunk item unless server explicitly type-rejects it
         expect(spots[0]).toMatchObject({
             client_nonce: 'nonce-0',
             external_id: 'ChIJ-0',
@@ -433,6 +433,27 @@ describe('buildResolvedSpots / ghostSpot / buildGhostSpots', () => {
         const spots = buildResolvedSpots([mkResolveResult(1), mkResolveResult(0)], chunk);
         expect(spots[0].external_id).toBe('ChIJ-0');
         expect(spots[1].external_id).toBe('ChIJ-1');
+    });
+    it('explicit type rejection is omitted from save input, never ghost-staged', () => {
+        const chunk = mkItems(2);
+        const rejected = mkResolveResult(0, {
+            external_id: null,
+            place: { type_rejected: true },
+            type_rejected: true,
+        });
+        const spots = buildResolvedSpots([rejected, mkResolveResult(1)], chunk);
+
+        expect(spots).toHaveLength(1);
+        expect(spots[0].client_nonce).toBe('nonce-1');
+        expect(spots.some((spot) => spot.client_nonce === 'nonce-0')).toBe(false);
+    });
+    it('an all-type-rejected chunk yields no save input', () => {
+        const chunk = mkItems(2);
+        const spots = buildResolvedSpots(
+            chunk.map((_, i) => mkResolveResult(i, { type_rejected: true })),
+            chunk,
+        );
+        expect(spots).toEqual([]);
     });
     it('ghostSpot pins table fields null and carries the address in place', () => {
         const g = ghostSpot(mkItems(1)[0]);
