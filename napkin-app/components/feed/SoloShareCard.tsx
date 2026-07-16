@@ -192,7 +192,7 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     place: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_500Medium',
         fontSize: 15,
         fontWeight: '500',
     },

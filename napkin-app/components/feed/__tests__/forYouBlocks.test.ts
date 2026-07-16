@@ -2,7 +2,7 @@
  * TICKET-125 → TICKET-189 — For You block composition, pure so the "everything
  * empty" answer and block ordering are verified, not eyeballed.
  *
- * Rule: fixed order on_socials → public_lists → people; only visible blocks
+ * Rule: fixed order on_socials → people → public_lists; only visible blocks
  * are included; all-false ⇒ [] (⇒ the §6 whole-surface branch in ForYouFeed).
  * Trending is GONE from the roster (§5).
  */
@@ -35,7 +35,7 @@ describe('visibleForYouBlocks', () => {
                 hasPublicLists: true,
                 hasPeople: true,
             }),
-        ).toEqual(['on_socials', 'public_lists', 'people']);
+        ).toEqual(['on_socials', 'people', 'public_lists']);
     });
 
     it('socials only', () => {
@@ -64,10 +64,10 @@ describe('visibleForYouBlocks', () => {
         ]);
     });
 
-    it('lists + people', () => {
+    it('people is promoted above lists', () => {
         expect(types({ ...NONE, hasPublicLists: true, hasPeople: true })).toEqual([
-            'public_lists',
             'people',
+            'public_lists',
         ]);
     });
 
@@ -83,7 +83,7 @@ describe('visibleForYouBlocks', () => {
     });
 
     it('every flag combination yields a subset in canonical order', () => {
-        const ORDER = ['on_socials', 'public_lists', 'people'];
+        const ORDER = ['on_socials', 'people', 'public_lists'];
         for (let mask = 0; mask < 8; mask++) {
             const flags: ForYouFlags = {
                 hasSocials: !!(mask & 1),

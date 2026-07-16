@@ -5,7 +5,7 @@
  * shared lists. Mirrors Top4EditedCard's ledger grammar exactly.
  *   single  → "Clara added St. John to Amsterdam"
  *   batched → "Clara added 3 spots to Amsterdam"
- * Verb is lowercase past-tense per brand rules. List name = content → serif italic.
+ * Verb is lowercase past-tense per brand rules. List names use upright serif.
  */
 import React from 'react';
 import { View, Text, StyleSheet, Image } from 'react-native';
@@ -113,7 +113,7 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
     },
     listName: {
-        fontFamily: 'Newsreader_500Medium_Italic',
+        fontFamily: 'Newsreader_500Medium',
     },
     time: {
         fontFamily: 'Manrope_400Regular',

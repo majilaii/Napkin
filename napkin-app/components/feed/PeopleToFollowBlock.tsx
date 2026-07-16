@@ -26,7 +26,7 @@ import Animated, { FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { Colors, Spacing, Radius } from '@/constants/theme';
+import { Colors, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { queryKeys } from '@/lib/queryKeys';
@@ -181,7 +181,7 @@ function PeopleToFollowV1() {
 
     return (
         <View>
-            <SectionKicker>people you&rsquo;ve eaten with</SectionKicker>
+            <SectionKicker>people to follow</SectionKicker>
             <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -236,7 +236,10 @@ function PersonRailCard({
     onOpenProfile: () => void;
 }) {
     return (
-        <View style={styles.person}>
+        <View
+            style={[styles.person, { backgroundColor: palette.card }, Shadow.ambient]}
+            testID="person-card"
+        >
             <Avatar
                 name={name}
                 url={avatarUrl}
@@ -249,10 +252,18 @@ function PersonRailCard({
                 accessibilityRole="button"
                 accessibilityLabel={`Open ${name}'s profile`}
             >
-                <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
+                <Text
+                    style={[styles.name, { color: palette.text }]}
+                    numberOfLines={1}
+                    testID="person-name"
+                >
                     {name}
                 </Text>
-                <Text style={[styles.meals, { color: palette.textMuted }]} numberOfLines={1}>
+                <Text
+                    style={[styles.meals, { color: palette.textMuted }]}
+                    numberOfLines={1}
+                    testID="person-meta"
+                >
                     {metaLine}
                 </Text>
             </Pressable>
@@ -264,16 +275,18 @@ function PersonRailCard({
                     styles.followBtn,
                     followed
                         ? { borderColor: palette.outlineVariant }
-                        : { borderColor: palette.terracottaBorderStrong, opacity: pressed ? 0.7 : 1 },
+                        : { borderColor: palette.primary, opacity: pressed ? 0.7 : 1 },
                 ]}
                 accessibilityRole="button"
                 accessibilityLabel={followed ? `Following ${name}` : `Follow ${name}`}
+                testID="person-follow"
             >
                 <Text
                     style={[
                         styles.followText,
                         { color: followed ? palette.textMuted : palette.primary },
                     ]}
+                    testID="person-follow-label"
                 >
                     {followed ? 'following' : 'follow'}
                 </Text>
@@ -284,36 +297,50 @@ function PersonRailCard({
 
 const styles = StyleSheet.create({
     railContent: {
-        paddingHorizontal: Spacing.lg,
-        gap: Spacing.md,
+        paddingHorizontal: 20,
+        paddingBottom: 6,
+        gap: 10,
     },
     person: {
-        width: 104,
+        width: 128,
+        height: 172,
+        borderRadius: Radius.lg,
+        paddingHorizontal: 12,
+        paddingTop: 16,
+        paddingBottom: 14,
         alignItems: 'center',
     },
     name: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
-        marginTop: 8,
+        fontFamily: 'Newsreader_500Medium',
+        fontSize: 15,
+        fontWeight: '500',
+        lineHeight: 18,
+        height: 18,
+        marginTop: 9,
         textAlign: 'center',
-        maxWidth: 100,
+        width: 104,
     },
     meals: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 9,
+        fontSize: 13,
+        lineHeight: 18,
+        height: 18,
         marginTop: 2,
         textAlign: 'center',
-        maxWidth: 100,
+        width: 104,
     },
     followBtn: {
         borderWidth: 1.5,
         borderRadius: Radius.full,
-        paddingHorizontal: 14,
+        paddingHorizontal: 16,
         paddingVertical: 5,
-        marginTop: 8,
+        marginTop: 10,
     },
     followText: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+        fontWeight: '700',
+        lineHeight: 18,
+        letterSpacing: 0.5,
     },
 });

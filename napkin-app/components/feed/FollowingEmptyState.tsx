@@ -113,13 +113,13 @@ const styles = StyleSheet.create({
         flexShrink: 0,
     },
     monogramMark: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_400Regular',
         fontSize: 24,
         lineHeight: 26,
     },
     ghostLine: {
         flex: 1,
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Manrope_400Regular',
         fontSize: 16,
         lineHeight: 22,
     },

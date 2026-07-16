@@ -10,11 +10,11 @@
  * branches (spinner / retry / invite — the §6 empty-vs-error contract in
  * ForYouFeed). Blocks still self-guard defensively inside their components.
  *
- * TICKET-189 roster: `on_socials → public_lists → people` — freshest community
- * momentum first, authored curation next, people last. Trending is GONE from
- * the stack (killed §5 — the socials module is the same "what's being saved"
- * intent expressed honestly and visually; the feed-trending BACKEND stays
- * intact for future staged modules).
+ * Founder-ordered roster: `on_socials → people → public_lists` — freshest
+ * community momentum first, people next, authored curation last. Trending is
+ * GONE from the stack (killed §5 — the socials module is the same "what's being
+ * saved" intent expressed honestly and visually; the feed-trending BACKEND
+ * stays intact for future staged modules).
  *
  * `hasSocials` is already ANDed with the FOR_YOU_SOCIALS flag upstream in
  * ForYouFeed (people-v2 selection likewise with FOR_YOU_PEOPLE_V2) — the
@@ -53,8 +53,8 @@ export type ForYouZeroVisibleState = 'loading' | 'retry' | 'empty';
 export function visibleForYouBlocks(f: ForYouFlags): ForYouBlock[] {
     const out: ForYouBlock[] = [];
     if (f.hasSocials) out.push({ _type: 'on_socials' });
-    if (f.hasPublicLists) out.push({ _type: 'public_lists' });
     if (f.hasPeople) out.push({ _type: 'people' });
+    if (f.hasPublicLists) out.push({ _type: 'public_lists' });
     return out;
 }
 

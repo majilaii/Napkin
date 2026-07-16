@@ -8,8 +8,8 @@
  *     'This week' | weekday-or-month for older rows (matches mockup `.dhdr`).
  *   - feedByline(iso) → the per-row stamp the header contextualizes: a clock
  *     time for today ('7:40 pm'), else the lowercase weekday ('tuesday').
- *   - masthead uses feedMastheadDate(now) → 'SATURDAY · JULY 5' small-caps
- *     current-date line (computed client-side, no data dependency).
+ *   - masthead uses feedMastheadDate(now) → 'saturday · july 5'; its type token
+ *     supplies the mock's uppercase rendering (computed client-side, no data).
  *
  * `now` is injectable so the unit tests run against a fixed clock and never flake.
  */
@@ -55,9 +55,9 @@ export function feedByline(iso: string, now: Date = new Date()): string {
     return d.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
 }
 
-/** Masthead small-caps date line, e.g. 'SATURDAY · JULY 5'. */
+/** Lowercase masthead source line, e.g. 'saturday · july 5'. */
 export function feedMastheadDate(now: Date = new Date()): string {
     const weekday = now.toLocaleDateString('en-US', { weekday: 'long' });
     const month = now.toLocaleDateString('en-US', { month: 'long' });
-    return `${weekday} · ${month} ${now.getDate()}`.toUpperCase();
+    return `${weekday} · ${month} ${now.getDate()}`.toLocaleLowerCase();
 }
