@@ -25,23 +25,44 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Spacing } from '@/constants/theme';
+import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { useTableWishlist, type TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
 import { useTableMapPins } from '@/hooks/tables/useTableMapPins';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
+import { useMyLists } from '@/hooks/lists/useMyLists';
+import { useList, type ListEntry } from '@/hooks/lists/useList';
 import { WishlistMapView, type WishlistMapItem } from '@/components/wishlist/WishlistMapView';
-import { overlapToMapItems, supperPinsToMapItems } from '@/components/wishlist/mapItems';
+import {
+    filterTableWishlistRows,
+    overlapToMapItems,
+    supperPinsToMapItems,
+    tableRowFacetView,
+} from '@/components/wishlist/mapItems';
 import {
     cuisineFacets,
     priceFacets,
     cityFacets,
     filterMapItems,
     sortGatheredRecent,
+    type FacetRow,
 } from '@/components/wishlist/mapFacets';
-import { FilterTabsSheet, TableWishlistRow } from '@/components/wishlist';
+import {
+    FilterTabsSheet,
+    TableWishlistRow,
+    WishlistListsSheet,
+    type WishlistMapListOption,
+} from '@/components/wishlist';
+import {
+    countUnmappableListEntries,
+    listEntriesToWishlistMapItems,
+} from '@/components/wishlist/listMapScope';
+import {
+    TableUnmappedSpotsSheet,
+    type UnmappableRow,
+} from '@/components/tables/TableUnmappedSpotsSheet';
 import type { FilterOption } from '@/components/wishlist/FilterActionSheet';
 import { GatherSheet } from '@/components/gatherings';
 import { priceTierLabel } from '@/lib/priceLevel';
@@ -69,6 +90,9 @@ export default function TableMapScreen() {
     const [gatherItem, setGatherItem] = useState<WishlistMapItem | null>(null);
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [listOpen, setListOpen] = useState(false);
+    const [listsSheetOpen, setListsSheetOpen] = useState(false);
+    const [selectedListId, setSelectedListId] = useState<string | null>(null);
+    const [unmappedOpen, setUnmappedOpen] = useState(false);
 
     // Filters — cuisine/price/city over the active layer. Reset on layer switch
     // so a Saved-only cuisine never blanks the Been layer.
@@ -86,55 +110,166 @@ export default function TableMapScreen() {
     );
 
     // Saved source (already carries lat/lng after TICKET-138's list_table change).
-    const { data: tableWishlist } = useTableWishlist(tableId);
+    const { data: tableWishlist } = useTableWishlist(user?.id, tableId);
+    const { data: myLists } = useMyLists(user?.id);
+    const tableListOptions = useMemo<WishlistMapListOption[]>(
+        () =>
+            (myLists ?? [])
+                .filter((list) => list.table_id === tableId)
+                .map((list) => ({
+                    id: list.id,
+                    title: list.title,
+                    emoji: list.emoji,
+                    entryCount: list.entry_count,
+                })),
+        [myLists, tableId],
+    );
+    // `useList` is keyed only by list id. Validate the stateful selection against
+    // this viewer's current-Table list set before touching that cache, otherwise
+    // an in-place auth/Table switch could briefly reuse private detail from the
+    // previous context.
+    const effectiveSelectedListId = useMemo(
+        () =>
+            selectedListId && tableListOptions.some((option) => option.id === selectedListId)
+                ? selectedListId
+                : null,
+        [selectedListId, tableListOptions],
+    );
+    const { data: selectedListResult } = useList(effectiveSelectedListId);
+    // Ignore observer carry-over defensively even if a future query default adds
+    // placeholder data across key changes.
+    const selectedListDetail = effectiveSelectedListId
+        ? selectedListResult?.data ?? null
+        : null;
+    const selectedList = selectedListDetail?.list ?? null;
+    const selectedListEntries = useMemo(
+        () => selectedListDetail?.entries ?? [],
+        [selectedListDetail?.entries],
+    );
+    const activeListOption = useMemo(
+        () =>
+            tableListOptions.find((option) => option.id === effectiveSelectedListId)
+            ?? (effectiveSelectedListId && selectedList
+                ? {
+                    id: selectedList.id,
+                    title: selectedList.title,
+                    emoji: selectedList.emoji,
+                    entryCount: selectedListEntries.length,
+                }
+                : null),
+        [effectiveSelectedListId, selectedList, selectedListEntries.length, tableListOptions],
+    );
     // Been-together source — lazy-armed on the first "Been together" select.
     const { data: beenPins } = useTableMapPins(tableId, { enabled: beenArmed });
     const { coords, status, request } = useNearbyLocation();
 
+    const filters = useMemo(
+        () => ({ cuisine: cuisineFilter, price: priceFilter, city: cityFilter }),
+        [cityFilter, cuisineFilter, priceFilter],
+    );
+
+    // Apply facets to source rows before the mapper drops coordinate-less saves.
+    // This same set owns both the pins and the repair-sheet count.
+    const filteredSourceRows = useMemo(
+        () => filterTableWishlistRows(tableWishlist ?? [], filters),
+        [filters, tableWishlist],
+    );
+
     // Singles kept (minCount 1) — 138's overlap mapper over this one table.
     const savedItems = useMemo(
         () =>
-            overlapToMapItems([{ tableId: tableId ?? '', tableName, items: tableWishlist ?? [] }], {
+            overlapToMapItems([{ tableId: tableId ?? '', tableName, items: filteredSourceRows }], {
                 minCount: 1,
             }),
-        [tableWishlist, tableId, tableName],
+        [filteredSourceRows, tableId, tableName],
     );
     const beenItems = useMemo(() => supperPinsToMapItems(beenPins), [beenPins]);
+    const scopedListItems = useMemo(
+        () =>
+            selectedList
+                ? listEntriesToWishlistMapItems(selectedListEntries, {
+                    emoji: selectedList.emoji,
+                    ranked: selectedList.ranked,
+                    ...filters,
+                })
+                : [],
+        [filters, selectedList, selectedListEntries],
+    );
 
-    // The active layer's UNFILTERED items drive the facet option lists; the
-    // FILTERED items drive the pins.
-    const rawItems = layer === 'saved' ? savedItems : beenItems;
+    const unmappableRows = useMemo<UnmappableRow[]>(
+        () =>
+            filteredSourceRows
+                .filter((row) => row.restaurant.lat == null || row.restaurant.lng == null)
+                .map((row) => {
+                    const firstSaver = row.members[0]?.display_name?.trim() || 'someone';
+                    return {
+                        restaurantId: row.restaurant.id,
+                        name: row.restaurant.name,
+                        city: row.restaurant.city,
+                        saverLabel: row.count > 1 ? `${firstSaver} +${row.count - 1}` : firstSaver,
+                        viewerItemId: row.viewer_item_id,
+                    };
+                }),
+        [filteredSourceRows],
+    );
+    const scopedListUnmappableCount = useMemo(
+        () => countUnmappableListEntries(selectedListEntries, filters),
+        [filters, selectedListEntries],
+    );
+
     const items = useMemo(
-        () => filterMapItems(rawItems, { cuisine: cuisineFilter, price: priceFilter, city: cityFilter }),
-        [rawItems, cuisineFilter, priceFilter, cityFilter],
+        () =>
+            layer === 'been'
+                ? filterMapItems(beenItems, filters)
+                : effectiveSelectedListId
+                    ? scopedListItems
+                    : savedItems,
+        [beenItems, effectiveSelectedListId, filters, layer, savedItems, scopedListItems],
+    );
+
+    // Facet choices come from the active UNFILTERED source, including rows with
+    // no coordinates, so a coord-less-only category remains selectable.
+    const facetSource = useMemo<FacetRow[]>(
+        () => {
+            if (layer === 'been') return beenItems;
+            if (effectiveSelectedListId) {
+                return selectedListEntries.map((entry) => ({
+                    cuisine: entry.restaurant.cuisine,
+                    city: entry.restaurant.city,
+                    priceLevel: entry.restaurant.price_level,
+                }));
+            }
+            return (tableWishlist ?? []).map(tableRowFacetView);
+        },
+        [beenItems, effectiveSelectedListId, layer, selectedListEntries, tableWishlist],
     );
 
     const cuisineOptions = useMemo<FilterOption[]>(
         () => [
             { value: null, label: 'All cuisines' },
-            ...cuisineFacets(rawItems).map((c) => ({ value: c.value, label: c.value, count: c.count })),
+            ...cuisineFacets(facetSource).map((c) => ({ value: c.value, label: c.value, count: c.count })),
         ],
-        [rawItems],
+        [facetSource],
     );
     const priceOptions = useMemo<FilterOption[]>(
         () => [
             { value: null, label: 'Any price' },
-            ...priceFacets(rawItems).map((p) => ({
+            ...priceFacets(facetSource).map((p) => ({
                 value: String(p.value),
                 label: priceTierLabel(p.value),
                 count: p.count,
             })),
         ],
-        [rawItems],
+        [facetSource],
     );
     const cityOptions = useMemo<FilterOption[]>(
         () => [
             { value: null, label: 'All cities' },
-            ...cityFacets(rawItems).map((c) => ({ value: c.value, label: c.value, count: c.count })),
+            ...cityFacets(facetSource).map((c) => ({ value: c.value, label: c.value, count: c.count })),
         ],
-        [rawItems],
+        [facetSource],
     );
-    const hideAreaTab = cityFacets(rawItems).length < 2;
+    const hideAreaTab = cityFacets(facetSource).length < 2;
     const filtersActive = !!cuisineFilter || !!priceFilter || !!cityFilter;
 
     // The List sheet's ledgers: Saved = the full count-ranked table wishlist (the
@@ -142,12 +277,34 @@ export default function TableMapScreen() {
     // gatherings, most recent first.
     const savedLedger = tableWishlist ?? [];
     const beenLedger = useMemo(() => sortGatheredRecent(beenItems), [beenItems]);
+    const unmappableCount =
+        layer === 'been'
+            ? 0
+            : effectiveSelectedListId
+                ? scopedListUnmappableCount
+                : unmappableRows.length;
+    const unmappableLabel =
+        layer === 'saved' && effectiveSelectedListId && scopedListUnmappableCount > 0
+            ? `${scopedListUnmappableCount} ${scopedListUnmappableCount === 1 ? 'place in this List isn’t' : 'places in this List aren’t'} on the map`
+            : undefined;
 
     const handleSource = useCallback((key: string) => {
         const next = key as 'saved' | 'been';
         setLayer(next);
-        if (next === 'been') setBeenArmed(true);
+        if (next === 'been') {
+            setBeenArmed(true);
+            setSelectedListId(null);
+        }
         // Reset filters — cuisines/prices don't carry across layers.
+        setCuisineFilter(null);
+        setPriceFilter(null);
+        setCityFilter(null);
+    }, []);
+
+    const handleListScope = useCallback((nextListId: string | null) => {
+        setSelectedListId(nextListId);
+        // Facets are source-scoped. Never carry an aggregate-only choice into a
+        // list (or vice versa) and silently blank the new collection.
         setCuisineFilter(null);
         setPriceFilter(null);
         setCityFilter(null);
@@ -164,7 +321,13 @@ export default function TableMapScreen() {
 
             <WishlistMapView
                 items={items}
-                unmappableCount={0}
+                unmappableCount={unmappableCount}
+                onUnmappablePress={
+                    layer === 'saved' && !effectiveSelectedListId
+                        ? () => setUnmappedOpen(true)
+                        : undefined
+                }
+                unmappableLabel={unmappableLabel}
                 userCoords={coords}
                 locationStatus={status}
                 onRequestLocation={request}
@@ -183,6 +346,23 @@ export default function TableMapScreen() {
                 onOpenFilters={() => setFiltersOpen(true)}
                 filtersActive={filtersActive}
                 onSwitchToList={() => setListOpen(true)}
+                listChip={
+                    layer === 'saved'
+                        ? {
+                            label: activeListOption
+                                ? `${activeListOption.emoji ? `${activeListOption.emoji} ` : ''}${activeListOption.title}`
+                                : 'Lists',
+                            selected: !!effectiveSelectedListId,
+                            onPress: () => setListsSheetOpen(true),
+                        }
+                        : undefined
+                }
+                preserveItemOrder={layer === 'saved' && !!effectiveSelectedListId}
+                collectionScopeKey={
+                    layer === 'saved' && effectiveSelectedListId
+                        ? `list:${effectiveSelectedListId}`
+                        : null
+                }
                 chromeTopOffset={insets.top + 56}
                 palette={palette}
             />
@@ -225,10 +405,33 @@ export default function TableMapScreen() {
                 layer={layer}
                 savedRows={savedLedger}
                 beenRows={beenLedger}
+                selectedListId={effectiveSelectedListId}
+                selectedListTitle={activeListOption?.title ?? selectedList?.title ?? null}
+                selectedListRanked={selectedList?.ranked ?? false}
+                selectedListRows={selectedListEntries}
                 onOpenRestaurant={(id) => {
                     setListOpen(false);
                     openRestaurant(id);
                 }}
+            />
+
+            <WishlistListsSheet
+                visible={listsSheetOpen}
+                onDismiss={() => setListsSheetOpen(false)}
+                palette={palette}
+                selectedListId={effectiveSelectedListId}
+                myLists={tableListOptions}
+                savedLists={[]}
+                onSelect={handleListScope}
+            />
+
+            <TableUnmappedSpotsSheet
+                visible={unmappedOpen}
+                onClose={() => setUnmappedOpen(false)}
+                rows={unmappableRows}
+                tableId={tableId}
+                userId={user?.id}
+                palette={palette}
             />
 
             {/* "gather here" from a saved-layer overlap peek → propose a date to
@@ -256,6 +459,10 @@ function ListSheet({
     layer,
     savedRows,
     beenRows,
+    selectedListId,
+    selectedListTitle,
+    selectedListRanked,
+    selectedListRows,
     onOpenRestaurant,
 }: {
     visible: boolean;
@@ -264,10 +471,19 @@ function ListSheet({
     layer: 'saved' | 'been';
     savedRows: TableWishlistItem[];
     beenRows: WishlistMapItem[];
+    selectedListId: string | null;
+    selectedListTitle: string | null;
+    selectedListRanked: boolean;
+    selectedListRows: ListEntry[];
     onOpenRestaurant: (id: string) => void;
 }) {
     const insets = useSafeAreaInsets();
-    const empty = layer === 'saved' ? savedRows.length === 0 : beenRows.length === 0;
+    const listScoped = layer === 'saved' && selectedListId !== null;
+    const empty = layer === 'saved'
+        ? listScoped
+            ? selectedListRows.length === 0
+            : savedRows.length === 0
+        : beenRows.length === 0;
 
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -281,27 +497,45 @@ function ListSheet({
                 >
                     <View style={[styles.grabber, { backgroundColor: palette.ruleWarmNib }]} />
                     <Text style={[styles.listKicker, { color: palette.textMuted }]}>
-                        {layer === 'saved' ? 'the table wishlist' : 'been together'}
+                        {layer === 'saved'
+                            ? listScoped
+                                ? selectedListTitle ?? 'selected list'
+                                : 'the table wishlist'
+                            : 'been together'}
                     </Text>
 
                     <ScrollView style={styles.listScroll} showsVerticalScrollIndicator={false}>
                         {empty ? (
                             <Text style={[styles.emptyLine, { color: palette.textMuted }]}>
                                 {layer === 'saved'
-                                    ? 'no one has saved a spot yet.'
+                                    ? listScoped
+                                        ? 'no places in this list yet.'
+                                        : 'no one has saved a spot yet.'
                                     : 'no gatherings on the map yet.'}
                             </Text>
                         ) : layer === 'saved' ? (
-                            savedRows.map((it, i) =>
-                                it.restaurant ? (
-                                    <TableWishlistRow
-                                        key={it.restaurant.id}
-                                        index={i + 1}
-                                        item={it}
+                            listScoped ? (
+                                selectedListRows.map((entry, index) => (
+                                    <TableListEntryRow
+                                        key={entry.id}
+                                        entry={entry}
+                                        rank={selectedListRanked ? index + 1 : null}
                                         palette={palette}
-                                        onPress={() => onOpenRestaurant(it.restaurant!.id)}
+                                        onPress={() => onOpenRestaurant(entry.restaurant.id)}
                                     />
-                                ) : null,
+                                ))
+                            ) : (
+                                savedRows.map((it, i) =>
+                                    it.restaurant ? (
+                                        <TableWishlistRow
+                                            key={it.restaurant.id}
+                                            index={i + 1}
+                                            item={it}
+                                            palette={palette}
+                                            onPress={() => onOpenRestaurant(it.restaurant!.id)}
+                                        />
+                                    ) : null,
+                                )
                             )
                         ) : (
                             beenRows.map((it) => (
@@ -317,6 +551,43 @@ function ListSheet({
                 </Pressable>
             </Pressable>
         </Modal>
+    );
+}
+
+/** One authored table-list entry; the API order is retained verbatim. */
+function TableListEntryRow({
+    entry,
+    rank,
+    palette,
+    onPress,
+}: {
+    entry: ListEntry;
+    rank: number | null;
+    palette: Palette;
+    onPress: () => void;
+}) {
+    const metadata = [rank ? `#${rank}` : null, entry.restaurant.city].filter(Boolean).join(' · ');
+    return (
+        <Pressable
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.gatheredRow,
+                { borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.7 : 1 },
+            ]}
+            accessibilityLabel={`Open ${entry.restaurant.name}`}
+        >
+            <View style={styles.gatheredText}>
+                <Text style={[styles.tableListName, { color: palette.text }]} numberOfLines={1}>
+                    {entry.restaurant.name}
+                </Text>
+                {metadata ? (
+                    <Text style={[styles.tableListMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                        {metadata}
+                    </Text>
+                ) : null}
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
+        </Pressable>
     );
 }
 
@@ -430,6 +701,11 @@ const styles = StyleSheet.create({
     gatheredText: {
         flex: 1,
         minWidth: 0,
+    },
+    tableListName: Type.editorialBody,
+    tableListMeta: {
+        ...Type.metadata,
+        marginTop: 2,
     },
     gatheredName: {
         fontFamily: 'Newsreader_400Regular_Italic',

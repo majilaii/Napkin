@@ -44,6 +44,7 @@ export interface PeekCardClient {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VISIBLE_SAVES_FLOOR = 3;
+const BLOCK_CHUNK = 30;
 const TIER_RANK: Record<string, number> = {
     self: 0,
     tablemate: 1,
@@ -291,6 +292,119 @@ async function authorizedGatheredPhoto(
     return typeof photo?.photo_url === 'string' && photo.photo_url.trim() ? photo.photo_url : null;
 }
 
+function chunkArray<T>(values: readonly T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let index = 0; index < values.length; index += size) {
+        chunks.push(values.slice(index, index + size));
+    }
+    return chunks;
+}
+
+async function authorizedTableSharedPhoto(
+    client: PeekCardClient,
+    viewerId: string,
+    restaurantId: string,
+    tableId: string | undefined,
+): Promise<string | null> {
+    if (!tableId) return null;
+
+    const { data: membership, error: membershipError } = await client
+        .from('table_members')
+        .select('member_id')
+        .eq('table_id', tableId)
+        .eq('member_id', viewerId)
+        .maybeSingle();
+    if (membershipError || !membership) return null;
+
+    const { data: shares, error: sharesError } = await client
+        .from('entry_tables')
+        .select('entry_id, posted_at')
+        .eq('table_id', tableId)
+        .order('posted_at', { ascending: false });
+    if (sharesError) return null;
+    const sharedEntryIds = [
+        ...new Set(
+            (shares ?? [])
+                .map((row: any) => row.entry_id)
+                .filter((id: unknown): id is string => typeof id === 'string'),
+        ),
+    ];
+    if (sharedEntryIds.length === 0) return null;
+
+    const { data: entries, error: entriesError } = await client
+        .from('entries')
+        .select('id, user_id')
+        .in('id', sharedEntryIds)
+        .eq('restaurant_id', restaurantId);
+    if (entriesError) return null;
+    const eligibleEntries = (entries ?? []).filter(
+        (entry: any): entry is { id: string; user_id: string } =>
+            typeof entry?.id === 'string' && typeof entry?.user_id === 'string',
+    );
+    if (eligibleEntries.length === 0) return null;
+
+    const authorIds = [
+        ...new Set(eligibleEntries.map((entry) => entry.user_id)),
+    ].sort();
+    const blocked = new Set<string>();
+    for (const chunk of chunkArray(authorIds, BLOCK_CHUNK)) {
+        const candidates = chunk.join(',');
+        const predicate = `and(blocker_id.eq.${viewerId},blocked_id.in.(${candidates})),` +
+            `and(blocker_id.in.(${candidates}),blocked_id.eq.${viewerId})`;
+        const { data: blockRows, error: blockError } = await client
+            .from('blocked_users')
+            .select('blocker_id, blocked_id')
+            .or(predicate);
+        if (blockError) return null;
+
+        for (const row of blockRows ?? []) {
+            if (
+                row?.blocker_id === viewerId &&
+                typeof row?.blocked_id === 'string'
+            ) {
+                blocked.add(row.blocked_id);
+            }
+            if (
+                row?.blocked_id === viewerId &&
+                typeof row?.blocker_id === 'string'
+            ) {
+                blocked.add(row.blocker_id);
+            }
+        }
+    }
+
+    const unblockedEntryIds = eligibleEntries
+        .filter((entry) => !blocked.has(entry.user_id))
+        .map((entry) => entry.id);
+    if (unblockedEntryIds.length === 0) return null;
+
+    const { data: photo, error: photoError } = await client
+        .from('entry_photos')
+        .select('photo_url, entry_id, created_at')
+        .in('entry_id', unblockedEntryIds)
+        .not('photo_url', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    if (photoError) return null;
+    return typeof photo?.photo_url === 'string' && photo.photo_url.trim() ? photo.photo_url : null;
+}
+
+async function tableIdForList(
+    client: PeekCardClient,
+    _viewerId: string,
+    listId: string | undefined,
+): Promise<string | null> {
+    if (!listId) return null;
+    const { data: list, error } = await client
+        .from('lists')
+        .select('table_id')
+        .eq('id', listId)
+        .maybeSingle();
+    if (error) return null;
+    return typeof list?.table_id === 'string' ? list.table_id : null;
+}
+
 function isEligibleSocialSource(source: any): boolean {
     const type = source?.type;
     if (type === 'tiktok' || type === 'video') return true;
@@ -439,6 +553,29 @@ export async function loadPeekCard(
             resolvedId,
             context.table_id,
         );
+        if (url) media.push({ kind: 'entry', url, photo_source: 'table' });
+    } else if (context.layer === 'overlap') {
+        const url = await authorizedTableSharedPhoto(
+            client,
+            viewerId,
+            resolvedId,
+            context.table_id,
+        );
+        if (url) media.push({ kind: 'entry', url, photo_source: 'table' });
+    } else if (context.layer === 'list') {
+        const tableId = await tableIdForList(
+            client,
+            viewerId,
+            context.list_id,
+        );
+        const url = tableId
+            ? await authorizedTableSharedPhoto(
+                client,
+                viewerId,
+                resolvedId,
+                tableId,
+            )
+            : null;
         if (url) media.push({ kind: 'entry', url, photo_source: 'table' });
     }
 

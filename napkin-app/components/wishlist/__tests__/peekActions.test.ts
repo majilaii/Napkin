@@ -17,8 +17,8 @@ const cases: Array<[string, WishlistMapItem, PeekPresentationActions]> = [
     ['saved', base, { slot1: 'log_visit', slot2: 'wishlist', slot3: 'directions' }],
     ['been', { ...base, been: true }, { slot1: 'directions', slot2: 'wishlist', slot3: 'log_again' }],
     ['network', { ...base, entryId: 'entry-1' }, { slot1: 'wishlist', slot2: 'view_restaurant', slot3: 'log_visit' }],
-    ['overlap', { ...base, overlap: { count: 2, tableId: 'table-1', tableName: 'Table', members: [] } }, { slot1: 'gather_here', slot2: 'wishlist', slot3: 'view_restaurant' }],
-    ['gathered', { ...base, been: true, gathered: { tableId: 'table-1', on: '2026-07-15', participants: [], suppersCount: 1 } }, { slot1: 'view_restaurant', slot2: 'wishlist', slot3: 'directions' }],
+    ['overlap', { ...base, overlap: { count: 2, tableId: 'table-1', tableName: 'Table', members: [] } }, { slot1: 'gather_here', slot2: 'wishlist', slot3: 'log_visit' }],
+    ['gathered', { ...base, been: true, gathered: { tableId: 'table-1', on: '2026-07-15', participants: [], suppersCount: 1 } }, { slot1: 'log_again', slot2: 'wishlist', slot3: 'directions' }],
     ['list', { ...base, listContext: { listId: 'list-1', rank: 1 } }, { slot1: 'wishlist', slot2: 'view_restaurant', slot3: 'directions' }],
 ];
 

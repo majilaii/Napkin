@@ -46,9 +46,9 @@ export function peekActionsForPresentation(
         case 'network':
             return { slot1: 'wishlist', slot2: 'view_restaurant', slot3: 'log_visit' };
         case 'overlap':
-            return { slot1: 'gather_here', slot2: 'wishlist', slot3: 'view_restaurant' };
+            return { slot1: 'gather_here', slot2: 'wishlist', slot3: 'log_visit' };
         case 'gathered':
-            return { slot1: 'view_restaurant', slot2: 'wishlist', slot3: 'directions' };
+            return { slot1: 'log_again', slot2: 'wishlist', slot3: 'directions' };
         case 'list':
             return { slot1: 'wishlist', slot2: 'view_restaurant', slot3: 'directions' };
     }

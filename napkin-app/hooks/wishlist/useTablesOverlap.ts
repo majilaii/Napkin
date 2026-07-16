@@ -7,7 +7,7 @@
  * restaurant), and most users have 1–2 tables, so we reuse that endpoint over
  * the viewer's tables via `useQueries` rather than a new "my-tables overlap"
  * edge action. Each query reuses the table Wishlist tab's cache + staleTime
- * (`queryKeys.wishlist.table(id)`).
+ * (`queryKeys.wishlist.table(viewerId, tableId)`).
  *
  * Lazy: fetches nothing until `enabled` (Discover armed) — the membership read
  * AND the per-table fan-out are both gated, so a wishlist visitor who never
@@ -36,11 +36,13 @@ export function useTablesOverlap(
     // zero new fetches for un-armed / zero-table users. `useTables` is disabled
     // when passed a null id.
     const { data: memberships } = useTables(opts.enabled ? userId : null);
-    const tables = (memberships ?? []).map((m) => m.tables).filter(Boolean);
+    const tables = opts.enabled && userId
+        ? (memberships ?? []).map((m) => m.tables).filter(Boolean)
+        : [];
 
     const results = useQueries({
         queries: tables.map((t) => ({
-            queryKey: queryKeys.wishlist.table(t.id),
+            queryKey: queryKeys.wishlist.table(userId!, t.id),
             queryFn: () =>
                 callEdgeFn<TableWishlistItem[]>('wishlist', {
                     action: 'list_table',

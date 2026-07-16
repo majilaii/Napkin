@@ -145,15 +145,16 @@ function PersonalGrid({ userId }: PersonalGridProps) {
 // ── Table Grid ────────────────────────────────────────────────────────────────
 
 interface TableGridProps {
+    userId: string;
     tableId: string;
 }
 
-function TableGrid({ tableId }: TableGridProps) {
+function TableGrid({ userId, tableId }: TableGridProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
 
-    const { data, isLoading, refetch, isRefetching } = useTableWishlist(tableId);
+    const { data, isLoading, refetch, isRefetching } = useTableWishlist(userId, tableId);
     const items: TableWishlistItem[] = data ?? [];
 
     const renderItem = useCallback(
@@ -220,12 +221,13 @@ type WishlistGridProps = WishlistGridPersonalProps | WishlistGridTableProps;
 export function WishlistGrid(props: WishlistGridProps) {
     const { user } = useAuth();
 
+    if (!user) return null;
+
     if (props.mode === 'personal') {
-        if (!user) return null;
         return <PersonalGrid userId={user.id} />;
     }
 
-    return <TableGrid tableId={props.tableId} />;
+    return <TableGrid userId={user.id} tableId={props.tableId} />;
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────

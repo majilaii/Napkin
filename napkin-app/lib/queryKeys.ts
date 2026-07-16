@@ -75,7 +75,9 @@ export const queryKeys = {
     wishlist: {
         personal: (userId: string) => ['wishlist', 'personal', userId] as const,
         tableAll: () => ['wishlist', 'table'] as const,
-        table: (tableId: string) => ['wishlist', 'table', tableId] as const,
+        tableDisabled: () => ['wishlist', 'table-disabled'] as const,
+        table: (viewerId: string, tableId: string) =>
+            ['wishlist', 'table', viewerId, tableId] as const,
         check: (userId: string, restaurantId: string) =>
             ['wishlist', 'check', userId, restaurantId] as const,
     },

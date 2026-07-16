@@ -33,7 +33,9 @@ export interface PeekCardData {
 }
 
 export function peekCardContextForItem(item: WishlistMapItem): PeekCardContext {
-    if (item.overlap != null) return { layer: 'overlap' };
+    if (item.overlap != null) {
+        return { layer: 'overlap', table_id: item.overlap.tableId };
+    }
     if (item.entryId != null) return { layer: 'network', entry_id: item.entryId };
     if (item.gathered != null) {
         return { layer: 'gathered', table_id: item.gathered.tableId };

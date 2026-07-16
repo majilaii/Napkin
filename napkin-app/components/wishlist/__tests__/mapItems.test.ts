@@ -22,6 +22,8 @@ import {
     buildTableRows,
     discoverItemsFor,
     overlapToMapItems,
+    filterTableWishlistRows,
+    tableRowFacetView,
     mergeDiscoverItems,
     supperPinsToMapItems,
 } from '../mapItems';
@@ -408,8 +410,45 @@ function overlapItem(
             { user_id: 'u1', display_name: 'Clara', avatar_url: null },
             { user_id: 'u2', display_name: 'Thomas', avatar_url: null },
         ],
+        viewer_item_id: null,
     };
 }
+
+describe('Table wishlist source-row facets (TICKET-199)', () => {
+    const rows = [
+        overlapItem('thai-unmapped', 2, {
+            restaurant: { cuisine: 'Thai', city: 'London', price_level: 2, lat: null, lng: null },
+        }),
+        overlapItem('italian-mapped', 1, {
+            restaurant: { cuisine: 'Italian', city: 'London', price_level: 3 },
+        }),
+        overlapItem('thai-mapped', 1, {
+            restaurant: { cuisine: 'Thai', city: 'Lisbon', price_level: 2 },
+        }),
+    ];
+
+    it('projects nested restaurant fields into the shared facet shape', () => {
+        expect(tableRowFacetView(rows[0])).toEqual({
+            cuisine: 'Thai',
+            city: 'London',
+            priceLevel: 2,
+        });
+    });
+
+    it('filters source rows before pins and unmappable rows are partitioned', () => {
+        const filtered = filterTableWishlistRows(rows, { cuisine: 'Thai', city: 'London' });
+        const unmappable = filtered.filter(
+            (row) => row.restaurant.lat == null || row.restaurant.lng == null,
+        );
+
+        expect(filtered.map((row) => row.restaurant.id)).toEqual(['thai-unmapped']);
+        expect(unmappable).toHaveLength(1);
+        expect(overlapToMapItems(
+            [{ tableId: 'table-1', tableName: 'Table', items: filtered }],
+            { minCount: 1 },
+        )).toEqual([]);
+    });
+});
 
 describe('overlapToMapItems (TICKET-138)', () => {
     it('drops count===1 at minCount:2, keeps it at minCount:1 (139 saved-layer single)', () => {
@@ -591,6 +630,7 @@ describe('supperPinsToMapItems (TICKET-139)', () => {
                         },
                         count: 1,
                         members: [{ user_id: 'u1', display_name: 'Clara', avatar_url: null }],
+                        viewer_item_id: null,
                     },
                 ],
             },

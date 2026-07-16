@@ -18,3 +18,7 @@ export { EditTop4Sheet } from './EditTop4Sheet';
 export { Top4EditedCard } from './Top4EditedCard';
 export { StartRoundPill } from './StartRoundPill';
 export { TableListsBlock } from './TableListsBlock';
+export {
+    TableUnmappedSpotsSheet,
+    type UnmappableRow,
+} from './TableUnmappedSpotsSheet';
