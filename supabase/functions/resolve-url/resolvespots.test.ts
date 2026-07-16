@@ -19,6 +19,13 @@ import {
     isGhostOnlyMode,
     IMPORT_PLACE_TYPE_ALLOWLIST,
     resolveImportPlaceSearch,
+    buildUnattemptedResolveSpotResult,
+    buildResolveSpotDecisionResult,
+    attemptedExternalIdFromResolutionEvidence,
+    isV2ResolveSpotsProtocol,
+    placesFailureDecision,
+    resolveSpotsRateGate,
+    resolutionDecisionForCandidate,
 } from './_helpers.ts';
 import { mapsItemsToStaged } from './mapsList.ts';
 
@@ -164,6 +171,99 @@ Deno.test('isGhostOnlyMode: any truthy value → on', () => {
     assertEquals(isGhostOnlyMode('true'), true);
     assertEquals(isGhostOnlyMode('on'), true);
     assertEquals(isGhostOnlyMode('yes'), true);
+});
+
+Deno.test('kill-switch rows preserve one no-spend provenance decision per item', () => {
+    const row = buildUnattemptedResolveSpotResult(
+        { name: 'Kartuli', address: 'London', client_nonce: 'nonce-1' },
+        'candidate-1',
+    );
+    assertEquals(row.client_nonce, 'nonce-1');
+    assertEquals(row.resolution_decision, 'unattempted_budget');
+    assertEquals(resolutionDecisionForCandidate(row), {
+        decision: 'unattempted_budget',
+        matchedExternalId: null,
+    });
+});
+
+Deno.test('provenance preserves explicit rejection but real identity always wins as matched', () => {
+    assertEquals(resolutionDecisionForCandidate({
+        resolution_decision: 'locality_reject',
+        external_id: null,
+    }), { decision: 'locality_reject', matchedExternalId: null });
+    assertEquals(resolutionDecisionForCandidate({
+        resolution_decision: 'transient',
+        restaurant: { external_id: 'ChIJ-server-held' },
+    }), { decision: 'matched', matchedExternalId: 'ChIJ-server-held' });
+});
+
+Deno.test('resolve_spots failure rows preserve terminal and retryable decisions', () => {
+    const item = { name: 'Kartuli', address: 'London', client_nonce: 'nonce-typed' };
+    for (const decision of [
+        'no_result',
+        'name_reject',
+        'locality_reject',
+        'transient',
+        'unattempted_budget',
+    ] as const) {
+        const row = buildResolveSpotDecisionResult(item, 'candidate-typed', decision);
+        assertEquals(row.resolution_decision, decision);
+        assertEquals(resolutionDecisionForCandidate(row), {
+            decision,
+            matchedExternalId: null,
+        });
+    }
+});
+
+Deno.test('places-search 429 distinguishes SKU budget deferral from interactive throttle', () => {
+    assertEquals(
+        placesFailureDecision(429, { error: { code: 'BUDGET_DEFERRED' } }),
+        'unattempted_budget',
+    );
+    assertEquals(
+        placesFailureDecision(429, { error: { code: 'RATE_LIMITED' } }),
+        'transient',
+    );
+    assertEquals(placesFailureDecision(429, { error: 'opaque' }), 'transient');
+    assertEquals(
+        placesFailureDecision(503, { error: { code: 'PROVIDER_FAILURE' } }),
+        'transient',
+    );
+});
+
+Deno.test('resolve_spots deferred failure protocol is explicit v2 only', () => {
+    assertEquals(isV2ResolveSpotsProtocol('v2'), true);
+    assertEquals(isV2ResolveSpotsProtocol('legacy'), false);
+    assertEquals(isV2ResolveSpotsProtocol(undefined), false);
+    assertEquals(isV2ResolveSpotsProtocol({ generation: 'v2' }), false);
+});
+
+Deno.test('resolve_spots rate gate distinguishes infrastructure failure from budget denial', () => {
+    assertEquals(resolveSpotsRateGate({ message: 'db unavailable' }, { allowed: false }), 'transient');
+    assertEquals(resolveSpotsRateGate(null, null), 'transient');
+    assertEquals(resolveSpotsRateGate(null, { allowed: false }), 'unattempted_budget');
+    assertEquals(resolveSpotsRateGate(null, { allowed: true }), 'allowed');
+});
+
+Deno.test('failed Details evidence preserves only a provider-safe attempted id', () => {
+    assertEquals(attemptedExternalIdFromResolutionEvidence({
+        path: 'url',
+        candidate: {
+            resolution_decision: 'transient',
+            attempted_external_id: '  ChIJ-known-details-id  ',
+        },
+    }), 'ChIJ-known-details-id');
+    for (const attempted_external_id of [
+        null,
+        '',
+        'ghost_pending',
+        'ghost_owner_nonce',
+        'merged_tombstone',
+    ]) {
+        assertEquals(attemptedExternalIdFromResolutionEvidence({
+            candidate: { attempted_external_id },
+        }), null);
+    }
 });
 
 // ── 5. TICKET-195 import-only Places type backstop ───────────────────────────

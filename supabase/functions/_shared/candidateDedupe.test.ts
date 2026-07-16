@@ -7,7 +7,15 @@
  */
 
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { dedupeAndRank, mergeExtracted, namesOverlap, normalizeName } from './candidateDedupe.ts';
+import {
+    classifyInteractiveCandidate,
+    dedupeAndRank,
+    mergeExtracted,
+    namesOverlap,
+    normalizeName,
+    scoreDeferredCandidates,
+    tokenJaccard,
+} from './candidateDedupe.ts';
 import type { ExtractedCandidate } from './visionExtract.ts';
 
 function cand(over: Partial<ExtractedCandidate>): ExtractedCandidate {
@@ -189,4 +197,124 @@ Deno.test('localityConsistent: documented outer-borough trade-off — pinned aga
         ),
         false,
     );
+});
+
+Deno.test('interactive resolver preserves no-result, name, and locality gate decisions', () => {
+    const extracted = { name: 'Kartuli', city: 'London', area: 'East Dulwich' };
+    assertEquals(classifyInteractiveCandidate(extracted, null), 'no_result');
+    assertEquals(
+        classifyInteractiveCandidate(extracted, {
+            name: 'Borough Kitchen',
+            city: 'London',
+            formattedAddress: 'London, UK',
+        }),
+        'name_reject',
+    );
+    assertEquals(
+        classifyInteractiveCandidate(extracted, {
+            name: 'Kartuli',
+            city: 'Hertford',
+            formattedAddress: '2 Bull Plain, Hertford SG14, UK',
+        }),
+        'locality_reject',
+    );
+    assertEquals(
+        classifyInteractiveCandidate(extracted, {
+            name: 'Kartuli',
+            city: 'London',
+            formattedAddress: 'East Dulwich, London, UK',
+        }),
+        'matched',
+    );
+});
+
+// ── TICKET-195: strict deferred scorer ───────────────────────────────────────
+
+Deno.test('tokenJaccard uses normalized token sets and pins the inclusive 0.85 threshold', () => {
+    const common = Array.from({ length: 17 }, (_, index) => `token${index}`);
+    const extracted = [...common, 'leftone', 'lefttwo'].join(' ');
+    const returned = [...common, 'rightone'].join(' ');
+    assertEquals(tokenJaccard(extracted, returned), 0.85);
+
+    const result = scoreDeferredCandidates(
+        { name: extracted, city: 'London' },
+        [{
+            externalId: 'place-threshold',
+            name: returned,
+            city: 'London',
+            formattedAddress: 'London, UK',
+        }],
+    );
+    assertEquals(result.decision, 'matched');
+    assertEquals(result.match?.externalId, 'place-threshold');
+});
+
+Deno.test('deferred scorer rejects the Kartuli → Cartouche regression by Jaccard', () => {
+    const result = scoreDeferredCandidates(
+        { name: 'Kartuli', city: 'London' },
+        [{
+            externalId: 'cartouche-hertford',
+            name: 'Cartouche',
+            city: 'Hertford',
+            formattedAddress: '2 Bull Plain, Hertford SG14, UK',
+        }],
+    );
+    assertEquals(result.decision, 'name_reject');
+    assertEquals(result.match, null);
+    assert(result.scores[0].nameScore < 0.85);
+});
+
+Deno.test('deferred scorer requires an extracted city and a provider city signal', () => {
+    const candidate = {
+        externalId: 'place-kartuli',
+        name: 'Kartuli',
+        city: null,
+        formattedAddress: null,
+    };
+    assertEquals(
+        scoreDeferredCandidates({ name: 'Kartuli', city: 'London' }, [candidate]).decision,
+        'locality_reject',
+    );
+    assertEquals(
+        scoreDeferredCandidates(
+            { name: 'Kartuli', city: null },
+            [{ ...candidate, city: 'London', formattedAddress: 'London, UK' }],
+        ).decision,
+        'locality_reject',
+    );
+});
+
+Deno.test('deferred city check does not confuse a street token for structured locality', () => {
+    const result = scoreDeferredCandidates(
+        { name: 'Kartuli', city: 'London' },
+        [{
+            externalId: 'place-hertford',
+            name: 'Kartuli',
+            city: 'Hertford',
+            formattedAddress: '12 London Road, Hertford SG13, UK',
+        }],
+    );
+    assertEquals(result.decision, 'locality_reject');
+});
+
+Deno.test('deferred scorer rejects a top-two gap below 0.1 as ambiguous', () => {
+    const result = scoreDeferredCandidates(
+        { name: 'the blue room london bridge', city: 'London' },
+        [
+            {
+                externalId: 'place-a',
+                name: 'The Blue Room London Bridge',
+                city: 'London',
+                formattedAddress: 'London, UK',
+            },
+            {
+                externalId: 'place-b',
+                name: 'The Blue Room London Bridge',
+                city: 'London',
+                formattedAddress: 'London, UK',
+            },
+        ],
+    );
+    assertEquals(result.decision, 'ambiguous');
+    assertEquals(result.match, null);
 });

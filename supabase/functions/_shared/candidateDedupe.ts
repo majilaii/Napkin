@@ -118,7 +118,30 @@ export function namesOverlap(a: string | null | undefined, b: string | null | un
 export function localityConsistent(
     extracted: { city?: string | null; area?: string | null },
     place: { city?: string | null; formattedAddress?: string | null },
+    options: { requireCity?: boolean } = {},
 ): boolean {
+    // The background completeness resolver is intentionally stricter than the
+    // interactive review flow. It may only auto-accept when the extracted CITY
+    // is present and a city token is present in Google's locality/address. An
+    // area-only or missing-provider signal is not enough for an unattended
+    // write. Existing interactive callers keep the historical lenient default.
+    if (options.requireCity) {
+        const wantedCity = new Set(
+            normalizeName(extracted.city).split(' ').filter(Boolean),
+        );
+        const providerCity = normalizeName(place.city);
+        // Prefer Google's structured locality. Falling back to the full address
+        // while a structured city exists would accept "London Road, Hertford"
+        // for an extracted city London.
+        const providerLocality = new Set(
+            normalizeName(providerCity || place.formattedAddress)
+                .split(' ')
+                .filter(Boolean),
+        );
+        if (wantedCity.size === 0 || providerLocality.size === 0) return false;
+        return [...wantedCity].some((token) => providerLocality.has(token));
+    }
+
     const wanted = [extracted.city, extracted.area]
         .map((w) => normalizeName(w))
         .filter((w) => w.length > 0);
@@ -130,6 +153,128 @@ export function localityConsistent(
     );
     if (hay.size === 0) return true;
     return wanted.some((w) => w.split(' ').some((tok) => hay.has(tok)));
+}
+
+export type InteractiveCandidateDecision =
+    | 'matched'
+    | 'no_result'
+    | 'name_reject'
+    | 'locality_reject';
+
+/**
+ * Preserve the exact interactive Places gates as an explicit provenance
+ * decision. Callers used to collapse all three non-match branches to `null`,
+ * which made a terminal name/locality rejection indistinguishable from an
+ * ordinary empty result.
+ */
+export function classifyInteractiveCandidate(
+    extracted: { name?: string | null; city?: string | null; area?: string | null },
+    place: { name?: string | null; city?: string | null; formattedAddress?: string | null } | null,
+): InteractiveCandidateDecision {
+    if (!place) return 'no_result';
+    if (!namesOverlap(extracted.name, place.name)) return 'name_reject';
+    if (!localityConsistent(extracted, place)) return 'locality_reject';
+    return 'matched';
+}
+
+// ── TICKET-195: unattended deferred-resolution scorer ───────────────────────
+
+/** Frozen completeness thresholds. Changing one is a product-contract change. */
+export const DEFERRED_NAME_THRESHOLD = 0.85;
+export const DEFERRED_AMBIGUITY_MARGIN = 0.1;
+
+/** Set-token Jaccard over the same normalizer used by the import deduper. */
+export function tokenJaccard(
+    a: string | null | undefined,
+    b: string | null | undefined,
+): number {
+    const left = new Set(normalizeName(a).split(' ').filter(Boolean));
+    const right = new Set(normalizeName(b).split(' ').filter(Boolean));
+    if (left.size === 0 || right.size === 0) return 0;
+
+    let intersection = 0;
+    for (const token of left) {
+        if (right.has(token)) intersection += 1;
+    }
+    const union = new Set([...left, ...right]).size;
+    return union === 0 ? 0 : intersection / union;
+}
+
+export interface DeferredPlaceCandidate {
+    externalId: string;
+    name: string | null;
+    city?: string | null;
+    formattedAddress?: string | null;
+}
+
+export interface DeferredCandidateScore extends DeferredPlaceCandidate {
+    nameScore: number;
+    cityConfirmed: boolean;
+}
+
+export type DeferredResolutionDecision =
+    | 'matched'
+    | 'no_result'
+    | 'name_reject'
+    | 'locality_reject'
+    | 'ambiguous';
+
+export interface DeferredResolutionResult {
+    decision: DeferredResolutionDecision;
+    match: DeferredCandidateScore | null;
+    scores: DeferredCandidateScore[];
+}
+
+/**
+ * Score Google Text Search candidates for an unattended completeness repair.
+ *
+ * Decision ordering is deliberate and produces an actionable provenance
+ * reason: first establish that any name clears 0.85, then require the city,
+ * then reject a top-two margin below 0.1. Only the final eligible set can be
+ * auto-matched. Interactive import review continues using its lenient guards.
+ */
+export function scoreDeferredCandidates(
+    extracted: { name?: string | null; city?: string | null },
+    candidates: DeferredPlaceCandidate[],
+): DeferredResolutionResult {
+    if (candidates.length === 0) {
+        return { decision: 'no_result', match: null, scores: [] };
+    }
+
+    const scores = candidates.map((candidate): DeferredCandidateScore => ({
+        ...candidate,
+        nameScore: tokenJaccard(extracted.name, candidate.name),
+        cityConfirmed: localityConsistent(
+            { city: extracted.city ?? null },
+            { city: candidate.city ?? null, formattedAddress: candidate.formattedAddress ?? null },
+            { requireCity: true },
+        ),
+    })).sort((a, b) => {
+        if (b.nameScore !== a.nameScore) return b.nameScore - a.nameScore;
+        return a.externalId.localeCompare(b.externalId);
+    });
+
+    const nameEligible = scores.filter((candidate) =>
+        candidate.nameScore >= DEFERRED_NAME_THRESHOLD
+    );
+    if (nameEligible.length === 0) {
+        return { decision: 'name_reject', match: null, scores };
+    }
+
+    const localityEligible = nameEligible.filter((candidate) => candidate.cityConfirmed);
+    if (localityEligible.length === 0) {
+        return { decision: 'locality_reject', match: null, scores };
+    }
+
+    if (
+        localityEligible.length > 1 &&
+        localityEligible[0].nameScore - localityEligible[1].nameScore <
+            DEFERRED_AMBIGUITY_MARGIN
+    ) {
+        return { decision: 'ambiguous', match: null, scores };
+    }
+
+    return { decision: 'matched', match: localityEligible[0], scores };
 }
 
 /** Merge two ExtractedCandidates: `primary` wins on non-null fields; `secondary` fills nulls. */
