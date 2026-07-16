@@ -19,11 +19,14 @@ import type { TopFourPick } from '@/hooks/top-fours/useTopFours';
 
 interface Props {
     pick: TopFourPick | null;   // null = empty slot
+    /** Already provenance-gated by the owning city surface. */
+    photoUrl: string | null;
     isOwner: boolean;
     onOpenEdit?: () => void;    // called when empty slot tapped by owner
+    onPhotoError?: () => void;
 }
 
-export function TopFourPosterSlot({ pick, isOwner, onOpenEdit }: Props) {
+export function TopFourPosterSlot({ pick, photoUrl, isOwner, onOpenEdit, onPhotoError }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -46,16 +49,17 @@ export function TopFourPosterSlot({ pick, isOwner, onOpenEdit }: Props) {
                         {
                             backgroundColor: palette.surfaceJournalLow,
                             borderColor: palette.dividerSoft,
-                            borderWidth: restaurant.photo_url ? 0 : StyleSheet.hairlineWidth,
+                            borderWidth: photoUrl ? 0 : StyleSheet.hairlineWidth,
                             ...Shadow.clip,
                         },
                     ]}
                 >
-                    {restaurant.photo_url ? (
+                    {photoUrl ? (
                         <ExpoImage
-                            source={{ uri: restaurant.photo_url }}
+                            source={{ uri: photoUrl }}
                             style={StyleSheet.absoluteFill}
                             contentFit="cover"
+                            onError={onPhotoError}
                         />
                     ) : null}
                     {/* Position badge */}

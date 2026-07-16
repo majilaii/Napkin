@@ -369,7 +369,11 @@ async function hydrate(
                     actor: actorProfile,
                     restaurantName: restaurant?.name ?? '',
                     restaurantId: restaurant?.id,
-                    photoUrl: entry.photo_url ?? restaurant?.photo_url ?? null,
+                    // Entry photos are user uploads and need no Places chrome.
+                    // A restaurant fallback could be a Places image; without
+                    // room for adjacent attribution in the compact row, fail
+                    // closed instead of rendering it bare.
+                    photoUrl: entry.photo_url ?? null,
                     quote: buildQuote(entry),
                     youveBeen: await viewerHasBeen(supabase, recipientUserId, restaurant?.id ?? null),
                 });

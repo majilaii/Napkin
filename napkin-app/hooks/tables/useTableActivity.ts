@@ -283,7 +283,14 @@ export interface GatheringCardActivity {
     id: string;
     sort_date: string;
     table_id: string;
-    restaurant: { id: string; name: string; city: string | null; photo_url: string | null } | null;
+    restaurant: {
+        id: string;
+        name: string;
+        city: string | null;
+        photo_url: string | null;
+        photo_source: string | null;
+        places_photo_attribution_html: string | null;
+    } | null;
     host_user_id: string | null;
     host_name: string | null;
     note: string | null;

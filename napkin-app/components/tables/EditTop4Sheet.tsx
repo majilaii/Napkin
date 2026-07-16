@@ -31,9 +31,19 @@ import { SearchInput } from '@/components/search/SearchInput';
 import { useRestaurantSearch } from '@/hooks/search/useRestaurantSearch';
 import { useSetTableTopFour } from '@/hooks/tables/useSetTableTopFour';
 import type { TopFourPlacePayload } from '@/hooks/tables/useSetTableTopFour';
-import { resolveTilePhoto } from '@/lib/restaurantPhoto';
 import type { TopFourSlot, TopFourSuggested } from '@/hooks/tables/useTableTopFour';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
+import {
+    PlacesCredit,
+    dedupePlacesCredits,
+    resolveSourcedPhoto,
+} from '@/components/ui/PlacesCredit';
+import {
+    deriveSearchPlacesCredits,
+    resolveSearchResultPhoto,
+    resolveVisibleSearchResultPhoto,
+    searchPhotoFailureKey,
+} from '@/components/search/searchPhotoPresentation';
 
 type Palette = typeof Colors.light;
 
@@ -45,9 +55,38 @@ interface DraftSlot {
     restaurant_id: string;
     restaurant_name: string;
     photo_url: string | null;
+    photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    places_photo_attribution_html?: string | null;
     city: string | null;
     /** Set for ghost Places-only results; cleared once server reconciles the real UUID. */
     place?: TopFourPlacePayload;
+}
+
+function resolveDraftSlotPhoto(slot: DraftSlot) {
+    return resolveSourcedPhoto({
+        url: slot.photo_url,
+        photoSource: slot.photo_source,
+        attributionHtml: slot.places_photo_attribution_html,
+        restaurantName: slot.restaurant_name,
+    });
+}
+
+function resolveSuggestedPhoto(item: TopFourSuggested) {
+    const { restaurant } = item;
+    return resolveSourcedPhoto({
+        url: restaurant.photo_url,
+        photoSource: restaurant.photo_source,
+        attributionHtml: restaurant.places_photo_attribution_html,
+        restaurantName: restaurant.name,
+    });
+}
+
+function scopedPhotoFailureKey(
+    scope: 'draft' | 'suggested',
+    identity: string,
+    photoUrl: string | null | undefined,
+): string | null {
+    return photoUrl ? `${scope}:${identity}:${photoUrl}` : null;
 }
 
 // ── Draft grid tile ────────────────────────────────────────────────────────────
@@ -60,18 +99,27 @@ interface DraftTileProps {
     palette: Palette;
     onClear: (position: 1 | 2 | 3 | 4) => void;
     onFocus: (position: 1 | 2 | 3 | 4) => void;
+    photoUrl: string | null;
+    photoFailureKey: string | null;
+    onPhotoError: (failureKey: string) => void;
 }
 
-function DraftTile({ position, slot, tileWidth, isFocused, palette, onClear, onFocus }: DraftTileProps) {
-    const [imgError, setImgError] = useState(false);
+function DraftTile({
+    position,
+    slot,
+    tileWidth,
+    isFocused,
+    palette,
+    onClear,
+    onFocus,
+    photoUrl,
+    photoFailureKey,
+    onPhotoError,
+}: DraftTileProps) {
     const tileHeight = (tileWidth * 4) / 3;
 
     if (slot) {
-        const photo = resolveTilePhoto({
-            primary_photo_url: slot.photo_url,
-            restaurant_name: slot.restaurant_name,
-        });
-        const showGhost = photo.kind === 'ghost' || imgError;
+        const showGhost = !photoUrl;
 
         return (
             <View style={{ position: 'relative' }}>
@@ -94,10 +142,10 @@ function DraftTile({ position, slot, tileWidth, isFocused, palette, onClear, onF
                         <View style={[styles.ghostTile, { backgroundColor: palette.surfaceJournalHi }]} />
                     ) : (
                         <Image
-                            source={{ uri: (photo as any).url }}
+                            source={{ uri: photoUrl }}
                             style={StyleSheet.absoluteFill}
                             resizeMode="cover"
-                            onError={() => setImgError(true)}
+                            onError={() => photoFailureKey && onPhotoError(photoFailureKey)}
                         />
                     )}
                     <View style={[styles.tileOverlay, { backgroundColor: palette.scrimDark }]}>
@@ -152,9 +200,19 @@ interface SuggestedRowProps {
     item: TopFourSuggested;
     palette: Palette;
     onAdd: (item: TopFourSuggested) => void;
+    photoUrl: string | null;
+    photoFailureKey: string | null;
+    onPhotoError: (failureKey: string) => void;
 }
 
-function SuggestedRow({ item, palette, onAdd }: SuggestedRowProps) {
+function SuggestedRow({
+    item,
+    palette,
+    onAdd,
+    photoUrl,
+    photoFailureKey,
+    onPhotoError,
+}: SuggestedRowProps) {
     return (
         <Pressable
             onPress={() => onAdd(item)}
@@ -166,8 +224,12 @@ function SuggestedRow({ item, palette, onAdd }: SuggestedRowProps) {
             accessibilityLabel={`Add ${item.restaurant.name}`}
         >
             <View style={[styles.suggestedThumb, { backgroundColor: palette.surfaceContainerHigh }]}>
-                {item.restaurant.photo_url ? (
-                    <Image source={{ uri: item.restaurant.photo_url }} style={styles.thumbImg} />
+                {photoUrl ? (
+                    <Image
+                        source={{ uri: photoUrl }}
+                        style={styles.thumbImg}
+                        onError={() => photoFailureKey && onPhotoError(photoFailureKey)}
+                    />
                 ) : (
                     <Ionicons name="restaurant-outline" size={18} color={palette.textMuted} />
                 )}
@@ -193,9 +255,19 @@ interface SearchRowProps {
     item: SearchResultRow;
     palette: Palette;
     onAdd: (item: SearchResultRow) => void;
+    photoUrl: string | null;
+    photoFailureKey: string | null;
+    onPhotoError: (failureKey: string) => void;
 }
 
-function SearchRow({ item, palette, onAdd }: SearchRowProps) {
+function SearchRow({
+    item,
+    palette,
+    onAdd,
+    photoUrl,
+    photoFailureKey,
+    onPhotoError,
+}: SearchRowProps) {
     return (
         <Pressable
             onPress={() => onAdd(item)}
@@ -207,8 +279,12 @@ function SearchRow({ item, palette, onAdd }: SearchRowProps) {
             accessibilityLabel={`Add ${item.name}`}
         >
             <View style={[styles.suggestedThumb, { backgroundColor: palette.surfaceContainerHigh }]}>
-                {item.photoUrl ? (
-                    <Image source={{ uri: item.photoUrl }} style={styles.thumbImg} />
+                {photoUrl ? (
+                    <Image
+                        source={{ uri: photoUrl }}
+                        style={styles.thumbImg}
+                        onError={() => photoFailureKey && onPhotoError(photoFailureKey)}
+                    />
                 ) : (
                     <Ionicons name="restaurant-outline" size={18} color={palette.textMuted} />
                 )}
@@ -262,9 +338,15 @@ export function EditTop4Sheet({
             restaurant_id: s.restaurant_id,
             restaurant_name: s.restaurant?.name ?? '',
             photo_url: s.restaurant?.photo_url ?? null,
+            photo_source: s.restaurant?.photo_source ?? null,
+            places_photo_attribution_html: s.restaurant?.places_photo_attribution_html ?? null,
             city: s.restaurant?.city ?? null,
         })),
     );
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
+    const handlePhotoError = useCallback((failureKey: string) => {
+        setFailedPhotoKeys((current) => new Set(current).add(failureKey));
+    }, []);
 
     // Reset draft when sheet opens
     React.useEffect(() => {
@@ -275,6 +357,8 @@ export function EditTop4Sheet({
                     restaurant_id: s.restaurant_id,
                     restaurant_name: s.restaurant?.name ?? '',
                     photo_url: s.restaurant?.photo_url ?? null,
+                    photo_source: s.restaurant?.photo_source ?? null,
+                    places_photo_attribution_html: s.restaurant?.places_photo_attribution_html ?? null,
                     city: s.restaurant?.city ?? null,
                 })),
             );
@@ -286,6 +370,7 @@ export function EditTop4Sheet({
             );
             setSearchValue('');
             setDebouncedSearch('');
+            setFailedPhotoKeys(new Set());
         }
         // Re-run when visible opens, or when currentSlots/initialFocusPosition change
         // while the sheet is open (e.g. caller updates position before opening).
@@ -333,6 +418,8 @@ export function EditTop4Sheet({
             photoUrl: string | null,
             city: string | null,
             place?: TopFourPlacePayload,
+            photoSource?: DraftSlot['photo_source'],
+            attributionHtml?: string | null,
         ) => {
             setDraft((prev) => {
                 const existingSlot = prev.find((s) => s.position === focusedPosition);
@@ -340,7 +427,16 @@ export function EditTop4Sheet({
                     // Replace
                     return prev.map((s) =>
                         s.position === focusedPosition
-                            ? { ...s, restaurant_id: id, restaurant_name: name, photo_url: photoUrl, city, place }
+                            ? {
+                                ...s,
+                                restaurant_id: id,
+                                restaurant_name: name,
+                                photo_url: photoUrl,
+                                photo_source: photoSource ?? null,
+                                places_photo_attribution_html: attributionHtml ?? null,
+                                city,
+                                place,
+                            }
                             : s,
                     );
                 }
@@ -350,6 +446,8 @@ export function EditTop4Sheet({
                     restaurant_id: id,
                     restaurant_name: name,
                     photo_url: photoUrl,
+                    photo_source: photoSource ?? null,
+                    places_photo_attribution_html: attributionHtml ?? null,
                     city,
                     place,
                 };
@@ -373,7 +471,16 @@ export function EditTop4Sheet({
         (item: SearchResultRow) => {
             if (item.id) {
                 // Persisted restaurant — add directly with DB id
-                addRestaurant(item.id, item.name, item.photoUrl, item.city);
+                const photo = resolveSearchResultPhoto(item);
+                addRestaurant(
+                    item.id,
+                    item.name,
+                    photo.url,
+                    item.city,
+                    undefined,
+                    item.photoSource,
+                    item.photoAttributionHtml,
+                );
             } else if (item.placeId) {
                 // Ghost Places-only result — build a place payload for server-side upsert
                 const place: TopFourPlacePayload = {
@@ -385,7 +492,7 @@ export function EditTop4Sheet({
                     cuisine: item.cuisine ?? undefined,
                 };
                 // Use placeId as a temporary key in draft (server reconciles to real UUID)
-                addRestaurant(item.placeId, item.name, item.photoUrl, item.city, place);
+                addRestaurant(item.placeId, item.name, null, item.city, place, null, null);
             }
             // else: no id or placeId — should not happen, but silently ignore
         },
@@ -394,11 +501,16 @@ export function EditTop4Sheet({
 
     const handleAddSuggested = useCallback(
         (item: TopFourSuggested) => {
+            const { restaurant } = item;
+            const photo = resolveSuggestedPhoto(item);
             addRestaurant(
-                item.restaurant.id,
-                item.restaurant.name,
-                item.restaurant.photo_url,
-                item.restaurant.city,
+                restaurant.id,
+                restaurant.name,
+                photo.url,
+                restaurant.city,
+                undefined,
+                restaurant.photo_source,
+                restaurant.places_photo_attribution_html,
             );
         },
         [addRestaurant],
@@ -459,11 +571,54 @@ export function EditTop4Sheet({
         }
     }, [hasDiff, onClose]);
 
-    const allSearchResults = [
+    const allSearchResults = useMemo(() => [
         ...searchResults.visited,
         ...searchResults.onNapkin,
         ...searchResults.morePlaces,
-    ].filter((r) => r.id || r.placeId); // persisted rows have a DB id; ghost rows have a placeId
+    ].filter((r) => r.id || r.placeId), [searchResults]); // persisted rows have a DB id; ghost rows have a placeId
+    const searchPlacesCredit = useMemo(
+        () => deriveSearchPlacesCredits(allSearchResults, failedPhotoKeys),
+        [allSearchResults, failedPhotoKeys],
+    );
+    const visiblePhotoCredits = useMemo(() => {
+        const draftCredits = draft.flatMap((slot) => {
+            const photo = resolveDraftSlotPhoto(slot);
+            const failureKey = scopedPhotoFailureKey(
+                'draft',
+                `${slot.position}:${slot.restaurant_id}`,
+                photo.url,
+            );
+            return photo.url
+                && photo.credit
+                && !(failureKey && failedPhotoKeys.has(failureKey))
+                ? [photo.credit]
+                : [];
+        });
+        const resultCredits = hasSearchQuery
+            ? (searchLoading ? [] : searchPlacesCredit.credits)
+            : suggested.flatMap((item) => {
+                const photo = resolveSuggestedPhoto(item);
+                const failureKey = scopedPhotoFailureKey(
+                    'suggested',
+                    item.restaurant.id,
+                    photo.url,
+                );
+                return photo.url
+                    && photo.credit
+                    && !(failureKey && failedPhotoKeys.has(failureKey))
+                    ? [photo.credit]
+                    : [];
+            });
+        const photoCount = draftCredits.length + (
+            hasSearchQuery
+                ? (searchLoading ? 0 : searchPlacesCredit.photoCount)
+                : resultCredits.length
+        );
+        return {
+            credits: dedupePlacesCredits([...draftCredits, ...resultCredits]),
+            photoCount,
+        };
+    }, [draft, failedPhotoKeys, hasSearchQuery, searchLoading, searchPlacesCredit, suggested]);
 
     return (
         <Modal
@@ -508,19 +663,44 @@ export function EditTop4Sheet({
 
                 {/* Draft grid */}
                 <View style={styles.grid}>
-                    {([1, 2, 3, 4] as const).map((pos) => (
-                        <DraftTile
-                            key={pos}
-                            position={pos}
-                            slot={draftMap.get(pos)}
-                            tileWidth={tileWidth}
-                            isFocused={focusedPosition === pos}
-                            palette={palette}
-                            onClear={handleClear}
-                            onFocus={handleFocus}
-                        />
-                    ))}
+                    {([1, 2, 3, 4] as const).map((pos) => {
+                        const slot = draftMap.get(pos);
+                        const photo = slot ? resolveDraftSlotPhoto(slot) : null;
+                        const failureKey = slot ? scopedPhotoFailureKey(
+                            'draft',
+                            `${slot.position}:${slot.restaurant_id}`,
+                            photo?.url,
+                        ) : null;
+                        const photoUrl = failureKey && failedPhotoKeys.has(failureKey)
+                            ? null
+                            : photo?.url ?? null;
+                        return (
+                            <DraftTile
+                                key={pos}
+                                position={pos}
+                                slot={slot}
+                                tileWidth={tileWidth}
+                                isFocused={focusedPosition === pos}
+                                palette={palette}
+                                onClear={handleClear}
+                                onFocus={handleFocus}
+                                photoUrl={photoUrl}
+                                photoFailureKey={failureKey}
+                                onPhotoError={handlePhotoError}
+                            />
+                        );
+                    })}
                 </View>
+
+                {visiblePhotoCredits.credits.length > 0 ? (
+                    <View style={styles.placesCredit}>
+                        <PlacesCredit
+                            credits={visiblePhotoCredits.credits}
+                            photoCount={visiblePhotoCredits.photoCount}
+                            testID="table-top-four-editor-places-credit"
+                        />
+                    </View>
+                ) : null}
 
                 {/* Search bar */}
                 <SearchInput
@@ -551,28 +731,48 @@ export function EditTop4Sheet({
                                 No results for &ldquo;{debouncedSearch}&rdquo;
                             </Text>
                         ) : (
-                            allSearchResults.map((item) => (
-                                <SearchRow
-                                    key={item.id ?? item.placeId ?? item.name}
-                                    item={item}
-                                    palette={palette}
-                                    onAdd={handleAddSearchResult}
-                                />
-                            ))
+                            allSearchResults.map((item) => {
+                                const photo = resolveVisibleSearchResultPhoto(item, failedPhotoKeys);
+                                const failureKey = searchPhotoFailureKey(item, photo.url);
+                                return (
+                                    <SearchRow
+                                        key={item.id ?? item.placeId ?? item.name}
+                                        item={item}
+                                        palette={palette}
+                                        onAdd={handleAddSearchResult}
+                                        photoUrl={photo.url}
+                                        photoFailureKey={failureKey}
+                                        onPhotoError={handlePhotoError}
+                                    />
+                                );
+                            })
                         )
                     ) : suggested.length > 0 ? (
                         <>
                             <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>
                                 SUGGESTED · FROM THE TABLE
                             </Text>
-                            {suggested.map((item) => (
-                                <SuggestedRow
-                                    key={item.restaurant.id}
-                                    item={item}
-                                    palette={palette}
-                                    onAdd={handleAddSuggested}
-                                />
-                            ))}
+                            {suggested.map((item) => {
+                                const photo = resolveSuggestedPhoto(item);
+                                const failureKey = scopedPhotoFailureKey(
+                                    'suggested',
+                                    item.restaurant.id,
+                                    photo.url,
+                                );
+                                return (
+                                    <SuggestedRow
+                                        key={item.restaurant.id}
+                                        item={item}
+                                        palette={palette}
+                                        onAdd={handleAddSuggested}
+                                        photoUrl={failureKey && failedPhotoKeys.has(failureKey)
+                                            ? null
+                                            : photo.url}
+                                        photoFailureKey={failureKey}
+                                        onPhotoError={handlePhotoError}
+                                    />
+                                );
+                            })}
                         </>
                     ) : (
                         <Text style={[styles.emptyHint, { color: palette.textMuted }]}>
@@ -624,6 +824,11 @@ const styles = StyleSheet.create({
         marginHorizontal: 22,
         gap: 8,
         marginBottom: Spacing.md,
+    },
+    placesCredit: {
+        marginHorizontal: 22,
+        marginTop: -Spacing.xs,
+        marginBottom: Spacing.sm,
     },
     tile: {
         borderRadius: Radius.sm,

@@ -20,6 +20,7 @@ Deno.test('list_mine payload snapshot carries attributed Places cover metadata a
         entryCount: 3,
         verifiedCount: 2,
         coverRestaurant: {
+            name: 'Ada Cafe',
             photo_url: 'https://project.supabase.co/storage/v1/object/public/restaurant-photos/place.jpg',
             photo_source: 'places',
             places_photo_attribution_html: '<a href="https://maps.google.com/?cid=1">Ada</a>',
@@ -37,6 +38,7 @@ Deno.test('list_mine payload snapshot carries attributed Places cover metadata a
             cover_photo_url: 'https://project.supabase.co/storage/v1/object/public/restaurant-photos/place.jpg',
             cover_photo_source: 'places',
             cover_attribution_html: '<a href="https://maps.google.com/?cid=1">Ada</a>',
+            cover_restaurant_name: 'Ada Cafe',
             table_name: null,
         }],
     });
@@ -48,6 +50,7 @@ Deno.test('list_mine cover projection preserves non-Places covers without invent
         entryCount: null,
         verifiedCount: 0,
         coverRestaurant: {
+            name: 'Own Photo Cafe',
             photo_url: 'https://project.supabase.co/storage/v1/object/public/entry-photos/own.jpg',
             photo_source: 'user',
             places_photo_attribution_html: null,
@@ -58,6 +61,7 @@ Deno.test('list_mine cover projection preserves non-Places covers without invent
     assertEquals(row.cover_photo_url, 'https://project.supabase.co/storage/v1/object/public/entry-photos/own.jpg');
     assertEquals(row.cover_photo_source, 'user');
     assertEquals(row.cover_attribution_html, null);
+    assertEquals(row.cover_restaurant_name, 'Own Photo Cafe');
     assertEquals(row.entry_count, 0);
     assertEquals(row.table_name, 'Sunday Club');
 });
@@ -75,9 +79,11 @@ Deno.test('list_mine cover projection emits an explicit nullable triplet when no
         cover_photo_url: row.cover_photo_url,
         cover_photo_source: row.cover_photo_source,
         cover_attribution_html: row.cover_attribution_html,
+        cover_restaurant_name: row.cover_restaurant_name,
     }, {
         cover_photo_url: null,
         cover_photo_source: null,
         cover_attribution_html: null,
+        cover_restaurant_name: null,
     });
 });

@@ -870,6 +870,8 @@ export default function CreateEntryScreen() {
                             restaurantName={selectedPlace.name}
                             meta={mastheadMeta}
                             thumbnailUri={mastheadThumbnail}
+                            thumbnailPhotoSource="places"
+                            thumbnailAttributionHtml={selectedPlace.photoAttributionHtml}
                             onClearPlace={handleClearPlace}
                         />
                     ) : null}

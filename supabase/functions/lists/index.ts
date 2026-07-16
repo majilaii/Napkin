@@ -478,6 +478,7 @@ serve(async (req) => {
                         .from('list_entries')
                         .select(`
                             restaurant:restaurants(
+                                name,
                                 photo_url,
                                 photo_source,
                                 places_photo_attribution_html
@@ -517,7 +518,7 @@ serve(async (req) => {
             // gate, counts and cover selection. It returns the same card array as
             // before, now capped and keyset-pageable with `(saved_at, id)`.
             const { data: cards, error: cardsErr } = await supabase.rpc(
-                'fn_saved_list_cards',
+                'fn_saved_list_cards_with_cover_credit',
                 {
                     p_viewer_id: user.id,
                     p_limit: page.value.limit,
@@ -1157,7 +1158,7 @@ serve(async (req) => {
         // consumes { rows } directly.
         if (action === 'browse_public') {
             const BROWSE_CAP = 6;
-            const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_browse_public_lists', {
+            const { data: rpcRows, error: rpcErr } = await supabase.rpc('fn_browse_public_lists_with_cover_credit', {
                 p_viewer: user.id,
                 p_limit: BROWSE_CAP,
             });
@@ -1167,6 +1168,7 @@ serve(async (req) => {
                 cover_photo_url: string | null;
                 cover_photo_source: string | null;
                 cover_attribution_html: string | null;
+                cover_restaurant_name: string | null;
             };
             // The RPC returns an explicit public projection (never table_id),
             // recency-ordered, self-excluded, capped. Re-project the cover

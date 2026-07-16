@@ -56,6 +56,7 @@ Deno.test('user-profile edge function', async (t) => {
                     publicList,
                     3,
                     {
+                        name: 'Friday Cafe',
                         photo_url: 'https://places.test/photo.jpg',
                         photo_source: 'places',
                         places_photo_attribution_html:
@@ -78,6 +79,7 @@ Deno.test('user-profile edge function', async (t) => {
                     cover_photo_source: 'places',
                     cover_attribution_html:
                         '<a href="https://maps.test/contributor">A. Photo</a>',
+                    cover_restaurant_name: 'Friday Cafe',
                 }],
             },
         });
@@ -89,6 +91,7 @@ Deno.test('user-profile edge function', async (t) => {
                 publicList,
                 3,
                 {
+                    name: 'Member Cafe',
                     photo_url: 'https://napkin.test/member-photo.jpg',
                     photo_source: 'user',
                     places_photo_attribution_html: null,
@@ -100,6 +103,7 @@ Deno.test('user-profile edge function', async (t) => {
                 cover_photo_url: 'https://napkin.test/member-photo.jpg',
                 cover_photo_source: 'user',
                 cover_attribution_html: null,
+                cover_restaurant_name: 'Member Cafe',
             },
         );
     });
@@ -111,6 +115,7 @@ Deno.test('user-profile edge function', async (t) => {
             cover_photo_url: null,
             cover_photo_source: null,
             cover_attribution_html: null,
+            cover_restaurant_name: null,
         });
     });
 

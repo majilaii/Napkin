@@ -15,6 +15,7 @@ import {
     quickTakePromptLabel,
     type ProfileQuickTake,
 } from '@/lib/profileQuickTakes';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import { SectionHeader } from './SectionHeader';
 
@@ -28,20 +29,18 @@ type Props = {
 type Palette = typeof Colors.light;
 
 function RestaurantArt({
-    take,
+    name,
+    photoUrl,
     palette,
     onPress,
+    onError,
 }: {
-    take: ProfileQuickTake;
+    name: string;
+    photoUrl: string;
     palette: Palette;
     onPress: () => void;
+    onError: () => void;
 }) {
-    const [failed, setFailed] = useState(false);
-    useEffect(() => setFailed(false), [take.photo_url]);
-    const showPhoto = !!take.photo_url && !failed;
-
-    if (!showPhoto) return null;
-
     return (
         <PressableScale
             onPress={onPress}
@@ -53,16 +52,16 @@ function RestaurantArt({
                 },
             ]}
             accessibilityRole="link"
-            accessibilityLabel={`Open ${take.name} restaurant page`}
+            accessibilityLabel={`Open ${name} restaurant page`}
             accessibilityHint="Shows the restaurant’s details"
             testID="quick-take-restaurant-art-link"
         >
             <Image
-                source={{ uri: take.photo_url! }}
+                source={{ uri: photoUrl }}
                 style={StyleSheet.absoluteFill}
                 contentFit="cover"
                 transition={160}
-                onError={() => setFailed(true)}
+                onError={onError}
                 accessible={false}
             />
             <View
@@ -109,6 +108,15 @@ function QuickTakeRow({
     }));
     const prompt = quickTakePromptLabel(take.prompt_key);
     const meta = [take.city, take.cuisine].filter(Boolean).join(' · ');
+    const sourcedPhoto = resolveSourcedPhoto({
+        url: take.photo_url,
+        photoSource: take.photo_source,
+        attributionHtml: take.places_photo_attribution_html,
+        restaurantName: take.name,
+    });
+    const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null);
+    useEffect(() => setFailedPhotoUrl(null), [take.photo_url]);
+    const photoUrl = sourcedPhoto.url === failedPhotoUrl ? null : sourcedPhoto.url;
     const accessibilityLabel = [
         `${prompt}: ${take.name}`,
         meta || null,
@@ -149,7 +157,15 @@ function QuickTakeRow({
                     </View>
                     <View style={styles.detailBody} testID="quick-take-detail-body">
                         <View style={styles.mediaRow} testID="quick-take-detail-media-row">
-                            <RestaurantArt take={take} palette={palette} onPress={onOpenRestaurant} />
+                            {photoUrl ? (
+                                <RestaurantArt
+                                    name={take.name}
+                                    photoUrl={photoUrl}
+                                    palette={palette}
+                                    onPress={onOpenRestaurant}
+                                    onError={() => setFailedPhotoUrl(photoUrl)}
+                                />
+                            ) : null}
                             <Pressable
                                 onPress={onOpenRestaurant}
                                 style={({ pressed }) => [
@@ -178,6 +194,14 @@ function QuickTakeRow({
                                 ) : null}
                             </Pressable>
                         </View>
+                        {photoUrl ? (
+                            <PlacesCredit
+                                credits={[sourcedPhoto.credit]}
+                                photoCount={1}
+                                style={styles.placesCredit}
+                                testID="quick-take-places-credit"
+                            />
+                        ) : null}
                         {take.note ? (
                             <Text
                                 style={[styles.note, { color: palette.textSecondary }]}
@@ -334,6 +358,7 @@ const styles = StyleSheet.create({
         ...Type.quote,
         marginTop: Spacing.sm + Spacing.xs,
     },
+    placesCredit: { marginTop: Spacing.xs },
     art: {
         width: 76,
         height: 76,

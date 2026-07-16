@@ -18,16 +18,19 @@
  * (socialsPresentation.reduceRailKicker — window-honest, never a false
  * "this week"). Self-hides (null) when there are no cards.
  */
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
+import {
+    PlacesCredit,
+    resolveSourcedPhoto,
+    type PlacesPhotoCredit,
+} from '@/components/ui/PlacesCredit';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { SocialsCard } from '@/hooks/feed/useSocials';
 import { SectionKicker } from './SectionKicker';
@@ -47,6 +50,52 @@ function platformGlyph(platform: SocialsCard['platform']): Glyph {
 }
 
 export function OnSocialsBlock({ cards }: { cards: SocialsCard[] }) {
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
+    const handlePhotoError = useCallback((failureKey: string) => {
+        setFailedPhotoKeys((current) => {
+            if (current.has(failureKey)) return current;
+            return new Set(current).add(failureKey);
+        });
+    }, []);
+
+    // Resolve the clip-first ladder in the owning render. The chosen Places
+    // image and its aggregate credit therefore enter and leave in the same
+    // commit, including after either image rung fails.
+    const presentations = cards.map((card) => {
+        const thumbFailureKey = card.thumb_url
+            ? `${card.restaurant_id}:thumb:${card.thumb_url}`
+            : null;
+        const showThumb = !!thumbFailureKey && !failedPhotoKeys.has(thumbFailureKey);
+        const placesHero = resolveSourcedPhoto({
+            url: card.photo_url,
+            // The clip fallback ladder is specifically mirrored Places imagery;
+            // user/Table restaurant heroes are not public-feed fallbacks.
+            photoSource: card.photo_source === 'places' ? 'places' : null,
+            attributionHtml: card.attribution_html,
+            restaurantName: card.name,
+        });
+        const heroFailureKey = placesHero.url
+            ? `${card.restaurant_id}:places:${placesHero.url}`
+            : null;
+        const showHero = !showThumb
+            && !!heroFailureKey
+            && !failedPhotoKeys.has(heroFailureKey);
+
+        return {
+            card,
+            thumbUrl: showThumb ? card.thumb_url : null,
+            thumbFailureKey,
+            heroUrl: showHero ? placesHero.url : null,
+            heroFailureKey,
+            credit: showHero ? placesHero.credit : null,
+        };
+    });
+    const renderedPlacesPhotos = presentations.flatMap((presentation) => (
+        presentation.heroUrl && presentation.credit
+            ? [{ url: presentation.heroUrl, credit: presentation.credit }]
+            : []
+    ));
+
     if (cards.length === 0) return null;
 
     return (
@@ -57,26 +106,44 @@ export function OnSocialsBlock({ cards }: { cards: SocialsCard[] }) {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.railContent}
             >
-                {cards.map((card) => (
-                    <SocialsClipCard key={card.restaurant_id} card={card} />
+                {presentations.map((presentation) => (
+                    <SocialsClipCard
+                        key={presentation.card.restaurant_id}
+                        {...presentation}
+                        onPhotoError={handlePhotoError}
+                    />
                 ))}
             </ScrollView>
+            <PlacesCredit
+                credits={renderedPlacesPhotos.map((photo) => photo.credit)}
+                photoCount={renderedPlacesPhotos.length}
+                testID="socials-places-credit"
+                interactive={false}
+                style={styles.aggregateCredit}
+            />
         </View>
     );
 }
 
-function SocialsClipCard({ card }: { card: SocialsCard }) {
+function SocialsClipCard({
+    card,
+    thumbUrl,
+    thumbFailureKey,
+    heroUrl,
+    heroFailureKey,
+    onPhotoError,
+}: {
+    card: SocialsCard;
+    thumbUrl: string | null;
+    thumbFailureKey: string | null;
+    heroUrl: string | null;
+    heroFailureKey: string | null;
+    credit: PlacesPhotoCredit | null;
+    onPhotoError: (failureKey: string) => void;
+}) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const router = useRouter();
-    const [thumbFailed, setThumbFailed] = useState(false);
-    const [heroFailed, setHeroFailed] = useState(false);
-
-    // Clip-first chain: durable thumb → attributed Places hero → type plate.
-    const showThumb = !!card.thumb_url && !thumbFailed;
-    const placesAttribution =
-        card.photo_source === 'places' ? parsePlacesAttribution(card.attribution_html) : null;
-    const showHero = !showThumb && !!card.photo_url && !!placesAttribution && !heroFailed;
 
     const signal = socialsSignalLine(card);
 
@@ -91,37 +158,24 @@ function SocialsClipCard({ card }: { card: SocialsCard }) {
             accessibilityLabel={`${card.name}. ${signal}`}
         >
             <View style={[styles.media, { backgroundColor: chipTint(card.restaurant_id, palette) }]}>
-                {showThumb ? (
+                {thumbUrl ? (
                     <ExpoImage
-                        source={{ uri: card.thumb_url as string }}
+                        source={{ uri: thumbUrl }}
                         style={StyleSheet.absoluteFillObject}
                         contentFit="cover"
-                        recyclingKey={card.thumb_url}
+                        recyclingKey={thumbUrl}
                         transition={120}
-                        onError={() => setThumbFailed(true)}
+                        onError={() => thumbFailureKey && onPhotoError(thumbFailureKey)}
                     />
-                ) : showHero ? (
-                    <>
-                        <ExpoImage
-                            source={{ uri: card.photo_url as string }}
-                            style={StyleSheet.absoluteFillObject}
-                            contentFit="cover"
-                            recyclingKey={card.photo_url}
-                            transition={120}
-                            onError={() => setHeroFailed(true)}
-                        />
-                        <LinearGradient
-                            colors={['rgba(28, 28, 25, 0)', 'rgba(28, 28, 25, 0.6)']}
-                            locations={[0.6, 1]}
-                            style={StyleSheet.absoluteFillObject}
-                        />
-                        <Text
-                            style={[styles.credit, { color: palette.textOnImage }]}
-                            numberOfLines={1}
-                        >
-                            {placesAttribution!.label}
-                        </Text>
-                    </>
+                ) : heroUrl ? (
+                    <ExpoImage
+                        source={{ uri: heroUrl }}
+                        style={StyleSheet.absoluteFillObject}
+                        contentFit="cover"
+                        recyclingKey={heroUrl}
+                        transition={120}
+                        onError={() => heroFailureKey && onPhotoError(heroFailureKey)}
+                    />
                 ) : (
                     <Ionicons
                         name={platformGlyph(card.platform)}
@@ -158,15 +212,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    credit: {
-        position: 'absolute',
-        bottom: 5,
-        left: 8,
-        right: 8,
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-        lineHeight: 14,
-        opacity: 0.9,
+    aggregateCredit: {
+        marginHorizontal: Spacing.lg,
+        marginTop: 6,
     },
     caption: {
         paddingHorizontal: 10,

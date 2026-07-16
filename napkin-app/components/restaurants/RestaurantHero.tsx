@@ -15,16 +15,16 @@
  * Bookmark lives in the chrome (per logging-entry-canvas). Log affordance is
  * the floating pill bottom-right — not this component.
  */
-import React from 'react';
-import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing } from '@/constants/theme';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
 import type { RestaurantPageRestaurant } from '@/hooks/restaurants/useRestaurantPage';
 
 type Palette = typeof Colors.light;
@@ -67,7 +67,15 @@ export function RestaurantHero({
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
 
-    const photoUri = restaurant.photo_url ?? null;
+    const resolvedPhoto = resolveSourcedPhoto({
+        url: restaurant.photo_url,
+        photoSource: restaurant.photo_source,
+        attributionHtml: restaurant.places_photo_attribution_html,
+        restaurantName: restaurant.name,
+    });
+    const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null);
+    const photoUri = resolvedPhoto.url === failedPhotoUrl ? null : resolvedPhoto.url;
+    const photoCredit = photoUri ? resolvedPhoto.credit : null;
     const isInvitation = !photoUri;
 
     const metaParts: string[] = [];
@@ -148,8 +156,7 @@ export function RestaurantHero({
     // attribution, falls through to invitation hero if photo_url is also null.
     // When a user/Table photo replaces a Places hero, photo_source flips server-side
     // and isPlaces becomes false on the next render — no manual refresh needed (AC 11).
-    const isPlaces = restaurant.photo_source === 'places';
-    const parsed = isPlaces ? parsePlacesAttribution(restaurant.places_photo_attribution_html) : null;
+    const isPlaces = resolvedPhoto.isPlaces;
 
     return (
         <>
@@ -160,6 +167,7 @@ export function RestaurantHero({
                         style={StyleSheet.absoluteFill}
                         contentFit="cover"
                         transition={200}
+                        onError={() => setFailedPhotoUrl(photoUri)}
                     />
                 ) : null}
 
@@ -237,30 +245,19 @@ export function RestaurantHero({
 
             {/* TICKET-057 AC 6/7: attribution rule below the hero photo, on the warm-paper
                 margin. NOT overlaid on the image (Heirloom: no scrim chrome on photography).
-                Only rendered when photo_source === 'places' AND parsed is non-null. */}
-            {isPlaces && parsed ? (
+                Only rendered when the shared source gate returns a Places credit. */}
+            {photoCredit ? (
                 <View
                     style={[
                         styles.attributionRow,
                         { backgroundColor: palette.background },
                     ]}
                 >
-                    <Text style={[styles.attribution, { color: palette.textMuted }]}>
-                        {'photo via google'}
-                        {parsed ? ' · ' : null}
-                        {parsed ? (
-                            parsed.href != null ? (
-                                <Text
-                                    onPress={() => Linking.openURL(parsed.href!)}
-                                    style={styles.attributionLink}
-                                >
-                                    {parsed.label}
-                                </Text>
-                            ) : (
-                                <Text>{parsed.label}</Text>
-                            )
-                        ) : null}
-                    </Text>
+                    <PlacesCredit
+                        credits={[photoCredit]}
+                        photoCount={1}
+                        testID="restaurant-hero-places-credit"
+                    />
                 </View>
             ) : null}
         </>
@@ -350,17 +347,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 22,
         paddingTop: 8,
         paddingBottom: 12,
-    },
-    attribution: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 11,
-        letterSpacing: 0.2,
-    },
-    attributionLink: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 11,
-        letterSpacing: 0.2,
-        textDecorationLine: 'underline',
     },
     // ── Invitation (no-photo) variant ────────────────────────────────────
     invitationBg: {

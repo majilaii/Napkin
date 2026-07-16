@@ -55,6 +55,7 @@ describe('myListsToShelf', () => {
             coverPhotoUrl: 'https://x/p.jpg',
             coverPhotoSource: 'user',
             coverAttributionHtml: null,
+            coverRestaurantName: null,
             emoji: '🍣',
             meta: '5 places',
         });
@@ -120,6 +121,7 @@ describe('publicListsToShelf', () => {
             coverPhotoUrl: 'https://c/1.jpg',
             coverPhotoSource: 'table',
             coverAttributionHtml: null,
+            coverRestaurantName: null,
             emoji: null,
             meta: '7 places',
         });

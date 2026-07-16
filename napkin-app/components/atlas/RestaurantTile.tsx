@@ -22,12 +22,16 @@ import {
 import { Colors, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { PressableScale } from '@/components/ui/napkin';
+import {
+    resolveSourcedPhoto,
+    type ResolvedSourcedPhoto,
+} from '@/components/ui/PlacesCredit';
 import { Ionicons } from '@expo/vector-icons';
 import { Avatar } from '@/components/feed/Avatar';
 import type { AtlasRestaurantTile } from '@/hooks/tables/useTableAtlasCity';
 
 // Warm gradient fallbacks
-const TEXTURES: ReadonlyArray<readonly [string, string]> = [
+const TEXTURES: readonly (readonly [string, string])[] = [
     ['#cc8b4a', '#713617'],
     ['#8c9962', '#4a5531'],
     ['#8f3e2b', '#3b170e'],
@@ -59,6 +63,9 @@ interface Props {
     onPress: () => void;
     heroHeight?: number;
     palette?: typeof Colors.light;
+    /** AtlasGridView supplies its already-resolved photo for aggregate credit parity. */
+    resolvedPhoto?: ResolvedSourcedPhoto;
+    onPhotoError?: () => void;
 }
 
 export function RestaurantTile({
@@ -66,10 +73,18 @@ export function RestaurantTile({
     onPress,
     heroHeight = 190,
     palette: paletteProp,
+    resolvedPhoto,
+    onPhotoError,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = paletteProp ?? Colors[scheme];
     const [gradStart, gradEnd] = textureFor(tile.id);
+    const photo = resolvedPhoto ?? resolveSourcedPhoto({
+        url: tile.photo_url,
+        photoSource: tile.photo_source,
+        attributionHtml: tile.places_photo_attribution_html,
+        restaurantName: tile.name,
+    });
 
     // Most-recent visit date
     const mostRecentDate = tile.visits[0]?.date ?? '';
@@ -100,12 +115,13 @@ export function RestaurantTile({
         <PressableScale onPress={onPress} haptic="light" scaleTo={0.97}>
             <View style={[styles.tile, Shadow.ambient]}>
                 {/* Photo / gradient hero */}
-                {tile.photo_url ? (
+                {photo.url ? (
                     <ImageBackground
-                        source={{ uri: tile.photo_url }}
+                        source={{ uri: photo.url }}
                         style={[styles.img, { height: heroHeight }]}
                         imageStyle={styles.imgInner}
                         resizeMode="cover"
+                        onError={onPhotoError}
                     >
                         <View style={styles.imgGradient} />
                         <View style={styles.imgOutline} />

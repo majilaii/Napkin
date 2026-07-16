@@ -2,19 +2,24 @@ import type { ListDetail, ListEntry, OwnerProfile } from '@/hooks/lists/useList'
 import {
     deriveContextLine,
     deriveCover,
+    deriveListPlacesCredits,
     deriveMetadataLine,
     deriveSavesClause,
+    listCoverPhotoFailureKey,
+    listRowPhotoFailureKey,
 } from '../listHeaderUtils';
+import { dedupePlacesCredits } from '@/components/ui/PlacesCredit';
 
 function entry(
     photoUrl: string | null,
     photoSource: ListEntry['restaurant']['photo_source'] = 'user',
     attributionHtml: string | null = null,
+    name = 'Place',
 ): Pick<ListEntry, 'restaurant'> {
     return {
         restaurant: {
             id: 'r',
-            name: 'Place',
+            name,
             address: null,
             city: null,
             country: null,
@@ -47,7 +52,6 @@ describe('deriveCover (A4)', () => {
     it('takes a known non-Places restaurant hero without a credit', () => {
         expect(deriveCover([entry('a.jpg'), entry('b.jpg')])).toEqual({
             photoUrl: 'a.jpg',
-            attributionLabel: null,
         });
     });
 
@@ -56,7 +60,6 @@ describe('deriveCover (A4)', () => {
             entry('places.jpg', 'places', '<a href="https://maps.example/jane">Jane Doe</a>'),
         ])).toEqual({
             photoUrl: 'places.jpg',
-            attributionLabel: 'Jane Doe',
         });
     });
 
@@ -71,6 +74,48 @@ describe('deriveCover (A4)', () => {
     it('is null when the first entry has no photo or the list is empty', () => {
         expect(deriveCover([entry(null), entry('b.jpg')])).toBeNull();
         expect(deriveCover([])).toBeNull();
+    });
+});
+
+describe('deriveListPlacesCredits', () => {
+    it('aggregates every rendered Places row and dedupes normalized authors in order', () => {
+        const summary = deriveListPlacesCredits([
+            entry('one.jpg', 'places', '<a href="https://maps.test/jane">Jane Doe</a>', 'One'),
+            entry('two.jpg', 'places', '  JANE   DOE  ', 'Two'),
+            entry('three.jpg', 'places', 'Marco', 'Three'),
+            entry('own.jpg', 'user', null, 'Own photo'),
+        ]);
+
+        expect(summary.photoCount).toBe(4);
+        expect(dedupePlacesCredits(summary.credits).map((credit) => credit.label)).toEqual([
+            'Jane Doe',
+            'Marco',
+        ]);
+    });
+
+    it('does not credit or count a suppressed un-attributed Places row', () => {
+        expect(deriveListPlacesCredits([
+            entry('missing.jpg', 'places', null),
+            entry('own.jpg', 'table', null),
+        ])).toEqual({ credits: [], photoCount: 0 });
+    });
+
+    it('tracks cover and row image failures as separate rendered instances', () => {
+        const rows = [
+            entry('one.jpg', 'places', 'Jane', 'One'),
+            entry('two.jpg', 'places', 'Marco', 'Two'),
+        ];
+        const failedCover = listCoverPhotoFailureKey(rows)!;
+        const failedSecondRow = listRowPhotoFailureKey(rows[1])!;
+
+        const summary = deriveListPlacesCredits(rows, new Set([
+            failedCover,
+            failedSecondRow,
+        ]));
+
+        expect(summary.photoCount).toBe(1);
+        expect(dedupePlacesCredits(summary.credits).map((credit) => credit.label))
+            .toEqual(['Jane']);
     });
 });
 

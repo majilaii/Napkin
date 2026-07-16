@@ -5,8 +5,12 @@ export type QuickTake = {
     name: string;
     city: string | null;
     cuisine: string | null;
-    /** Guaranteed Places/public-safe. User and Table photos never enter hydration. */
+    /** Guaranteed attributed Places/public-safe. User and Table photos never enter hydration. */
     photo_url: string | null;
+    /** Explicit provenance for the client-side source gate. */
+    photo_source: 'places' | null;
+    /** Paired with photo_url; both values fail closed to null when either is unavailable. */
+    places_photo_attribution_html: string | null;
     note: string | null;
 };
 
@@ -24,6 +28,7 @@ type RestaurantRow = {
     cuisine: string | null;
     photo_url: string | null;
     photo_source: string | null;
+    places_photo_attribution_html: string | null;
 };
 
 /**
@@ -41,6 +46,10 @@ export function hydrateProfileTakes(
         .map((take): QuickTake | null => {
             const restaurant = byId.get(take.restaurant_id);
             if (!restaurant) return null;
+            const placesAttribution = restaurant.places_photo_attribution_html?.trim() || null;
+            const placesPhotoUrl = restaurant.photo_source === 'places' && placesAttribution
+                ? (restaurant.photo_url ?? null)
+                : null;
             return {
                 prompt_key: take.prompt_key,
                 position: take.position,
@@ -48,9 +57,9 @@ export function hydrateProfileTakes(
                 name: restaurant.name,
                 city: restaurant.city ?? null,
                 cuisine: restaurant.cuisine ?? null,
-                photo_url: restaurant.photo_source === 'places'
-                    ? (restaurant.photo_url ?? null)
-                    : null,
+                photo_url: placesPhotoUrl,
+                photo_source: placesPhotoUrl ? 'places' : null,
+                places_photo_attribution_html: placesPhotoUrl ? placesAttribution : null,
                 note: take.note ?? null,
             };
         })

@@ -17,6 +17,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { SearchResultRow as SearchResultRowType } from '@/hooks/search/useRestaurantSearch';
+import {
+    resolveVisibleSearchResultPhoto,
+    searchPhotoFailureKey,
+} from './searchPhotoPresentation';
 
 interface Props {
     item: SearchResultRowType;
@@ -27,20 +31,25 @@ interface Props {
      * "Pinned near you" section; absent everywhere else.
      */
     distanceLabel?: string | null;
+    failedPhotoKeys?: ReadonlySet<string>;
+    onPhotoError?: (failureKey: string) => void;
 }
 
-function buildPhotoUrl(_photoReference: string | null): string | null {
-    // No Places photo proxy in v1 — ghosts render text-only (no thumb).
-    return null;
-}
-
-export function SearchResultRow({ item, onPress, distanceLabel }: Props) {
+export function SearchResultRow({
+    item,
+    onPress,
+    distanceLabel,
+    failedPhotoKeys = new Set(),
+    onPhotoError,
+}: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const [imgError, setImgError] = useState(false);
+    const [locallyFailedKey, setLocallyFailedKey] = useState<string | null>(null);
 
-    const thumbUrl = item.photoUrl ?? buildPhotoUrl(item.photoReference);
-    const hasPhoto = !!thumbUrl && !imgError;
+    const photo = resolveVisibleSearchResultPhoto(item, failedPhotoKeys);
+    const failureKey = searchPhotoFailureKey(item, photo.url);
+    const thumbUrl = failureKey === locallyFailedKey ? null : photo.url;
+    const hasPhoto = !!thumbUrl;
 
     // Meta line: address · cuisine. TICKET-167 flips the preference to address
     // (falling back to city) so same-name venues at different addresses read as
@@ -75,7 +84,11 @@ export function SearchResultRow({ item, onPress, distanceLabel }: Props) {
                 <Image
                     source={{ uri: thumbUrl! }}
                     style={styles.thumb}
-                    onError={() => setImgError(true)}
+                    onError={() => {
+                        if (!failureKey) return;
+                        setLocallyFailedKey(failureKey);
+                        onPhotoError?.(failureKey);
+                    }}
                 />
             ) : null}
 

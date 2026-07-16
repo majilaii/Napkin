@@ -29,7 +29,13 @@ import {
     type ListDetailSheetHandle,
 } from '@/components/lists';
 import { ListEntryRow } from '@/components/lists/ListEntryRow';
-import { deriveContextLine, deriveCover, deriveMetadataLine } from '@/components/lists/listHeaderUtils';
+import {
+    deriveContextLine,
+    deriveCover,
+    deriveListPlacesCredits,
+    deriveMetadataLine,
+    listCoverPhotoFailureKey,
+} from '@/components/lists/listHeaderUtils';
 import { HALF, PEEK, resolveSheetMode, visibleHeight, type Snap } from '@/components/lists/listSheetMath';
 import { mintFocusRequest, resolveSettleFocus, type FocusRequest } from '@/components/lists/focusRequest';
 import { derivePinnedIds } from '@/components/lists/pinnedLookupUtils';
@@ -115,6 +121,10 @@ export default function ListDetailScreen() {
     const [wishlistOverrides, setWishlistOverrides] = useState<Map<string, boolean>>(() => new Map());
     const wishlistPendingRef = useRef<Set<string>>(new Set());
     const [wishlistPendingIds, setWishlistPendingIds] = useState<Set<string>>(() => new Set());
+    const [failedListPhotoKeys, setFailedListPhotoKeys] = useState<Set<string>>(() => new Set());
+    const handleListPhotoError = useCallback((failureKey: string) => {
+        setFailedListPhotoKeys((current) => new Set(current).add(failureKey));
+    }, []);
 
     const existingRestaurantIds = useMemo(
         () => entries.map((entry) => entry.restaurant_id),
@@ -150,6 +160,14 @@ export default function ListDetailScreen() {
 
     // ── Header derivations ──────────────────────────────────────────────────────────
     const cover = useMemo(() => deriveCover(entries), [entries]);
+    const coverFailureKey = useMemo(() => listCoverPhotoFailureKey(entries), [entries]);
+    const visibleCoverUrl = coverFailureKey && failedListPhotoKeys.has(coverFailureKey)
+        ? null
+        : cover?.photoUrl ?? null;
+    const placesCredit = useMemo(
+        () => deriveListPlacesCredits(entries, failedListPhotoKeys),
+        [entries, failedListPhotoKeys],
+    );
     const metadata = list ? deriveMetadataLine(entries.length, saveCount, list.privacy, list.table_id) : '';
     const contextLine = useMemo(
         () => (list ? deriveContextLine(list, isOwner, ownerProfile) : null),
@@ -329,9 +347,11 @@ export default function ListDetailScreen() {
                     ? () => handleToggleWishlist(entry, pinnedIds.has(entry.restaurant_id))
                     : undefined}
                 drag={drag}
+                failedPhotoKeys={failedListPhotoKeys}
+                onPhotoError={handleListPhotoError}
             />
         ),
-        [list, canEditEntries, isEditingPlaces, sheetMode.locked, dragDisabled, reorderEntry.isPending, pinnedIds, wishlistPendingIds, user, openRestaurant, focusPin, handleRemove, handleNoteChange, handleToggleWishlist],
+        [list, canEditEntries, isEditingPlaces, sheetMode.locked, dragDisabled, reorderEntry.isPending, pinnedIds, wishlistPendingIds, user, openRestaurant, focusPin, handleRemove, handleNoteChange, handleToggleWishlist, failedListPhotoKeys, handleListPhotoError],
     );
 
     const canShareList = !!list && !list.table_id && verifiedCount > 0 && (isOwner || list.privacy === 'public');
@@ -406,8 +426,12 @@ export default function ListDetailScreen() {
                             headerProps={{
                                 list,
                                 ownerProfile,
-                                cover: cover?.photoUrl ?? null,
-                                coverAttribution: cover?.attributionLabel ?? null,
+                                cover: visibleCoverUrl,
+                                placesCredits: placesCredit.credits,
+                                placesPhotoCount: placesCredit.photoCount,
+                                onCoverError: () => {
+                                    if (coverFailureKey) handleListPhotoError(coverFailureKey);
+                                },
                                 metadata,
                                 contextLine,
                                 isOwner,

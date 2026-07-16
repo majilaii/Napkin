@@ -11,3 +11,10 @@ export { SheetHeader } from './SheetHeader';
 export { RestaurantHeader } from './RestaurantHeader';
 export { PhotoStrip } from './PhotoStrip';
 export { PhotoCollage } from './PhotoCollage';
+export {
+    PlacesCredit,
+    dedupePlacesCredits,
+    normalizePlacesCreditLabel,
+    resolveSourcedPhoto,
+} from './PlacesCredit';
+export type { PlacesPhotoCredit, ResolvedSourcedPhoto, SourcedPhotoInput } from './PlacesCredit';

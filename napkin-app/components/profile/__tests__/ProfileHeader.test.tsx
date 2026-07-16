@@ -139,7 +139,8 @@ describe('ProfileHeader avatar swap badge', () => {
         // filter to the host View so the count means "one dimmer rendered".
         expect(
             renderer.root.findAll(
-                (node) => typeof node.type === 'string' && node.props.testID === 'profile-avatar-dimmer',
+                (node: { type: unknown; props: Record<string, unknown> }) =>
+                    typeof node.type === 'string' && node.props.testID === 'profile-avatar-dimmer',
             ),
         ).toHaveLength(1);
         act(() => renderer.unmount());

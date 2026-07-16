@@ -32,8 +32,10 @@ export interface PublicListResult {
     cover_photo_url?: string | null;
     /** TICKET-189 (browse only): 'places' when cover_photo_url is set, else null. */
     photo_source?: string | null;
-    /** TICKET-189 (browse only): Places attribution html for the credit overlay. */
+    /** TICKET-189/200 (browse only): Places attribution html for the adjacent credit. */
     attribution_html?: string | null;
+    /** Restaurant paired with the cover, used only for redundant-credit minimization. */
+    cover_restaurant_name?: string | null;
 }
 
 async function fetchPublicListsPage(

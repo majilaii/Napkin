@@ -7,7 +7,7 @@
  */
 import type { MyList } from '@/hooks/lists/useMyLists';
 import type { ProfileListSummary } from '@/hooks/users/useUserProfile';
-import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 type CoverPhotoSource = 'user' | 'table' | 'places' | 'none' | null;
 
@@ -20,6 +20,7 @@ export interface ShelfList {
     coverPhotoSource: CoverPhotoSource;
     /** Sanitized server-authored Places attribution HTML; parsed before display. */
     coverAttributionHtml: string | null;
+    coverRestaurantName: string | null;
     /** User-chosen list emoji; null → the default terracotta teardrop plate. */
     emoji: string | null;
     /** "N places", or the owning Table's name for a shared Table list. */
@@ -40,11 +41,11 @@ function safeCoverPhotoUrl(
     source: CoverPhotoSource | undefined,
     attributionHtml: string | null | undefined,
 ): string | null {
-    if (!url) return null;
-    if (source === 'places') {
-        return parsePlacesAttribution(attributionHtml) ? url : null;
-    }
-    return source === 'user' || source === 'table' ? url : null;
+    return resolveSourcedPhoto({
+        url,
+        photoSource: source,
+        attributionHtml,
+    }).url;
 }
 
 /** Own lists — the richest source (incl. private + Table, emoji, table_name). */
@@ -62,6 +63,7 @@ export function myListsToShelf(lists: MyList[]): ShelfList[] {
             ),
             coverPhotoSource,
             coverAttributionHtml,
+            coverRestaurantName: list.cover_restaurant_name ?? null,
             emoji: list.emoji,
             meta:
                 list.table_id && list.table_name
@@ -86,6 +88,7 @@ export function publicListsToShelf(lists: ProfileListSummary[]): ShelfList[] {
             ),
             coverPhotoSource,
             coverAttributionHtml,
+            coverRestaurantName: list.cover_restaurant_name ?? null,
             emoji: null,
             meta: placesLabel(list.entry_count),
         };

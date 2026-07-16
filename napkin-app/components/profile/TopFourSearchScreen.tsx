@@ -33,6 +33,13 @@ import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRestaurantSearch, type SearchResultRow as SearchRow } from '@/hooks/search/useRestaurantSearch';
 import { usePersistPlace } from '@/hooks/search/usePersistPlace';
+import { PlacesCredit } from '@/components/ui/PlacesCredit';
+import {
+    deriveSearchPlacesCredits,
+    resolveSearchResultPhoto,
+    resolveVisibleSearchResultPhoto,
+    searchPhotoFailureKey,
+} from '@/components/search/searchPhotoPresentation';
 
 export interface TopFourSearchPick {
     restaurant_id: string;
@@ -66,6 +73,7 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
     const [resolvingKey, setResolvingKey] = useState<string | null>(null);
     // Rows added this session — marks ghosts (no restaurant_id yet) as "added".
     const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set());
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
     // Synchronous in-flight guard — blocks a same-frame double-tap from firing a
     // second (billed) Places Details call before resolvingKey state lands.
     const inFlightRef = useRef<Set<string>>(new Set());
@@ -98,7 +106,11 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
             // Persisted result → has a Napkin id already (synchronous add).
             if (r.id) {
                 setAddedKeys((prev) => new Set(prev).add(key));
-                onPick({ restaurant_id: r.id, name: r.name, photo_url: r.photoUrl });
+                onPick({
+                    restaurant_id: r.id,
+                    name: r.name,
+                    photo_url: resolveSearchResultPhoto(r).url,
+                });
                 return;
             }
 
@@ -112,7 +124,13 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
                         inFlightRef.current.delete(key);
                         setResolvingKey((cur) => (cur === key ? null : cur));
                         setAddedKeys((prev) => new Set(prev).add(key));
-                        onPick({ restaurant_id: restaurantId, name: r.name, photo_url: r.photoUrl });
+                        onPick({
+                            restaurant_id: restaurantId,
+                            name: r.name,
+                            // Search ghosts stay text-only even after persistence;
+                            // the profile refetch supplies the canonical sourced photo.
+                            photo_url: resolveSearchResultPhoto(r).url,
+                        });
                     },
                     onError: () => {
                         inFlightRef.current.delete(key);
@@ -132,6 +150,14 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
                 { label: 'MORE PLACES', rows: results.morePlaces },
             ].filter((s) => s.rows.length > 0),
         [results],
+    );
+    const visibleRows = useMemo(
+        () => sections.flatMap((section) => section.rows),
+        [sections],
+    );
+    const placesCredit = useMemo(
+        () => deriveSearchPlacesCredits(visibleRows, failedPhotoKeys),
+        [failedPhotoKeys, visibleRows],
     );
 
     const hasQuery = debounced.length >= 2;
@@ -199,6 +225,15 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
                 >
+                    {placesCredit.credits.length > 0 ? (
+                        <View style={styles.placesCredit}>
+                            <PlacesCredit
+                                credits={placesCredit.credits}
+                                photoCount={placesCredit.photoCount}
+                                testID="profile-top-four-search-places-credit"
+                            />
+                        </View>
+                    ) : null}
                     {sections.map((section) => (
                         <View key={section.label}>
                             <Text style={[styles.tierLabel, { color: palette.textMuted }]}>
@@ -210,6 +245,8 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
                                 const resolving = resolvingKey === key;
                                 const dimmed = atCapacity && !added;
                                 const meta = [r.city ?? r.address, r.cuisine].filter(Boolean).join(' · ');
+                                const photoUrl = resolveVisibleSearchResultPhoto(r, failedPhotoKeys).url;
+                                const photoFailureKey = searchPhotoFailureKey(r, photoUrl);
                                 return (
                                     <Pressable
                                         key={key}
@@ -223,8 +260,18 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
                                         accessibilityRole="button"
                                         accessibilityLabel={added ? `${r.name}, added` : `Add ${r.name}`}
                                     >
-                                        {r.photoUrl ? (
-                                            <ExpoImage source={{ uri: r.photoUrl }} style={styles.thumb} contentFit="cover" />
+                                        {photoUrl ? (
+                                            <ExpoImage
+                                                source={{ uri: photoUrl }}
+                                                style={styles.thumb}
+                                                contentFit="cover"
+                                                onError={() => {
+                                                    if (!photoFailureKey) return;
+                                                    setFailedPhotoKeys(
+                                                        (current) => new Set(current).add(photoFailureKey),
+                                                    );
+                                                }}
+                                            />
                                         ) : (
                                             <View style={[styles.thumb, styles.thumbGhost, { backgroundColor: palette.surfaceJournalHi }]}>
                                                 <Ionicons name="location-outline" size={18} color={palette.textMuted} />
@@ -304,6 +351,10 @@ const styles = StyleSheet.create({
         ...Type.metadata,
         marginHorizontal: 18,
         marginBottom: Spacing.xs,
+    },
+    placesCredit: {
+        paddingHorizontal: 18,
+        paddingTop: Spacing.xs,
     },
     centered: {
         flex: 1,

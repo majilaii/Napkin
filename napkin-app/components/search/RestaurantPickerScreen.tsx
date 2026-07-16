@@ -22,6 +22,12 @@ import {
 } from '@/hooks/search/useRestaurantSearch';
 import { usePersistPlace } from '@/hooks/search/usePersistPlace';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
+import { PlacesCredit } from '@/components/ui/PlacesCredit';
+import {
+    deriveSearchPlacesCredits,
+    resolveVisibleSearchResultPhoto,
+    searchPhotoFailureKey,
+} from './searchPhotoPresentation';
 
 export type RestaurantPickerPick = {
     restaurant_id: string;
@@ -51,6 +57,7 @@ export function RestaurantPickerScreen({
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const [resolvingKey, setResolvingKey] = useState<string | null>(null);
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
     const inFlight = useRef(new Set<string>());
     const persistPlace = usePersistPlace();
 
@@ -73,6 +80,14 @@ export function RestaurantPickerScreen({
                 { label: 'More places', rows: results.morePlaces },
             ].filter((section) => section.rows.length > 0),
         [results],
+    );
+    const visibleRows = useMemo(
+        () => sections.flatMap((section) => section.rows),
+        [sections],
+    );
+    const placesCredit = useMemo(
+        () => deriveSearchPlacesCredits(visibleRows, failedPhotoKeys),
+        [failedPhotoKeys, visibleRows],
     );
 
     const choose = useCallback(
@@ -167,6 +182,15 @@ export function RestaurantPickerScreen({
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xl }}
                 >
+                    {placesCredit.credits.length > 0 ? (
+                        <View style={styles.placesCredit}>
+                            <PlacesCredit
+                                credits={placesCredit.credits}
+                                photoCount={placesCredit.photoCount}
+                                testID="restaurant-picker-places-credit"
+                            />
+                        </View>
+                    ) : null}
                     {sections.map((section) => (
                         <View key={section.label}>
                             <Text style={[Type.sectionKicker, styles.sectionLabel, { color: palette.textMuted }]}>
@@ -175,6 +199,8 @@ export function RestaurantPickerScreen({
                             {section.rows.map((row) => {
                                 const key = rowKey(row);
                                 const meta = [row.city ?? row.address, row.cuisine].filter(Boolean).join(' · ');
+                                const photoUrl = resolveVisibleSearchResultPhoto(row, failedPhotoKeys).url;
+                                const photoFailureKey = searchPhotoFailureKey(row, photoUrl);
                                 return (
                                     <PressableScale
                                         key={key}
@@ -194,8 +220,18 @@ export function RestaurantPickerScreen({
                                                 },
                                             ]}
                                         >
-                                            {row.photoUrl ? (
-                                                <Image source={{ uri: row.photoUrl }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                                            {photoUrl ? (
+                                                <Image
+                                                    source={{ uri: photoUrl }}
+                                                    style={StyleSheet.absoluteFill}
+                                                    contentFit="cover"
+                                                    onError={() => {
+                                                        if (!photoFailureKey) return;
+                                                        setFailedPhotoKeys(
+                                                            (current) => new Set(current).add(photoFailureKey),
+                                                        );
+                                                    }}
+                                                />
                                             ) : (
                                                 <Ionicons name="restaurant-outline" size={20} color={palette.textMuted} />
                                             )}
@@ -275,6 +311,10 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         marginTop: Spacing.md,
         marginBottom: Spacing.xs,
+    },
+    placesCredit: {
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.xs,
     },
     row: {
         minHeight: 68,

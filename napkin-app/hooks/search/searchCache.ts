@@ -31,8 +31,8 @@ export interface PlacesResult {
     cuisine: string | null;
     photoReference: string | null;
     // TICKET-057: synthesized attribution HTML from Places authorAttributions.
-    // null when no attribution is available. Plumbed to ghost render + upsert
-    // so attribution and warm-paper overlay appear on ghost pages.
+    // null when no attribution is available. Search ghosts stay text-only; the
+    // value is retained for a later details lookup/upsert.
     photoAttributionHtml: string | null;
     formattedAddress: string | null;
     latitude: number | null;
@@ -68,6 +68,10 @@ export interface PersistedRow {
     // entries written before this field existed lack it.
     address?: string | null;
     photo_url: string | null;
+    /** Restaurant-hero provenance. Optional so a stale in-memory result fails closed. */
+    photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    /** Stored Places author attribution paired with photo_url. */
+    places_photo_attribution_html?: string | null;
     external_id: string | null; // Google Place ID — see migration 20251215134700
 }
 

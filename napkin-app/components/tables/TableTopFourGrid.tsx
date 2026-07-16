@@ -24,7 +24,8 @@ import {
 import { Image as ExpoImage } from 'expo-image';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { FRIEND_TEST } from '@/constants/flags';
-import { resolveTilePhoto } from '@/lib/restaurantPhoto';
+import { resolveTilePhoto, type TilePhotoResult } from '@/lib/restaurantPhoto';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import type { TopFourSlot, TopFourLastEvent } from '@/hooks/tables/useTableTopFour';
 
 type Palette = typeof Colors.light;
@@ -69,25 +70,16 @@ function buildAttributionCopy(
 
 interface FilledTileProps {
     slot: TopFourSlot;
+    photo: TilePhotoResult;
     tileWidth: number;
     palette: Palette;
     onPress: () => void;
+    onPhotoError: (url: string) => void;
 }
 
-function FilledTile({ slot, tileWidth, palette, onPress }: FilledTileProps) {
+function FilledTile({ slot, photo, tileWidth, palette, onPress, onPhotoError }: FilledTileProps) {
     const [imgError, setImgError] = useState(false);
     const tileHeight = (tileWidth * 4) / 3;
-
-    // TICKET-157: custom_photo_url (no writer yet — chain position preserved) →
-    // gated Places tier (`photo_source === 'places'` + flag) → ghost. Flag read
-    // here, not in the resolver.
-    const photo = resolveTilePhoto({
-        custom_photo_url: slot.custom_photo_url,
-        primary_photo_url: slot.restaurant?.photo_url,
-        photo_source: slot.restaurant?.photo_source,
-        places_hero_enabled: FRIEND_TEST.topFourPlacesHero,
-        restaurant_name: slot.restaurant?.name,
-    });
 
     const resolvedUrl = photo.kind === 'url' ? photo.url : null;
     // [ARCH-REVIEW W3]: reset the sticky error when the source changes (the grid
@@ -129,7 +121,10 @@ function FilledTile({ slot, tileWidth, palette, onPress }: FilledTileProps) {
                             contentFit="cover"
                             transition={200}
                             recyclingKey={photo.url}
-                            onError={() => setImgError(true)}
+                            onError={() => {
+                                setImgError(true);
+                                onPhotoError(photo.url);
+                            }}
                         />
                         {/* TICKET-157: warm Places wash over the borrowed venue photo,
                             between the image and the bottom label overlay. */}
@@ -229,6 +224,7 @@ export function TableTopFourGrid({
     palette,
 }: TableTopFourGridProps) {
     const { width: screenWidth } = useWindowDimensions();
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
 
     // Return null for 0/4 — caller shows the placeholder instead
     if (slots.length === 0) return null;
@@ -238,8 +234,36 @@ export function TableTopFourGrid({
     const tileWidth = Math.floor((containerWidth - 8 * 3) / 4);
 
     // Build the 4-slot grid (position 1–4), filling empties
-    const slotMap = new Map(slots.map((s) => [s.position, s]));
     const positions: (1 | 2 | 3 | 4)[] = [1, 2, 3, 4];
+
+    // Resolve every slot at the grid boundary so the one aggregate line names
+    // only authors whose Places photos actually render. A custom slot photo has
+    // absolute precedence and never contributes Places credit.
+    const resolvedSlotMap = new Map(slots.map((slot) => {
+        const sourced = resolveSourcedPhoto({
+            url: slot.restaurant?.photo_url,
+            photoSource: slot.restaurant?.photo_source,
+            attributionHtml: slot.restaurant?.places_photo_attribution_html,
+            restaurantName: slot.restaurant?.name,
+        });
+        const photo = resolveTilePhoto({
+            custom_photo_url: slot.custom_photo_url,
+            primary_photo_url: sourced.url,
+            photo_source: slot.restaurant?.photo_source,
+            places_hero_enabled: FRIEND_TEST.topFourPlacesHero,
+            restaurant_name: slot.restaurant?.name,
+        });
+        return [slot.position, {
+            slot,
+            photo,
+            credit: photo.kind === 'url' && photo.isPlaces ? sourced.credit : null,
+        }] as const;
+    }));
+    const renderedPlacesPhotos = [...resolvedSlotMap.values()]
+        .filter((resolved) => {
+            if (!resolved.credit || resolved.photo.kind !== 'url') return false;
+            return !failedPhotoKeys.has(`${resolved.slot.restaurant_id}:${resolved.photo.url}`);
+        });
 
     // ── Attribution row logic ──────────────────────────────────────────────────
     let attributionCopy: string | null = null;
@@ -291,15 +315,19 @@ export function TableTopFourGrid({
             {/* 4-column poster grid */}
             <View style={styles.grid}>
                 {positions.map((pos) => {
-                    const slot = slotMap.get(pos);
-                    if (slot) {
+                    const resolved = resolvedSlotMap.get(pos);
+                    if (resolved) {
                         return (
                             <FilledTile
                                 key={pos}
-                                slot={slot}
+                                slot={resolved.slot}
+                                photo={resolved.photo}
                                 tileWidth={tileWidth}
                                 palette={palette}
                                 onPress={onEdit}
+                                onPhotoError={(url) => setFailedPhotoKeys(
+                                    (current) => new Set(current).add(`${resolved.slot.restaurant_id}:${url}`),
+                                )}
                             />
                         );
                     }
@@ -315,7 +343,17 @@ export function TableTopFourGrid({
                 })}
             </View>
 
-            {/* Attribution row */}
+            {renderedPlacesPhotos.length > 0 ? (
+                <View style={styles.placesCreditRow}>
+                    <PlacesCredit
+                        credits={renderedPlacesPhotos.map((resolved) => resolved.credit)}
+                        photoCount={renderedPlacesPhotos.length}
+                        testID="table-top-four-places-credit"
+                    />
+                </View>
+            ) : null}
+
+            {/* Last-edit social attribution row — unrelated to Places photo credit. */}
             {attributionCopy ? (
                 <View style={styles.attributionRow}>
                     {attributionAvatarUrl ? (
@@ -387,6 +425,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         marginHorizontal: 22,
         gap: 8,
+    },
+    placesCreditRow: {
+        marginHorizontal: 22,
+        marginTop: 10,
     },
     tile: {
         borderRadius: Radius.sm,

@@ -91,7 +91,7 @@ serve(async (req) => {
                 if (night.restaurant_id) {
                     const { data: r, error: rErr } = await supabase
                         .from('restaurants')
-                        .select('id, name, address, city, photo_url')
+                        .select('id, name, address, city, photo_url, photo_source, places_photo_attribution_html')
                         .eq('id', night.restaurant_id)
                         .single();
                     if (rErr) {
@@ -556,7 +556,7 @@ serve(async (req) => {
                 if (revealed.restaurant_id) {
                     const { data: r, error: rErr } = await supabase
                         .from('restaurants')
-                        .select('id, name, address, city, photo_url')
+                        .select('id, name, address, city, photo_url, photo_source, places_photo_attribution_html')
                         .eq('id', revealed.restaurant_id)
                         .single();
                     if (rErr) {

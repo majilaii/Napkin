@@ -923,6 +923,8 @@ export default function RestaurantScreen() {
                         name: restaurant.name,
                         city: restaurant.city ?? null,
                         photo_url: restaurant.photo_url ?? null,
+                        photo_source: restaurant.photo_source ?? null,
+                        places_photo_attribution_html: restaurant.places_photo_attribution_html ?? null,
                     }}
                     tableId={tableId ?? (tables?.[0]?.tables?.id ?? null)}
                 />

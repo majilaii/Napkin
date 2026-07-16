@@ -339,7 +339,7 @@ serve(async (req) => {
                         .from('restaurants')
                         // TICKET-167: address disambiguates same-name venues in the
                         // unified search list (shown on every row).
-                        .select('id, name, city, cuisine, address, photo_url, external_id')
+                        .select('id, name, city, cuisine, address, photo_url, photo_source, places_photo_attribution_html, external_id')
                         .in('id', visitedIds)
                         .ilike('name', `%${q}%`)
                         .eq('verification', 'verified')
@@ -364,7 +364,7 @@ serve(async (req) => {
                 .from('restaurants')
                 // TICKET-167: address disambiguates same-name venues in the
                 // unified search list (shown on every row).
-                .select('id, name, city, cuisine, address, photo_url, external_id')
+                .select('id, name, city, cuisine, address, photo_url, photo_source, places_photo_attribution_html, external_id')
                 .ilike('name', `%${q}%`)
                 .eq('verification', 'verified')
                 .limit(30); // fetch extra to account for JS-side filter

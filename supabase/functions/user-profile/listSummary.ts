@@ -7,6 +7,7 @@ export type ListSummarySource = {
 };
 
 export type ListCoverRestaurant = {
+    name?: string | null;
     photo_url?: string | null;
     photo_source?: string | null;
     places_photo_attribution_html?: string | null;
@@ -17,6 +18,7 @@ export type ListSummary = ListSummarySource & {
     cover_photo_url: string | null;
     cover_photo_source: string | null;
     cover_attribution_html: string | null;
+    cover_restaurant_name: string | null;
 };
 
 /**
@@ -39,5 +41,6 @@ export function projectListSummary(
         cover_photo_url: restaurant?.photo_url ?? null,
         cover_photo_source: restaurant?.photo_source ?? null,
         cover_attribution_html: restaurant?.places_photo_attribution_html ?? null,
+        cover_restaurant_name: restaurant?.name ?? null,
     };
 }

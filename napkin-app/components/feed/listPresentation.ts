@@ -6,6 +6,7 @@
  * the lead treatment simply because it happened to be edited last.
  */
 import type { PublicListResult } from '@/hooks/lists/useSearchPublicLists';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 export interface ListPresentation {
     showcase: PublicListResult | null;
@@ -17,7 +18,13 @@ export function isDisplayablePublicList(list: PublicListResult): boolean {
 }
 
 export function earnsShowcaseTreatment(list: PublicListResult): boolean {
-    return !!list.cover_photo_url && list.entry_count >= 3;
+    const cover = resolveSourcedPhoto({
+        url: list.cover_photo_url,
+        photoSource: list.photo_source === 'places' ? 'places' : null,
+        attributionHtml: list.attribution_html,
+        restaurantName: list.cover_restaurant_name,
+    });
+    return !!cover.url && list.entry_count >= 3;
 }
 
 export function arrangePublicLists(lists: PublicListResult[]): ListPresentation {

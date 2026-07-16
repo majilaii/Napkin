@@ -9,7 +9,7 @@
  * Heirloom Journal: warm paper surfaces, Newsreader italic for name,
  * Manrope body, no emoji in chrome, ambient shadows only.
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,8 @@ export interface PendingSaveCardProps {
     restaurantCity?: string | null;
     restaurantCuisine?: string | null;
     restaurantPhotoUrl?: string | null;
+    restaurantPhotoSource?: 'user' | 'table' | 'places' | 'none' | null;
+    restaurantPhotoAttributionHtml?: string | null;
     /** Called when the user taps "tap to confirm" on needs_confirm cards. */
     onConfirm?: () => void;
 }
@@ -45,10 +48,21 @@ export function PendingSaveCard({
     restaurantCity,
     restaurantCuisine,
     restaurantPhotoUrl,
+    restaurantPhotoSource,
+    restaurantPhotoAttributionHtml,
     onConfirm,
 }: PendingSaveCardProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
+    const resolvedPhoto = resolveSourcedPhoto({
+        url: restaurantPhotoUrl,
+        photoSource: restaurantPhotoSource,
+        attributionHtml: restaurantPhotoAttributionHtml,
+        restaurantName,
+    });
+    const [failedPhoto, setFailedPhoto] = useState<string | null>(null);
+    useEffect(() => setFailedPhoto(null), [resolvedPhoto.url]);
+    const visiblePhoto = resolvedPhoto.url !== failedPhoto ? resolvedPhoto.url : null;
 
     const cityLine = [restaurantCity, restaurantCuisine].filter(Boolean).join(' · ');
 
@@ -61,11 +75,12 @@ export function PendingSaveCard({
             ]}
         >
             {/* Photo or placeholder */}
-            {restaurantPhotoUrl ? (
+            {visiblePhoto ? (
                 <Image
-                    source={{ uri: restaurantPhotoUrl }}
+                    source={{ uri: visiblePhoto }}
                     style={[styles.thumb, { borderRadius: Radius.sm }]}
                     accessibilityIgnoresInvertColors
+                    onError={() => setFailedPhoto(visiblePhoto)}
                 />
             ) : (
                 <View
@@ -115,6 +130,13 @@ export function PendingSaveCard({
                         ) : null}
                     </>
                 )}
+                {visiblePhoto && resolvedPhoto.credit ? (
+                    <PlacesCredit
+                        credits={[resolvedPhoto.credit]}
+                        photoCount={1}
+                        testID="pending-save-places-credit"
+                    />
+                ) : null}
             </View>
         </View>
     );
