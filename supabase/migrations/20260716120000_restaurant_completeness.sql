@@ -2943,10 +2943,10 @@ begin
               select pg_catalog.count(*)
               from public.restaurant_completeness_queue q
               where q.job_id = j.job_id and q.state in ('verified','resolved','exhausted')
-          ) = j.expected_items
+        ) = j.expected_items
         order by j.sealed_at, j.job_id
-        for update skip locked
         limit least(greatest(coalesce(p_limit, 25), 1), 100)
+        for update skip locked
     loop
         if public.fn_maybe_emit_import_done(v_job.job_id) then
             v_count := v_count + 1;

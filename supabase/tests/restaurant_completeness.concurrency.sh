@@ -52,7 +52,9 @@ insert into auth.users(
   '{"display_name":"Completeness Concurrency"}'
 );
 insert into public.profiles(user_id,display_name)
-values (:'owner_id'::uuid,'Completeness Concurrency');
+values (:'owner_id'::uuid,'Completeness Concurrency')
+on conflict (user_id) do update
+set display_name = excluded.display_name;
 insert into public.restaurants(id,external_id,name,verification,created_by)
 values
   (:'ghost_id'::uuid,'ghost_195_concurrency','Concurrent Ghost','unverified',:'owner_id'::uuid),

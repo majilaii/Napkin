@@ -1579,9 +1579,21 @@ begin
             )
         ),2
     );
-    v_item_one := (v_enqueued->'items'->0->>'id')::uuid;
-    v_item_two := (v_enqueued->'items'->1->>'id')::uuid;
-    v_destination_two := (v_enqueued->'destinations'->1->>'id')::uuid;
+    -- fn_enqueue returns each collection in created_at/id order. These rows
+    -- share a transaction timestamp and use random UUIDs, so array position is
+    -- deliberately NOT an item↔destination pairing contract. Bind the fixture
+    -- to its immutable nonces before testing dismissal semantics.
+    select (returned.value->>'id')::uuid into v_item_one
+    from pg_catalog.jsonb_array_elements(v_enqueued->'items') as returned(value)
+    where returned.value->>'item_nonce' = '19500000-3900-4000-8000-000000000002';
+    select (returned.value->>'id')::uuid into v_item_two
+    from pg_catalog.jsonb_array_elements(v_enqueued->'items') as returned(value)
+    where returned.value->>'item_nonce' = '19500000-3900-4000-8000-000000000003';
+    select (returned.value->>'id')::uuid into v_destination_two
+    from pg_catalog.jsonb_array_elements(v_enqueued->'destinations') as returned(value)
+    where returned.value->>'destination_nonce' = '19500000-3900-4000-8000-000000000005';
+    assert v_item_one is not null and v_item_two is not null and v_destination_two is not null,
+        'FAIL: enqueue response omitted nonce-bound correction/dismissal rows';
     select * into v_claim from public.fn_claim_completeness_item(
         v_item_one,'19500000-3900-4000-8000-000000000006',120
     );
@@ -1834,7 +1846,10 @@ begin
         '19500000-aaaa-4000-8000-000000000003','places/ChIJ195Media/photos/a',
         '19500000-4000-4000-8000-000000000003',120
     );
-    assert v_claim.outcome = 'done', 'FAIL: committed media was not reused';
+    assert v_claim.outcome = 'satisfied'
+       and v_claim.committed_url =
+           'https://storage.invalid/19500000-aaaa-4000-8000-000000000003/a.jpg',
+        'FAIL: committed exact-reference hero was not reused';
     select * into v_claim from public.fn_claim_media(
         '19500000-aaaa-4000-8000-000000000003','places/ChIJ195Media/photos/b',
         '19500000-4000-4000-8000-000000000004',120
@@ -1975,10 +1990,12 @@ insert into public.wishlist_items(
 )
 values
     ('19500000-dddd-4000-8000-000000000101','19500000-0000-4000-8000-000000000001',
-     '19500000-aaaa-4000-8000-000000000102','deleted canonical','{"type":"web"}',now()-interval '3 days',now(),
+     '19500000-aaaa-4000-8000-000000000102','deleted canonical',
+     '{"type":"web","url":"https://example.invalid/canonical"}',now()-interval '3 days',now(),
      '19500000-dddd-4000-8000-000000000111'),
     ('19500000-dddd-4000-8000-000000000102','19500000-0000-4000-8000-000000000001',
-     '19500000-aaaa-4000-8000-000000000101','live ghost','{"type":"tiktok"}',now()-interval '1 day',null,
+     '19500000-aaaa-4000-8000-000000000101','live ghost',
+     '{"type":"tiktok","url":"https://www.tiktok.com/@merge/video/195"}',now()-interval '1 day',null,
      '19500000-dddd-4000-8000-000000000112')
 on conflict (id) do nothing;
 
@@ -2140,7 +2157,9 @@ begin
 
     assert (
         select restaurant_id = v_id and deleted_at is null and note = 'live ghost'
-        from public.wishlist_items where user_id = '19500000-0000-4000-8000-000000000001'
+        from public.wishlist_items
+        where user_id = '19500000-0000-4000-8000-000000000001'
+          and restaurant_id = v_id
     ), 'FAIL: wishlist live-over-deleted merge policy';
     assert (
         select pg_catalog.count(*) = 1 and pg_catalog.min(note) = 'older canonical'
