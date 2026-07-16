@@ -23,7 +23,8 @@ export type NotificationType =
     | 'claim_city'
     | 'reservation_reminder'
     | 'import_done'
-    | 'supper_set';
+    | 'supper_set'
+    | 'image_rejected';
 
 interface BaseNotification {
     id: string;
@@ -132,6 +133,13 @@ export interface SupperSetNotification extends BaseNotification {
     photoUrl?: string | null;
 }
 
+/** Self-directed moderation notice emitted exactly once per removed sink. */
+export interface ImageRejectedNotification extends BaseNotification {
+    type: 'image_rejected';
+    sinkKind: 'avatar' | 'entry_photo' | 'entry_hero';
+    reason: string;
+}
+
 export type Notification =
     | FriendLoggedNotification
     | FriendPinnedNotification
@@ -141,7 +149,8 @@ export type Notification =
     | ClaimCityNotification
     | ReservationReminderNotification
     | ImportDoneNotification
-    | SupperSetNotification;
+    | SupperSetNotification
+    | ImageRejectedNotification;
 
 /**
  * TICKET-159 (forward-compat, finding 15): the server hydrator emits a generic

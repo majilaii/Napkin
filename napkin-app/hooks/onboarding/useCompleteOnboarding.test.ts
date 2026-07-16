@@ -66,4 +66,28 @@ describe('useCompleteOnboarding', () => {
         await waitFor(() => expect(result.current.isError).toBe(true));
         expect(setOnboardedAt).not.toHaveBeenCalled();
     });
+
+    it('forwards the approved avatar in the complete onboarding payload', async () => {
+        const approvedAvatar = 'https://project.test/storage/v1/object/public/avatars/approved/user/sha.jpg';
+        mockEdgeFnResolves({ ...PROFILE_ROW, avatar_url: approvedAvatar });
+        const { result } = renderHookWithClient(() => useCompleteOnboarding());
+
+        act(() => {
+            result.current.mutate({
+                display_name: 'Jacky',
+                home_city: 'London',
+                avatar_url: approvedAvatar,
+            });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(callEdgeFn).toHaveBeenCalledWith('user-profile', {
+            action: 'complete_onboarding',
+            body: {
+                display_name: 'Jacky',
+                home_city: 'London',
+                avatar_url: approvedAvatar,
+            },
+        });
+    });
 });

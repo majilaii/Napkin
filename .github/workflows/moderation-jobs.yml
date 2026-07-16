@@ -1,0 +1,106 @@
+name: Image moderation jobs
+
+# Built dark in B-0. Founder-owned credentials are installed and the repository
+# variable MODERATION_JOBS_ACTIVE is flipped only with the B-2 activation gate.
+# Edge secrets required before the one-time preflight: MODERATION_CRON_TOKEN,
+# GOOGLE_VISION_API_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL, OPS_ALERT_EMAIL, and
+# MODERATION_HEARTBEAT_<ACTION>_URL for all eight allowlisted actions.
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      preflight_only:
+        description: Validate Resend + all independent heartbeat URLs without running jobs
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-moderation-jobs
+  cancel-in-progress: false
+
+env:
+  SUPABASE_URL: https://ftvmseaqwwlcxtdlvxxz.supabase.co
+
+jobs:
+  preflight:
+    name: Credential + dead-man preflight
+    # One-time activation canary. Do not contact heartbeat URLs from the 6h
+    # schedule: a preflight ping could mask a failed worker from the dead-man.
+    if: inputs.preflight_only == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require activation credentials
+        env:
+          CRON_TOKEN: ${{ secrets.MODERATION_CRON_TOKEN }}
+          ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+        run: |
+          [[ -n "$CRON_TOKEN" ]] || { echo '::error::MODERATION_CRON_TOKEN is missing'; exit 1; }
+          [[ -n "$ANON_KEY" ]] || { echo '::error::PROD_ANON_KEY is missing'; exit 1; }
+
+      - name: Validate Resend and every heartbeat URL
+        env:
+          CRON_TOKEN: ${{ secrets.MODERATION_CRON_TOKEN }}
+          ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -X POST "$SUPABASE_URL/functions/v1/moderation-jobs" \
+            -H "apikey: $ANON_KEY" \
+            -H "Authorization: Bearer $ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -H "x-moderation-cron-token: $CRON_TOKEN" \
+            --data '{"action":"ops-alarm","preflight":true}'
+
+  jobs:
+    name: ${{ matrix.action }}
+    if: vars.MODERATION_JOBS_ACTIVE == 'true' && inputs.preflight_only != true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        action:
+          - grandfather
+          - gc_staging
+          - gc_unbound
+          - gc_refdriven
+          - reconcile
+          - account_cleanup
+    steps:
+      - name: Run fenced job
+        env:
+          CRON_TOKEN: ${{ secrets.MODERATION_CRON_TOKEN }}
+          ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          ACTION: ${{ matrix.action }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -X POST "$SUPABASE_URL/functions/v1/moderation-jobs" \
+            -H "apikey: $ANON_KEY" \
+            -H "Authorization: Bearer $ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -H "x-moderation-cron-token: $CRON_TOKEN" \
+            --data "{\"action\":\"$ACTION\"}"
+
+  ops-alarm:
+    name: Drain moderation alert outbox
+    # Must run even when any sibling job fails, so operational failures still
+    # reach durable email escalation. It owns an independent heartbeat.
+    if: always() && vars.MODERATION_JOBS_ACTIVE == 'true' && inputs.preflight_only != true
+    needs: [jobs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Drain outbox
+        env:
+          CRON_TOKEN: ${{ secrets.MODERATION_CRON_TOKEN }}
+          ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -X POST "$SUPABASE_URL/functions/v1/moderation-jobs" \
+            -H "apikey: $ANON_KEY" \
+            -H "Authorization: Bearer $ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -H "x-moderation-cron-token: $CRON_TOKEN" \
+            --data '{"action":"ops-alarm"}'

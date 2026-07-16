@@ -3,11 +3,11 @@
  *
  * Tap the circle (or "Change photo") for the instant source sheet (Take photo /
  * Choose from library — lib/avatarPicker); the pick is square-cropped to 512²
- * and uploaded to the avatars bucket, then written to the profile via
+ * and moderated through private staging, then written to the profile via
  * useUpdateProfile. The write is optimistic — the new photo appears instantly
  * on every surface (this circle, the settings list, the profile header)
  * without waiting on a refetch. Changes apply immediately — no Save button.
- * "Remove photo" clears avatar_url (→ monogram) and deletes the stored file.
+ * "Remove photo" clears avatar_url (→ monogram); the server unbinds and GCs it.
  */
 import React, { useState } from 'react';
 import { View, Text, ActivityIndicator, Alert, StyleSheet } from 'react-native';
@@ -21,7 +21,7 @@ import { Avatar } from '@/components/feed/Avatar';
 import { PillButton, PressableScale } from '@/components/ui/napkin';
 import { EditorScreen } from '@/components/settings';
 import { chooseAvatarAsset } from '@/lib/avatarPicker';
-import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
+import { compressAndUploadAvatar, isModerationRejected } from '@/lib/imageUpload';
 
 export default function EditPhotoScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -58,20 +58,15 @@ export default function EditPhotoScreen() {
         // busy spans the whole op (picker + upload + save) so the spinner never
         // clears early. mutateAsync's optimistic patch flips the avatar the
         // moment the save starts — the photo shows without waiting on a refetch.
-        const previous = avatarUrl;
-        let uploaded: string | null = null;
         try {
-            uploaded = await compressAndUploadAvatar(asset.uri, user.id);
+            const uploaded = await compressAndUploadAvatar(asset.uri, user.id);
             await update.mutateAsync({ avatar_url: uploaded });
-            // Saved — the replaced upload is now orphaned. Best-effort cleanup.
-            if (previous && previous !== uploaded) {
-                void removeUploadedAvatar(previous).catch(() => {});
-            }
-        } catch {
-            // Upload OR save failed. If we uploaded but the save threw, the fresh
-            // file is orphaned — clean it up (the hook already rolled the cache back).
-            if (uploaded) void removeUploadedAvatar(uploaded).catch(() => {});
-            Alert.alert("Couldn't save that photo", 'Please try again.');
+        } catch (error) {
+            // A moderated object that never binds is reclaimed by the 48h GC.
+            Alert.alert(
+                isModerationRejected(error) ? "That photo can't be used" : "Couldn't save that photo",
+                isModerationRejected(error) ? 'Choose another photo.' : 'Please try again.',
+            );
         } finally {
             setBusy(false);
         }
@@ -85,10 +80,8 @@ export default function EditPhotoScreen() {
                 text: 'Remove',
                 style: 'destructive',
                 onPress: async () => {
-                    const previous = avatarUrl;
                     try {
                         await update.mutateAsync({ avatar_url: null });
-                        void removeUploadedAvatar(previous).catch(() => {});
                     } catch {
                         Alert.alert("Couldn't remove that photo", 'Please try again.');
                     }

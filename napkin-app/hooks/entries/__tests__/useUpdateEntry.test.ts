@@ -5,6 +5,7 @@ import { renderHookWithClient } from '@/__tests__/utils/queryWrapper';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useUpdateEntry } from '../useUpdateEntry';
+import { mockSupabase } from '@/__mocks__/supabase';
 
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
 jest.mock('@/lib/supabase', () => {
@@ -17,7 +18,7 @@ const PRIYA = { user_id: 'priya-id', display_name: 'Priya' };
 const ORIGINAL = { user_id: 'old-id', display_name: 'Old companion' };
 const mockCallEdgeFn = callEdgeFn as jest.MockedFunction<typeof callEdgeFn>;
 
-describe('useUpdateEntry companion edits', () => {
+describe('useUpdateEntry writer routing', () => {
     beforeEach(() => {
         jest.clearAllMocks();
     });
@@ -77,5 +78,33 @@ describe('useUpdateEntry companion edits', () => {
 
         await waitFor(() => expect(result.current.isError).toBe(true));
         expect(client.getQueryData(detailKey)).toMatchObject({ companions: [ORIGINAL] });
+    });
+
+    it('routes hero changes through the flag-aware entry writer, never direct PATCH', async () => {
+        mockCallEdgeFn.mockResolvedValue({
+            id: ENTRY_ID,
+            user_id: 'user-1',
+            photo_url: 'https://cdn.test/approved.jpg',
+        });
+        const { result, client } = renderHookWithClient(() => useUpdateEntry(ENTRY_ID));
+        client.setQueryData(queryKeys.entries.detail(ENTRY_ID), {
+            id: ENTRY_ID,
+            photo_url: 'https://cdn.test/old.jpg',
+        });
+
+        act(() => result.current.mutate({ photo_url: 'https://cdn.test/approved.jpg' }));
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        expect(mockCallEdgeFn).toHaveBeenCalledWith('entry', {
+            action: 'set_entry_hero',
+            body: {
+                entry_id: ENTRY_ID,
+                photo_url: 'https://cdn.test/approved.jpg',
+            },
+        });
+        expect(mockSupabase.from).not.toHaveBeenCalledWith('entries');
+        expect(client.getQueryData(queryKeys.entries.detail(ENTRY_ID))).toMatchObject({
+            photo_url: 'https://cdn.test/approved.jpg',
+        });
     });
 });

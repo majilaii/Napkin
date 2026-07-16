@@ -47,6 +47,10 @@ import { track, trackError, flushNow } from '@/lib/track';
 import { initSentry, captureError, wrapRootComponent } from '@/lib/sentry';
 import { ConnectivityProvider } from '@/providers/ConnectivityProvider';
 import { getPreviewOnboardingOnLaunch } from '@/lib/devPrefs';
+import {
+  OnboardingGateBoundary,
+  shouldBlockOnboardingGate,
+} from '@/components/auth/OnboardingGateBoundary';
 
 // TICKET-121: before any render. No-op until EXPO_PUBLIC_SENTRY_DSN exists.
 initSentry();
@@ -321,8 +325,8 @@ function RootLayoutNav() {
     // TICKET-107: onboardedAt is TRI-STATE (undefined = still loading). Wait
     // for it to resolve before redirecting so a fresh signup routes straight
     // to /onboarding instead of flashing /wishlist then bouncing. AuthProvider
-    // always resolves it to null-or-string (read errors fall back to
-    // "onboarded"), so this never strands a user on /auth.
+    // resolves it only from a real profile read. Read errors remain undefined
+    // after bounded retry, deliberately keeping this route gate fail-closed.
     if (onboardedAt === undefined) return;
 
     if (onboardedAt === null) {
@@ -364,8 +368,16 @@ function RootLayoutNav() {
     return () => sub.remove();
   }, [userId]);
 
+  const gateBlocked = shouldBlockOnboardingGate(
+    isLoading,
+    session !== null,
+    onboardedAt,
+    segments[0],
+  );
+
   return (
-    <ThemeProvider value={NavTheme}>
+    <OnboardingGateBoundary blocked={gateBlocked}>
+      <ThemeProvider value={NavTheme}>
       <View style={{ flex: 1 }}>
         {/* Root catch: a render error anywhere used to white-screen the whole
             app with zero trace (only entry-detail was wrapped). */}
@@ -527,7 +539,8 @@ function RootLayoutNav() {
         />
       </View>
       <StatusBar style="auto" />
-    </ThemeProvider>
+      </ThemeProvider>
+    </OnboardingGateBoundary>
   );
 }
 

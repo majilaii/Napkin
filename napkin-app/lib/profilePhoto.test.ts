@@ -1,13 +1,12 @@
 jest.mock('@/lib/avatarPicker', () => ({
     chooseAvatarAsset: jest.fn(),
 }));
-jest.mock('@/lib/imageUpload', () => ({
-    compressAndUploadAvatar: jest.fn(),
-    removeUploadedAvatar: jest.fn(),
+jest.mock('@/lib/imageStaging', () => ({
+    stageAndModerate: jest.fn(),
 }));
 
 import { chooseAvatarAsset } from '@/lib/avatarPicker';
-import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
+import { stageAndModerate } from '@/lib/imageStaging';
 import {
     chooseAndSaveNewProfilePhoto,
     shouldBlockProfilePhotoPicker,
@@ -16,17 +15,11 @@ import {
 const mockChooseAvatarAsset = chooseAvatarAsset as jest.MockedFunction<
     typeof chooseAvatarAsset
 >;
-const mockCompressAndUploadAvatar = compressAndUploadAvatar as jest.MockedFunction<
-    typeof compressAndUploadAvatar
->;
-const mockRemoveUploadedAvatar = removeUploadedAvatar as jest.MockedFunction<
-    typeof removeUploadedAvatar
->;
+const mockStageAndModerate = stageAndModerate as jest.MockedFunction<typeof stageAndModerate>;
 
 describe('chooseAndSaveNewProfilePhoto', () => {
     beforeEach(() => {
         jest.resetAllMocks();
-        mockRemoveUploadedAvatar.mockResolvedValue(undefined);
     });
 
     it('treats picker cancellation as a no-op', async () => {
@@ -35,107 +28,71 @@ describe('chooseAndSaveNewProfilePhoto', () => {
 
         await expect(
             chooseAndSaveNewProfilePhoto({
-                userId: 'user-1',
-                previousAvatarUrl: null,
                 onSourceChosen: jest.fn(),
                 saveAvatarUrl,
             }),
         ).resolves.toBe(false);
 
-        expect(mockCompressAndUploadAvatar).not.toHaveBeenCalled();
+        expect(mockStageAndModerate).not.toHaveBeenCalled();
         expect(saveAvatarUrl).not.toHaveBeenCalled();
     });
 
-    it('uploads and saves a replacement, then cleans up the previous avatar', async () => {
+    it('moderates and commits the approved replacement URL', async () => {
         mockChooseAvatarAsset.mockResolvedValue({ uri: 'file:///photo.jpg' } as never);
-        mockCompressAndUploadAvatar.mockResolvedValue('https://cdn.example/avatar.jpg');
-        mockRemoveUploadedAvatar.mockRejectedValue(new Error('cleanup failed'));
+        mockStageAndModerate.mockResolvedValue({
+            approved_url: 'https://cdn.example/avatar.jpg',
+            storage_path: 'approved/user-1/sha.jpg',
+            bucket: 'avatars',
+            sha256: 'sha',
+            verdict: 'pass',
+        });
         const saveAvatarUrl = jest.fn().mockResolvedValue(undefined);
 
         await expect(
             chooseAndSaveNewProfilePhoto({
-                userId: 'user-1',
-                previousAvatarUrl: 'https://cdn.example/previous.jpg',
                 onSourceChosen: jest.fn(),
                 saveAvatarUrl,
             }),
         ).resolves.toBe(true);
 
-        expect(mockCompressAndUploadAvatar).toHaveBeenCalledWith(
-            'file:///photo.jpg',
-            'user-1',
-        );
+        expect(mockStageAndModerate).toHaveBeenCalledWith('file:///photo.jpg', 'avatar');
         expect(saveAvatarUrl).toHaveBeenCalledWith('https://cdn.example/avatar.jpg');
-        expect(mockRemoveUploadedAvatar).toHaveBeenCalledWith(
-            'https://cdn.example/previous.jpg',
-        );
-        expect(saveAvatarUrl.mock.invocationCallOrder[0]).toBeLessThan(
-            mockRemoveUploadedAvatar.mock.invocationCallOrder[0],
-        );
     });
 
-    it('removes a fresh upload when the profile save fails', async () => {
+    it('leaves an unbound approved object to fenced TTL GC when commit fails', async () => {
         mockChooseAvatarAsset.mockResolvedValue({ uri: 'file:///photo.jpg' } as never);
-        mockCompressAndUploadAvatar.mockResolvedValue('https://cdn.example/orphan.jpg');
-        mockRemoveUploadedAvatar.mockResolvedValue(undefined);
+        mockStageAndModerate.mockResolvedValue({
+            approved_url: 'https://cdn.example/orphan.jpg',
+            storage_path: 'approved/user-1/orphan.jpg',
+            bucket: 'avatars',
+            sha256: 'orphan',
+            verdict: 'pass',
+        });
         const saveError = new Error('save failed');
 
         await expect(
             chooseAndSaveNewProfilePhoto({
-                userId: 'user-1',
-                previousAvatarUrl: 'https://cdn.example/previous.jpg',
                 onSourceChosen: jest.fn(),
                 saveAvatarUrl: jest.fn().mockRejectedValue(saveError),
             }),
         ).rejects.toBe(saveError);
-
-        expect(mockRemoveUploadedAvatar).toHaveBeenCalledWith(
-            'https://cdn.example/orphan.jpg',
-        );
-        expect(mockRemoveUploadedAvatar).not.toHaveBeenCalledWith(
-            'https://cdn.example/previous.jpg',
-        );
     });
 
-    it('waits for orphan cleanup before completing the failed save', async () => {
+    it('surfaces moderation rejection without calling the profile writer', async () => {
         mockChooseAvatarAsset.mockResolvedValue({ uri: 'file:///photo.jpg' } as never);
-        mockCompressAndUploadAvatar.mockResolvedValue('https://cdn.example/orphan.jpg');
-        let finishCleanup!: () => void;
-        mockRemoveUploadedAvatar.mockImplementation(
-            () =>
-                new Promise<void>((resolve) => {
-                    finishCleanup = resolve;
-                }),
-        );
-        const saveError = new Error('save failed');
-        let settled = false;
-        const result = chooseAndSaveNewProfilePhoto({
-            userId: 'user-1',
-            previousAvatarUrl: 'https://cdn.example/previous.jpg',
-            onSourceChosen: jest.fn(),
-            saveAvatarUrl: jest.fn().mockRejectedValue(saveError),
-        }).then(
-            () => {
-                settled = true;
-                return null;
-            },
-            (error: unknown) => {
-                settled = true;
-                return error;
-            },
-        );
+        const rejection = Object.assign(new Error('rejected'), {
+            code: 'moderation_rejected' as const,
+        });
+        mockStageAndModerate.mockRejectedValue(rejection);
+        const saveAvatarUrl = jest.fn();
 
-        for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
-        expect(mockRemoveUploadedAvatar).toHaveBeenCalledWith(
-            'https://cdn.example/orphan.jpg',
-        );
-        expect(mockRemoveUploadedAvatar).not.toHaveBeenCalledWith(
-            'https://cdn.example/previous.jpg',
-        );
-        expect(settled).toBe(false);
-
-        finishCleanup();
-        await expect(result).resolves.toBe(saveError);
+        await expect(
+            chooseAndSaveNewProfilePhoto({
+                onSourceChosen: jest.fn(),
+                saveAvatarUrl,
+            }),
+        ).rejects.toBe(rejection);
+        expect(saveAvatarUrl).not.toHaveBeenCalled();
     });
 });
 

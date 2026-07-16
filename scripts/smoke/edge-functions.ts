@@ -33,6 +33,9 @@
  *   PLACES_SMOKE=1            — enables the places-search check (REAL Google
  *       Places cost). Set only by prod-deploy.yml's smoke step, never by the
  *       scheduled smoke.
+ *   IMAGE_MODERATION_CANARY=1 — enables the post-canonical, dedupe-proof
+ *       Google Vision provider canary. Kept dark until the dedicated Vision
+ *       credential is provisioned.
  *
  * Run locally:
  *   deno run --allow-env --allow-net scripts/smoke/edge-functions.ts
@@ -52,6 +55,8 @@ type Check = {
     expectedStatus?: number;
     /** Skip Authorization + apikey headers (for public endpoints). */
     noAuth?: boolean;
+    /** Extra per-check headers (used only for dedicated operational tokens). */
+    headers?: Record<string, string>;
     /** Optional shape sniff on parsed JSON (only for JSON responses). */
     shape?: (json: unknown) => string | null;
     /** Optional shape sniff on raw text + Content-Type (for non-JSON responses). */
@@ -67,6 +72,8 @@ const RESTAURANT_ID = Deno.env.get('SMOKE_TEST_RESTAURANT_ID');
 // so the check always runs (it was inert for weeks when it depended on this
 // env being seeded).
 const ENTRY_ID = Deno.env.get('SMOKE_TEST_ENTRY_ID');
+const IMAGE_MODERATION_CANARY = Deno.env.get('IMAGE_MODERATION_CANARY') === '1';
+const MODERATION_CRON_TOKEN = Deno.env.get('MODERATION_CRON_TOKEN');
 
 function requireEnv(name: string, val: string | undefined): string {
     if (!val) {
@@ -79,6 +86,9 @@ function requireEnv(name: string, val: string | undefined): string {
 requireEnv('SUPABASE_URL', SUPABASE_URL);
 requireEnv('SUPABASE_ANON_KEY', ANON_KEY);
 requireEnv('SMOKE_TEST_RESTAURANT_ID', RESTAURANT_ID);
+if (IMAGE_MODERATION_CANARY) {
+    requireEnv('MODERATION_CRON_TOKEN', MODERATION_CRON_TOKEN);
+}
 
 // ── Auth: static JWT, or password sign-in for a runtime-fresh token ─────────
 async function resolveJwt(): Promise<string> {
@@ -780,6 +790,43 @@ if (Deno.env.get('PLACES_SMOKE') === '1') {
     });
 }
 
+// TICKET-196: this is intentionally opt-in while B-0 is dark. Once activated,
+// every backend deploy must consume the reserved canary allocation and prove a
+// real Vision round-trip; provider failure or an accidental cache hit fails the
+// production smoke gate.
+if (IMAGE_MODERATION_CANARY) {
+    CHECKS.push({
+        name: 'moderate-image canary (post-canonical unique bytes, real Vision call)',
+        method: 'POST',
+        fn: 'moderate-image',
+        query: 'action=canary',
+        body: {},
+        headers: { 'x-moderation-cron-token': MODERATION_CRON_TOKEN! },
+        shape: (json) => {
+            const data = (json as {
+                data?: {
+                    sha256?: unknown;
+                    verdict?: unknown;
+                    provider_called?: unknown;
+                    cache_hit?: unknown;
+                    canonical_pixels?: unknown;
+                };
+            }).data;
+            if (!data) return 'missing data envelope';
+            if (typeof data.sha256 !== 'string' || data.sha256.length !== 64) {
+                return 'data.sha256 is not a canonical SHA-256';
+            }
+            if (data.verdict !== 'pass' && data.verdict !== 'rejected') {
+                return 'data.verdict is not terminal';
+            }
+            if (data.provider_called !== true) return 'provider_called is not true';
+            if (data.cache_hit !== false) return 'cache_hit is not false';
+            if (data.canonical_pixels !== 4_000_000) return 'canonical canary is not 4MP';
+            return null;
+        },
+    });
+}
+
 // ── Runner state ────────────────────────────────────────────────────────────
 
 let passed = 0;
@@ -952,6 +999,7 @@ for (const check of CHECKS) {
         headers['Authorization'] = `Bearer ${JWT}`;
         headers['apikey'] = ANON_KEY!;
     }
+    Object.assign(headers, check.headers ?? {});
 
     const init: RequestInit = {
         method: check.method,

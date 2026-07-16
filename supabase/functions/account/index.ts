@@ -12,13 +12,10 @@
  * table-management). Service role is REQUIRED for `delete` (auth.admin) and
  * for hydrating blocked profiles regardless of their privacy.
  *
- * Deletion contract (guideline 5.1.1(v)):
- *   1. Owned tables: transfer to the earliest-joined other member, or delete
- *      the table when the caller is the only member. Migration 20260704000000
- *      makes table deletion safe — member entries revert to feed-only.
- *   2. Storage: remove every object under entry-photos/{userId}/.
- *   3. auth.admin.deleteUser() — every remaining row cascades via FK rules
- *      normalized in migration 20260704000000.
+ * Deletion contract (TICKET-196): freeze writers with a durable tombstone,
+ * drain generation-fenced staging writes, inventory every per-user namespace,
+ * purge Storage, re-list stable-zero, then delete Auth and content rows. Any
+ * external-call failure resumes through the monitored account_cleanup job.
  */
 
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
@@ -26,8 +23,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { errorResponse } from '../_shared/errors.ts';
-
-const PHOTO_BUCKET = 'entry-photos';
+import { advanceAccountDeletion } from './deletionSaga.ts';
+import { requestAccountDeletion } from './deletionRequest.ts';
+import {
+    createSupabaseDeletionAdapter,
+    freezeAccountDeletion,
+} from './deletionSupabase.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
@@ -38,54 +39,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const REPORT_TARGET_TYPES = new Set(['entry', 'comment', 'profile', 'share', 'supper', 'photo']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Delete every storage object under {userId}/ in the entry-photos bucket. */
-async function deleteUserPhotos(supabase: any, userId: string): Promise<void> {
-    // storage.list is folder-scoped and paginated; loop until drained.
-    for (;;) {
-        const { data: objects, error } = await supabase.storage
-            .from(PHOTO_BUCKET)
-            .list(userId, { limit: 100 });
-        if (error) throw new Error(`storage list failed: ${error.message}`);
-        if (!objects || objects.length === 0) return;
-        const paths = objects.map((o: { name: string }) => `${userId}/${o.name}`);
-        const { error: rmError } = await supabase.storage.from(PHOTO_BUCKET).remove(paths);
-        if (rmError) throw new Error(`storage remove failed: ${rmError.message}`);
-        if (objects.length < 100) return;
-    }
-}
-
-/** Transfer ownership of every table the user owns, or delete sole-member tables. */
-async function releaseOwnedTables(supabase: any, userId: string): Promise<void> {
-    const { data: owned, error } = await supabase
-        .from('tables')
-        .select('id')
-        .eq('owner_id', userId);
-    if (error) throw new Error(`owned tables lookup failed: ${error.message}`);
-
-    for (const table of owned ?? []) {
-        const { data: members, error: mErr } = await supabase
-            .from('table_members')
-            .select('member_id, joined_at')
-            .eq('table_id', table.id)
-            .neq('member_id', userId)
-            .order('joined_at', { ascending: true })
-            .limit(1);
-        if (mErr) throw new Error(`member lookup failed: ${mErr.message}`);
-
-        const heir = members?.[0]?.member_id ?? null;
-        if (heir) {
-            const { error: uErr } = await supabase
-                .from('tables')
-                .update({ owner_id: heir })
-                .eq('id', table.id);
-            if (uErr) throw new Error(`ownership transfer failed: ${uErr.message}`);
-        } else {
-            const { error: dErr } = await supabase.from('tables').delete().eq('id', table.id);
-            if (dErr) throw new Error(`table delete failed: ${dErr.message}`);
-        }
-    }
-}
 
 serve(async (req: Request) => {
     if (req.method === 'OPTIONS') {
@@ -213,16 +166,33 @@ serve(async (req: Request) => {
 
         // ── delete ───────────────────────────────────────────────────────────
         if (action === 'delete') {
-            // Ordered so a mid-flight failure leaves a still-working account:
-            // tables first (reversible-ish), then storage, then the point of
-            // no return. Any thrown step surfaces as 500 and nothing after runs.
-            await releaseOwnedTables(supabase, user.id);
-            await deleteUserPhotos(supabase, user.id);
+            // This RPC is the linearization point: it takes the same lifecycle
+            // lock as staging/binding, writes the tombstone FIRST, consumes live
+            // staging generations, and persists the maximum writer-alive
+            // quiesce deadline. Never sleep 730s inside this invocation.
+            const result = await requestAccountDeletion({
+                freeze: () => freezeAccountDeletion(supabase, user.id),
+                advance: (deletion) => advanceAccountDeletion(
+                    deletion,
+                    createSupabaseDeletionAdapter(supabase, user.id),
+                ),
+                reportDeferredError: (error, deletion) => {
+                    console.error('account deletion deferred after freeze:', error);
+                    reportError(error, {
+                        fn: 'account',
+                        action: 'delete',
+                        extra: {
+                            phase: 'post_freeze',
+                            deletion_state: deletion.state,
+                        },
+                    });
+                },
+            });
 
-            const { error: delError } = await supabase.auth.admin.deleteUser(user.id);
-            if (delError) throw new Error(`auth delete failed: ${delError.message}`);
-
-            return jsonResponse({ data: { deleted: true } });
+            return jsonResponse(
+                { data: result },
+                result.deleted ? 200 : 202,
+            );
         }
 
         return errorResponse('INVALID_INPUT', 'Unknown action', 400);

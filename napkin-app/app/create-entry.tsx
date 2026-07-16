@@ -44,8 +44,7 @@ import {
     FieldUnderline,
 } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
-import { compressAndUpload, removeUploadedPhoto, PhotoUploadError } from '@/lib/imageUpload';
-import { collectOrphanedBlobUrls } from '@/lib/photoCleanup';
+import { compressAndUpload, PhotoUploadError } from '@/lib/imageUpload';
 import { CompanionChipsRow, CompanionPickerSheet } from '@/components/logging';
 import { CalendarModal } from '@/components/log/CalendarModal';
 import {
@@ -472,24 +471,6 @@ export default function CreateEntryScreen() {
 
     // ── Photo upload ──────────────────────────────────────────────────────
 
-    const photosRef = useRef(photos);
-    useEffect(() => {
-        photosRef.current = photos;
-    }, [photos]);
-
-    // Gates the unmount cleanup: a successful save means every blob belongs to
-    // the entry and must NOT be deleted. Explicit flag, not the setPhotos([])
-    // race (see lib/photoCleanup.ts / TICKET-071 regression).
-    const savedRef = useRef(false);
-
-    useEffect(() => {
-        return () => {
-            for (const url of collectOrphanedBlobUrls(photosRef.current, savedRef.current)) {
-                removeUploadedPhoto(url).catch(() => {});
-            }
-        };
-    }, []);
-
     const startUploadForSlot = useCallback(async (slotId: string, uri: string) => {
         if (!user?.id) return;
         const gen = (uploadGenRefs.current.get(slotId) ?? 0) + 1;
@@ -503,7 +484,7 @@ export default function CreateEntryScreen() {
         try {
             const url = await compressAndUpload(uri, user.id);
             if (uploadGenRefs.current.get(slotId) !== gen) {
-                removeUploadedPhoto(url).catch(() => {});
+                // Approved but unbound: the registry's 48h GC reclaims it.
                 return;
             }
             setPhotos(prev => prev.map(s => s.id === slotId
@@ -515,6 +496,8 @@ export default function CreateEntryScreen() {
             let errorMsg = 'Upload failed. Tap to retry.';
             if (err instanceof PhotoUploadError && err.code === 'too_large') {
                 errorMsg = 'Photo is too large. Please choose a smaller image.';
+            } else if (err instanceof PhotoUploadError && err.code === 'moderation_rejected') {
+                errorMsg = "That photo can't be used. Tap to choose another.";
             }
             setPhotos(prev => prev.map(s => s.id === slotId
                 ? { ...s, uploading: false, error: errorMsg }
@@ -545,10 +528,8 @@ export default function CreateEntryScreen() {
         uploadGenRefs.current.set(slotId, currentGen + 1);
 
         setPhotos(prev => {
-            const slot = prev.find(s => s.id === slotId);
-            if (slot?.publicUrl) {
-                removeUploadedPhoto(slot.publicUrl).catch(() => {});
-            }
+            // Approved objects are service-owned. Removing an unbound slot lets
+            // the registry's TTL GC reclaim it without racing a sink bind.
             return prev.filter(s => s.id !== slotId);
         });
     }, []);
@@ -656,7 +637,6 @@ export default function CreateEntryScreen() {
             if (result.merge_outcome === 'merged') {
                 toast.show('became a round.');
             }
-            savedRef.current = true;
             setPhotos([]);
             router.back();
         } catch (e: any) {
@@ -732,7 +712,6 @@ export default function CreateEntryScreen() {
                     }),
                 });
             }
-            savedRef.current = true;
             setPhotos([]);
             // Post-save toast: brand grammar lowercase past-tense
             if (restaurantLabel) {

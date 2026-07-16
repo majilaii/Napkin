@@ -366,6 +366,11 @@ jobs:
           # post-enable item gate below owns paid-path readiness; do not make a
           # deliberately frozen Google call fail this bootstrap phase.
           PLACES_SMOKE: "0"
+          # TICKET-196 B-0 ships the real-provider gate dark. The founder flips
+          # this repo variable only after GOOGLE_VISION_API_KEY is provisioned;
+          # from then on every backend deploy must pass the reserved canary.
+          IMAGE_MODERATION_CANARY: ${{ vars.IMAGE_MODERATION_CANARY_ACTIVE == 'true' && '1' || '0' }}
+          MODERATION_CRON_TOKEN: ${{ secrets.MODERATION_CRON_TOKEN }}
         run: |
           echo "## Smoke test results (PROD)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

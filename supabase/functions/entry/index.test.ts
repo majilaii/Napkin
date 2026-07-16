@@ -6,6 +6,7 @@
 
 import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import { normalizeMergeImagePayload } from './mergeImagePayload.ts';
 
 Deno.test('Entry Edge Function Tests', async (t) => {
 
@@ -55,5 +56,24 @@ Deno.test('Entry Edge Function Tests', async (t) => {
 
         const body = await res.json();
         assertEquals(body.error, 'Missing Authorization header');
+    });
+
+    await t.step('merge-with derives a hero and preserves the complete photo_urls payload', () => {
+        const photos = [
+            'https://project.test/entry-photos/approved/u/a.jpg',
+            'https://project.test/entry-photos/approved/u/b.jpg',
+        ];
+
+        assertEquals(normalizeMergeImagePayload({ photo_urls: photos }), {
+            photo_url: photos[0],
+            photo_urls: photos,
+        });
+        assertEquals(normalizeMergeImagePayload({
+            photo_url: 'https://project.test/entry-photos/approved/u/hero.jpg',
+            photo_urls: photos,
+        }), {
+            photo_url: 'https://project.test/entry-photos/approved/u/hero.jpg',
+            photo_urls: photos,
+        });
     });
 });

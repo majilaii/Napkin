@@ -59,6 +59,7 @@ import {
     chooseAndSaveNewProfilePhoto,
     shouldBlockProfilePhotoPicker,
 } from '@/lib/profilePhoto';
+import { isModerationRejected } from '@/lib/imageStaging';
 
 interface Props {
     identifier: string | null | undefined;
@@ -122,14 +123,15 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
 
         try {
             await chooseAndSaveNewProfilePhoto({
-                userId: profileUserId,
-                previousAvatarUrl: profileData.profile.avatar_url,
                 onSourceChosen: () => setIsChangingProfilePhoto(true),
                 saveAvatarUrl: (avatarUrl) =>
                     updateProfile.mutateAsync({ avatar_url: avatarUrl }),
             });
-        } catch {
-            Alert.alert("Couldn't save that photo", 'Please try again.');
+        } catch (error) {
+            Alert.alert(
+                isModerationRejected(error) ? "That photo can't be used" : "Couldn't save that photo",
+                isModerationRejected(error) ? 'Choose another photo.' : 'Please try again.',
+            );
         } finally {
             setIsChangingProfilePhoto(false);
         }

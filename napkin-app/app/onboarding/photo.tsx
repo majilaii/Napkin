@@ -1,10 +1,9 @@
 /**
- * Onboarding S2 — Profile photo (TICKET-126). Skippable.
+ * Onboarding S2 — mandatory moderated profile photo (TICKET-196 B-1).
  *
  * Tap the circle to pick from the library; the picked image is square-cropped to
- * 512² and uploaded to the avatars bucket (own-folder RLS), and its public URL is
- * written to the onboarding draft. Skip always visible → monogram fallback (the
- * same Avatar the rest of the app uses), avatar_url stays null. Continue/Skip → city.
+ * 512², privately staged, moderated, and its approved public URL is written to
+ * the onboarding draft. Continue stays blocked until an approved photo exists.
  * Copy-economy: kicker + serif brandLine + one action; no prose.
  */
 import React, { useState } from 'react';
@@ -17,7 +16,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { Avatar } from '@/components/feed/Avatar';
 import { chooseAvatarAsset } from '@/lib/avatarPicker';
-import { compressAndUploadAvatar, removeUploadedAvatar } from '@/lib/imageUpload';
+import { isModerationRejected, stageAndModerate } from '@/lib/imageStaging';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
 
@@ -43,28 +42,20 @@ export default function OnboardingPhotoScreen() {
         }
 
         try {
-            const previous = draft.avatar_url;
-            const url = await compressAndUploadAvatar(asset.uri, user.id);
-            patch({ avatar_url: url });
-            // Best-effort: a re-pick orphans the prior upload — clean it up.
-            if (previous && previous !== url) void removeUploadedAvatar(previous).catch(() => {});
-        } catch {
-            Alert.alert("Couldn't add that photo", 'Please try another one.');
+            const approved = await stageAndModerate(asset.uri, 'avatar');
+            patch({ avatar_url: approved.approved_url });
+        } catch (error) {
+            Alert.alert(
+                isModerationRejected(error) ? "That photo can't be used" : "Couldn't add that photo",
+                isModerationRejected(error) ? 'Choose another photo.' : 'Please try again.',
+            );
         } finally {
             setUploading(false);
         }
     };
 
     const goCity = () => {
-        if (uploading) return;
-        router.push('/onboarding/city');
-    };
-
-    const skip = () => {
-        if (uploading) return;
-        // Best-effort: skipping after an upload orphans it — clean it up.
-        if (draft.avatar_url) void removeUploadedAvatar(draft.avatar_url).catch(() => {});
-        patch({ avatar_url: null });
+        if (uploading || !draft.avatar_url) return;
         router.push('/onboarding/city');
     };
 
@@ -103,21 +94,22 @@ export default function OnboardingPhotoScreen() {
                         </Text>
                     </Pressable>
                 </View>
-
-                <Pressable onPress={skip} disabled={uploading} hitSlop={8} accessibilityRole="button">
-                    <Text style={[s.skip, { color: palette.textMuted, alignSelf: 'center' }]}>Skip</Text>
-                </Pressable>
             </View>
 
             <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
                 <Pressable
                     onPress={goCity}
-                    disabled={uploading}
+                    disabled={uploading || !draft.avatar_url}
                     style={({ pressed }) => [
                         s.primaryBtn,
-                        { backgroundColor: palette.primary, opacity: uploading ? 0.5 : pressed ? 0.85 : 1 },
+                        {
+                            backgroundColor: palette.primary,
+                            opacity: uploading || !draft.avatar_url ? 0.5 : pressed ? 0.85 : 1,
+                        },
                     ]}
                     accessibilityRole="button"
+                    accessibilityLabel="Continue"
+                    accessibilityState={{ disabled: uploading || !draft.avatar_url }}
                 >
                     <Text style={s.primaryBtnText}>Continue</Text>
                 </Pressable>

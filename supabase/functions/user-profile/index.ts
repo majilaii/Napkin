@@ -1726,6 +1726,8 @@ serve(async (req) => {
         // ── update_profile ────────────────────────────────────────────────
         if (action === 'update_profile') {
             const updates: Record<string, unknown> = {};
+            const hasAvatarUpdate = body.avatar_url !== undefined;
+            const avatarUrl = body.avatar_url == null ? null : String(body.avatar_url).trim();
 
             if (typeof body.display_name === 'string') {
                 const name = body.display_name.trim();
@@ -1735,19 +1737,37 @@ serve(async (req) => {
             if (body.bio !== undefined) {
                 updates.bio = body.bio ? String(body.bio).slice(0, 160) : null;
             }
-            if (body.avatar_url !== undefined) {
-                updates.avatar_url = body.avatar_url ? String(body.avatar_url) : null;
+            if (hasAvatarUpdate && avatarUrl && avatarUrl.length > 500) {
+                return fail('avatar_url is too long', 400);
             }
 
-            if (Object.keys(updates).length === 0) {
+            if (Object.keys(updates).length === 0 && !hasAvatarUpdate) {
                 return fail('No updatable fields provided', 400);
+            }
+
+            if (Object.keys(updates).length > 0) {
+                const { error } = await supabase
+                    .from('profiles')
+                    .update(updates)
+                    .eq('user_id', user.id);
+                if (error) throw error;
+            }
+
+            // Avatar replacement/removal owns image-ref unbinding + GC enqueue.
+            // Keep it in the SQL transaction that reads the live enforcement
+            // flag; a service-role profiles.update here would bypass B-2.
+            if (hasAvatarUpdate) {
+                const { error } = await supabase.rpc('fn_commit_avatar', {
+                    p_user_id: user.id,
+                    p_avatar_url: avatarUrl || null,
+                });
+                if (error) throw error;
             }
 
             const { data: updated, error } = await supabase
                 .from('profiles')
-                .update(updates)
-                .eq('user_id', user.id)
                 .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+                .eq('user_id', user.id)
                 .single();
             if (error) throw error;
 
@@ -1769,21 +1789,19 @@ serve(async (req) => {
         // bypasses the "username required to go public" guard — onboarding
         // captures no username; opt-out and handle-claim live in settings.
         if (action === 'complete_onboarding') {
-            const updates: Record<string, unknown> = {
-                onboarded_at: new Date().toISOString(),
-                terms_accepted_at: new Date().toISOString(),
-                account_privacy: 'public',
-            };
+            let displayName: string | null = null;
+            let homeCity: string | null = null;
+            let avatarUrl: string | null = null;
 
             if (typeof body.display_name === 'string') {
                 const name = body.display_name.trim();
                 if (!name || name.length > 80) return fail('display_name must be 1–80 chars', 400);
-                updates.display_name = name;
+                displayName = name;
             }
             // home_city is optional (skip) — trim to null, cap at 120 chars.
             if (body.home_city !== undefined) {
                 const city = body.home_city == null ? '' : String(body.home_city).trim();
-                updates.home_city = city ? city.slice(0, 120) : null;
+                homeCity = city ? city.slice(0, 120) : null;
             }
             // avatar_url is optional (skip) — trim to null. Defense-in-depth:
             // onboarding only ever produces our own storage URL, so pin it to the
@@ -1792,23 +1810,32 @@ serve(async (req) => {
             if (body.avatar_url !== undefined) {
                 const avatar = body.avatar_url == null ? '' : String(body.avatar_url).trim();
                 if (avatar) {
-                    const ownPrefix = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/avatars/${user.id}/`;
-                    if (avatar.length > 500 || !avatar.startsWith(ownPrefix)) {
+                    const publicRoot = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/avatars/`;
+                    const legacyPrefix = `${publicRoot}${user.id}/`;
+                    const approvedPrefix = `${publicRoot}approved/${user.id}/`;
+                    if (
+                        avatar.length > 500 ||
+                        (!avatar.startsWith(legacyPrefix) && !avatar.startsWith(approvedPrefix))
+                    ) {
                         return fail('avatar_url must be an uploaded avatar', 400);
                     }
-                    updates.avatar_url = avatar;
-                } else {
-                    updates.avatar_url = null;
+                    avatarUrl = avatar;
                 }
             }
 
-            const { data: updated, error } = await supabase
-                .from('profiles')
-                .update(updates)
-                .eq('user_id', user.id)
-                .select('user_id, username, display_name, bio, avatar_url, home_city, onboarded_at, terms_accepted_at, account_privacy, allow_public_replies')
-                .single();
+            // Full-payload RPC: flag read, approved-object validation, all
+            // completion fields, onboarded_at/terms/privacy stamps, and avatar
+            // ref binding commit atomically.  OFF remains legacy-compatible;
+            // B-2 turns avatar null/raw into a closed failure.
+            const { data: rpcData, error } = await supabase.rpc('fn_complete_onboarding', {
+                p_user_id: user.id,
+                p_display_name: displayName,
+                p_home_city: homeCity,
+                p_avatar_url: avatarUrl,
+            });
             if (error) throw error;
+
+            const updated = Array.isArray(rpcData) ? rpcData[0] : rpcData;
 
             return json({ data: updated });
         }

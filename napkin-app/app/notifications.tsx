@@ -287,6 +287,9 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
                 router.push('/import-progress' as any);
             }
             return;
+        case 'image_rejected':
+            if (n.sinkKind === 'avatar') router.push('/settings/photo');
+            return;
         default:
             // TICKET-159 (finding 15): an unknown (newer-server) kind renders as
             // a generic row; tapping it just marks it read — nowhere to route.
@@ -560,6 +563,21 @@ function NotificationRow({
                             <I>{n.restaurantName}</I>
                         </>
                     }
+                    time={n.timeLabel}
+                />
+            );
+        case 'image_rejected':
+            return (
+                <NotifRow
+                    tone={tone}
+                    onPress={onPress}
+                    leading={<NotifGlyph tone="amber">{'!'}</NotifGlyph>}
+                    title={
+                        n.reason === 'registry_storage_missing'
+                            ? 'a photo was unavailable and has been removed'
+                            : "a photo didn't meet our safety checks and was removed"
+                    }
+                    body={n.sinkKind === 'avatar' ? 'Tap to choose a new profile photo.' : undefined}
                     time={n.timeLabel}
                 />
             );
