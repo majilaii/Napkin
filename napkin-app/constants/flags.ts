@@ -61,4 +61,8 @@ export const FRIEND_TEST = {
      *  tables, not opted into on a review.) Default FALSE (live for the friend-test);
      *  flip TRUE to curtain. Gates JSX only — hooks/routes stay compiled & deep-linkable. */
     hideSuppers: false,
+    /** Hide the settings-only onboarding preview switch. Default FALSE so the
+     *  founder can use it now; flip TRUE for store builds. Gates JSX only — the
+     *  local preference and launch route stay compiled. */
+    hideOnboardingPreviewToggle: false,
 } as const;
