@@ -69,9 +69,15 @@ const userHeaders = {
     Authorization: `Bearer ${jwt}`,
     apikey: ANON_KEY,
 };
+// PostgREST needs bearer auth for legacy service-role JWTs, but rejects opaque
+// sb_secret_* keys in Authorization. The Edge drain below always uses apikey.
+const serviceAuthorization = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(SERVICE_ROLE_KEY)
+    ? { Authorization: `Bearer ${SERVICE_ROLE_KEY}` }
+    : {};
 const serviceHeaders = {
     'Content-Type': 'application/json',
     apikey: SERVICE_ROLE_KEY,
+    ...serviceAuthorization,
 };
 
 const legacyEdge = await jsonFetch('/functions/v1/resolve-url', {

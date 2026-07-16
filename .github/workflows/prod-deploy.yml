@@ -25,6 +25,8 @@ name: Deploy to Production
 # Key rotation: create the replacement Supabase key, update the repository
 # secret, immediately dispatch this workflow to pin the same key in the Edge
 # runtime, then revoke the prior key.
+# PostgREST calls add Authorization only when that key is a legacy JWT; opaque
+# sb_secret_* keys and all completeness Edge calls use apikey only.
 
 on:
   push:
@@ -162,9 +164,14 @@ jobs:
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          service_auth=()
+          if [[ "$SUPABASE_SERVICE_ROLE_KEY" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+            service_auth=(-H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          fi
           code=$(curl --silent --show-error -o /tmp/completeness-pre-freeze.json -w '%{http_code}' \
             -X POST \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            "${service_auth[@]}" \
             -H 'Content-Type: application/json' \
             --data '{"p_frozen":true,"p_reason":"rollout"}' \
             https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze || true)
@@ -208,9 +215,14 @@ jobs:
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          service_auth=()
+          if [[ "$SUPABASE_SERVICE_ROLE_KEY" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+            service_auth=(-H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          fi
           curl --fail-with-body --silent --show-error \
             -X POST \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            "${service_auth[@]}" \
             -H 'Content-Type: application/json' \
             --data '{"p_frozen":true,"p_reason":"rollout"}' \
             https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze
@@ -418,9 +430,14 @@ jobs:
             COMPLETENESS_CRON_SECRET="$COMPLETENESS_CRON_SECRET" \
             COMPLETENESS_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" \
             --project-ref ftvmseaqwwlcxtdlvxxz
+          service_auth=()
+          if [[ "$SUPABASE_SERVICE_ROLE_KEY" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+            service_auth=(-H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          fi
           curl --fail-with-body --silent --show-error \
             -X POST \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            "${service_auth[@]}" \
             -H 'Content-Type: application/json' \
             --data '{"p_frozen":false,"p_reason":"post-deploy gate"}' \
             https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze
@@ -514,11 +531,16 @@ jobs:
             restore_failures+=("Edge worker disable/freeze")
           fi
 
+          service_auth=()
+          if [[ "$SUPABASE_SERVICE_ROLE_KEY" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+            service_auth=(-H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          fi
           freeze_rc=0
           freeze_code=$(curl --silent --show-error \
             -o /tmp/completeness-restore-freeze.json -w '%{http_code}' \
             -X POST \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            "${service_auth[@]}" \
             -H 'Content-Type: application/json' \
             --data '{"p_frozen":true,"p_reason":"rollout failed"}' \
             https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze) \

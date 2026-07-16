@@ -1,4 +1,7 @@
-/** Cron/owner entry point for the durable restaurant-completeness pipeline. */
+/**
+ * Cron/owner entry point for the durable restaurant-completeness pipeline.
+ * Gateway JWT verification is disabled; both auth modes are verified here.
+ */
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
