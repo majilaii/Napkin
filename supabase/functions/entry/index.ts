@@ -6,6 +6,7 @@ import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { errorResponse, mapPgError } from '../_shared/errors.ts';
 import { emitFriendLogged } from '../_shared/notify.ts';
 import { coerceClientNonce } from '../_shared/uuid.ts';
+import { normalizeMergeImagePayload } from './mergeImagePayload.ts';
 
 /**
  * Entry Edge Function
@@ -560,6 +561,71 @@ serve(async (req) => {
                 );
             }
 
+            // ── moderated image lifecycle mutations ──────────────────────
+            // These service-only RPCs keep sink changes and image-ref changes in
+            // the same database transaction.  B-1 clients route here before B-2
+            // removes the legacy direct grants; delete triggers remain the
+            // correctness net for old clients and cascades.
+            if (body.action === 'set_entry_hero') {
+                const entryId = typeof body.entry_id === 'string' ? body.entry_id : '';
+                const photoUrl = body.photo_url == null ? null : String(body.photo_url).trim();
+                if (!entryId) {
+                    return errorResponse('INVALID_INPUT', 'entry_id is required', 400);
+                }
+                if (photoUrl !== null && !photoUrl) {
+                    return errorResponse('INVALID_INPUT', 'photo_url must be a URL or null', 400);
+                }
+
+                const { data, error } = await supabase.rpc('fn_set_entry_hero', {
+                    p_user_id: user.id,
+                    p_entry_id: entryId,
+                    p_photo_url: photoUrl,
+                });
+                if (error) {
+                    const { code, status } = mapPgError(error);
+                    return errorResponse(code, error.message ?? 'set_entry_hero failed', status);
+                }
+                return new Response(JSON.stringify({ data }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                });
+            }
+
+            if (body.action === 'delete_entry_photo') {
+                const photoId = typeof body.photo_id === 'string' ? body.photo_id : '';
+                if (!photoId) {
+                    return errorResponse('INVALID_INPUT', 'photo_id is required', 400);
+                }
+                const { data, error } = await supabase.rpc('fn_delete_entry_photo', {
+                    p_user_id: user.id,
+                    p_photo_id: photoId,
+                });
+                if (error) {
+                    const { code, status } = mapPgError(error);
+                    return errorResponse(code, error.message ?? 'delete_entry_photo failed', status);
+                }
+                return new Response(JSON.stringify({ data }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                });
+            }
+
+            if (body.action === 'delete_entry') {
+                const entryId = typeof body.entry_id === 'string' ? body.entry_id : '';
+                if (!entryId) {
+                    return errorResponse('INVALID_INPUT', 'entry_id is required', 400);
+                }
+                const { data, error } = await supabase.rpc('fn_delete_entry', {
+                    p_user_id: user.id,
+                    p_entry_id: entryId,
+                });
+                if (error) {
+                    const { code, status } = mapPgError(error);
+                    return errorResponse(code, error.message ?? 'delete_entry failed', status);
+                }
+                return new Response(JSON.stringify({ data }), {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                });
+            }
+
             // ── update-companions action ───────────────────────────────────
             // Replace the full companion set for an entry the caller owns.
             // Receives: { action: 'update-companions', entry_id, companion_ids[] }
@@ -889,6 +955,7 @@ serve(async (req) => {
                     service_rating: mServiceRating,
                     value_rating: mValueRating,
                     photo_url: mPhotoUrl,
+                    photo_urls: mPhotoUrls,
                 } = body;
 
                 // Coerce a possibly-malformed client nonce (RN runtimes lacking
@@ -921,6 +988,10 @@ serve(async (req) => {
                 const mergeVisitedAtValue = mergeVisitedAt
                     ? new Date(mergeVisitedAt).toISOString()
                     : new Date().toISOString();
+                const mergeImages = normalizeMergeImagePayload({
+                    photo_url: mPhotoUrl,
+                    photo_urls: mPhotoUrls,
+                });
 
                 const bPayload = {
                     restaurant_id: mergeRestaurantId,
@@ -933,7 +1004,7 @@ serve(async (req) => {
                     ...(mFlavorRating != null ? { flavor_rating: mFlavorRating } : {}),
                     ...(mServiceRating != null ? { service_rating: mServiceRating } : {}),
                     ...(mValueRating != null ? { value_rating: mValueRating } : {}),
-                    ...(mPhotoUrl ? { photo_url: mPhotoUrl } : {}),
+                    ...mergeImages,
                     ...(safeMergeNonce ? { client_nonce: safeMergeNonce } : {}),
                 };
 
@@ -1202,6 +1273,7 @@ serve(async (req) => {
                         ...(takeValue != null ? { value_rating: takeValue } : {}),
                         liked: takeLiked === true,
                         ...(takeHeroPhoto ? { photo_url: takeHeroPhoto } : {}),
+                        ...(takePhotoArray.length > 0 ? { photo_urls: takePhotoArray } : {}),
                         ...(safeTakeNonce ? { client_nonce: safeTakeNonce } : {}),
                     };
 
@@ -1250,21 +1322,10 @@ serve(async (req) => {
                         throw takeBindErr;
                     }
 
-                    // Bulk-insert this take's extra photos (non-fatal). Skip on dedup
-                    // so a retried take doesn't double-insert photos.
-                    if (!takeWasDedup && takePhotoArray.length > 0) {
-                        const takePhotoRows = takePhotoArray.map((url: string, idx: number) => ({
-                            entry_id: takeEntryId,
-                            photo_url: url,
-                            sort_order: idx,
-                        }));
-                        const { error: takePhotosErr } = await supabase
-                            .from('entry_photos')
-                            .insert(takePhotoRows);
-                        if (takePhotosErr) {
-                            console.error('[entry] supper take entry_photos insert error (non-fatal):', takePhotosErr);
-                        }
-                    }
+                    // Photo rows and registry refs are created atomically by
+                    // fn_create_entry_with_tables from p_entry.photo_urls.  Do
+                    // not reintroduce a service-role insert here: it would bypass
+                    // the enforcement flag and leave an untracked public object.
 
                     // Mark the author "been" at the restaurant (mirrors create path).
                     const { error: takeStatusErr } = await supabase
@@ -1646,6 +1707,7 @@ serve(async (req) => {
                 // but sending it explicitly keeps the wire shape stable).
                 liked: liked === true,
                 ...(heroPhotoUrl ? { photo_url: heroPhotoUrl } : {}),
+                ...(photoUrlsArray.length > 0 ? { photo_urls: photoUrlsArray } : {}),
                 ...(safeClientNonce ? { client_nonce: safeClientNonce } : {}),
             };
 
@@ -1845,20 +1907,9 @@ serve(async (req) => {
                 }
             }
 
-            // Bulk-insert entry_photos if photo_urls provided (non-fatal if it fails)
-            if (photoUrlsArray.length > 0) {
-                const photoRows = photoUrlsArray.map((url: string, idx: number) => ({
-                    entry_id: entryData.id,
-                    photo_url: url,
-                    sort_order: idx,
-                }));
-                const { error: photosError } = await supabase
-                    .from('entry_photos')
-                    .insert(photoRows);
-                if (photosError) {
-                    console.error('entry_photos insert error (non-fatal):', photosError);
-                }
-            }
+            // Photo rows, hero binding, and image refs committed inside the
+            // entry RPC.  Keeping this outside the RPC would let the flag flip
+            // between the entry write and the ref bind.
 
             // If it's a restaurant entry, update user_restaurant_status
             if (restaurantId) {

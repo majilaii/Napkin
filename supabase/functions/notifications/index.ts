@@ -49,6 +49,7 @@ type HydratedNotification =
     | TableInviteAcceptedNotification
     | ImportDoneNotification
     | SupperSetNotification
+    | ImageRejectedNotification
     | PassthroughNotification
     | UnknownKindNotification;
 
@@ -119,6 +120,12 @@ interface SupperSetNotification extends BaseHydrated {
     restaurantName: string;
     restaurantId: string | undefined;
     photoUrl: string | null;
+}
+
+interface ImageRejectedNotification extends BaseHydrated {
+    type: 'image_rejected';
+    sinkKind: 'avatar' | 'entry_photo' | 'entry_hero';
+    reason: string;
 }
 
 /**
@@ -489,6 +496,28 @@ async function hydrate(
                     restaurantName: restaurant?.name ?? '',
                     restaurantId: restaurant?.id,
                     photoUrl: restaurant?.photo_url ?? null,
+                });
+                break;
+            }
+
+            case 'image_rejected': {
+                const meta = (r.subject_meta ?? {}) as {
+                    sink_kind?: string;
+                    reason?: string;
+                };
+                const sinkKind = meta.sink_kind === 'avatar' ||
+                        meta.sink_kind === 'entry_photo' ||
+                        meta.sink_kind === 'entry_hero'
+                    ? meta.sink_kind
+                    : 'entry_photo';
+                out.push({
+                    id: r.id,
+                    type: 'image_rejected',
+                    read: !!r.read_at,
+                    createdAt: r.created_at,
+                    timeLabel: formatTimeLabel(r.created_at),
+                    sinkKind,
+                    reason: typeof meta.reason === 'string' ? meta.reason : 'moderation_rejected',
                 });
                 break;
             }
