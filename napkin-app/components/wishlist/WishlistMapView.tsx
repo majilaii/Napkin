@@ -1850,7 +1850,21 @@ function PeekCardBody({
                 return;
             case 'log_visit':
             case 'log_again':
-                router.push({ pathname: '/create-entry', params: { restaurantId: item.id } });
+                // /log-meal (the current LogSheet) — NOT the legacy /create-entry
+                // composer. Same param contract as restaurant/[id]'s handleLogPress;
+                // map pins are always persisted restaurants, so the row fields
+                // suffice and log-meal re-derives the rest (placePayload optional).
+                router.push({
+                    pathname: '/log-meal',
+                    params: {
+                        restaurant: JSON.stringify({
+                            id: item.id,
+                            name: item.name,
+                            city: item.city,
+                            cuisine: item.cuisine,
+                        }),
+                    },
+                });
                 return;
             case 'directions':
                 openDirections(item);
