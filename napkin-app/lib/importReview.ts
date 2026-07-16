@@ -5,6 +5,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export interface ManualImportPlace {
     id: string;
+    external_id?: string | null;
     name: string;
     city: string | null;
     cuisine: string | null;
@@ -45,16 +46,19 @@ export function createManualImportSpot(
     result: ManualImportPlace,
     tableIds: string[],
     uuid: () => string = safeRandomUUID,
+    resolutionId: string | null = null,
 ): PersistedImportSpot {
     const isNapkinId = UUID_RE.test(result.id);
+    const externalId = result.external_id ?? (isNapkinId ? null : result.id);
     const tableShares: Record<string, string> = {};
     for (const tableId of tableIds) tableShares[tableId] = uuid();
 
     return {
         candidate_id: uuid(),
         client_nonce: uuid(),
+        resolution_id: resolutionId,
         restaurant_id: isNapkinId ? result.id : null,
-        external_id: isNapkinId ? null : result.id,
+        external_id: isNapkinId ? null : externalId,
         restaurant_name: result.name,
         restaurant_city: result.city,
         table_id: tableIds[0] ?? null,
@@ -63,7 +67,7 @@ export function createManualImportSpot(
         place: isNapkinId
             ? null
             : {
-                  external_id: result.id,
+                  external_id: externalId,
                   name: result.name,
                   location: { locality: result.city ?? undefined },
                   cuisine: result.cuisine,

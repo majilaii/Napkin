@@ -63,4 +63,10 @@ export const onboardingStyles = StyleSheet.create({
         letterSpacing: 0.3,
         color: Colors.light.textInverse,
     },
+    completionError: {
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+        lineHeight: 18,
+        marginBottom: Spacing.sm,
+    },
 });

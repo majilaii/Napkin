@@ -25,6 +25,9 @@ on:
     paths:
       - 'supabase/migrations/**'
       - 'supabase/tests/**'
+      - 'scripts/backfill/**'
+      - 'scripts/classify-forward-only-release.sh'
+      - 'scripts/test-forward-only-release-classifier.sh'
       - 'scripts/test-image-moderation-concurrency.sh'
       - '.github/workflows/migration-replay.yml'
   push:
@@ -32,6 +35,9 @@ on:
     paths:
       - 'supabase/migrations/**'
       - 'supabase/tests/**'
+      - 'scripts/backfill/**'
+      - 'scripts/classify-forward-only-release.sh'
+      - 'scripts/test-forward-only-release-classifier.sh'
       - 'scripts/test-image-moderation-concurrency.sh'
       - '.github/workflows/migration-replay.yml'
 
@@ -45,6 +51,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Assert completeness backfill contract
+        # deno resolves npm:-specifier types through root node_modules;
+        # without the install it dies on npm:@types/node before any test runs.
+        run: |
+          npm ci --ignore-scripts
+          deno test --allow-env scripts/backfill/restaurant-completeness_test.ts
+
+      - name: Assert forward-only release classifier
+        run: bash scripts/test-forward-only-release-classifier.sh
 
       - name: Duplicate timestamp guard
         run: bash scripts/check-migration-timestamps.sh
@@ -102,6 +122,11 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/people_lists_discovery.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/restaurant_completeness.spec.sql
+          bash supabase/tests/restaurant_completeness.concurrency.sh \
+            "postgresql://postgres:postgres@127.0.0.1:54329/postgres"
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/image_moderation_b0.spec.sql

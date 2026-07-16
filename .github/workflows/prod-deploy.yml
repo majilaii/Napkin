@@ -1,7 +1,8 @@
 name: Deploy to Production
 
 # Auto-deploys merged-to-main commits to production, then runs smoke tests.
-# If smoke fails, automatically opens a revert PR.
+# If smoke fails, ordinarily opens a revert PR. Forward-only bootstrap commits
+# freeze/disable their new path and require a forward fix instead.
 #
 # This is Option 4 from the 2026-04-30 deploy doctrine review: no staging
 # (Supabase free-tier project cap), so the safety net is fast detection +
@@ -19,6 +20,8 @@ name: Deploy to Production
 #   - PROD_SMOKE_TEST_EMAIL           (smoke user on prod — signs in at runtime)
 #   - PROD_SMOKE_TEST_PASSWORD
 #   - PROD_SMOKE_TEST_RESTAURANT_ID
+#   - SUPABASE_SERVICE_ROLE_KEY        (cron transport + deploy gate)
+#   - COMPLETENESS_CRON_SECRET         (shared only by CI and the Edge runtime)
 
 on:
   push:
@@ -31,6 +34,7 @@ on:
       # the next backend deploy.
       - 'scripts/smoke/**'
       - '.github/workflows/prod-deploy.yml'
+      - '.github/workflows/restaurant-completeness-cron.yml'
   # Manual re-run: db push is idempotent, fn detection diffs HEAD~1 (usually
   # nothing), so a bare dispatch is effectively "run the smoke suite against
   # prod". The `functions` input force-deploys named functions — the recovery
@@ -66,7 +70,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          # The rollout classifier and function detector inspect the complete
+          # push range, not just the last commit. Logical multi-commit merges
+          # must not hide an earlier migration or shared-function change.
+          fetch-depth: 0
+
+      - name: Classify forward-only bootstrap release
+        id: rollout-mode
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          base_ref="${PUSH_BEFORE:-HEAD~1}"
+          head_ref="${PUSH_HEAD:-HEAD}"
+          if [[ "$base_ref" =~ ^0+$ ]] || ! git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1; then
+            base_ref=HEAD~1
+          fi
+          forward_only=$(bash scripts/classify-forward-only-release.sh "$base_ref" "$head_ref")
+          if [[ "$forward_only" != 'true' && "$forward_only" != 'false' ]]; then
+            echo "::error::Unexpected forward-only classifier output: $forward_only"
+            exit 1
+          fi
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
+          echo "forward_only=$forward_only" >> "$GITHUB_OUTPUT"
+          echo "Forward-only bootstrap release: $forward_only" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verify required secrets
         env:
@@ -76,9 +105,11 @@ jobs:
           PROD_SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
           PROD_SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
           PROD_SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
         run: |
           missing=()
-          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROD_ANON_KEY PROD_SMOKE_TEST_EMAIL PROD_SMOKE_TEST_PASSWORD PROD_SMOKE_TEST_RESTAURANT_ID; do
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROD_ANON_KEY PROD_SMOKE_TEST_EMAIL PROD_SMOKE_TEST_PASSWORD PROD_SMOKE_TEST_RESTAURANT_ID SUPABASE_SERVICE_ROLE_KEY COMPLETENESS_CRON_SECRET; do
             if [[ -z "${!v:-}" ]]; then missing+=("$v"); fi
           done
           if [[ ${#missing[@]} -gt 0 ]]; then
@@ -107,6 +138,38 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: supabase link --project-ref ftvmseaqwwlcxtdlvxxz --password "$SUPABASE_DB_PASSWORD"
 
+      # Forward-only bootstrap (TICKET-195 delta 5). This runs before the first
+      # migration exists, so it may only touch Edge secrets. The additive
+      # migration seeds the DB freeze itself; later deploys additionally freeze
+      # the already-present control row below on a best-effort basis.
+      - name: Disable completeness worker before rollout
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
+        run: |
+          supabase secrets set \
+            COMPLETENESS_WORKER_ENABLED=false \
+            COMPLETENESS_SPEND_FROZEN=true \
+            COMPLETENESS_CRON_SECRET="$COMPLETENESS_CRON_SECRET" \
+            --project-ref ftvmseaqwwlcxtdlvxxz
+
+      - name: Freeze an existing completeness rollout (bootstrap-safe)
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          code=$(curl --silent --show-error -o /tmp/completeness-pre-freeze.json -w '%{http_code}' \
+            -X POST \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_frozen":true,"p_reason":"rollout"}' \
+            https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze || true)
+          if [[ "$code" =~ ^2 ]]; then
+            echo "Existing completeness control frozen before migration."
+          else
+            echo "Bootstrap: freeze RPC is not present yet (HTTP $code); the additive migration will seed frozen=true."
+          fi
+
       # Provision against the pre-existing prod schema/functions BEFORE any
       # deployment. The diary/reviews keyset walks need ≥2 review-bearing
       # entries, and feed-socials needs its second public saver. Both fixture
@@ -119,11 +182,14 @@ jobs:
           SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
           SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
         run: |
           deno run --allow-env --allow-net scripts/smoke/ensure-fixtures.ts 2>&1 \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Push migrations to prod
+        id: push-migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -134,18 +200,31 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Assert database completeness freeze after migration
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_frozen":true,"p_reason":"rollout"}' \
+            https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze
+
       # ── TICKET-159: pg_cron gate — the gathering sweep MUST be scheduled ──
       # The migration's cron.schedule block is extension-guarded so from-scratch
       # replays stay green, which means a prod without pg_cron would silently
       # no-op the hourly sweep. This gate makes that state a deploy FAILURE
-      # (→ the auto-revert PR opens, same as a smoke failure). On-read dispatch
+      # (→ ordinary releases open an auto-revert PR; the forward-only
+      # completeness bootstrap freezes/disables for a forward fix). On-read dispatch
       # is defense-in-depth, never the excuse for an unscheduled sweep.
       # Connects via the Supavisor session pooler (GitHub runners are IPv4-only;
       # the direct db.<ref> host is IPv6). The pooler INSTANCE NUMBER varies per
       # project (aws-0/aws-1/… — the 2026-07-10 first run guessed aws-0 and got
       # "tenant not found"), so the host comes from the Management API's pooler
       # config, with instance-number probing as fallback. Still fail-closed: no
-      # reachable pooler, or job absent → deploy failure → auto-revert PR.
+      # reachable pooler, or job absent → deploy failure under that same policy.
       - name: Verify gathering sweep is scheduled (pg_cron gate)
         id: cron-gate
         env:
@@ -195,6 +274,8 @@ jobs:
           # env — never interpolated into the script — and validated against
           # the real function directories below.
           FORCE_FNS: ${{ inputs.functions }}
+          DIFF_BASE: ${{ steps.rollout-mode.outputs.base_ref }}
+          DIFF_HEAD: ${{ steps.rollout-mode.outputs.head_ref }}
         run: |
           if [[ -n "$FORCE_FNS" ]]; then
             if [[ "$FORCE_FNS" == "all" ]]; then
@@ -215,7 +296,7 @@ jobs:
             exit 0
           fi
 
-          diff_paths=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/**')
+          diff_paths=$(git diff --name-only "$DIFF_BASE" "$DIFF_HEAD" -- 'supabase/functions/**')
 
           # _shared/** modules and top-level files (import_map.json) are baked
           # into every function's bundle at deploy time — they are not deployed
@@ -281,9 +362,10 @@ jobs:
           SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
           SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
-          # TICKET-121: places-search check (real Google cost) runs at deploy
-          # time only — the scheduled smoke never sets this.
-          PLACES_SMOKE: "1"
+          # Completeness spend is still frozen during ordinary smoke. The
+          # post-enable item gate below owns paid-path readiness; do not make a
+          # deliberately frozen Google call fail this bootstrap phase.
+          PLACES_SMOKE: "0"
           # TICKET-196 B-0 ships the real-provider gate dark. The founder flips
           # this repo variable only after GOOGLE_VISION_API_KEY is provisioned;
           # from then on every backend deploy must pass the reserved canary.
@@ -296,6 +378,162 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Completeness bootstrap smoke (forward-only)
+        id: completeness-smoke
+        if: success()
+        env:
+          SUPABASE_URL: https://ftvmseaqwwlcxtdlvxxz.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
+          SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+        run: |
+          echo "## Completeness bootstrap smoke (forward-only)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          deno run --allow-env --allow-net scripts/smoke/restaurant-completeness.ts 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # The worker is default-inert through migration, function deployment, and
+      # ordinary smoke. Only after all three pass do we enable it and clear the
+      # authoritative DB freeze. A gate failure is a forward-fix incident: the
+      # restoration step below freezes/disables the new path and deliberately
+      # does not whole-SHA-revert migrations or workflow files.
+      - name: Enable completeness worker for post-deploy gate
+        id: completeness-enable
+        if: success()
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
+        run: |
+          supabase secrets set \
+            COMPLETENESS_WORKER_ENABLED=true \
+            COMPLETENESS_SPEND_FROZEN=false \
+            COMPLETENESS_CRON_SECRET="$COMPLETENESS_CRON_SECRET" \
+            --project-ref ftvmseaqwwlcxtdlvxxz
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_frozen":false,"p_reason":"post-deploy gate"}' \
+            https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze
+
+      # The item-to-terminal gate below deliberately uses an already-complete
+      # restaurant and therefore proves no paid provider path. Keep one real,
+      # fixed Text Search after the authoritative DB freeze has been cleared so
+      # a bad Google key, SKU-budget wiring, or stale frozen state cannot ship.
+      - name: Completeness paid-path readiness gate
+        id: completeness-paid-gate
+        if: success()
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
+        run: |
+          auth=$(curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -cn --arg email "$SMOKE_TEST_EMAIL" --arg password "$SMOKE_TEST_PASSWORD" '{email:$email,password:$password}')" \
+            'https://ftvmseaqwwlcxtdlvxxz.supabase.co/auth/v1/token?grant_type=password')
+          jwt=$(jq -er '.access_token' <<< "$auth")
+          owner_id=$(jq -er '.user.id' <<< "$auth")
+          payload=$(jq -cn --arg owner_id "$owner_id" \
+            '{query:"blue bottle coffee san francisco",limit:1,expected_owner_id:$owner_id}')
+
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $jwt" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            https://ftvmseaqwwlcxtdlvxxz.supabase.co/functions/v1/places-search \
+            | jq -e '.data | type == "array" and length > 0 and (.[0].id | type == "string")'
+
+      - name: Completeness item-to-terminal gate
+        id: completeness-gate
+        if: success()
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.PROD_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
+          SMOKE_TEST_EMAIL: ${{ secrets.PROD_SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.PROD_SMOKE_TEST_PASSWORD }}
+          SMOKE_TEST_RESTAURANT_ID: ${{ secrets.PROD_SMOKE_TEST_RESTAURANT_ID }}
+        run: |
+          auth=$(curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -cn --arg email "$SMOKE_TEST_EMAIL" --arg password "$SMOKE_TEST_PASSWORD" '{email:$email,password:$password}')" \
+            'https://ftvmseaqwwlcxtdlvxxz.supabase.co/auth/v1/token?grant_type=password')
+          owner_id=$(jq -er '.user.id' <<< "$auth")
+          import_nonce=$(cat /proc/sys/kernel/random/uuid)
+          payload=$(jq -cn \
+            --arg owner_id "$owner_id" \
+            --arg restaurant_id "$SMOKE_TEST_RESTAURANT_ID" \
+            --arg import_nonce "$import_nonce" \
+            '{action:"deploy_gate",owner_id:$owner_id,restaurant_id:$restaurant_id,import_nonce:$import_nonce}')
+
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "x-completeness-cron: $COMPLETENESS_CRON_SECRET" \
+            --data "$payload" \
+            https://ftvmseaqwwlcxtdlvxxz.supabase.co/functions/v1/restaurant-completeness \
+            | jq -e '.data.terminal == true and (.data.state == "verified" or .data.state == "resolved")'
+
+      - name: Restore completeness freeze after any interrupted rollout
+        # `failure()` does not run after workflow cancellation. Keep this step on
+        # the always() path and leave completeness live only after the terminal
+        # gate has positively succeeded.
+        if: ${{ always() && steps.completeness-gate.outcome != 'success' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
+          MIGRATION_STEP_OUTCOME: ${{ steps.push-migrations.outcome }}
+        run: |
+          restore_failures=()
+          if supabase secrets set \
+              COMPLETENESS_WORKER_ENABLED=false \
+              COMPLETENESS_SPEND_FROZEN=true \
+              COMPLETENESS_CRON_SECRET="$COMPLETENESS_CRON_SECRET" \
+              --project-ref ftvmseaqwwlcxtdlvxxz; then
+            echo "Completeness Edge worker disabled and provider spend frozen."
+          else
+            restore_failures+=("Edge worker disable/freeze")
+          fi
+
+          freeze_rc=0
+          freeze_code=$(curl --silent --show-error \
+            -o /tmp/completeness-restore-freeze.json -w '%{http_code}' \
+            -X POST \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_frozen":true,"p_reason":"rollout failed"}' \
+            https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze) \
+            || freeze_rc=$?
+          if [[ "$freeze_rc" == '0' && "$freeze_code" =~ ^2 ]]; then
+            echo "Completeness database budget frozen."
+          elif [[ "$MIGRATION_STEP_OUTCOME" != 'success' && "$freeze_code" == '404' ]]; then
+            echo "Bootstrap restoration: freeze RPC is not installed yet; Edge disable is authoritative."
+          else
+            restore_failures+=("database freeze (curl=$freeze_rc HTTP=$freeze_code)")
+            cat /tmp/completeness-restore-freeze.json 2>/dev/null || true
+          fi
+
+          if [[ ${#restore_failures[@]} -gt 0 ]]; then
+            echo "::error::Completeness restoration FAILED: ${restore_failures[*]}"
+            exit 1
+          fi
+
       # ── If smoke failed, automatically open a revert PR ──────────────────
       # We do NOT auto-merge — you stay in the loop. But the diff is
       # one-click ready, so MTTR is the time it takes you to read the email
@@ -303,7 +541,7 @@ jobs:
       # TICKET-159: the cron gate is part of "smoke" for revert purposes — an
       # unscheduled sweep is a broken deploy and must open the same revert PR.
       - name: Open auto-revert PR on smoke failure
-        if: failure() && (steps.smoke.conclusion == 'failure' || steps.cron-gate.conclusion == 'failure')
+        if: failure() && steps.rollout-mode.outputs.forward_only != 'true' && (steps.smoke.conclusion == 'failure' || steps.cron-gate.conclusion == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -350,5 +588,14 @@ jobs:
           if [[ -n "$FAILED_FNS" ]]; then
             echo "::error::Edge functions that FAILED to deploy (still on the OLD bundle): $FAILED_FNS"
           fi
-          echo "::error::If smoke failed, an auto-revert PR has been opened — go merge it now."
+          if [[ "${{ steps.completeness-smoke.conclusion }}" == "failure" || \
+                "${{ steps.completeness-enable.conclusion }}" == "failure" || \
+                "${{ steps.completeness-paid-gate.conclusion }}" == "failure" || \
+                "${{ steps.completeness-gate.conclusion }}" == "failure" ]]; then
+            echo "::error::Completeness rollout gate failed. The new path was frozen/disabled; preserve the additive migration and workflow, then forward-fix or selectively redeploy a known-good Edge bundle."
+          elif [[ "${{ steps.rollout-mode.outputs.forward_only }}" == "true" ]]; then
+            echo "::error::This is the forward-only completeness bootstrap. The new path was frozen/disabled; no whole-SHA auto-revert PR was opened. Preserve the migration and workflow, then forward-fix or selectively redeploy a known-good Edge bundle."
+          else
+            echo "::error::If ordinary smoke failed, an auto-revert PR has been opened — go merge it now."
+          fi
           echo "::error::If deploy failed (migrations / edge functions), prod may be in a partial state. Investigate the step output above."

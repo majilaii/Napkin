@@ -70,6 +70,15 @@ import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { markImportCompleted } from '@/lib/importActivation';
+import { mintImportMatchCorrection } from '@/lib/importResolution';
+import {
+    buildCompletenessDestinationIntent,
+    expectedImportDestinations,
+    importDestinationTargets,
+    reconcileImportDestinationNonces,
+    type ImportDestinationNonceState,
+    type ImportDestinationTarget,
+} from '@/lib/importProtocol';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
 
@@ -189,11 +198,17 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     // Stable table_client_nonce per (candidateKey, tableId) — reused across retries.
     // Key format: `${keyFor(c)}:${table_id}`.
     const tableNonceMapRef = useRef<Map<string, string>>(new Map());
+    // V2 destination/title nonces live for the whole sheet attempt and survive
+    // partial-save retries. They are never derived from mutable row text.
+    const destinationNoncesRef = useRef<ImportDestinationNonceState | undefined>(undefined);
+    const destinationTargetsRef = useRef<ImportDestinationTarget[] | undefined>(undefined);
+    const expectedDestinationsRef = useRef<number | undefined>(undefined);
 
     // Inline edit-match search (per-row correction)
     const [editMatchQuery, setEditMatchQuery] = useState('');
     const [editMatchResults, setEditMatchResults] = useState<InlineSearchResult[]>([]);
     const [editMatchLoading, setEditMatchLoading] = useState(false);
+    const [editMatchError, setEditMatchError] = useState<string | null>(null);
     const [editCorrectionForCandidate, setEditCorrectionForCandidate] = useState<ResolvedCandidate | null>(null);
     const editMatchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -254,6 +269,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             spotNonceMapRef.current.clear();
             savedCandidateIdsRef.current.clear();
             tableNonceMapRef.current.clear();
+            destinationNoncesRef.current = undefined;
+            destinationTargetsRef.current = undefined;
+            expectedDestinationsRef.current = undefined;
             setFailedCandidateKeys(new Set());
             setTickedKeys(new Set()); // re-initialized when resolver succeeds
             setChosenTable(null);
@@ -338,6 +356,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
         tableNonceMapRef.current.clear();
+        destinationNoncesRef.current = undefined;
+        destinationTargetsRef.current = undefined;
+        expectedDestinationsRef.current = undefined;
         setFailedCandidateKeys(new Set());
         setTickedKeys(new Set()); // candidates not yet known; re-initialized on success
         setChosenTable(null);
@@ -368,11 +389,15 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         setEditMatchQuery('');
         setEditMatchResults([]);
         setEditCorrectionForCandidate(null);
+        setEditMatchError(null);
         setScreenshotStoragePath(null);
         // Clear nonce maps on dismiss (new import gets fresh nonces).
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
         tableNonceMapRef.current.clear();
+        destinationNoncesRef.current = undefined;
+        destinationTargetsRef.current = undefined;
+        expectedDestinationsRef.current = undefined;
         setFailedCandidateKeys(new Set());
         setTickedKeys(new Set());
         setChosenTable(null);
@@ -424,6 +449,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         };
 
         // Fix 8: on retry, only send spots that aren't already saved.
+        // Freeze every selected item's nonce before filtering already-accepted
+        // rows so retries retain the original exact cardinality declaration.
+        for (const candidate of ticked) getOrMintNonce(candidate);
         const spotsToSend = ticked.filter((c) => {
             const key = c.candidate_id ?? c.restaurant.external_id ?? '';
             return !savedCandidateIdsRef.current.has(key);
@@ -470,6 +498,27 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         });
 
         const source = buildSource(inputValue.trim(), resolvedData);
+        const selection = {
+            wishlist: true,
+            tableIds: chosenTable ? [chosenTable.id] : [],
+            listIds: [],
+            newListTitles: [],
+        };
+        if (!destinationTargetsRef.current) {
+            destinationNoncesRef.current = reconcileImportDestinationNonces(
+                selection,
+                destinationNoncesRef.current,
+            );
+            destinationTargetsRef.current = importDestinationTargets(
+                selection,
+                destinationNoncesRef.current,
+            );
+            expectedDestinationsRef.current = expectedImportDestinations(
+                ticked.length,
+                destinationTargetsRef.current.length,
+            );
+        }
+        const destinationTargets = destinationTargetsRef.current;
 
         saveImportSpots.mutate(
             {
@@ -477,6 +526,13 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                 spots,
                 note: note || undefined,
                 source: source as any,
+                protocol_generation: 'v2',
+                protocol_version: 2,
+                expected_destinations: expectedDestinationsRef.current,
+                destination_intent: buildCompletenessDestinationIntent(
+                    spots.map((spot) => spot.client_nonce),
+                    destinationTargets,
+                ),
             },
             {
                 onSuccess: (result) => {
@@ -484,19 +540,35 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                     const newFailed = new Set<string>();
                     let membershipLost = false;
                     let anySaved = false;
+                    let queuedCount = 0;
+                    const seenNonces = new Set<string>();
                     for (const r of result.results ?? []) {
                         // Find the candidate whose nonce matches.
                         const matchedSpot = spots.find((s) => s.client_nonce === r.client_nonce);
                         if (!matchedSpot) continue;
+                        seenNonces.add(r.client_nonce);
                         const key = matchedSpot.candidate.candidate_id
                             ?? matchedSpot.candidate.restaurant.external_id ?? '';
-                        if (r.status === 'saved' || r.status === 'already_pinned') {
+                        if (
+                            r.status === 'saved' ||
+                            r.status === 'already_pinned' ||
+                            r.status === 'queued' ||
+                            r.status === 'ghost'
+                        ) {
                             savedCandidateIdsRef.current.add(key);
-                            anySaved = true;
+                            if (r.status === 'queued') queuedCount += 1;
+                            else anySaved = true;
                         } else if (r.status === 'failed') {
                             newFailed.add(key);
                             if ((r as any).code === 'NOT_A_MEMBER') membershipLost = true;
                         }
+                    }
+                    // A v2 response is one outcome per submitted item. Treat an
+                    // omitted row as retryable instead of deleting the only local
+                    // replay for an incompletely sealed server job.
+                    for (const spot of spots) {
+                        if (seenNonces.has(spot.client_nonce)) continue;
+                        newFailed.add(keyFor(spot.candidate));
                     }
 
                     // TICKET-122: a successful in-app save also flips the activation
@@ -507,8 +579,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                     // retry self-heals to wishlist-only instead of looping the same
                     // unauthorized table share.
                     if (membershipLost) {
-                        setChosenTable(null);
-                        toast.show('not at that table anymore · sharing removed');
+                        // V2 intent is immutable once submitted. Keep it frozen so
+                        // a retry cannot silently mutate the server job after an
+                        // ambiguous/partial response; dismissing starts a new job.
+                        toast.show('table access changed · close to start without it');
                     }
 
                     if (newFailed.size > 0) {
@@ -525,6 +599,11 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                         });
                     } else {
                         // All ticked spots saved — dismiss with confirmation.
+                        if (queuedCount > 0) {
+                            toast.show(
+                                `${queuedCount} ${queuedCount === 1 ? 'spot is' : 'spots are'} completing…`,
+                            );
+                        }
                         handleDismiss();
                     }
                 },
@@ -589,6 +668,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
 
     // TICKET-063: per-row "not this?" opens edit-match for that specific candidate
     const handleCorrectRow = useCallback((candidate: ResolvedCandidate) => {
+        setEditMatchError(null);
         setEditCorrectionForCandidate(candidate);
         const defaultQuery = resolvedData?.best_query ?? candidate.restaurant.name ?? '';
         setEditMatchQuery(defaultQuery);
@@ -634,6 +714,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
         tableNonceMapRef.current.clear();
+        destinationNoncesRef.current = undefined;
+        destinationTargetsRef.current = undefined;
+        expectedDestinationsRef.current = undefined;
         setFailedCandidateKeys(new Set());
         setTickedKeys(new Set());
         setChosenTable(null);
@@ -695,12 +778,30 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         editMatchDebounceRef.current = setTimeout(() => runEditMatchSearch(q), 400);
     }, [runEditMatchSearch]);
 
-    const handleEditMatchSelect = useCallback((row: InlineSearchResult) => {
-        if (!editCorrectionForCandidate) return;
+    const handleEditMatchSelect = useCallback(async (row: InlineSearchResult) => {
+        if (!editCorrectionForCandidate || !user?.id) return;
+        const expectedOwnerId = user.id;
+
+        setEditMatchLoading(true);
+        setEditMatchError(null);
+        let freshResolutionId: string;
+        try {
+            freshResolutionId = await mintImportMatchCorrection({
+                import_nonce: importNonceRef.current,
+                prior_resolution_id: editCorrectionForCandidate.resolution_id ?? null,
+                chosen_external_id: row.id,
+                expected_owner_id: expectedOwnerId,
+            });
+        } catch {
+            setEditMatchError("couldn't verify that match — try again");
+            setEditMatchLoading(false);
+            return;
+        }
 
         const patchedCandidate: ResolvedCandidate = {
             ...editCorrectionForCandidate,
             candidate_id: editCorrectionForCandidate.candidate_id, // preserve stable id
+            resolution_id: freshResolutionId,
             restaurant: {
                 ...editCorrectionForCandidate.restaurant,
                 id: row.id,
@@ -749,7 +850,8 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         setEditMatchResults([]);
         setEditCorrectionForCandidate(null);
         setSheetState('picking');
-    }, [editCorrectionForCandidate, patchedCandidates, resolvedData]);
+        setEditMatchLoading(false);
+    }, [editCorrectionForCandidate, patchedCandidates, resolvedData, user?.id]);
 
     // ── Source builder ─────────────────────────────────────────────────
     function buildSource(url: string, data: ResolveUrlData | null) {
@@ -878,7 +980,9 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 isSaving={saveImportSpots.isPending}
                                 sourceTag={sourceTagLabel()}
                                 noun={noun}
-                                onCorrectRow={handleCorrectRow}
+                                onCorrectRow={(candidate) => {
+                                    if (!destinationTargetsRef.current) handleCorrectRow(candidate);
+                                }}
                                 onOpenRestaurant={(id) => {
                                     handleDismiss();
                                     router.push(('/restaurant/' + id) as any);
@@ -886,17 +990,27 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 failedCandidateKeys={failedCandidateKeys}
                                 palette={palette}
                                 ticked={tickedKeys}
+                                selectionLocked={destinationTargetsRef.current != null}
                                 onToggleTicked={(key) => setTickedKeys((prev) => {
+                                    if (destinationTargetsRef.current) return prev;
                                     const next = new Set(prev);
                                     if (next.has(key)) next.delete(key);
                                     else next.add(key);
                                     return next;
                                 })}
                                 noteText={noteText}
-                                onNoteChange={setNoteText}
+                                onNoteChange={(text) => {
+                                    if (!destinationTargetsRef.current) setNoteText(text);
+                                }}
                                 chosenTable={chosenTable}
-                                onShareToTable={() => setSheetState('share-destination')}
-                                onClearTable={() => setChosenTable(null)}
+                                onShareToTable={() => {
+                                    if (!destinationTargetsRef.current) {
+                                        setSheetState('share-destination');
+                                    }
+                                }}
+                                onClearTable={() => {
+                                    if (!destinationTargetsRef.current) setChosenTable(null);
+                                }}
                                 onDismiss={handleDismiss}
                             />
                         )}
@@ -909,6 +1023,7 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                                 onQueryChange={handleEditMatchQueryChange}
                                 results={editMatchResults}
                                 isLoading={editMatchLoading}
+                                errorText={editMatchError}
                                 onSelect={handleEditMatchSelect}
                                 onBack={() => {
                                     setEditCorrectionForCandidate(null);
@@ -1245,6 +1360,7 @@ interface EditMatchPanelProps {
     onQueryChange: (q: string) => void;
     results: InlineSearchResult[];
     isLoading: boolean;
+    errorText: string | null;
     onSelect: (r: InlineSearchResult) => void;
     onBack: () => void;
     /** Name of the candidate being corrected. */
@@ -1257,6 +1373,7 @@ function EditMatchPanel({
     onQueryChange,
     results,
     isLoading,
+    errorText,
     onSelect,
     onBack,
     correcting,
@@ -1285,6 +1402,11 @@ function EditMatchPanel({
                     },
                 ]}
             />
+            {errorText ? (
+                <Text style={[Type.bodySmall, { color: palette.error, marginTop: Spacing.sm }]}>
+                    {errorText}
+                </Text>
+            ) : null}
             {isLoading ? (
                 <ActivityIndicator
                     color={palette.primary}

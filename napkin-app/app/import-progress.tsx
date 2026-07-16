@@ -22,6 +22,10 @@ import { useToast } from '@/providers/ToastProvider';
 import { useActiveImports, type ActiveImport } from '@/hooks/wishlist/useActiveImports';
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { useHasImported } from '@/hooks/wishlist/useHasImported';
+import {
+    useExhaustedCompletenessItems,
+    useRetryCompletenessItem,
+} from '@/hooks/imports/useCompletenessRetries';
 import { ImportActivationHub } from '@/components/import-education';
 import {
     importSourceIcon,
@@ -55,12 +59,19 @@ export default function ImportProgressScreen() {
     // exactly what this hub shows, so no local slice.
     const { data: recent } = useRecentImports(user?.id);
     const recentBatches = recent ?? [];
+    const {
+        data: exhausted = [],
+        fetchNextPage: fetchMoreExhausted,
+        hasNextPage: hasMoreExhausted,
+        isFetchingNextPage: isFetchingMoreExhausted,
+    } = useExhaustedCompletenessItems(user?.id);
+    const retryCompleteness = useRetryCompletenessItem(user?.id);
     // Full activation hub until a first import lands, then the compact standing row.
     const hasImported = useHasImported(user?.id);
     // TICKET-181 decision ④: the share-tip banner shows ONLY on an EMPTY hub. Once
     // there's anything to see (in-flight or recently imported), thumbnail-first rows
     // lead and the banner steps aside.
-    const hasRows = active.length > 0 || recentBatches.length > 0;
+    const hasRows = active.length > 0 || recentBatches.length > 0 || exhausted.length > 0;
 
     const toast = useToast();
 
@@ -181,10 +192,15 @@ export default function ImportProgressScreen() {
                             } else if (m.phase === 'saving') {
                                 title = `${large.cursor} of ${large.listCount} · saving your spots…`;
                             } else {
-                                title =
+                                title = [
+                                    `${large.imported} imported`,
+                                    (large.queued ?? 0) > 0 ? `${large.queued} completing` : null,
                                     large.needsLook > 0
-                                        ? `${large.imported} imported · ${large.needsLook} need a look`
-                                        : `${large.imported} imported`;
+                                        ? `${large.needsLook} need a look`
+                                        : null,
+                                ]
+                                    .filter(Boolean)
+                                    .join(' · ');
                             }
                         } else {
                             // TICKET-180: a working row shows the LIVE stage (fetching
@@ -275,11 +291,19 @@ export default function ImportProgressScreen() {
                                     ) : null}
                                     {m.phase === 'failed' ? (
                                         <View style={styles.failRow}>
-                                            <Pressable onPress={() => retryImport(m.jobId)} hitSlop={6}>
+                                            <Pressable
+                                                onPress={() => retryImport(m.jobId)}
+                                                hitSlop={6}
+                                                style={styles.failActionTarget}
+                                            >
                                                 <Text style={[styles.failAction, { color: palette.primary }]}>try again</Text>
                                             </Pressable>
                                             <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
-                                            <Pressable onPress={() => discard(m)} hitSlop={6}>
+                                            <Pressable
+                                                onPress={() => discard(m)}
+                                                hitSlop={6}
+                                                style={styles.failActionTarget}
+                                            >
                                                 <Text style={[styles.failAction, { color: palette.textMuted }]}>discard</Text>
                                             </Pressable>
                                         </View>
@@ -300,16 +324,98 @@ export default function ImportProgressScreen() {
                 {/* Bulk actions — only when several batches await review */}
                 {reviewBatches.length >= 2 ? (
                     <View style={styles.bulkRow}>
-                        <Pressable onPress={approveAll} hitSlop={8} accessibilityRole="button">
+                        <Pressable
+                            onPress={approveAll}
+                            hitSlop={8}
+                            style={styles.failActionTarget}
+                            accessibilityRole="button"
+                        >
                             <Text style={[styles.bulkAction, { color: palette.primary }]}>
                                 {`approve all ${approveSpotTotal}`}
                             </Text>
                         </Pressable>
                         <Text style={[styles.bulkDot, { color: palette.textMuted }]}>·</Text>
-                        <Pressable onPress={discardAll} hitSlop={8} accessibilityRole="button">
+                        <Pressable
+                            onPress={discardAll}
+                            hitSlop={8}
+                            style={styles.failActionTarget}
+                            accessibilityRole="button"
+                        >
                             <Text style={[styles.bulkAction, { color: palette.textMuted }]}>discard all</Text>
                         </Pressable>
                     </View>
+                ) : null}
+
+                {exhausted.length > 0 ? (
+                    <>
+                        <Text style={[styles.completenessKicker, { color: palette.textMuted }]}>NEEDS A LOOK</Text>
+                        {exhausted.map((item) => {
+                            const retrying =
+                                retryCompleteness.isPending &&
+                                retryCompleteness.variables === item.id;
+                            return (
+                                <View
+                                    key={item.id}
+                                    style={[
+                                        styles.recentRow,
+                                        { backgroundColor: palette.surfaceJournalLow },
+                                    ]}
+                                >
+                                    <View style={styles.recentBody}>
+                                        <Text
+                                            style={[styles.completenessName, { color: palette.text }]}
+                                            numberOfLines={1}
+                                        >
+                                            {item.restaurant_name ?? 'unmatched spot'}
+                                        </Text>
+                                        <Text
+                                            style={[styles.completenessMeta, { color: palette.textMuted }]}
+                                            numberOfLines={1}
+                                        >
+                                            {[item.restaurant_city, 'automatic matching paused']
+                                                .filter(Boolean)
+                                                .join(' · ')}
+                                        </Text>
+                                    </View>
+                                    <Pressable
+                                        onPress={() =>
+                                            retryCompleteness.mutate(item.id, {
+                                                onSuccess: () => toast.show('trying that spot again…'),
+                                                onError: () => toast.show("couldn't retry — try again"),
+                                            })
+                                        }
+                                        disabled={retrying}
+                                        style={styles.retryTarget}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`retry ${item.restaurant_name ?? 'unmatched spot'}`}
+                                    >
+                                        {retrying ? (
+                                            <ActivityIndicator size="small" color={palette.primary} />
+                                        ) : (
+                                            <Text style={[styles.failAction, { color: palette.primary }]}>try again</Text>
+                                        )}
+                                    </Pressable>
+                                </View>
+                            );
+                        })}
+                        {hasMoreExhausted ? (
+                            <View style={styles.bulkRow}>
+                                <Pressable
+                                    onPress={() => void fetchMoreExhausted()}
+                                    disabled={isFetchingMoreExhausted}
+                                    style={styles.failActionTarget}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="show earlier spots needing a look"
+                                >
+                                    {isFetchingMoreExhausted ? (
+                                        <ActivityIndicator size="small" color={palette.primary} />
+                                    ) : (
+                                        <Text style={[styles.bulkAction, { color: palette.primary }]}>show earlier</Text>
+                                    )}
+                                </Pressable>
+                            </View>
+                        ) : null}
+                    </>
                 ) : null}
 
                 {/* Earlier — completed batches; tap in to fix a wrong pin or prune */}
@@ -370,6 +476,13 @@ const styles = StyleSheet.create({
     hubWrap: { paddingTop: Spacing.sm, paddingBottom: Spacing.md },
     failRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
     failAction: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
+    failActionTarget: { minHeight: 40, justifyContent: 'center' },
+    retryTarget: {
+        minWidth: 72,
+        minHeight: 40,
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+    },
     failDot: { fontFamily: 'Manrope_400Regular', fontSize: 12 },
     bulkRow: {
         flexDirection: 'row',
@@ -394,6 +507,15 @@ const styles = StyleSheet.create({
         marginTop: Spacing.md,
         marginBottom: Spacing.sm,
     },
+    completenessKicker: {
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11,
+        letterSpacing: 1.5,
+        marginTop: Spacing.md,
+        marginBottom: Spacing.sm,
+    },
+    completenessName: { fontFamily: 'Newsreader_400Regular', fontSize: 16 },
+    completenessMeta: { fontFamily: 'Manrope_500Medium', fontSize: 13, flexShrink: 1 },
     recentRow: {
         flexDirection: 'row',
         alignItems: 'center',

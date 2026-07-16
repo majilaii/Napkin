@@ -9,7 +9,7 @@
  * manifest: prune to kept spots, flip mode → 'auto', poke the drain (the
  * normal save+route path — no duplicated save logic here).
  */
-import React, { useMemo, useState, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -21,12 +21,14 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import { track } from '@/lib/track';
 import {
-    getImport,
+    getImportForUser,
     confirmImportReview,
     removeImport,
     pokeImportQueue,
+    importManifestProtocol,
     type PersistedImportSpot,
 } from '@/lib/importQueue';
+import { mintImportMatchCorrection } from '@/lib/importResolution';
 import { truncationNote } from '@/lib/importTruncation';
 import { deleteAppGroupFile } from '@/modules/media-extract';
 import { useMyLists } from '@/hooks/lists/useMyLists';
@@ -47,9 +49,13 @@ export default function ImportReviewScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const toast = useToast();
+    const { user } = useAuth();
 
     // Snapshot the manifest once — the drain won't touch a held review manifest.
-    const manifest = useMemo(() => (jobId ? getImport(jobId) : null), [jobId]);
+    const manifest = useMemo(
+        () => (jobId ? getImportForUser(jobId, user?.id) : null),
+        [jobId, user?.id],
+    );
 
     // Local working copy: fixes edit rows in place before the save prunes.
     const [spots, setSpots] = useState<PersistedImportSpot[]>(() => manifest?.spots ?? []);
@@ -65,12 +71,13 @@ export default function ImportReviewScreen() {
     );
     const [fixTarget, setFixTarget] = useState<PersistedImportSpot | null>(null);
     const [addingSpot, setAddingSpot] = useState(false);
+    const [pickerBusy, setPickerBusy] = useState(false);
+    const [pickerError, setPickerError] = useState<string | null>(null);
     const confirmingRef = useRef(false);
     const [confirming, setConfirming] = useState(false);
 
     // Editable destinations live here, after extraction, instead of crowding the
     // share extension before the user even knows what Napkin found.
-    const { user } = useAuth();
     const { data: myLists = [] } = useMyLists(user?.id);
     const {
         data: tableMemberships = [],
@@ -99,6 +106,41 @@ export default function ImportReviewScreen() {
     );
     const [listSheetOpen, setListSheetOpen] = useState(false);
     const [tableSheetOpen, setTableSheetOpen] = useState(false);
+    const hydratedManifestKeyRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (!manifest || !user?.id) {
+            hydratedManifestKeyRef.current = null;
+            setSpots([]);
+            setTicked(new Set());
+            setFixTarget(null);
+            setTableIds([]);
+            setPinWishlist(true);
+            setListIds([]);
+            setNewListTitles([]);
+            setListSheetOpen(false);
+            setTableSheetOpen(false);
+            return;
+        }
+        const manifestKey = `${user.id}:${jobId ?? ''}:${manifest.importNonce}`;
+        if (hydratedManifestKeyRef.current === manifestKey) return;
+        hydratedManifestKeyRef.current = manifestKey;
+        const manifestSpots = manifest.spots ?? [];
+        const manifestTableIds = manifest.destinations.tableIds ?? [];
+        setSpots(manifestSpots);
+        setTicked(new Set(
+            manifestSpots
+                .filter((spot) => spot.stance !== 'warned')
+                .map((spot) => spot.candidate_id),
+        ));
+        setFixTarget(null);
+        setTableIds(manifestTableIds);
+        setPinWishlist(manifestTableIds.length > 0 || (manifest.pinWishlist ?? true));
+        setListIds(manifest.destinations.listIds ?? []);
+        setNewListTitles(manifest.destinations.newListTitles ?? []);
+        setListSheetOpen(false);
+        setTableSheetOpen(false);
+    }, [jobId, manifest, user?.id]);
 
     const toggleList = useCallback(
         (id: string) =>
@@ -176,56 +218,111 @@ export default function ImportReviewScreen() {
     // (ghosts) — the manifest carries a field for each; the save path
     // upserts ghosts from `place`.
     const handleFixPick = useCallback(
-        (r: PlacePickerResult) => {
+        async (r: PlacePickerResult) => {
             const target = fixTarget;
-            setFixTarget(null);
-            if (!target) return;
+            if (!target || !manifest || pickerBusy) return;
             const isNapkinId = UUID_RE.test(r.id);
-            setSpots((prev) =>
-                prev.map((s) =>
-                    s.candidate_id === target.candidate_id
-                        ? {
-                              ...s,
-                              restaurant_id: isNapkinId ? r.id : null,
-                              external_id: isNapkinId ? null : r.id,
-                              restaurant_name: r.name,
-                              restaurant_city: r.city ?? null,
-                              place: isNapkinId
-                                  ? null
-                                  : {
-                                        external_id: r.id,
-                                        name: r.name,
-                                        location: { locality: r.city ?? undefined },
-                                        cuisine: r.cuisine ?? null,
-                                    },
-                          }
-                        : s,
-                ),
-            );
-            setTicked((prev) => new Set(prev).add(target.candidate_id));
-            toast.show(`fixed → ${r.name}`);
+            const chosenExternalId = r.external_id ?? (isNapkinId ? null : r.id);
+            setPickerBusy(true);
+            setPickerError(null);
+            try {
+                const isV2 = importManifestProtocol(manifest) === 'v2';
+                if (isV2 && !chosenExternalId) {
+                    throw new Error('The selected place has no provider id');
+                }
+                const resolutionId =
+                    isV2
+                        ? await mintImportMatchCorrection({
+                              import_nonce: manifest.importNonce,
+                              prior_resolution_id: target.resolution_id ?? null,
+                              chosen_external_id: chosenExternalId!,
+                              expected_owner_id: manifest.userId!,
+                          })
+                        : target.resolution_id ?? null;
+                setSpots((prev) =>
+                    prev.map((s) =>
+                        s.candidate_id === target.candidate_id
+                            ? {
+                                  ...s,
+                                  resolution_id: resolutionId,
+                                  restaurant_id: isNapkinId ? r.id : null,
+                                  external_id: isNapkinId ? null : chosenExternalId,
+                                  restaurant_name: r.name,
+                                  restaurant_city: r.city ?? null,
+                                  place: isNapkinId
+                                      ? null
+                                      : {
+                                            external_id: chosenExternalId,
+                                            name: r.name,
+                                            location: { locality: r.city ?? undefined },
+                                            cuisine: r.cuisine ?? null,
+                                        },
+                              }
+                            : s,
+                    ),
+                );
+                setTicked((prev) => new Set(prev).add(target.candidate_id));
+                setFixTarget(null);
+                toast.show(`fixed → ${r.name}`);
+            } catch {
+                setPickerError("couldn't verify that match — try again");
+            } finally {
+                setPickerBusy(false);
+            }
         },
-        [fixTarget, toast],
+        [fixTarget, manifest, pickerBusy, toast],
     );
 
     const handleAddPick = useCallback(
-        (r: PlacePickerResult) => {
-            setAddingSpot(false);
+        async (r: PlacePickerResult) => {
+            if (!manifest || pickerBusy) return;
             const duplicate = spots.find(
-                (s) => s.restaurant_id === r.id || s.external_id === r.id,
+                (s) =>
+                    s.restaurant_id === r.id ||
+                    s.external_id === (r.external_id ?? r.id),
             );
             if (duplicate) {
                 setTicked((prev) => new Set(prev).add(duplicate.candidate_id));
+                setAddingSpot(false);
                 toast.show(`${r.name} is already here`);
                 return;
             }
 
-            const added = createManualImportSpot(r, tableIds);
-            setSpots((prev) => [...prev, added]);
-            setTicked((prev) => new Set(prev).add(added.candidate_id));
-            toast.show(`added ${r.name}`);
+            const isNapkinId = UUID_RE.test(r.id);
+            const chosenExternalId = r.external_id ?? (isNapkinId ? null : r.id);
+            setPickerBusy(true);
+            setPickerError(null);
+            try {
+                const isV2 = importManifestProtocol(manifest) === 'v2';
+                if (isV2 && !chosenExternalId) {
+                    throw new Error('The selected place has no provider id');
+                }
+                const resolutionId =
+                    isV2
+                        ? await mintImportMatchCorrection({
+                              import_nonce: manifest.importNonce,
+                              prior_resolution_id: null,
+                              chosen_external_id: chosenExternalId!,
+                              expected_owner_id: manifest.userId!,
+                          })
+                        : null;
+                const added = createManualImportSpot(
+                    { ...r, external_id: chosenExternalId },
+                    tableIds,
+                    undefined,
+                    resolutionId,
+                );
+                setSpots((prev) => [...prev, added]);
+                setTicked((prev) => new Set(prev).add(added.candidate_id));
+                setAddingSpot(false);
+                toast.show(`added ${r.name}`);
+            } catch {
+                setPickerError("couldn't verify that spot — try again");
+            } finally {
+                setPickerBusy(false);
+            }
         },
-        [spots, tableIds, toast],
+        [manifest, pickerBusy, spots, tableIds, toast],
     );
 
     const keptCount = ticked.size;
@@ -364,6 +461,7 @@ export default function ImportReviewScreen() {
                             )
                         }
                         hitSlop={8}
+                        style={styles.inlineAction}
                         accessibilityRole="button"
                     >
                         <Text style={[styles.tickAll, { color: palette.primary }]}>
@@ -378,7 +476,10 @@ export default function ImportReviewScreen() {
                     </Text>
                 ) : null}
                 <Pressable
-                    onPress={() => setAddingSpot(true)}
+                    onPress={() => {
+                        setPickerError(null);
+                        setAddingSpot(true);
+                    }}
                     accessibilityRole="button"
                     accessibilityLabel="add a missing spot"
                     style={({ pressed }) => [
@@ -433,8 +534,12 @@ export default function ImportReviewScreen() {
                                     text (same handler). Taupe at rest, terracotta while
                                     this spot's fix panel is open. */}
                                 <Pressable
-                                    onPress={() => setFixTarget(s)}
+                                    onPress={() => {
+                                        setPickerError(null);
+                                        setFixTarget(s);
+                                    }}
                                     hitSlop={8}
+                                    style={styles.inlineAction}
                                     accessibilityLabel={`fix ${s.restaurant_name ?? 'this spot'}`}
                                 >
                                     <Text
@@ -454,6 +559,7 @@ export default function ImportReviewScreen() {
                                 <Pressable
                                     onPress={() => toggle(s.candidate_id)}
                                     hitSlop={8}
+                                    style={styles.inlineAction}
                                     accessibilityRole="checkbox"
                                     accessibilityState={{ checked: on }}
                                     accessibilityLabel={on ? 'untick' : 'keep'}
@@ -575,7 +681,7 @@ export default function ImportReviewScreen() {
             <View style={[styles.footer, { paddingBottom: insets.bottom + 14, backgroundColor: palette.background }]}>
                 <Pressable
                     onPress={handleSave}
-                    disabled={keptCount === 0 || !hasDestination || confirming}
+                    disabled={keptCount === 0 || !hasDestination || confirming || pickerBusy}
                     style={[
                         styles.cta,
                         {
@@ -608,10 +714,13 @@ export default function ImportReviewScreen() {
                         : 'search for the missing spot'
                 }
                 initialQuery={fixTarget?.restaurant_name ?? ''}
+                busy={pickerBusy}
+                errorText={pickerError}
                 onSelect={fixTarget ? handleFixPick : handleAddPick}
                 onDismiss={() => {
                     setFixTarget(null);
                     setAddingSpot(false);
+                    setPickerError(null);
                 }}
                 palette={palette}
             />
@@ -696,6 +805,7 @@ const styles = StyleSheet.create({
     name: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 17, lineHeight: 21 },
     meta: { fontFamily: 'Manrope_500Medium', fontSize: 12 },
     actions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, flexShrink: 0 },
+    inlineAction: { minHeight: 40, minWidth: 40, alignItems: 'center', justifyContent: 'center' },
     wrong: {
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 12.5,

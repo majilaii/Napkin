@@ -20,12 +20,13 @@
  * Error policy: auth/expired/429/5xx → stop the round, no poison; deterministic →
  * bump attempts, poison at 3 + drop the .mov.
  */
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { callEdgeFn, isAuthFailure, SessionExpiredError } from '@/lib/edgeInvoke';
+import { clientBuildMetadata } from '@/lib/clientBuild';
 import { queryKeys } from '@/lib/queryKeys';
 import { safeRandomUUID } from '@/lib/uuid';
 import { track } from '@/lib/track';
@@ -56,12 +57,20 @@ import {
     bumpImportAttempt,
     acquireDrainLock,
     releaseDrainLock,
+    ensureImportV2Routing,
+    importManifestProtocol,
+    claimImportOwner,
     onImportEnqueued,
     pokeImportQueue,
     type ImportManifest,
     type PersistedImportSpot,
     type LargeImportJob,
 } from '@/lib/importQueue';
+import {
+    buildCompletenessDestinationIntent,
+    importDestinationTargets,
+    type ImportDestinationTarget,
+} from '@/lib/importProtocol';
 import { evaluateFastPath, isContentGate } from '@/lib/importFastPath';
 import {
     fusePhotoSlideText,
@@ -88,6 +97,7 @@ import {
     buildResolvedSpots,
     buildGhostSpots,
     toChunkOutcomes,
+    awaitCompletenessLedger,
     classifyDrainError,
     LARGE_JOB_MAX_CHUNK_ATTEMPTS,
     type ChunkItemOutcome,
@@ -99,14 +109,23 @@ import {
 } from '@/lib/largeImportJob';
 import { truncationNote } from '@/lib/importTruncation';
 import {
+    requireActiveImportOwner,
+    runWithActiveImportOwner,
+} from '@/lib/importOwnerGuard';
+import {
     fetchTikTokPerception,
     isTikTokUrl,
     downloadTikTokVideo,
     deleteCachedTikTokVideo,
     downloadSlideImage,
     deleteCachedSlide,
+    type TikTokPerception,
 } from '@/lib/tiktokPerception';
-import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
+import {
+    fetchInstagramPerception,
+    isInstagramUrl,
+    type InstagramPerception,
+} from '@/lib/instagramPerception';
 import { captureClipThumbFromUrl, type ClipThumbSourceType } from '@/lib/clipThumbCapture';
 import { isMapsShareUrl } from '@/lib/mapsShare';
 import type { ResolveUrlData, ResolvedCandidate } from './useResolveUrl';
@@ -149,17 +168,74 @@ function buildPlace(c: ResolvedCandidate): unknown {
     };
 }
 
+function v2Targets(manifest: ImportManifest): ImportDestinationTarget[] {
+    if (!manifest.destinationNonces) return [];
+    const selection = manifest.largeJob
+        ? {
+              wishlist: manifest.largeJob.pinAll,
+              tableIds: [],
+              listIds: [],
+              newListTitles: manifest.largeJob.destListTitle
+                  ? [manifest.largeJob.destListTitle]
+                  : [],
+          }
+        : {
+              wishlist:
+                  manifest.destinations.tableIds.length > 0 || effectivePinWishlist(manifest),
+              tableIds: manifest.destinations.tableIds,
+              listIds: manifest.destinations.listIds,
+              newListTitles: manifest.destinations.newListTitles,
+          };
+    return importDestinationTargets(selection, manifest.destinationNonces);
+}
+
+function v2SaveFields(
+    manifest: ImportManifest,
+    itemNonces: string[],
+    targets: ImportDestinationTarget[],
+    notifyDone: boolean,
+): Record<string, unknown> {
+    if (importManifestProtocol(manifest) !== 'v2') return {};
+    if (manifest.expectedDestinations == null || targets.length === 0) {
+        throw new Error('Incomplete v2 import routing declaration');
+    }
+    return {
+        protocol_generation: 'v2',
+        protocol_version: 2,
+        expected_destinations: manifest.expectedDestinations,
+        destination_intent: buildCompletenessDestinationIntent(itemNonces, targets, notifyDone),
+    };
+}
+
+function assertV2ResolutionIds(spots: Array<{ resolution_id?: string | null }>): void {
+    if (
+        spots.some(
+            (spot) => typeof spot.resolution_id !== 'string' || spot.resolution_id.length === 0,
+        )
+    ) {
+        throw new Error('A v2 import item is missing server provenance');
+    }
+}
+
 /**
  * Resolve "create new list" titles to list ids — title-deduped against the user's
  * existing lists so a re-drain reuses the list it already created (replay-safe;
  * lists.create is NOT idempotent on its own).
  */
-async function resolveNewLists(titles: string[]): Promise<string[]> {
+type OwnerBoundRunner = <T>(operation: () => Promise<T>) => Promise<T>;
+
+async function resolveNewLists(
+    titles: string[],
+    runOwnerBound: OwnerBoundRunner,
+): Promise<string[]> {
     if (!titles || titles.length === 0) return [];
     let mine: { id: string; title: string }[] = [];
     try {
-        mine = (await callEdgeFn<{ id: string; title: string }[]>('lists', { action: 'list_mine' })) ?? [];
-    } catch {
+        mine = (await runOwnerBound(() =>
+            callEdgeFn<{ id: string; title: string }[]>('lists', { action: 'list_mine' })
+        )) ?? [];
+    } catch (error) {
+        if (isSessionError(error)) throw error;
         mine = [];
     }
     const out: string[] = [];
@@ -172,12 +248,18 @@ async function resolveNewLists(titles: string[]): Promise<string[]> {
             continue;
         }
         try {
-            const created = await callEdgeFn<{ id: string }>('lists', { action: 'create', body: { title } });
+            const created = await runOwnerBound(() =>
+                callEdgeFn<{ id: string }>('lists', {
+                    action: 'create',
+                    body: { title },
+                })
+            );
             if (created?.id) {
                 out.push(created.id);
                 mine.push({ id: created.id, title });
             }
-        } catch {
+        } catch (error) {
+            if (isSessionError(error)) throw error;
             /* skip a failed create */
         }
     }
@@ -205,6 +287,33 @@ export function useProcessImportQueue() {
     const userId = session?.user?.id;
     const queryClient = useQueryClient();
     const toast = useToast();
+    const activeUserIdRef = useRef<string | null>(userId ?? null);
+    activeUserIdRef.current = userId ?? null;
+
+    const runOwnerBound = useCallback(
+        <T,>(manifest: ImportManifest, operation: (ownerId: string) => Promise<T>) =>
+            runWithActiveImportOwner(
+                manifest.userId,
+                () => activeUserIdRef.current,
+                operation,
+            ),
+        [],
+    );
+
+    const callImportResolveUrl = useCallback(
+        <T,>(
+            manifest: ImportManifest,
+            action: string | undefined,
+            body: Record<string, unknown>,
+        ): Promise<T> =>
+            runOwnerBound(manifest, (expectedOwnerId) =>
+                callEdgeFn<T>('resolve-url', {
+                    action,
+                    body: { ...body, expected_owner_id: expectedOwnerId },
+                })
+            ),
+        [runOwnerBound],
+    );
 
     // ── TICKET-152: large Maps-list drain ─────────────────────────────────────
     // A large job is client-pumped in chunks of 20 through resolve_spots →
@@ -213,29 +322,53 @@ export function useProcessImportQueue() {
     // a deferred poke schedules the next — progress re-renders per chunk, the drain
     // lock releases between chunks, and search stays responsive (separate bucket).
     const processLargeJob = useCallback(
-        async (m: ImportManifest) => {
+        async (queuedManifest: ImportManifest) => {
+            requireActiveImportOwner(queuedManifest.userId, activeUserIdRef.current);
+            const m =
+                importManifestProtocol(queuedManifest) === 'v2'
+                    ? ensureImportV2Routing(queuedManifest.jobId)
+                    : queuedManifest;
+            if (!m) return;
             const job = m.largeJob;
             if (!job) return;
             // Kickoff is HELD for the sheet; done is owned by the digest — no drain.
             if (job.phase !== 'running') return;
 
             const source = { type: 'google_maps', url: m.url ?? '' };
+            const isV2 = importManifestProtocol(m) === 'v2';
+            const routingTargets = isV2 ? v2Targets(m) : [];
 
-            const saveChunkSpots = (jb: LargeImportJob, spots: LargeImportSpotInput[]) =>
-                callEdgeFn<LargeSaveResult>('resolve-url', {
-                    action: 'save_spots',
-                    body: {
+            const saveChunkSpots = (jb: LargeImportJob, spots: LargeImportSpotInput[]) => {
+                // Merely including `resolution_id` classifies a request as v2. A
+                // pre-upgrade manifest must therefore omit it even when a newer
+                // resolver happened to echo provenance during a resumed drain.
+                if (isV2) assertV2ResolutionIds(spots);
+                const wireSpots = isV2
+                    ? spots
+                    : spots.map(({ resolution_id: _resolutionId, ...spot }) => spot);
+                return callImportResolveUrl<LargeSaveResult>(
+                    m,
+                    'save_spots',
+                    {
                         import_nonce: m.importNonce,
-                        spots,
+                        spots: wireSpots,
                         source,
+                        ...clientBuildMetadata(),
                         // pin_wishlist honors the kickoff toggle: false = list-only
                         // (the destination list, NOT the personal wishlist).
                         pin_wishlist: jb.pinAll,
                         // notify_done false on EVERY chunk — ONE completion bell is
                         // emitted client-side at the end with the grand total.
                         notify_done: false,
+                        ...v2SaveFields(
+                            m,
+                            spots.map((spot) => spot.client_nonce),
+                            routingTargets,
+                            false,
+                        ),
                     },
-                });
+                );
+            };
 
             // Deterministic (non-transient) failure at the current cursor: bump
             // chunkAttempts; poison at MAX so /import-progress shows try-again.
@@ -258,23 +391,29 @@ export function useProcessImportQueue() {
                 if (!t) return null;
                 try {
                     const mine =
-                        (await callEdgeFn<{ id: string; title: string }[]>('lists', {
-                            action: 'list_mine',
-                        })) ?? [];
+                        (await runOwnerBound(m, () =>
+                            callEdgeFn<{ id: string; title: string }[]>('lists', {
+                                action: 'list_mine',
+                            })
+                        )) ?? [];
                     const existing = mine.find(
                         (l) => (l.title ?? '').trim().toLowerCase() === t.toLowerCase(),
                     );
                     if (existing) return existing.id;
-                } catch {
+                } catch (error) {
+                    if (isSessionError(error)) throw error;
                     /* fall through to create */
                 }
                 try {
-                    const created = await callEdgeFn<{ id: string }>('lists', {
-                        action: 'create',
-                        body: { title: t },
-                    });
+                    const created = await runOwnerBound(m, () =>
+                        callEdgeFn<{ id: string }>('lists', {
+                            action: 'create',
+                            body: { title: t },
+                        })
+                    );
                     return created?.id ?? null;
-                } catch {
+                } catch (error) {
+                    if (isSessionError(error)) throw error;
                     return null;
                 }
             };
@@ -295,7 +434,7 @@ export function useProcessImportQueue() {
                     .filter((x): x is string => !!x);
 
                 let destListId = jb.destListId;
-                if (!destListId && jb.destListTitle && chunkRestaurantIds.length > 0) {
+                if (!isV2 && !destListId && jb.destListTitle && chunkRestaurantIds.length > 0) {
                     destListId = await ensureDestList(jb.destListTitle);
                 }
                 // Route to the destination list. A failure here is tolerated (never
@@ -303,20 +442,23 @@ export function useProcessImportQueue() {
                 // the completion reconcile retries, then flags survivors needsLook
                 // (P1: list membership must never silently drop).
                 let routed = false;
-                if (destListId && chunkRestaurantIds.length > 0) {
+                if (!isV2 && destListId && chunkRestaurantIds.length > 0) {
                     try {
                         // ≤20 ids per chunk « the 200-cap, so no sub-chunking needed.
-                        await callEdgeFn('lists', {
-                            action: 'add_entries',
-                            body: { list_id: destListId, restaurant_ids: chunkRestaurantIds },
-                        });
+                        await runOwnerBound(m, () =>
+                            callEdgeFn('lists', {
+                                action: 'add_entries',
+                                body: { list_id: destListId, restaurant_ids: chunkRestaurantIds },
+                            })
+                        );
                         routed = true;
-                    } catch {
+                    } catch (error) {
+                        if (isSessionError(error)) throw error;
                         /* tolerated — the completion reconcile retries (P1) */
                     }
                 }
                 // Only a job WITH a destination list tracks routing state.
-                const routedOutcomes = jb.destListTitle
+                const routedOutcomes = !isV2 && jb.destListTitle
                     ? applyListRouting(outcomes, routed)
                     : outcomes;
                 const newItems = applyChunkOutcomes(jb.items, routedOutcomes);
@@ -350,7 +492,7 @@ export function useProcessImportQueue() {
                 // remove drops them) and the header/toast counts include them,
                 // instead of existing in no user-visible surface at all.
                 let jobNow = jb;
-                if (jobNow.destListTitle) {
+                if (!isV2 && jobNow.destListTitle) {
                     const unrouted = pendingListRoutes(jobNow.items);
                     if (unrouted.length > 0) {
                         let destListId = jobNow.destListId;
@@ -369,12 +511,15 @@ export function useProcessImportQueue() {
                             for (let i = 0; i < ids.length; i += 200) {
                                 const batch = ids.slice(i, i + 200);
                                 try {
-                                    await callEdgeFn('lists', {
-                                        action: 'add_entries',
-                                        body: { list_id: destListId, restaurant_ids: batch },
-                                    });
+                                    await runOwnerBound(m, () =>
+                                        callEdgeFn('lists', {
+                                            action: 'add_entries',
+                                            body: { list_id: destListId, restaurant_ids: batch },
+                                        })
+                                    );
                                     for (const id of batch) routedIds.add(id);
-                                } catch {
+                                } catch (error) {
+                                    if (isSessionError(error)) throw error;
                                     /* still unrouted → needsLook below */
                                 }
                             }
@@ -396,17 +541,21 @@ export function useProcessImportQueue() {
                 // ONE completion bell. outcome:'review' — emit_self HARD-REJECTS
                 // 'saved' (the client may not forge a pinned row) and 'review' is
                 // whitelisted + semantically right (the job ends in a digest).
-                callEdgeFn('notifications', {
-                    action: 'emit_self',
-                    body: {
-                        kind: 'import_done',
-                        subject_meta: {
-                            job_id: doneJob.serverJobId,
-                            count: counts.imported,
-                            outcome: 'review',
-                        },
-                    },
-                }).catch(() => {});
+                if (!isV2) {
+                    void runOwnerBound(m, () =>
+                        callEdgeFn('notifications', {
+                            action: 'emit_self',
+                            body: {
+                                kind: 'import_done',
+                                subject_meta: {
+                                    job_id: doneJob.serverJobId,
+                                    count: counts.imported,
+                                    outcome: 'review',
+                                },
+                            },
+                        })
+                    ).catch(() => {});
+                }
 
                 track('import_completed', {
                     spot_count: counts.imported,
@@ -415,7 +564,7 @@ export function useProcessImportQueue() {
                 if (counts.imported > 0) markImportCompleted();
 
                 // TICKET-120: backgrounded → local notification (foreground = toast).
-                if (AppState.currentState !== 'active') {
+                if (!isV2 && AppState.currentState !== 'active') {
                     presentImportNotification({
                         title: `imported ${counts.imported} of ${doneJob.listCount}`,
                         body: counts.needsLook > 0 ? 'tap to see what needs a look' : 'tap to review',
@@ -427,7 +576,9 @@ export function useProcessImportQueue() {
                     onPress: () => router.push(`/import-digest?jobId=${m.jobId}` as any),
                 };
                 toast.show(
-                    counts.needsLook > 0
+                    isV2 && counts.queued > 0
+                        ? `${counts.queued} ${counts.queued === 1 ? 'spot is' : 'spots are'} completing…`
+                        : counts.needsLook > 0
                         ? `imported ${counts.imported} of ${doneJob.listCount} · ${counts.needsLook} need a look`
                         : `imported ${counts.imported} of ${doneJob.listCount}`,
                     reviewAction,
@@ -472,21 +623,46 @@ export function useProcessImportQueue() {
                     forceGhost = ckpt.ghostMode;
                 } else {
                     try {
-                        const resolveData = await callEdgeFn<ResolveSpotsData>('resolve-url', {
-                            action: 'resolve_spots',
-                            body: {
+                        const resolveData = await callImportResolveUrl<ResolveSpotsData>(
+                            m,
+                            'resolve_spots',
+                            {
                                 import_nonce: m.importNonce,
+                                protocol_generation: m.protocolGeneration,
                                 items: chunk.map((c) => ({
                                     name: c.name,
                                     address: c.address,
                                     client_nonce: c.client_nonce,
                                 })),
                             },
-                        });
+                        );
                         // ghost_mode = kill-switch (RESOLVE_SPOTS_GHOST_ONLY) →
                         // ghost-save this chunk; the switch is re-read per chunk.
                         forceGhost = resolveData?.ghost_mode === true;
-                        results = forceGhost ? [] : (resolveData?.results ?? []);
+                        // New resolvers still return per-item provenance for a
+                        // kill-switched/no-result decision. Keep it even when the
+                        // payload is ghost-shaped so v2 never loses its binding.
+                        results = resolveData?.results ?? [];
+                        if (
+                            isV2 &&
+                            forceGhost &&
+                            chunk.some((item) => {
+                                const result = results.find(
+                                    (candidate) => candidate.client_nonce === item.client_nonce,
+                                );
+                                return (
+                                    typeof result?.resolution_id !== 'string' ||
+                                    result.resolution_id.length === 0
+                                );
+                            })
+                        ) {
+                            // Older kill-switched servers returned an empty result
+                            // array. V2 must not fabricate a provenance-free ghost,
+                            // and this response spent no Places budget, so do not
+                            // checkpoint it: the next foreground/enqueue wakeup will
+                            // resolve this same cursor again after the switch changes.
+                            return;
+                        }
                         const observedTypeRejected = resolveData?.type_rejected;
                         if (
                             typeof observedTypeRejected === 'number' &&
@@ -517,6 +693,8 @@ export function useProcessImportQueue() {
                         };
                         setLargeJob(m.jobId, jobNow);
                     } catch (err) {
+                        requireActiveImportOwner(m.userId, activeUserIdRef.current);
+                        if (isSessionError(err)) throw err;
                         const cls = classifyDrainError(errStatus(err), isSessionError(err));
                         // M3: 503 (inner Places throttle) / 5xx / network / session →
                         // transient — pause + resume, NEVER a ghost-degrade.
@@ -524,6 +702,13 @@ export function useProcessImportQueue() {
                         if (cls === 'deterministic') {
                             // A real 4xx (malformed) → attempts/poison. Per-spot save
                             // failures never reach here (they mark items, drain continues).
+                            bumpChunkAttempts(jobNow);
+                            return;
+                        }
+                        if (isV2) {
+                            // A v2 item may never be fabricated without a
+                            // server-minted resolution. Leave it on the local retry
+                            // surface instead of silently downgrading its protocol.
                             bumpChunkAttempts(jobNow);
                             return;
                         }
@@ -544,15 +729,24 @@ export function useProcessImportQueue() {
             // no inputs by design: advance it as failed/needs-look without calling
             // save_spots with an invalid empty array (and never ghost-stage it).
             let saveResult: LargeSaveResult;
+            const resolutionByNonce = new Map(
+                results.map((result) => [result.client_nonce, result.resolution_id ?? null]),
+            );
             const saveInputs = forceGhost
-                ? buildGhostSpots(chunk)
-                : buildResolvedSpots(results, chunk);
+                ? buildGhostSpots(chunk).map((spot) => ({
+                      ...spot,
+                      resolution_id:
+                          resolutionByNonce.get(spot.client_nonce) ?? spot.resolution_id ?? null,
+                  }))
+                : buildResolvedSpots(results, chunk, isV2);
             if (saveInputs.length === 0) {
                 saveResult = { results: [] };
             } else {
                 try {
                     saveResult = await saveChunkSpots(jobNow, saveInputs);
                 } catch (err) {
+                    requireActiveImportOwner(m.userId, activeUserIdRef.current);
+                    if (isSessionError(err)) throw err;
                     // save_spots has no rate bucket — a 429 HERE is not a budget signal,
                     // so everything non-deterministic (429/503/5xx/network/session) is a
                     // plain resumable transient. The resolve checkpoint above means the
@@ -565,7 +759,8 @@ export function useProcessImportQueue() {
                 }
             }
 
-            const outcomes = toChunkOutcomes(chunk, results, saveResult, forceGhost);
+            const rawOutcomes = toChunkOutcomes(chunk, results, saveResult, forceGhost);
+            const outcomes = isV2 ? awaitCompletenessLedger(rawOutcomes) : rawOutcomes;
             const newJob = await commitChunk(jobNow, outcomes, saveResult, end);
             if (isDrained(newJob)) {
                 await finalizeLargeJob(newJob);
@@ -575,11 +770,12 @@ export function useProcessImportQueue() {
             // lock releases first — a synchronous poke would no-op behind the lock).
             setTimeout(() => pokeImportQueue(), 0);
         },
-        [userId, queryClient, toast],
+        [userId, queryClient, toast, callImportResolveUrl, runOwnerBound],
     );
 
     const processOne = useCallback(
         async (m: ImportManifest) => {
+            requireActiveImportOwner(m.userId, activeUserIdRef.current);
             // TICKET-152: a large Maps-list job takes its own client-pumped chunk
             // drain — never the single-shot resolve/save below.
             if (m.largeJob) {
@@ -679,9 +875,11 @@ export function useProcessImportQueue() {
                         // deadlineAt (epoch ms) caps the perception fetches' internal
                         // timeouts — only the escalation RETRY passes one (R8).
                         const fetchPerception = (deadlineAt?: number) =>
-                            provider === 'tiktok'
-                                ? fetchTikTokPerception(m.url as string, deadlineAt)
-                                : fetchInstagramPerception(m.url as string, deadlineAt);
+                            runOwnerBound<TikTokPerception | InstagramPerception | null>(m, async () =>
+                                provider === 'tiktok'
+                                    ? await fetchTikTokPerception(m.url as string, deadlineAt)
+                                    : await fetchInstagramPerception(m.url as string, deadlineAt)
+                            );
                         let perception = await fetchPerception();
                         // Caption ALWAYS fuses: even a name-free caption carries
                         // the city signal (hashtags/handle) that Places needs.
@@ -724,11 +922,13 @@ export function useProcessImportQueue() {
                             // stays true — the server may have billed the slot (R5).
                             let cheap: ResolveUrlData | null = null;
                             try {
-                                cheap = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                                    body: transcript
+                                cheap = await callImportResolveUrl<ResolveUrlData>(
+                                    m,
+                                    undefined,
+                                    transcript
                                         ? { caption: desc || undefined, extracted_text: transcript }
                                         : { extracted_text: desc },
-                                });
+                                );
                             } catch (err) {
                                 if (isSessionError(err) || isTransientError(err)) throw err;
                                 fastPathGate = 'cheap_error'; // structural — never review-holds
@@ -801,10 +1001,12 @@ export function useProcessImportQueue() {
                                     // share link in any form) is a fine Referer.
                                     const remaining = Math.max(0, stageDeadlineAt - Date.now());
                                     if (remaining <= 0) break;
-                                    const file = await downloadSlideImage(
-                                        slideUrls[slideIndex],
-                                        m.url as string,
-                                        remaining,
+                                    const file = await runOwnerBound(m, () =>
+                                        downloadSlideImage(
+                                            slideUrls[slideIndex],
+                                            m.url as string,
+                                            remaining,
+                                        )
                                     );
                                     slideFiles[slideIndex] = file;
                                 }
@@ -836,13 +1038,16 @@ export function useProcessImportQueue() {
                                         );
                                         if (remainingOcrBudgetMs <= 0) break;
                                         try {
-                                            const res = await extractFromImages([file], {
-                                                ocrBudgetMs: remainingOcrBudgetMs,
-                                            });
+                                            const res = await runOwnerBound(m, () =>
+                                                extractFromImages([file], {
+                                                    ocrBudgetMs: remainingOcrBudgetMs,
+                                                })
+                                            );
                                             slideLines[slideIndex] = (res?.ocr ?? [])
                                                 .map((line) => line.trim())
                                                 .filter(Boolean);
-                                        } catch {
+                                        } catch (error) {
+                                            if (isSessionError(error)) throw error;
                                             // One bad slide must not erase the others.
                                         }
                                     }
@@ -865,15 +1070,20 @@ export function useProcessImportQueue() {
                             // when there's a playAddr; a photo post skips the loop below).
                             if (perception?.playAddr) setImportStage(m.jobId, 'downloading video');
                             for (let attempt = 0; attempt < 2; attempt++) {
-                                if (!perception?.playAddr) break;
-                                const fileUri = await downloadTikTokVideo(
-                                    perception.playAddr,
-                                    // IG's fbcdn checks the embed-page referer;
-                                    // TikTok's CDN wants the video page itself.
+                                const playAddr = perception?.playAddr;
+                                if (!playAddr) break;
+                                const refererUrl =
                                     (perception as { refererUrl?: string }).refererUrl ??
-                                        (m.url as string),
-                                    // R8: the REMAINING shared budget, never a fresh 30s.
-                                    Math.max(0, stageDeadlineAt - Date.now()),
+                                    (m.url as string);
+                                const fileUri = await runOwnerBound(m, () =>
+                                    downloadTikTokVideo(
+                                        playAddr,
+                                        // IG's fbcdn checks the embed-page referer;
+                                        // TikTok's CDN wants the video page itself.
+                                        refererUrl,
+                                        // R8: the REMAINING shared budget, never a fresh 30s.
+                                        Math.max(0, stageDeadlineAt - Date.now()),
+                                    )
                                 );
                                 if (!fileUri) {
                                     // [review-1 Codex-5] the refetch's own page/VTT
@@ -913,23 +1123,25 @@ export function useProcessImportQueue() {
                                 // TICKET-180 stage 4/6: on-device OCR + STT of the mp4.
                                 setImportStage(m.jobId, 'reading the video');
                                 try {
-                                    const { ocr, transcript: spoken } = await extractFromVideo(
-                                        fileUri,
-                                        // 2fps: creators flash "Name, Area" overlays
-                                        // for ~1s — the old 60-frame/1.5s stride
-                                        // missed most of them (086c E2E: 2/7 caught
-                                        // at 1.5s stride, 7/7 at 0.5s).
-                                        // TikTok's ASR already covers speech when
-                                        // present — only transcribe as a fallback.
-                                        // Budgets threaded (R8/R4 — native-gated).
-                                        {
-                                            maxFrames: 240,
-                                            fps: 2,
-                                            transcribe: !perception?.hasTranscript,
-                                            ocrBudgetMs: OCR_WALLCLOCK_BUDGET_MS,
-                                            sttTimeoutMs: STT_TIMEOUT_MS,
-                                            sttMaxDurationSec: STT_MAX_DURATION_SEC,
-                                        },
+                                    const { ocr, transcript: spoken } = await runOwnerBound(m, () =>
+                                        extractFromVideo(
+                                            fileUri,
+                                            // 2fps: creators flash "Name, Area" overlays
+                                            // for ~1s — the old 60-frame/1.5s stride
+                                            // missed most of them (086c E2E: 2/7 caught
+                                            // at 1.5s stride, 7/7 at 0.5s).
+                                            // TikTok's ASR already covers speech when
+                                            // present — only transcribe as a fallback.
+                                            // Budgets threaded (R8/R4 — native-gated).
+                                            {
+                                                maxFrames: 240,
+                                                fps: 2,
+                                                transcribe: !perception?.hasTranscript,
+                                                ocrBudgetMs: OCR_WALLCLOCK_BUDGET_MS,
+                                                sttTimeoutMs: STT_TIMEOUT_MS,
+                                                sttMaxDurationSec: STT_MAX_DURATION_SEC,
+                                            },
+                                        )
                                     );
                                     ocrLines = ocr?.length ?? 0;
                                     sttChars = (spoken ?? '').length;
@@ -938,7 +1150,8 @@ export function useProcessImportQueue() {
                                             .filter(Boolean)
                                             .join('\n')
                                             .trim() || null;
-                                } catch {
+                                } catch (error) {
+                                    if (isSessionError(error)) throw error;
                                     // OCR channel is best-effort by contract.
                                 }
                                 deleteCachedTikTokVideo(fileUri);
@@ -1024,19 +1237,20 @@ export function useProcessImportQueue() {
                         // Maps list over the sync cap ENUMERATES (no Places call) instead
                         // of truncating at 20. Harmless for non-maps urls (server ignores
                         // the flag below the cap / for non-list sources).
-                        const resolved = await callEdgeFn<ResolveUrlData & Partial<LargeListEnumeration>>(
-                            'resolve-url',
-                            {
-                                body: extractedText
-                                    ? {
-                                        extracted_text: extractedText,
-                                        ...(photoImportContext ?? {}),
-                                    }
-                                    : {
-                                        url: m.url,
-                                        supports_large_lists: true,
-                                    },
-                            },
+                        const resolved = await callImportResolveUrl<
+                            ResolveUrlData & Partial<LargeListEnumeration>
+                        >(
+                            m,
+                            undefined,
+                            extractedText
+                                ? {
+                                    extracted_text: extractedText,
+                                    ...(photoImportContext ?? {}),
+                                }
+                                : {
+                                    url: m.url,
+                                    supports_large_lists: true,
+                                },
                         );
                         mergeTypeRejected(resolved);
                         // A large Maps list → build the durable job + HOLD for the kickoff
@@ -1079,9 +1293,11 @@ export function useProcessImportQueue() {
                             provider !== 'instagram' &&
                             !(cheapTierRan && downloadOk)
                         ) {
-                            const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                                body: { url: m.url },
-                            });
+                            const fallback = await callImportResolveUrl<ResolveUrlData>(
+                                m,
+                                undefined,
+                                { url: m.url },
+                            );
                             mergeTypeRejected(fallback);
                             candidates = fallback?.candidates ?? [];
                             resolvedSourceType = fallback?.source_type ?? resolvedSourceType;
@@ -1106,7 +1322,9 @@ export function useProcessImportQueue() {
                     }
                     // TICKET-180 stage 4/6: shared-file video → on-device OCR + STT.
                     setImportStage(m.jobId, 'reading the video');
-                    const { ocr, transcript } = await extractFromVideo(m.videoPath as string);
+                    const { ocr, transcript } = await runOwnerBound(m, () =>
+                        extractFromVideo(m.videoPath as string)
+                    );
                     const extractedText = [...(ocr ?? []), transcript ?? '']
                         .filter(Boolean)
                         .join('\n')
@@ -1119,9 +1337,11 @@ export function useProcessImportQueue() {
                     }
                     // TICKET-180 stage 5/6: resolving candidates against the OCR text.
                     setImportStage(m.jobId, 'matching spots');
-                    const resolved = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                        body: { extracted_text: extractedText },
-                    });
+                    const resolved = await callImportResolveUrl<ResolveUrlData>(
+                        m,
+                        undefined,
+                        { extracted_text: extractedText },
+                    );
                     mergeTypeRejected(resolved);
                     candidates = resolved?.candidates ?? [];
                 }
@@ -1198,6 +1418,7 @@ export function useProcessImportQueue() {
                     return {
                         candidate_id: c.candidate_id ?? safeRandomUUID(),
                         client_nonce: safeRandomUUID(),
+                        resolution_id: c.resolution_id ?? null,
                         restaurant_id: c.restaurant_id ?? null,
                         external_id: c.restaurant_id ? null : (c.restaurant.external_id ?? null),
                         restaurant_name: c.restaurant.name ?? null,
@@ -1249,13 +1470,15 @@ export function useProcessImportQueue() {
                     // above is; the row is the quiet always-on third). The drain
                     // has no service-role INSERT, so it emits via the self-directed
                     // notifications action. Fire-and-forget — never fail the import.
-                    callEdgeFn('notifications', {
-                        action: 'emit_self',
-                        body: {
-                            kind: 'import_done',
-                            subject_meta: { job_id: m.jobId, count: n, outcome: 'review' },
-                        },
-                    }).catch(() => {});
+                    void runOwnerBound(m, () =>
+                        callEdgeFn('notifications', {
+                            action: 'emit_self',
+                            body: {
+                                kind: 'import_done',
+                                subject_meta: { job_id: m.jobId, count: n, outcome: 'review' },
+                            },
+                        })
+                    ).catch(() => {});
                     if (userId) {
                         queryClient.invalidateQueries({
                             queryKey: queryKeys.importJobs.all(userId),
@@ -1299,7 +1522,12 @@ export function useProcessImportQueue() {
             // aren't dropped. Calls are SEQUENTIAL so the first call's wishlist
             // insert lands before the already-pinned table calls. No tables → one
             // wishlist-only call.
-            const tableIds = m.destinations.tableIds;
+            const activeManifest =
+                importManifestProtocol(m) === 'v2' ? ensureImportV2Routing(m.jobId) : m;
+            if (!activeManifest) throw new Error('Import manifest disappeared before save');
+            const isV2 = importManifestProtocol(activeManifest) === 'v2';
+            const allRoutingTargets = isV2 ? v2Targets(activeManifest) : [];
+            const tableIds = activeManifest.destinations.tableIds;
             const spotsForTable = (t: string): PersistedImportSpot[] =>
                 spots!.map((s) => ({
                     ...s,
@@ -1307,6 +1535,37 @@ export function useProcessImportQueue() {
                     table_client_nonce:
                         s.table_shares?.[t] ?? (s.table_id === t ? s.table_client_nonce : null),
                 }));
+            const wireSpots = (input: PersistedImportSpot[]) =>
+                isV2
+                    ? input
+                    : input.map(({ resolution_id: _resolutionId, ...spot }) => spot);
+            const saveOnce = (
+                input: PersistedImportSpot[],
+                targets: ImportDestinationTarget[],
+                notifyDone: boolean,
+                pinWishlistValue?: boolean,
+            ) => {
+                if (isV2) assertV2ResolutionIds(input);
+                return callImportResolveUrl<SaveImportSpotsResult>(
+                    activeManifest,
+                    'save_spots',
+                    {
+                        import_nonce: activeManifest.importNonce,
+                        spots: wireSpots(input),
+                        source,
+                        ...clientBuildMetadata(),
+                        notify_done: notifyDone,
+                        ...(pinWishlistValue == null ? {} : { pin_wishlist: pinWishlistValue }),
+                        ...(photoImportContext ?? {}),
+                        ...v2SaveFields(
+                            activeManifest,
+                            input.map((spot) => spot.client_nonce),
+                            targets,
+                            notifyDone,
+                        ),
+                    },
+                );
+            };
             // TICKET-123: the WISHLIST-BASE call carries notify_done so the server
             // writes the durable `import_done` row (outcome 'saved') off its own
             // savedCount — set on the single no-tables call AND the i===0 fan-out
@@ -1319,20 +1578,10 @@ export function useProcessImportQueue() {
             // list(s), not the personal wishlist. No-tables path only — the table
             // fan-out below forces true. The server still returns restaurant_ids for
             // list routing when false (large-job path precedent).
-            const pinWishlist = effectivePinWishlist(m);
+            const pinWishlist = effectivePinWishlist(activeManifest);
             let result: SaveImportSpotsResult | undefined;
             if (tableIds.length === 0) {
-                result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
-                    action: 'save_spots',
-                    body: {
-                        import_nonce: m.importNonce,
-                        spots,
-                        source,
-                        notify_done: true,
-                        pin_wishlist: pinWishlist,
-                        ...(photoImportContext ?? {}),
-                    },
-                });
+                result = await saveOnce(spots, allRoutingTargets, true, pinWishlist);
             } else {
                 for (let i = 0; i < tableIds.length; i++) {
                     // pin_wishlist is FORCED true when tables exist: a table share is a
@@ -1340,17 +1589,27 @@ export function useProcessImportQueue() {
                     // post together, and the list-only branch skips it entirely. A false
                     // here would silently drop the pre-chosen table's share (the review
                     // editor locks the wishlist chip on for the same reason).
-                    const r = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
-                        action: 'save_spots',
-                        body: {
-                            import_nonce: m.importNonce,
-                            spots: spotsForTable(tableIds[i]),
-                            source,
-                            notify_done: i === 0,
-                            ...(i === 0 ? { pin_wishlist: true } : {}),
-                            ...(photoImportContext ?? {}),
-                        },
-                    });
+                    const tableTarget = allRoutingTargets.find(
+                        (target) => target.kind === 'table' && target.tableId === tableIds[i],
+                    );
+                    if (isV2 && !tableTarget) {
+                        throw new Error(`Missing frozen destination nonce for Table ${tableIds[i]}`);
+                    }
+                    const nonTableTargets = allRoutingTargets.filter(
+                        (target) => target.kind !== 'table',
+                    );
+                    const requestTargets = isV2
+                        ? [
+                              ...(i === 0 ? nonTableTargets : []),
+                              ...(tableTarget ? [tableTarget] : []),
+                          ]
+                        : [];
+                    const r = await saveOnce(
+                        spotsForTable(tableIds[i]),
+                        requestTargets,
+                        i === 0,
+                        i === 0 ? true : undefined,
+                    );
                     if (i === 0) result = r; // first call pinned the wishlist + did routing
                 }
             }
@@ -1359,18 +1618,24 @@ export function useProcessImportQueue() {
             const restaurantIds = (result?.results ?? [])
                 .map((r) => r.restaurant_id)
                 .filter((x): x is string => !!x);
-            if (restaurantIds.length > 0) {
+            if (!isV2 && restaurantIds.length > 0) {
                 // Create any "new list" titles (title-deduped), then file into every
                 // chosen list (existing + new) via the idempotent bulk add.
-                const newListIds = await resolveNewLists(m.destinations.newListTitles);
+                const newListIds = await resolveNewLists(
+                    m.destinations.newListTitles,
+                    (operation) => runOwnerBound(activeManifest, () => operation()),
+                );
                 const allListIds = [...new Set([...m.destinations.listIds, ...newListIds])];
                 for (const listId of allListIds) {
                     try {
-                        await callEdgeFn('lists', {
-                            action: 'add_entries',
-                            body: { list_id: listId, restaurant_ids: restaurantIds },
-                        });
-                    } catch {
+                        await runOwnerBound(activeManifest, () =>
+                            callEdgeFn('lists', {
+                                action: 'add_entries',
+                                body: { list_id: listId, restaurant_ids: restaurantIds },
+                            })
+                        );
+                    } catch (error) {
+                        if (isSessionError(error)) throw error;
                         /* a bad/removed list must not fail the import */
                     }
                 }
@@ -1386,7 +1651,14 @@ export function useProcessImportQueue() {
             // null on a re-drain (no fresh perception) — the thumb was cached on the
             // first pass. Never blocks or fails the import.
             if (clipProvider && clipThumbUrl && m.url) {
-                void captureClipThumbFromUrl(m.url, clipThumbUrl, clipProvider);
+                void runOwnerBound(activeManifest, (expectedOwnerId) =>
+                    captureClipThumbFromUrl(
+                        m.url!,
+                        clipThumbUrl,
+                        clipProvider,
+                        expectedOwnerId,
+                    )
+                ).catch(() => {});
             }
 
             const saved = result?.summary?.saved ?? 0;
@@ -1395,10 +1667,14 @@ export function useProcessImportQueue() {
             // `ghost` — filed into the chosen list(s) by the routing above,
             // deliberately NOT pinned. A success, not a failure.
             const ghost = result?.summary?.ghost ?? 0;
+            const queued =
+                result?.summary?.queued ??
+                (result?.results ?? []).filter((item) => item.status === 'queued').length;
             const listOnly = saved === 0 && ghost > 0;
             // On a retry/re-drain the save may have landed on the prior pass and now
             // come back as already_pinned — still a success, count all three.
             const done = saved + already + ghost;
+            const accepted = done + queued;
             // TICKET-164 [R9 + review-1 FAIL-1]: a FRESH pass reads the hoisted local
             // (setImportDiagnostics writes the manifest FILE, never this in-memory
             // `m`, so `m.diag` is stale until a re-drain re-parses it); a RE-DRAIN
@@ -1408,11 +1684,13 @@ export function useProcessImportQueue() {
                 ? fastPath
                 : (m.diag as { fast_path?: boolean } | undefined)?.fast_path === true;
             // TICKET-088: the capture funnel's terminal event (fire-and-forget).
-            track('import_completed', {
-                spot_count: done,
-                source_type: source.type,
-                fast_path: fastPathDiag,
-            });
+            if (done > 0) {
+                track('import_completed', {
+                    spot_count: done,
+                    source_type: source.type,
+                    fast_path: fastPathDiag,
+                });
+            }
             // TICKET-122: first completed import flips the activation-hub signal so
             // the empty-state hub collapses full→compact. Idempotent, best-effort.
             if (done > 0) markImportCompleted();
@@ -1420,7 +1698,7 @@ export function useProcessImportQueue() {
             // action so a wrong pin is taps away from corrected. Routes via the
             // imports HUB (hierarchical back-nav is sacred — never deep-link
             // past the intermediate screen; the fresh batch is its top row).
-            const reviewAction = done > 0
+            const reviewAction = accepted > 0
                 ? { label: 'review', onPress: () => router.push('/import-progress' as any) }
                 : undefined;
             // TICKET-151: when a Maps list was truncated (list_count > kept), say so
@@ -1445,7 +1723,9 @@ export function useProcessImportQueue() {
                     ? 'your list'
                     : 'your lists';
             toast.show(
-                saved > 0
+                queued > 0
+                    ? `${queued} ${queued === 1 ? 'spot is' : 'spots are'} completing…`
+                    : saved > 0
                     ? fastPathName
                         ? `pinned ${fastPathName}`
                         : note
@@ -1465,7 +1745,7 @@ export function useProcessImportQueue() {
             // TICKET-120: mirror the success to a local notification when backgrounded
             // (only on a fresh save — an already-pinned re-drain stays silent).
             // Foreground = toast-only.
-            if ((saved > 0 || listOnly) && AppState.currentState !== 'active') {
+            if (!isV2 && (saved > 0 || listOnly) && AppState.currentState !== 'active') {
                 presentImportNotification({
                     title: listOnly
                         ? `saved ${ghost} to ${listNoun}`
@@ -1490,7 +1770,14 @@ export function useProcessImportQueue() {
                 });
             }
         },
-        [userId, queryClient, toast, processLargeJob],
+        [
+            userId,
+            queryClient,
+            toast,
+            processLargeJob,
+            callImportResolveUrl,
+            runOwnerBound,
+        ],
     );
 
     const drain = useCallback(async () => {
@@ -1515,13 +1802,15 @@ export function useProcessImportQueue() {
         }
 
         try {
-            const pending = listPendingImports().filter(
+            const pending = listPendingImports().flatMap((manifest) => {
                 // Review-mode manifests ARE drained — they get resolved (OCR/caption)
                 // and persisted, then HELD (processOne returns before save) until the
-                // user confirms in the review screen. Only cross-account manifests are
-                // skipped (their destinations belong to the other user).
-                (m) => !(m.userId && m.userId !== userId),
-            );
+                // user confirms in the review screen. Ownerless extension captures
+                // bind to the first signed-in account before any resolve/save work;
+                // another account's manifest is excluded.
+                const claimed = claimImportOwner(manifest.jobId, userId);
+                return claimed ? [claimed] : [];
+            });
             // TICKET-120: actively draining ≥1 import while the user is here is the
             // demonstrated-value beat to (quietly, cadence-gated) offer notifications.
             if (pending.length > 0 && AppState.currentState === 'active') {
@@ -1532,6 +1821,7 @@ export function useProcessImportQueue() {
                 try {
                     await processOne(m);
                 } catch (err) {
+                    if (activeUserIdRef.current !== m.userId) break;
                     if (isSessionError(err) || isTransientError(err)) break;
                     const updated = bumpImportAttempt(m.jobId);
                     if (updated?.status === 'failed') {
@@ -1548,13 +1838,19 @@ export function useProcessImportQueue() {
                         // count 0). Always written regardless of AppState; the row
                         // is the quiet always-on record so a decliner/missed-banner
                         // user can still catch it. Fire-and-forget.
-                        callEdgeFn('notifications', {
-                            action: 'emit_self',
-                            body: {
-                                kind: 'import_done',
-                                subject_meta: { job_id: m.jobId, count: 0, outcome: 'failed' },
-                            },
-                        }).catch(() => {});
+                        void runOwnerBound(m, () =>
+                            callEdgeFn('notifications', {
+                                action: 'emit_self',
+                                body: {
+                                    kind: 'import_done',
+                                    subject_meta: {
+                                        job_id: m.jobId,
+                                        count: 0,
+                                        outcome: 'failed',
+                                    },
+                                },
+                            })
+                        ).catch(() => {});
                         // Keep the .mov: a poisoned manifest stays for "try again" in
                         // the progress hub (re-OCR needs the source). The .mov is
                         // deleted on success (processOne) or when the user discards.

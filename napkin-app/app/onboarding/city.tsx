@@ -6,9 +6,9 @@
  *
  * Also the branch point for the conditional Follows step: co-diner candidates are
  * prefetched on entry (useCoDiners, 5-min stale) so that on Continue/Skip we can
- * route candidates>0 → follows, else → teach. If the fetch hasn't resolved yet we
- * await it (isFetched gate) before branching, so we never mis-skip; follows.tsx
- * self-advances to teach as a second safety net.
+ * route candidates>0 → follows, else complete onboarding. If the fetch hasn't
+ * resolved yet we await it (isFetched gate) before branching, so we never
+ * mis-skip; follows.tsx completes defensively if its warm cache is empty.
  */
 import React, { useState } from 'react';
 import {
@@ -29,6 +29,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useCoDiners } from '@/hooks/feed/useCoDiners';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
+import { useFinishOnboarding } from '@/hooks/onboarding/useFinishOnboarding';
 
 export default function OnboardingCityScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -37,6 +38,7 @@ export default function OnboardingCityScreen() {
     const router = useRouter();
     const { user } = useAuth();
     const { draft, patch } = useOnboardingDraft();
+    const { finish, isPending, completionError } = useFinishOnboarding();
 
     const [city, setCity] = useState(draft.home_city ?? '');
     const [branching, setBranching] = useState(false);
@@ -44,9 +46,11 @@ export default function OnboardingCityScreen() {
     // Prefetch on entry — populates queryKeys.feed.coDiners so the branch below
     // (and the follows screen) reads a warm cache.
     const coDiners = useCoDiners(user?.id);
+    const isTerminal = coDiners.isFetched && (coDiners.data?.length ?? 0) === 0;
+    const isBusy = branching || isPending;
 
     const proceed = async (homeCity: string | null) => {
-        if (branching) return;
+        if (isBusy) return;
         patch({ home_city: homeCity });
 
         // Resolve candidates before branching. Almost always already fetched
@@ -56,7 +60,7 @@ export default function OnboardingCityScreen() {
             setBranching(true);
             try {
                 // 4s cap: a hung network must never wedge onboarding — on timeout
-                // fall through to teach (worst case: the follows step is skipped).
+                // complete directly (worst case: the follows step is skipped).
                 const r = await Promise.race([
                     coDiners.refetch(),
                     new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
@@ -69,7 +73,17 @@ export default function OnboardingCityScreen() {
             }
         }
 
-        router.push(candidates.length > 0 ? '/onboarding/follows' : '/onboarding/teach');
+        if (candidates.length > 0) {
+            router.push('/onboarding/follows');
+            return;
+        }
+        finish({ home_city: homeCity });
+    };
+
+    const skip = () => {
+        if (isBusy) return;
+        setCity('');
+        void proceed(null);
     };
 
     return (
@@ -96,25 +110,42 @@ export default function OnboardingCityScreen() {
                     style={[s.input, { color: palette.text, borderBottomColor: palette.ruleInkSoft }]}
                 />
 
-                <Pressable onPress={() => proceed(null)} hitSlop={8} accessibilityRole="button">
+                <Pressable
+                    onPress={skip}
+                    disabled={isBusy}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                >
                     <Text style={[s.skip, { color: palette.textMuted }]}>Skip</Text>
                 </Pressable>
             </View>
 
             <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
+                {completionError ? (
+                    <Text
+                        accessible
+                        accessibilityRole="alert"
+                        accessibilityLiveRegion="polite"
+                        style={[s.completionError, { color: palette.error }]}
+                    >
+                        {completionError}
+                    </Text>
+                ) : null}
                 <Pressable
                     onPress={() => proceed(city.trim() || null)}
-                    disabled={branching}
+                    disabled={isBusy}
                     style={({ pressed }) => [
                         s.primaryBtn,
-                        { backgroundColor: palette.primary, opacity: branching ? 0.6 : pressed ? 0.85 : 1 },
+                        { backgroundColor: palette.primary, opacity: isBusy ? 0.6 : pressed ? 0.85 : 1 },
                     ]}
                     accessibilityRole="button"
                 >
-                    {branching ? (
+                    {isBusy ? (
                         <ActivityIndicator color={palette.textInverse} />
                     ) : (
-                        <Text style={s.primaryBtnText}>Continue</Text>
+                        <Text style={s.primaryBtnText}>
+                            {completionError ? 'Try again' : isTerminal ? 'Done' : 'Continue'}
+                        </Text>
                     )}
                 </Pressable>
             </View>

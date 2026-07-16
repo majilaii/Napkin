@@ -29,6 +29,7 @@ import { resolveReserveUrl } from '../_shared/reserveLink.ts';
 import { buildPage, decodeCursor, encodeCursor } from '../_shared/pagination.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { projectRound } from '../_shared/round_projection.ts';
+import { resolveRestaurantLookupId } from '../_shared/canonicalRestaurant.ts';
 // TICKET-156: the single content-key authority for the On Socials rail — the
 // TICKET-189: exact-hostname IG predicate (TS copy of fn_is_instagram_url) —
 // replaced the inline /instagram\.com|instagr\.am/ substring regex, closing
@@ -261,7 +262,7 @@ serve(async (req) => {
 
         const url = new URL(req.url);
         const action = url.searchParams.get('action');
-        const restaurantId = url.searchParams.get('restaurant_id');
+        let restaurantId = url.searchParams.get('restaurant_id');
 
         // GET for the classic read actions; POST only for body-routed actions
         // (paginated — cursor strings don't belong in query params).
@@ -396,19 +397,9 @@ serve(async (req) => {
             const rid = (body?.restaurant_id ?? restaurantId) as string | null;
             if (!rid) return fail('restaurant_id is required');
 
-            // Accept UUID or external_id, like action=page.
-            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-            let resolvedId = rid;
-            if (!uuidPattern.test(rid)) {
-                const { data: r, error: ridErr } = await supabase
-                    .from('restaurants')
-                    .select('id')
-                    .eq('external_id', rid)
-                    .maybeSingle();
-                if (ridErr) throw ridErr;
-                if (!r) return json({ data: { rows: [], next_cursor: null, has_more: false } });
-                resolvedId = r.id as string;
-            }
+            // Accept UUID/external id, then follow any tombstone aliases.
+            const resolvedId = await resolveRestaurantLookupId(supabase, rid);
+            if (!resolvedId) return json({ data: { rows: [], next_cursor: null, has_more: false } });
 
             const pageSize = Math.min(Math.max(Number(body?.limit) || 30, 1), 50);
             const cursor = decodeCursor(body?.cursor);
@@ -519,19 +510,9 @@ serve(async (req) => {
             const rid = (body?.restaurant_id ?? restaurantId) as string | null;
             if (!rid) return fail('restaurant_id is required');
 
-            // Accept UUID or external_id, like action=page / action=reviews.
-            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-            let resolvedId = rid;
-            if (!uuidPattern.test(rid)) {
-                const { data: r, error: ridErr } = await supabase
-                    .from('restaurants')
-                    .select('id')
-                    .eq('external_id', rid)
-                    .maybeSingle();
-                if (ridErr) throw ridErr;
-                if (!r) return json({ data: { rows: [] } });
-                resolvedId = r.id as string;
-            }
+            // Accept UUID/external id, then follow any tombstone aliases.
+            const resolvedId = await resolveRestaurantLookupId(supabase, rid);
+            if (!resolvedId) return json({ data: { rows: [] } });
 
             // 155's predicate. p_viewer = the JWT-validated caller (unspoofable —
             // the RPC is service_role-only EXECUTE, invoked here after getUser).
@@ -682,9 +663,12 @@ serve(async (req) => {
             if (!rid) return fail('restaurant_id is required');
             if (!isPeekCardContext(body?.context)) return fail('valid context is required');
 
+            const resolvedId = await resolveRestaurantLookupId(supabase, rid);
+            if (!resolvedId) return fail('restaurant not found', 404);
+
             const data = await loadPeekCard(supabase, {
                 viewerId: user.id,
-                restaurantId: rid,
+                restaurantId: resolvedId,
                 context: body.context,
                 supabaseUrl: supabaseUrl ?? '',
             });
@@ -693,6 +677,11 @@ serve(async (req) => {
 
 
         if (!restaurantId) return fail('restaurant_id is required', 400);
+        // All remaining read paths accept a durable deep link. A link may point
+        // at a tombstone forever, so normalize it once before any authorization,
+        // hydration, reservation, or aggregate lookup.
+        restaurantId = await resolveRestaurantLookupId(supabase, restaurantId);
+        if (!restaurantId) return fail('restaurant not found', 404);
 
         // ── Table-scoped history ──────────────────────────────────────────
         if (action === 'table_history') {

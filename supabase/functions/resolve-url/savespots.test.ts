@@ -13,48 +13,187 @@
  */
 
 import {
-    assertEquals,
-    assertNotEquals,
-    assertStringIncludes,
-} from 'https://deno.land/std@0.224.0/assert/mod.ts';
+  assertEquals,
+  assertNotEquals,
+  assertStringIncludes,
+} from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
-    isGhostExternalId,
-    buildGhostExternalId,
-    filterUnauthorizedTableIds,
-    isSpotPinnable,
-    detectSourceTypeFromHost,
-    isWebExtractionSource,
-    isTypeRejectedSaveSpot,
-} from './_helpers.ts';
-import { deriveClientNonce } from '../handoff/nonce.ts';
-import { loadHandoffWriteAuthorization, type LiveSpotsClient } from '../handoff/snapshot.ts';
+  buildGhostExternalId,
+  buildInlineCompletenessClaims,
+  detectSourceTypeFromHost,
+  evaluateLegacySaveSunset,
+  expectedImportOwnerDecision,
+  filterUnauthorizedTableIds,
+  isGhostExternalId,
+  isSpotPinnable,
+  isTypeRejectedSaveSpot,
+  isV2SaveProtocolRequest,
+  isWebExtractionSource,
+  validateV2SaveProtocol,
+} from "./_helpers.ts";
+import { deriveClientNonce } from "../handoff/nonce.ts";
+import {
+  type LiveSpotsClient,
+  loadHandoffWriteAuthorization,
+} from "../handoff/snapshot.ts";
+
+// ── TICKET-195: strict generation classifier + staged legacy sunset ──
+
+const V2_IMPORT_NONCE = "19500000-0000-4000-8000-000000000001";
+const V2_ITEM_NONCE = "19500000-0000-4000-8000-000000000002";
+const V2_RESOLUTION_ID = "19500000-0000-4000-8000-000000000003";
+const V2_DESTINATION_NONCE = "19500000-0000-4000-8000-000000000004";
+const OTHER_OWNER = "19500000-0000-4000-8000-000000000005";
+
+Deno.test("expected import owner fence is optional for old clients but strict when present", () => {
+  assertEquals(
+    expectedImportOwnerDecision(undefined, V2_IMPORT_NONCE),
+    "allow",
+  );
+  assertEquals(
+    expectedImportOwnerDecision(V2_IMPORT_NONCE, V2_IMPORT_NONCE),
+    "allow",
+  );
+  assertEquals(
+    expectedImportOwnerDecision(OTHER_OWNER, V2_IMPORT_NONCE),
+    "mismatch",
+  );
+  assertEquals(expectedImportOwnerDecision(null, V2_IMPORT_NONCE), "invalid");
+  assertEquals(
+    expectedImportOwnerDecision("not-a-uuid", V2_IMPORT_NONCE),
+    "invalid",
+  );
+});
+
+Deno.test("save protocol: every individual v2 field opts into strict v2 validation", () => {
+  const fields: Array<Record<string, unknown>> = [
+    { protocol_version: 2 },
+    { protocol_generation: "v2" },
+    { destination_intent: [] },
+    { expected_destinations: 1 },
+  ];
+  for (const body of fields) {
+    assertEquals(isV2SaveProtocolRequest(body, []), true);
+    assertNotEquals(validateV2SaveProtocol(V2_IMPORT_NONCE, [], body), null);
+  }
+  assertEquals(
+    isV2SaveProtocolRequest({}, [{ resolution_id: V2_RESOLUTION_ID }]),
+    true,
+  );
+});
+
+Deno.test("save protocol: complete v2 shape validates and client_build stays generation-neutral", () => {
+  const spots = [{
+    client_nonce: V2_ITEM_NONCE,
+    resolution_id: V2_RESOLUTION_ID,
+  }];
+  const body = {
+    protocol_version: 2,
+    protocol_generation: "v2",
+    expected_destinations: 1,
+    destination_intent: [{
+      item_nonce: V2_ITEM_NONCE,
+      destination_nonce: V2_DESTINATION_NONCE,
+      destination_kind: "wishlist",
+    }],
+  };
+  assertEquals(isV2SaveProtocolRequest(body, spots), true);
+  assertEquals(validateV2SaveProtocol(V2_IMPORT_NONCE, spots, body), null);
+  assertEquals(
+    isV2SaveProtocolRequest(
+      { client_build: 999 } as Record<string, unknown>,
+      [],
+    ),
+    false,
+  );
+});
+
+Deno.test("v2 inline claims use a distinct claimant for duplicate Place ids", () => {
+  const items = [
+    { id: "queue-1", item_nonce: "item-1", external_id: "ChIJ-same-place" },
+    { id: "queue-2", item_nonce: "item-2", external_id: "ChIJ-same-place" },
+  ];
+  let claimant = 0;
+  const claims = buildInlineCompletenessClaims(
+    items,
+    new Set(["item-1", "item-2"]),
+    () => `claimant-${++claimant}`,
+  );
+  assertEquals(claims.map((claim) => claim.item.external_id), [
+    "ChIJ-same-place",
+    "ChIJ-same-place",
+  ]);
+  assertEquals(claims.map((claim) => claim.workerId), [
+    "claimant-1",
+    "claimant-2",
+  ]);
+});
+
+Deno.test("v2 inline claims ignore mappings from an earlier import chunk", () => {
+  const claims = buildInlineCompletenessClaims(
+    [
+      { id: "queue-old", item_nonce: "chunk-1-item" },
+      { id: "queue-current", item_nonce: "chunk-2-item" },
+    ],
+    new Set(["chunk-2-item"]),
+    () => "current-claimant",
+  );
+  assertEquals(claims, [{
+    item: { id: "queue-current", item_nonce: "chunk-2-item" },
+    workerId: "current-claimant",
+  }]);
+});
+
+Deno.test("legacy sunset: configured floor warns by default and rejects only in explicit reject mode", () => {
+  assertEquals(evaluateLegacySaveSunset("200", undefined, 199), {
+    minimumBuild: 200,
+    observedBuild: 199,
+    belowFloor: true,
+    reject: false,
+  });
+  assertEquals(evaluateLegacySaveSunset("200", "reject", undefined), {
+    minimumBuild: 200,
+    observedBuild: null,
+    belowFloor: true,
+    reject: true,
+  });
+  assertEquals(evaluateLegacySaveSunset("200", "reject", "200").reject, false);
+  assertEquals(evaluateLegacySaveSunset("", "reject", 1).belowFloor, false);
+});
 
 // ── TICKET-195: type-rejected import rows never reach a write ────────────────
 
-Deno.test('isTypeRejectedSaveSpot: recognizes new top-level marker', () => {
-    assertEquals(isTypeRejectedSaveSpot({ type_rejected: true, place: null }), true);
+Deno.test("isTypeRejectedSaveSpot: recognizes new top-level marker", () => {
+  assertEquals(
+    isTypeRejectedSaveSpot({ type_rejected: true, place: null }),
+    true,
+  );
 });
 
-Deno.test('isTypeRejectedSaveSpot: recognizes nested compatibility marker preserved by old clients', () => {
-    assertEquals(
-        isTypeRejectedSaveSpot({
-            external_id: null,
-            place: { type_rejected: true },
-        }),
-        true,
-    );
+Deno.test("isTypeRejectedSaveSpot: recognizes nested compatibility marker preserved by old clients", () => {
+  assertEquals(
+    isTypeRejectedSaveSpot({
+      external_id: null,
+      place: { type_rejected: true },
+    }),
+    true,
+  );
 });
 
-Deno.test('isTypeRejectedSaveSpot: ordinary resolved and ghost spots remain writable', () => {
-    assertEquals(
-        isTypeRejectedSaveSpot({ place: { external_id: 'ChIJ-food', categories: ['restaurant'] } }),
-        false,
-    );
-    assertEquals(
-        isTypeRejectedSaveSpot({ place: { external_id: null, name: 'Unresolved venue' } }),
-        false,
-    );
-    assertEquals(isTypeRejectedSaveSpot(null), false);
+Deno.test("isTypeRejectedSaveSpot: ordinary resolved and ghost spots remain writable", () => {
+  assertEquals(
+    isTypeRejectedSaveSpot({
+      place: { external_id: "ChIJ-food", categories: ["restaurant"] },
+    }),
+    false,
+  );
+  assertEquals(
+    isTypeRejectedSaveSpot({
+      place: { external_id: null, name: "Unresolved venue" },
+    }),
+    false,
+  );
+  assertEquals(isTypeRejectedSaveSpot(null), false);
 });
 
 // ── 1. Source passthrough — object not stringified ────────────────────────────
@@ -64,25 +203,33 @@ Deno.test('isTypeRejectedSaveSpot: ordinary resolved and ghost spots remain writ
 // object should pass through unchanged (not become a JSON string), so Postgres
 // can correctly infer jsonb_typeof(p_source) = 'object'.
 
-Deno.test('source passthrough: object value is not a string', () => {
-    const source = { type: 'tiktok', url: 'https://tiktok.com/v/123' };
-    // The canonical form: source ?? null (not JSON.stringify)
-    const pSource = source ?? null;
-    // It must remain an object, not a serialized string.
-    assertEquals(typeof pSource, 'object', 'p_source must be passed as an object, not a JSON string');
-    assertNotEquals(typeof pSource, 'string', 'JSON.stringify would break the jsonb CHECK');
+Deno.test("source passthrough: object value is not a string", () => {
+  const source = { type: "tiktok", url: "https://tiktok.com/v/123" };
+  // The canonical form: source ?? null (not JSON.stringify)
+  const pSource = source ?? null;
+  // It must remain an object, not a serialized string.
+  assertEquals(
+    typeof pSource,
+    "object",
+    "p_source must be passed as an object, not a JSON string",
+  );
+  assertNotEquals(
+    typeof pSource,
+    "string",
+    "JSON.stringify would break the jsonb CHECK",
+  );
 });
 
-Deno.test('source passthrough: null source yields null (not JSON null string)', () => {
-    const source: unknown = null;
-    const pSource = source ?? null;
-    assertEquals(pSource, null);
+Deno.test("source passthrough: null source yields null (not JSON null string)", () => {
+  const source: unknown = null;
+  const pSource = source ?? null;
+  assertEquals(pSource, null);
 });
 
-Deno.test('source passthrough: undefined source yields null', () => {
-    const source: unknown = undefined;
-    const pSource = source ?? null;
-    assertEquals(pSource, null);
+Deno.test("source passthrough: undefined source yields null", () => {
+  const source: unknown = undefined;
+  const pSource = source ?? null;
+  assertEquals(pSource, null);
 });
 
 // ── 2. Ghost external_id minting stability ────────────────────────────────────
@@ -90,58 +237,74 @@ Deno.test('source passthrough: undefined source yields null', () => {
 // Fix P0-B: the RPC mints 'ghost_<user>_<nonce>' when no real external_id is
 // provided. Same inputs → same id (replay-idempotent).
 
-Deno.test('buildGhostExternalId: same user+nonce → same external_id', () => {
-    const userId = 'aabbccdd-0000-4000-8000-000000000001';
-    const nonce = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
-    const id1 = buildGhostExternalId(userId, nonce);
-    const id2 = buildGhostExternalId(userId, nonce);
-    assertEquals(id1, id2, 'ghost external_id must be stable across replays');
-    assertEquals(id1, `ghost_${userId}_${nonce}`);
+Deno.test("buildGhostExternalId: same user+nonce → same external_id", () => {
+  const userId = "aabbccdd-0000-4000-8000-000000000001";
+  const nonce = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+  const id1 = buildGhostExternalId(userId, nonce);
+  const id2 = buildGhostExternalId(userId, nonce);
+  assertEquals(id1, id2, "ghost external_id must be stable across replays");
+  assertEquals(id1, `ghost_${userId}_${nonce}`);
 });
 
-Deno.test('buildGhostExternalId: different nonces → different ids', () => {
-    const userId = 'aabbccdd-0000-4000-8000-000000000001';
-    const id1 = buildGhostExternalId(userId, 'nonce-a');
-    const id2 = buildGhostExternalId(userId, 'nonce-b');
-    assertNotEquals(id1, id2, 'different nonces must produce different external_ids');
+Deno.test("buildGhostExternalId: different nonces → different ids", () => {
+  const userId = "aabbccdd-0000-4000-8000-000000000001";
+  const id1 = buildGhostExternalId(userId, "nonce-a");
+  const id2 = buildGhostExternalId(userId, "nonce-b");
+  assertNotEquals(
+    id1,
+    id2,
+    "different nonces must produce different external_ids",
+  );
 });
 
-Deno.test('buildGhostExternalId: different users → different ids (same nonce)', () => {
-    const nonce = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
-    const id1 = buildGhostExternalId('user-a', nonce);
-    const id2 = buildGhostExternalId('user-b', nonce);
-    assertNotEquals(id1, id2, 'different users must produce different external_ids');
-    assertStringIncludes(id1, 'ghost_');
-    assertStringIncludes(id2, 'ghost_');
+Deno.test("buildGhostExternalId: different users → different ids (same nonce)", () => {
+  const nonce = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+  const id1 = buildGhostExternalId("user-a", nonce);
+  const id2 = buildGhostExternalId("user-b", nonce);
+  assertNotEquals(
+    id1,
+    id2,
+    "different users must produce different external_ids",
+  );
+  assertStringIncludes(id1, "ghost_");
+  assertStringIncludes(id2, "ghost_");
 });
 
 // ── 3. isGhostExternalId sentinel detection ───────────────────────────────────
 
-Deno.test('isGhostExternalId: null → true', () => {
-    assertEquals(isGhostExternalId(null), true);
+Deno.test("isGhostExternalId: null → true", () => {
+  assertEquals(isGhostExternalId(null), true);
 });
 
-Deno.test('isGhostExternalId: undefined → true', () => {
-    assertEquals(isGhostExternalId(undefined), true);
+Deno.test("isGhostExternalId: undefined → true", () => {
+  assertEquals(isGhostExternalId(undefined), true);
 });
 
-Deno.test('isGhostExternalId: empty string → true', () => {
-    assertEquals(isGhostExternalId(''), true);
+Deno.test("isGhostExternalId: empty string → true", () => {
+  assertEquals(isGhostExternalId(""), true);
 });
 
 Deno.test('isGhostExternalId: "ghost_pending" sentinel → true', () => {
-    assertEquals(isGhostExternalId('ghost_pending'), true, '"ghost_pending" must be treated as ghost');
+  assertEquals(
+    isGhostExternalId("ghost_pending"),
+    true,
+    '"ghost_pending" must be treated as ghost',
+  );
 });
 
-Deno.test('isGhostExternalId: real Google Place ID → false', () => {
-    assertEquals(isGhostExternalId('ChIJN1t_tDeuEmsRUsoyG83frY4'), false);
+Deno.test("isGhostExternalId: real Google Place ID → false", () => {
+  assertEquals(isGhostExternalId("ChIJN1t_tDeuEmsRUsoyG83frY4"), false);
 });
 
-Deno.test('isGhostExternalId: minted ghost id → false (the minted id itself is real)', () => {
-    // A minted ghost id like 'ghost_<user>_<nonce>' should NOT be treated as sentinel —
-    // it is a real unique external_id. The sentinel check is ONLY for the 'ghost_pending' string.
-    const minted = buildGhostExternalId('user-123', 'nonce-456');
-    assertEquals(isGhostExternalId(minted), false, 'Minted ghost external_id should not be treated as sentinel');
+Deno.test("isGhostExternalId: minted ghost id → false (the minted id itself is real)", () => {
+  // A minted ghost id like 'ghost_<user>_<nonce>' should NOT be treated as sentinel —
+  // it is a real unique external_id. The sentinel check is ONLY for the 'ghost_pending' string.
+  const minted = buildGhostExternalId("user-123", "nonce-456");
+  assertEquals(
+    isGhostExternalId(minted),
+    false,
+    "Minted ghost external_id should not be treated as sentinel",
+  );
 });
 
 // ── 4. filterUnauthorizedTableIds — membership gate ──────────────────────────
@@ -150,35 +313,41 @@ Deno.test('isGhostExternalId: minted ghost id → false (the minted id itself is
 // (NOT user_id — TICKET-034 doctrine) and rejects unauthorized table_ids
 // BEFORE calling the RPC.
 
-Deno.test('filterUnauthorizedTableIds: all authorized → empty set', () => {
-    const tableIds = ['t1', 't2'];
-    const memberRows = [{ table_id: 't1' }, { table_id: 't2' }, { table_id: 't3' }];
-    const result = filterUnauthorizedTableIds(tableIds, memberRows);
-    assertEquals(result.size, 0);
+Deno.test("filterUnauthorizedTableIds: all authorized → empty set", () => {
+  const tableIds = ["t1", "t2"];
+  const memberRows = [{ table_id: "t1" }, { table_id: "t2" }, {
+    table_id: "t3",
+  }];
+  const result = filterUnauthorizedTableIds(tableIds, memberRows);
+  assertEquals(result.size, 0);
 });
 
-Deno.test('filterUnauthorizedTableIds: none authorized → full set returned', () => {
-    const tableIds = ['t1', 't2'];
-    const memberRows: { table_id: string }[] = [];
-    const result = filterUnauthorizedTableIds(tableIds, memberRows);
-    assertEquals(result.size, 2);
-    assertEquals(result.has('t1'), true);
-    assertEquals(result.has('t2'), true);
+Deno.test("filterUnauthorizedTableIds: none authorized → full set returned", () => {
+  const tableIds = ["t1", "t2"];
+  const memberRows: { table_id: string }[] = [];
+  const result = filterUnauthorizedTableIds(tableIds, memberRows);
+  assertEquals(result.size, 2);
+  assertEquals(result.has("t1"), true);
+  assertEquals(result.has("t2"), true);
 });
 
-Deno.test('filterUnauthorizedTableIds: partial — only unauthorized ones returned', () => {
-    const tableIds = ['t1', 't2', 't3'];
-    const memberRows = [{ table_id: 't1' }];
-    const result = filterUnauthorizedTableIds(tableIds, memberRows);
-    assertEquals(result.size, 2);
-    assertEquals(result.has('t1'), false, 't1 is authorized, should not be in result');
-    assertEquals(result.has('t2'), true);
-    assertEquals(result.has('t3'), true);
+Deno.test("filterUnauthorizedTableIds: partial — only unauthorized ones returned", () => {
+  const tableIds = ["t1", "t2", "t3"];
+  const memberRows = [{ table_id: "t1" }];
+  const result = filterUnauthorizedTableIds(tableIds, memberRows);
+  assertEquals(result.size, 2);
+  assertEquals(
+    result.has("t1"),
+    false,
+    "t1 is authorized, should not be in result",
+  );
+  assertEquals(result.has("t2"), true);
+  assertEquals(result.has("t3"), true);
 });
 
-Deno.test('filterUnauthorizedTableIds: empty tableIds → empty result', () => {
-    const result = filterUnauthorizedTableIds([], [{ table_id: 't1' }]);
-    assertEquals(result.size, 0);
+Deno.test("filterUnauthorizedTableIds: empty tableIds → empty result", () => {
+  const result = filterUnauthorizedTableIds([], [{ table_id: "t1" }]);
+  assertEquals(result.size, 0);
 });
 
 // ── 5. 'exact' confidence for google_maps URL parse ───────────────────────────
@@ -188,27 +357,35 @@ Deno.test('filterUnauthorizedTableIds: empty tableIds → empty result', () => {
 // low = everything else.
 
 Deno.test("'exact' for google_maps: first result should be confidence='exact'", () => {
-    // Simulate the confidence assignment logic from handleUrlResolve google_maps path.
-    // FIX: was `idx === 0 && googleRatingCount > 50 ? 'high' : 'low'`
-    // Now: `idx === 0 ? 'exact' : 'low'`
-    const getConfidence = (idx: number) => idx === 0 ? 'exact' : 'low';
-    assertEquals(getConfidence(0), 'exact', 'top google_maps result must be exact');
-    assertEquals(getConfidence(1), 'low', 'subsequent results are low confidence');
-    assertEquals(getConfidence(2), 'low');
+  // Simulate the confidence assignment logic from handleUrlResolve google_maps path.
+  // FIX: was `idx === 0 && googleRatingCount > 50 ? 'high' : 'low'`
+  // Now: `idx === 0 ? 'exact' : 'low'`
+  const getConfidence = (idx: number) => idx === 0 ? "exact" : "low";
+  assertEquals(
+    getConfidence(0),
+    "exact",
+    "top google_maps result must be exact",
+  );
+  assertEquals(
+    getConfidence(1),
+    "low",
+    "subsequent results are low confidence",
+  );
+  assertEquals(getConfidence(2), "low");
 });
 
 Deno.test("old behavior regression: rating-based confidence would have been 'high' not 'exact'", () => {
-    // Documents the BUG we fixed: the old code never emitted 'exact' for any google_maps result.
-    // The new code always emits 'exact' for idx=0, regardless of rating count.
-    const oldGetConfidence = (idx: number, ratingCount: number) =>
-        (idx === 0 && ratingCount > 50) ? 'high' : 'low';
-    const newGetConfidence = (idx: number) => idx === 0 ? 'exact' : 'low';
+  // Documents the BUG we fixed: the old code never emitted 'exact' for any google_maps result.
+  // The new code always emits 'exact' for idx=0, regardless of rating count.
+  const oldGetConfidence = (idx: number, ratingCount: number) =>
+    (idx === 0 && ratingCount > 50) ? "high" : "low";
+  const newGetConfidence = (idx: number) => idx === 0 ? "exact" : "low";
 
-    // Old: even a highly-rated place got 'high', not 'exact'.
-    assertEquals(oldGetConfidence(0, 1000), 'high');
-    // New: always 'exact' for deterministic Maps parse.
-    assertEquals(newGetConfidence(0), 'exact');
-    assertNotEquals(newGetConfidence(0), 'high');
+  // Old: even a highly-rated place got 'high', not 'exact'.
+  assertEquals(oldGetConfidence(0, 1000), "high");
+  // New: always 'exact' for deterministic Maps parse.
+  assertEquals(newGetConfidence(0), "exact");
+  assertNotEquals(newGetConfidence(0), "high");
 });
 
 // ── 6. place_id DB-miss: never text-search ────────────────────────────────────
@@ -218,50 +395,62 @@ Deno.test("old behavior regression: rating-based confidence would have been 'hig
 // decision logic: if google_place_id is set, we should NOT fall through to
 // a text-query path.
 
-Deno.test('place_id hydration: google_place_id present → should use Details, not text-search', () => {
-    // Simulate the resolveCandidateToPlace decision:
-    // If candidate.google_place_id is set, the function calls callPlacesDetails.
-    // The invariant: we only do text search when google_place_id is falsy.
-    const shouldTextSearch = (googlePlaceId: string | null | undefined): boolean => {
-        // This models the new behavior: text search only if NO google_place_id.
-        return !googlePlaceId;
-    };
+Deno.test("place_id hydration: google_place_id present → should use Details, not text-search", () => {
+  // Simulate the resolveCandidateToPlace decision:
+  // If candidate.google_place_id is set, the function calls callPlacesDetails.
+  // The invariant: we only do text search when google_place_id is falsy.
+  const shouldTextSearch = (
+    googlePlaceId: string | null | undefined,
+  ): boolean => {
+    // This models the new behavior: text search only if NO google_place_id.
+    return !googlePlaceId;
+  };
 
-    assertEquals(shouldTextSearch('ChIJN1t_tDeuEmsRUsoyG83frY4'), false,
-        'should NOT text-search when google_place_id is set');
-    assertEquals(shouldTextSearch(null), true,
-        'should text-search when no google_place_id (normal name+city candidate)');
-    assertEquals(shouldTextSearch(undefined), true);
-    assertEquals(shouldTextSearch(''), true);
+  assertEquals(
+    shouldTextSearch("ChIJN1t_tDeuEmsRUsoyG83frY4"),
+    false,
+    "should NOT text-search when google_place_id is set",
+  );
+  assertEquals(
+    shouldTextSearch(null),
+    true,
+    "should text-search when no google_place_id (normal name+city candidate)",
+  );
+  assertEquals(shouldTextSearch(undefined), true);
+  assertEquals(shouldTextSearch(""), true);
 });
 
 Deno.test('place_id hydration: "ghost_pending" is not a real place_id', () => {
-    // Documents that 'ghost_pending' should never be sent to Places Details.
-    const isRealPlaceId = (id: string | null | undefined): boolean => {
-        return !isGhostExternalId(id);
-    };
-    assertEquals(isRealPlaceId('ghost_pending'), false);
-    assertEquals(isRealPlaceId('ChIJN1t_tDeuEmsRUsoyG83frY4'), true);
-    assertEquals(isRealPlaceId(null), false);
+  // Documents that 'ghost_pending' should never be sent to Places Details.
+  const isRealPlaceId = (id: string | null | undefined): boolean => {
+    return !isGhostExternalId(id);
+  };
+  assertEquals(isRealPlaceId("ghost_pending"), false);
+  assertEquals(isRealPlaceId("ChIJN1t_tDeuEmsRUsoyG83frY4"), true);
+  assertEquals(isRealPlaceId(null), false);
 });
 
 // ── ROUND-3 FIX: verified-only restaurant_id mapping ─────────────────────────
-import { mapVerifiedRestaurantIds } from './_helpers.ts';
+import { mapVerifiedRestaurantIds } from "./_helpers.ts";
 
-Deno.test('mapVerifiedRestaurantIds: maps verified rows only', () => {
-    const map = mapVerifiedRestaurantIds([
-        { id: 'r1', external_id: 'place_a', verification: 'verified' },
-        { id: 'r2', external_id: 'place_b', verification: 'unverified' },
-        { id: 'r3', external_id: null, verification: 'verified' },
-    ]);
-    if (map.get('place_a') !== 'r1') throw new Error('verified row must map');
-    if (map.has('place_b')) throw new Error('unverified row must NOT map — it would skip the save-time verified upsert repair');
-    if (map.size !== 1) throw new Error(`expected 1 entry, got ${map.size}`);
+Deno.test("mapVerifiedRestaurantIds: maps verified rows only", () => {
+  const map = mapVerifiedRestaurantIds([
+    { id: "r1", external_id: "place_a", verification: "verified" },
+    { id: "r2", external_id: "place_b", verification: "unverified" },
+    { id: "r3", external_id: null, verification: "verified" },
+  ]);
+  if (map.get("place_a") !== "r1") throw new Error("verified row must map");
+  if (map.has("place_b")) {
+    throw new Error(
+      "unverified row must NOT map — it would skip the save-time verified upsert repair",
+    );
+  }
+  if (map.size !== 1) throw new Error(`expected 1 entry, got ${map.size}`);
 });
 
-Deno.test('mapVerifiedRestaurantIds: missing verification field treated as unmapped', () => {
-    const map = mapVerifiedRestaurantIds([{ id: 'r4', external_id: 'place_c' }]);
-    if (map.size !== 0) throw new Error('rows without verification must not map');
+Deno.test("mapVerifiedRestaurantIds: missing verification field treated as unmapped", () => {
+  const map = mapVerifiedRestaurantIds([{ id: "r4", external_id: "place_c" }]);
+  if (map.size !== 0) throw new Error("rows without verification must not map");
 });
 
 // ── TICKET-077: LIVE handoff pin guard ────────────────────────────────────────
@@ -271,32 +460,32 @@ Deno.test('mapVerifiedRestaurantIds: missing verification field treated as unmap
 // the owner has since removed, or one from a different share. Off-set spots →
 // NOT_IN_SHARE (rejected, not pinned).
 
-Deno.test('isSpotPinnable: restaurant_id IN the live set → pinnable', () => {
-    const live = new Set(['r1', 'r2']);
-    assertEquals(isSpotPinnable('r1', live), true);
+Deno.test("isSpotPinnable: restaurant_id IN the live set → pinnable", () => {
+  const live = new Set(["r1", "r2"]);
+  assertEquals(isSpotPinnable("r1", live), true);
 });
 
-Deno.test('isSpotPinnable: restaurant_id NOT in the live set → rejected (NOT_IN_SHARE)', () => {
-    const live = new Set(['r1', 'r2']);
-    // Owner removed r3 (or it belongs to a different share) since the recipient viewed.
-    assertEquals(isSpotPinnable('r3', live), false);
+Deno.test("isSpotPinnable: restaurant_id NOT in the live set → rejected (NOT_IN_SHARE)", () => {
+  const live = new Set(["r1", "r2"]);
+  // Owner removed r3 (or it belongs to a different share) since the recipient viewed.
+  assertEquals(isSpotPinnable("r3", live), false);
 });
 
-Deno.test('isSpotPinnable: null/undefined restaurant_id on handoff → rejected (live spots always carry an id)', () => {
-    const live = new Set(['r1']);
-    assertEquals(isSpotPinnable(null, live), false);
-    assertEquals(isSpotPinnable(undefined, live), false);
+Deno.test("isSpotPinnable: null/undefined restaurant_id on handoff → rejected (live spots always carry an id)", () => {
+  const live = new Set(["r1"]);
+  assertEquals(isSpotPinnable(null, live), false);
+  assertEquals(isSpotPinnable(undefined, live), false);
 });
 
-Deno.test('isSpotPinnable: empty live set → nothing pinnable (revoked-to-empty share)', () => {
-    const live = new Set<string>();
-    assertEquals(isSpotPinnable('r1', live), false);
+Deno.test("isSpotPinnable: empty live set → nothing pinnable (revoked-to-empty share)", () => {
+  const live = new Set<string>();
+  assertEquals(isSpotPinnable("r1", live), false);
 });
 
-Deno.test('isSpotPinnable: no handoff gate (null set) → every spot pinnable (normal import)', () => {
-    // The non-handoff import path passes liveRestaurantIds = null — the guard is a no-op.
-    assertEquals(isSpotPinnable('anything', null), true);
-    assertEquals(isSpotPinnable(null, null), true);
+Deno.test("isSpotPinnable: no handoff gate (null set) → every spot pinnable (normal import)", () => {
+  // The non-handoff import path passes liveRestaurantIds = null — the guard is a no-op.
+  assertEquals(isSpotPinnable("anything", null), true);
+  assertEquals(isSpotPinnable(null, null), true);
 });
 
 // ── TICKET-077: per-spot client_nonce determinism (token, restaurant_id) ──────
@@ -306,26 +495,40 @@ Deno.test('isSpotPinnable: no handoff gate (null set) → every spot pinnable (n
 // (user_id, client_nonce) UNIQUE in fn_save_import_spot). restaurant_id comes
 // from the LIVE read, which is stable for a given restaurant.
 
-Deno.test('client_nonce determinism: same (token, restaurant_id) → same nonce', async () => {
-    const token = 'ABCdefGHIjklMNOpqrSTUv';
-    const rid = 'aabbccdd-0000-4000-8000-000000000001';
-    const a = await deriveClientNonce(token, rid);
-    const b = await deriveClientNonce(token, rid);
-    assertEquals(a, b, 'nonce must be stable per (token, restaurant_id) for idempotent re-receipt');
+Deno.test("client_nonce determinism: same (token, restaurant_id) → same nonce", async () => {
+  const token = "ABCdefGHIjklMNOpqrSTUv";
+  const rid = "aabbccdd-0000-4000-8000-000000000001";
+  const a = await deriveClientNonce(token, rid);
+  const b = await deriveClientNonce(token, rid);
+  assertEquals(
+    a,
+    b,
+    "nonce must be stable per (token, restaurant_id) for idempotent re-receipt",
+  );
 });
 
-Deno.test('client_nonce determinism: different restaurant_id → different nonce', async () => {
-    const token = 'ABCdefGHIjklMNOpqrSTUv';
-    const a = await deriveClientNonce(token, 'aabbccdd-0000-4000-8000-000000000001');
-    const b = await deriveClientNonce(token, 'aabbccdd-0000-4000-8000-000000000002');
-    assertNotEquals(a, b, 'distinct restaurants must derive distinct nonces');
+Deno.test("client_nonce determinism: different restaurant_id → different nonce", async () => {
+  const token = "ABCdefGHIjklMNOpqrSTUv";
+  const a = await deriveClientNonce(
+    token,
+    "aabbccdd-0000-4000-8000-000000000001",
+  );
+  const b = await deriveClientNonce(
+    token,
+    "aabbccdd-0000-4000-8000-000000000002",
+  );
+  assertNotEquals(a, b, "distinct restaurants must derive distinct nonces");
 });
 
-Deno.test('client_nonce determinism: different token → different nonce (no cross-share collision)', async () => {
-    const rid = 'aabbccdd-0000-4000-8000-000000000001';
-    const a = await deriveClientNonce('ABCdefGHIjklMNOpqrSTUv', rid);
-    const b = await deriveClientNonce('ZZZdefGHIjklMNOpqrSTUv', rid);
-    assertNotEquals(a, b, 'same restaurant under different shares must not collide');
+Deno.test("client_nonce determinism: different token → different nonce (no cross-share collision)", async () => {
+  const rid = "aabbccdd-0000-4000-8000-000000000001";
+  const a = await deriveClientNonce("ABCdefGHIjklMNOpqrSTUv", rid);
+  const b = await deriveClientNonce("ZZZdefGHIjklMNOpqrSTUv", rid);
+  assertNotEquals(
+    a,
+    b,
+    "same restaurant under different shares must not collide",
+  );
 });
 
 // ── TICKET-077 fix-pass (TOCTOU): write-boundary authorization uses the FRESH read
@@ -341,8 +544,8 @@ Deno.test('client_nonce determinism: different token → different nonce (no cro
 // against a fake client that changes its answer between reads (the race), and assert
 // the WRITE-boundary decision uses the SECOND read → NOT_IN_SHARE for the removed spot.
 
-const SHARE_OWNER = 'owner00-0000-4000-8000-0000000000ff';
-const SHARE_TOKEN = 'TokenABCdefGHIjklMNOp';
+const SHARE_OWNER = "owner00-0000-4000-8000-0000000000ff";
+const SHARE_TOKEN = "TokenABCdefGHIjklMNOp";
 
 /**
  * Fake supabase client whose per-table query result is chosen by call index, so a
@@ -352,158 +555,238 @@ const SHARE_TOKEN = 'TokenABCdefGHIjklMNOp';
  * maybeSingle for single-row reads; thenable for multi-row reads), same shape as
  * handoff/liveSpots.test.ts's fake.
  */
-function sequencedClient(tableSequences: Record<string, any[][]>): LiveSpotsClient {
-    const callCounts: Record<string, number> = {};
+function sequencedClient(
+  tableSequences: Record<string, any[][]>,
+): LiveSpotsClient {
+  const callCounts: Record<string, number> = {};
 
-    const makeBuilder = (table: string) => {
-        const seq = tableSequences[table] ?? [];
-        const idx = callCounts[table] ?? 0;
-        callCounts[table] = idx + 1;
-        // Once the sequence is exhausted, keep returning its LAST entry (a stable
-        // post-mutation steady state) rather than undefined.
-        const rows = seq.length === 0 ? [] : (seq[idx] ?? seq[seq.length - 1]);
+  const makeBuilder = (table: string) => {
+    const seq = tableSequences[table] ?? [];
+    const idx = callCounts[table] ?? 0;
+    callCounts[table] = idx + 1;
+    // Once the sequence is exhausted, keep returning its LAST entry (a stable
+    // post-mutation steady state) rather than undefined.
+    const rows = seq.length === 0 ? [] : (seq[idx] ?? seq[seq.length - 1]);
 
-        const builder: any = {
-            select: () => builder,
-            eq: () => builder,
-            is: () => builder,
-            not: () => builder,
-            neq: () => builder, // TICKET-173: snapshot rating read filters visibility
-            in: () => builder,
-            order: () => builder,
-            maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
-            then: (resolve: (v: { data: any[]; error: null }) => void) =>
-                resolve({ data: rows, error: null }),
-        };
-        return builder;
+    const builder: any = {
+      select: () => builder,
+      eq: () => builder,
+      is: () => builder,
+      not: () => builder,
+      neq: () => builder, // TICKET-173: snapshot rating read filters visibility
+      in: () => builder,
+      order: () => builder,
+      maybeSingle: () =>
+        Promise.resolve({ data: rows[0] ?? null, error: null }),
+      then: (resolve: (v: { data: any[]; error: null }) => void) =>
+        resolve({ data: rows, error: null }),
     };
+    return builder;
+  };
 
-    return { from: (table: string) => makeBuilder(table) };
+  return { from: (table: string) => makeBuilder(table) };
 }
 
-Deno.test('TOCTOU regression: spot removed before the write-boundary read → NOT_IN_SHARE (not pinned)', async () => {
-    // The recipient resolved a wishlist share that contained restaurant R. The owner
-    // then removed R (or it de-verified). The write-boundary read must see R gone.
-    //
-    // wishlist_items returns R on the FIRST read (resolve view), then EMPTY on the
-    // SECOND read (the write-boundary read, after the owner removed R). The share row
-    // stays present + un-revoked the whole time — this is specifically the
-    // membership-not-revocation race the old code missed.
-    const client = sequencedClient({
-        wishlist_shares: [
-            // Every share-row read: still present, never revoked.
-            [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
-        ],
-        wishlist_items: [
-            // 1st loadLiveSpots read (resolve view): R is present + verified.
-            [{ restaurant_id: 'R', restaurant: { id: 'R', name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } }],
-            // 2nd loadLiveSpots read (write boundary): R has been removed.
-            [],
-        ],
-        entries: [[], []],
-        profiles: [[{ display_name: 'Jacky Ng' }], [{ display_name: 'Jacky Ng' }]],
-    });
+Deno.test("TOCTOU regression: spot removed before the write-boundary read → NOT_IN_SHARE (not pinned)", async () => {
+  // The recipient resolved a wishlist share that contained restaurant R. The owner
+  // then removed R (or it de-verified). The write-boundary read must see R gone.
+  //
+  // wishlist_items returns R on the FIRST read (resolve view), then EMPTY on the
+  // SECOND read (the write-boundary read, after the owner removed R). The share row
+  // stays present + un-revoked the whole time — this is specifically the
+  // membership-not-revocation race the old code missed.
+  const client = sequencedClient({
+    wishlist_shares: [
+      // Every share-row read: still present, never revoked.
+      [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
+    ],
+    wishlist_items: [
+      // 1st loadLiveSpots read (resolve view): R is present + verified.
+      [{
+        restaurant_id: "R",
+        restaurant: {
+          id: "R",
+          name: "Berenjak",
+          city: "London",
+          cuisine: "Persian",
+          verification: "verified",
+        },
+      }],
+      // 2nd loadLiveSpots read (write boundary): R has been removed.
+      [],
+    ],
+    entries: [[], []],
+    profiles: [[{ display_name: "Jacky Ng" }], [{ display_name: "Jacky Ng" }]],
+  });
 
-    // --- Resolve-time view: the set the OLD code would have frozen and authorized off.
-    const resolveView = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
-    if (resolveView.revoked === true) throw new Error('precondition: resolve-view share must be live');
-    // Sanity: at resolve time R *was* legitimately in the share.
-    assertEquals(isSpotPinnable('R', resolveView.liveRestaurantIds), true,
-        'precondition: R is pinnable at resolve time (this is what made the stale-set bug fire)');
+  // --- Resolve-time view: the set the OLD code would have frozen and authorized off.
+  const resolveView = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+  if (resolveView.revoked === true) {
+    throw new Error("precondition: resolve-view share must be live");
+  }
+  // Sanity: at resolve time R *was* legitimately in the share.
+  assertEquals(
+    isSpotPinnable("R", resolveView.liveRestaurantIds),
+    true,
+    "precondition: R is pinnable at resolve time (this is what made the stale-set bug fire)",
+  );
 
-    // --- Write boundary: the authoritative late read. R is gone now.
-    const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
-    if (writeAuth.revoked === true) throw new Error('share must NOT be revoked — only the spot was removed');
+  // --- Write boundary: the authoritative late read. R is gone now.
+  const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+  if (writeAuth.revoked === true) {
+    throw new Error("share must NOT be revoked — only the spot was removed");
+  }
 
-    // The fresh set must NOT contain R, and the REAL per-spot decision (isSpotPinnable,
-    // exactly as handleSaveSpots calls it) must reject R → the handler emits NOT_IN_SHARE.
-    assertEquals(writeAuth.liveRestaurantIds.has('R'), false,
-        'write-boundary set must reflect the removal — not the stale resolve-time set');
-    assertEquals(isSpotPinnable('R', writeAuth.liveRestaurantIds), false,
-        'authorizing off the FRESH write-boundary read must reject the removed spot (NOT_IN_SHARE)');
+  // The fresh set must NOT contain R, and the REAL per-spot decision (isSpotPinnable,
+  // exactly as handleSaveSpots calls it) must reject R → the handler emits NOT_IN_SHARE.
+  assertEquals(
+    writeAuth.liveRestaurantIds.has("R"),
+    false,
+    "write-boundary set must reflect the removal — not the stale resolve-time set",
+  );
+  assertEquals(
+    isSpotPinnable("R", writeAuth.liveRestaurantIds),
+    false,
+    "authorizing off the FRESH write-boundary read must reject the removed spot (NOT_IN_SHARE)",
+  );
 
-    // And the bug would have looked like this: authorizing off the STALE resolve set
-    // wrongly passes. This asserts the two reads genuinely diverge (the race is real).
-    assertNotEquals(
-        isSpotPinnable('R', resolveView.liveRestaurantIds),
-        isSpotPinnable('R', writeAuth.liveRestaurantIds),
-        'the stale set and the fresh set must disagree on R — the consolidation is what closes this gap',
-    );
+  // And the bug would have looked like this: authorizing off the STALE resolve set
+  // wrongly passes. This asserts the two reads genuinely diverge (the race is real).
+  assertNotEquals(
+    isSpotPinnable("R", resolveView.liveRestaurantIds),
+    isSpotPinnable("R", writeAuth.liveRestaurantIds),
+    "the stale set and the fresh set must disagree on R — the consolidation is what closes this gap",
+  );
 });
 
-Deno.test('TOCTOU regression: revoke landing before the write-boundary read → SHARE_REVOKED', async () => {
-    // Same race, revocation flavor: the share row was live at resolve time, then
-    // revoked before the write boundary. The write-boundary read must report revoked.
-    const client = sequencedClient({
-        wishlist_shares: [
-            // 1st share-row read (resolve view): live.
-            [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
-            // 2nd share-row read (write boundary): revoked.
-            [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: '2026-06-12T00:00:00Z' }],
-        ],
-        wishlist_items: [
-            [{ restaurant_id: 'R', restaurant: { id: 'R', name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } }],
-            [{ restaurant_id: 'R', restaurant: { id: 'R', name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } }],
-        ],
-        entries: [[], []],
-        profiles: [[{ display_name: 'Jacky' }], [{ display_name: 'Jacky' }]],
-    });
+Deno.test("TOCTOU regression: revoke landing before the write-boundary read → SHARE_REVOKED", async () => {
+  // Same race, revocation flavor: the share row was live at resolve time, then
+  // revoked before the write boundary. The write-boundary read must report revoked.
+  const client = sequencedClient({
+    wishlist_shares: [
+      // 1st share-row read (resolve view): live.
+      [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
+      // 2nd share-row read (write boundary): revoked.
+      [{
+        owner_id: SHARE_OWNER,
+        list_id: null,
+        revoked_at: "2026-06-12T00:00:00Z",
+      }],
+    ],
+    wishlist_items: [
+      [{
+        restaurant_id: "R",
+        restaurant: {
+          id: "R",
+          name: "Berenjak",
+          city: "London",
+          cuisine: "Persian",
+          verification: "verified",
+        },
+      }],
+      [{
+        restaurant_id: "R",
+        restaurant: {
+          id: "R",
+          name: "Berenjak",
+          city: "London",
+          cuisine: "Persian",
+          verification: "verified",
+        },
+      }],
+    ],
+    entries: [[], []],
+    profiles: [[{ display_name: "Jacky" }], [{ display_name: "Jacky" }]],
+  });
 
-    const resolveView = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
-    if (resolveView.revoked === true) throw new Error('precondition: resolve-view share must be live');
+  const resolveView = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+  if (resolveView.revoked === true) {
+    throw new Error("precondition: resolve-view share must be live");
+  }
 
-    const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
-    assertEquals(writeAuth.revoked, true,
-        'a revoke landing before the write-boundary read must fail all spots SHARE_REVOKED');
+  const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+  assertEquals(
+    writeAuth.revoked,
+    true,
+    "a revoke landing before the write-boundary read must fail all spots SHARE_REVOKED",
+  );
 });
 
-Deno.test('write-boundary auth: deleted/unowned list NOW → revoked (points at nothing)', async () => {
-    // A per-list share whose list was deleted (or ownership changed) between resolve
-    // and write: loadLiveSpots returns null for the missing list → revoked, never a crash.
-    const LIST_ID = 'list000-0000-4000-8000-0000000000aa';
-    const client = sequencedClient({
-        wishlist_shares: [
-            [{ owner_id: SHARE_OWNER, list_id: LIST_ID, revoked_at: null }],
-        ],
-        lists: [
-            // Write-boundary list read: gone (deleted or no longer owned) → maybeSingle null.
-            [],
-        ],
-        list_entries: [[]],
-        entries: [[]],
-        profiles: [[{ display_name: 'Jacky' }]],
-    });
+Deno.test("write-boundary auth: deleted/unowned list NOW → revoked (points at nothing)", async () => {
+  // A per-list share whose list was deleted (or ownership changed) between resolve
+  // and write: loadLiveSpots returns null for the missing list → revoked, never a crash.
+  const LIST_ID = "list000-0000-4000-8000-0000000000aa";
+  const client = sequencedClient({
+    wishlist_shares: [
+      [{ owner_id: SHARE_OWNER, list_id: LIST_ID, revoked_at: null }],
+    ],
+    lists: [
+      // Write-boundary list read: gone (deleted or no longer owned) → maybeSingle null.
+      [],
+    ],
+    list_entries: [[]],
+    entries: [[]],
+    profiles: [[{ display_name: "Jacky" }]],
+  });
 
-    const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
-    assertEquals(writeAuth.revoked, true,
-        'a list deleted/unowned at the write boundary must fail all spots (SHARE_REVOKED)');
+  const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+  assertEquals(
+    writeAuth.revoked,
+    true,
+    "a list deleted/unowned at the write boundary must fail all spots (SHARE_REVOKED)",
+  );
 });
 
-Deno.test('write-boundary auth: live share with present spots → carries the FRESH set + sharer_name', async () => {
-    // Happy path: the write-boundary read returns the current verified set and the
-    // owner's CURRENT display name (provenance comes from THIS read, not an early one).
-    const client = sequencedClient({
-        wishlist_shares: [
-            [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
-        ],
-        wishlist_items: [
-            [
-                { restaurant_id: 'R1', restaurant: { id: 'R1', name: 'Berenjak', city: 'London', cuisine: 'Persian', verification: 'verified' } },
-                { restaurant_id: 'R2', restaurant: { id: 'R2', name: 'Kono', city: 'NY', cuisine: 'Japanese', verification: 'verified' } },
-            ],
-        ],
-        entries: [[]],
-        profiles: [[{ display_name: 'Jacky Ng' }]],
-    });
+Deno.test("write-boundary auth: live share with present spots → carries the FRESH set + sharer_name", async () => {
+  // Happy path: the write-boundary read returns the current verified set and the
+  // owner's CURRENT display name (provenance comes from THIS read, not an early one).
+  const client = sequencedClient({
+    wishlist_shares: [
+      [{ owner_id: SHARE_OWNER, list_id: null, revoked_at: null }],
+    ],
+    wishlist_items: [
+      [
+        {
+          restaurant_id: "R1",
+          restaurant: {
+            id: "R1",
+            name: "Berenjak",
+            city: "London",
+            cuisine: "Persian",
+            verification: "verified",
+          },
+        },
+        {
+          restaurant_id: "R2",
+          restaurant: {
+            id: "R2",
+            name: "Kono",
+            city: "NY",
+            cuisine: "Japanese",
+            verification: "verified",
+          },
+        },
+      ],
+    ],
+    entries: [[]],
+    profiles: [[{ display_name: "Jacky Ng" }]],
+  });
 
-    const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
-    if (writeAuth.revoked === true) throw new Error('share must be live');
-    assertEquals(writeAuth.liveRestaurantIds.has('R1'), true);
-    assertEquals(writeAuth.liveRestaurantIds.has('R2'), true);
-    assertEquals(writeAuth.sharerName, 'Jacky', 'sharer_name comes from the write-boundary read');
-    // The real per-spot gate passes both present spots and rejects an unknown one.
-    assertEquals(isSpotPinnable('R1', writeAuth.liveRestaurantIds), true);
-    assertEquals(isSpotPinnable('R-not-shared', writeAuth.liveRestaurantIds), false);
+  const writeAuth = await loadHandoffWriteAuthorization(client, SHARE_TOKEN);
+  if (writeAuth.revoked === true) throw new Error("share must be live");
+  assertEquals(writeAuth.liveRestaurantIds.has("R1"), true);
+  assertEquals(writeAuth.liveRestaurantIds.has("R2"), true);
+  assertEquals(
+    writeAuth.sharerName,
+    "Jacky",
+    "sharer_name comes from the write-boundary read",
+  );
+  // The real per-spot gate passes both present spots and rejects an unknown one.
+  assertEquals(isSpotPinnable("R1", writeAuth.liveRestaurantIds), true);
+  assertEquals(
+    isSpotPinnable("R-not-shared", writeAuth.liveRestaurantIds),
+    false,
+  );
 });
 
 // ── TICKET-079: source detection (reddit/substack labels + web-path routing) ──
@@ -514,59 +797,59 @@ Deno.test('write-boundary auth: live share with present spots → carries the FR
 // they never mislabel as video and never 500. detectSourceTypeFromHost +
 // isWebExtractionSource are the pure decisions that guarantee this.
 
-Deno.test('detectSourceTypeFromHost: tiktok hosts → tiktok', () => {
-    assertEquals(detectSourceTypeFromHost('www.tiktok.com'), 'tiktok');
-    assertEquals(detectSourceTypeFromHost('vm.tiktok.com'), 'tiktok');
-    assertEquals(detectSourceTypeFromHost('m.tiktok.com'), 'tiktok');
+Deno.test("detectSourceTypeFromHost: tiktok hosts → tiktok", () => {
+  assertEquals(detectSourceTypeFromHost("www.tiktok.com"), "tiktok");
+  assertEquals(detectSourceTypeFromHost("vm.tiktok.com"), "tiktok");
+  assertEquals(detectSourceTypeFromHost("m.tiktok.com"), "tiktok");
 });
 
-Deno.test('detectSourceTypeFromHost: maps share hosts → google_maps', () => {
-    assertEquals(detectSourceTypeFromHost('maps.app.goo.gl'), 'google_maps');
-    assertEquals(detectSourceTypeFromHost('maps.google.com'), 'google_maps');
-    assertEquals(detectSourceTypeFromHost('goo.gl'), 'google_maps');
+Deno.test("detectSourceTypeFromHost: maps share hosts → google_maps", () => {
+  assertEquals(detectSourceTypeFromHost("maps.app.goo.gl"), "google_maps");
+  assertEquals(detectSourceTypeFromHost("maps.google.com"), "google_maps");
+  assertEquals(detectSourceTypeFromHost("goo.gl"), "google_maps");
 });
 
-Deno.test('detectSourceTypeFromHost: instagram hosts → instagram', () => {
-    assertEquals(detectSourceTypeFromHost('instagram.com'), 'instagram');
-    assertEquals(detectSourceTypeFromHost('www.instagram.com'), 'instagram');
+Deno.test("detectSourceTypeFromHost: instagram hosts → instagram", () => {
+  assertEquals(detectSourceTypeFromHost("instagram.com"), "instagram");
+  assertEquals(detectSourceTypeFromHost("www.instagram.com"), "instagram");
 });
 
-Deno.test('detectSourceTypeFromHost: reddit hosts (incl. redd.it + subdomains) → reddit', () => {
-    assertEquals(detectSourceTypeFromHost('reddit.com'), 'reddit');
-    assertEquals(detectSourceTypeFromHost('www.reddit.com'), 'reddit');
-    assertEquals(detectSourceTypeFromHost('old.reddit.com'), 'reddit');
-    assertEquals(detectSourceTypeFromHost('redd.it'), 'reddit');
+Deno.test("detectSourceTypeFromHost: reddit hosts (incl. redd.it + subdomains) → reddit", () => {
+  assertEquals(detectSourceTypeFromHost("reddit.com"), "reddit");
+  assertEquals(detectSourceTypeFromHost("www.reddit.com"), "reddit");
+  assertEquals(detectSourceTypeFromHost("old.reddit.com"), "reddit");
+  assertEquals(detectSourceTypeFromHost("redd.it"), "reddit");
 });
 
-Deno.test('detectSourceTypeFromHost: substack hosts (incl. custom subdomains) → substack', () => {
-    assertEquals(detectSourceTypeFromHost('substack.com'), 'substack');
-    assertEquals(detectSourceTypeFromHost('someone.substack.com'), 'substack');
+Deno.test("detectSourceTypeFromHost: substack hosts (incl. custom subdomains) → substack", () => {
+  assertEquals(detectSourceTypeFromHost("substack.com"), "substack");
+  assertEquals(detectSourceTypeFromHost("someone.substack.com"), "substack");
 });
 
-Deno.test('detectSourceTypeFromHost: unknown host → web', () => {
-    assertEquals(detectSourceTypeFromHost('example.com'), 'web');
-    assertEquals(detectSourceTypeFromHost('eater.com'), 'web');
+Deno.test("detectSourceTypeFromHost: unknown host → web", () => {
+  assertEquals(detectSourceTypeFromHost("example.com"), "web");
+  assertEquals(detectSourceTypeFromHost("eater.com"), "web");
 });
 
-Deno.test('detectSourceTypeFromHost: case-insensitive on host', () => {
-    assertEquals(detectSourceTypeFromHost('WWW.Reddit.com'), 'reddit');
-    assertEquals(detectSourceTypeFromHost('Someone.SUBSTACK.com'), 'substack');
+Deno.test("detectSourceTypeFromHost: case-insensitive on host", () => {
+  assertEquals(detectSourceTypeFromHost("WWW.Reddit.com"), "reddit");
+  assertEquals(detectSourceTypeFromHost("Someone.SUBSTACK.com"), "substack");
 });
 
-Deno.test('isWebExtractionSource: reddit + substack ride the web extraction path', () => {
-    // The invariant that keeps reddit/substack from mislabeling as video / 500ing:
-    // they take the SAME unfurl→extraction branch as a generic web page.
-    assertEquals(isWebExtractionSource('web'), true);
-    assertEquals(isWebExtractionSource('reddit'), true);
-    assertEquals(isWebExtractionSource('substack'), true);
+Deno.test("isWebExtractionSource: reddit + substack ride the web extraction path", () => {
+  // The invariant that keeps reddit/substack from mislabeling as video / 500ing:
+  // they take the SAME unfurl→extraction branch as a generic web page.
+  assertEquals(isWebExtractionSource("web"), true);
+  assertEquals(isWebExtractionSource("reddit"), true);
+  assertEquals(isWebExtractionSource("substack"), true);
 });
 
-Deno.test('isWebExtractionSource: tiktok/maps/instagram/screenshot do NOT take the web path', () => {
-    assertEquals(isWebExtractionSource('tiktok'), false);
-    assertEquals(isWebExtractionSource('google_maps'), false);
-    assertEquals(isWebExtractionSource('instagram'), false);
-    assertEquals(isWebExtractionSource('screenshot'), false);
-    assertEquals(isWebExtractionSource('vision'), false);
+Deno.test("isWebExtractionSource: tiktok/maps/instagram/screenshot do NOT take the web path", () => {
+  assertEquals(isWebExtractionSource("tiktok"), false);
+  assertEquals(isWebExtractionSource("google_maps"), false);
+  assertEquals(isWebExtractionSource("instagram"), false);
+  assertEquals(isWebExtractionSource("screenshot"), false);
+  assertEquals(isWebExtractionSource("vision"), false);
 });
 
 // ── TICKET-187: client photo fields are NEVER read by save_spots ──────────────
@@ -579,91 +862,97 @@ Deno.test('isWebExtractionSource: tiktok/maps/instagram/screenshot do NOT take t
 // Restaurant-A attack).
 
 import {
-    buildVerifiedUpsertInput,
-    dedupeSuccessfulRestaurantIds,
-    type SaveSpotPlacePayload,
-} from './_helpers.ts';
+  buildVerifiedUpsertInput,
+  dedupeSuccessfulRestaurantIds,
+  type SaveSpotPlacePayload,
+} from "./_helpers.ts";
 
-Deno.test('buildVerifiedUpsertInput: forged client photo fields are dropped', () => {
-    const forged = {
-        external_id: 'ChIJ-forged-target',
-        name: 'Innocent Restaurant',
-        photoReference: 'places/ChIJ-someone-else/photos/stolen',
-        photoAttributionHtml: '<a href="https://evil.example">Not The Author</a>',
-    } as unknown as SaveSpotPlacePayload;
+Deno.test("buildVerifiedUpsertInput: forged client photo fields are dropped", () => {
+  const forged = {
+    external_id: "ChIJ-forged-target",
+    name: "Innocent Restaurant",
+    photoReference: "places/ChIJ-someone-else/photos/stolen",
+    photoAttributionHtml: '<a href="https://evil.example">Not The Author</a>',
+  } as unknown as SaveSpotPlacePayload;
 
-    const input = buildVerifiedUpsertInput('ChIJ-forged-target', {
-        restaurant_name: 'Innocent Restaurant',
-        restaurant_city: 'London',
-        place: forged,
-    });
+  const input = buildVerifiedUpsertInput("ChIJ-forged-target", {
+    restaurant_name: "Innocent Restaurant",
+    restaurant_city: "London",
+    place: forged,
+  });
 
-    assertEquals('photoReference' in input, false,
-        'client photoReference must never reach upsertRestaurant');
-    assertEquals('photoAttributionHtml' in input, false,
-        'client attribution must never reach upsertRestaurant');
-    // The legit metadata still flows.
-    assertEquals(input.external_id, 'ChIJ-forged-target');
-    assertEquals(input.name, 'Innocent Restaurant');
-    assertEquals(input.verification, 'verified');
+  assertEquals(
+    "photoReference" in input,
+    false,
+    "client photoReference must never reach upsertRestaurant",
+  );
+  assertEquals(
+    "photoAttributionHtml" in input,
+    false,
+    "client attribution must never reach upsertRestaurant",
+  );
+  // The legit metadata still flows.
+  assertEquals(input.external_id, "ChIJ-forged-target");
+  assertEquals(input.name, "Innocent Restaurant");
+  assertEquals(input.verification, "verified");
 });
 
-Deno.test('buildVerifiedUpsertInput: full place payload maps all metadata (fix-pass-2 item 3 preserved)', () => {
-    const input = buildVerifiedUpsertInput('ChIJ-full', {
-        restaurant_name: 'Fallback Name',
-        restaurant_city: 'Fallback City',
-        place: {
-            external_id: 'ChIJ-full',
-            name: 'Berenjak',
-            location: { address: '27 Romilly St', locality: 'London', country: 'UK' },
-            latitude: 51.5,
-            longitude: -0.13,
-            googleRating: 4.6,
-            googleRatingCount: 2100,
-            priceLevel: 2,
-            cuisine: 'Persian',
-            phone: '+44 20 1234 5678',
-            website: 'https://berenjak.example',
-            google_maps_uri: 'https://maps.google.com/?cid=1',
-            hours: { weekdayDescriptions: ['Monday: 12–10'] },
-        },
-    });
-    assertEquals(input.name, 'Berenjak');
-    assertEquals(input.location?.locality, 'London');
-    assertEquals(input.latitude, 51.5);
-    assertEquals(input.googleRating, 4.6);
-    assertEquals(input.cuisine, 'Persian');
-    assertEquals(input.phone, '+44 20 1234 5678');
-    assertEquals(input.googleMapsUri, 'https://maps.google.com/?cid=1');
-    assertEquals(input.hours, { weekdayDescriptions: ['Monday: 12–10'] });
-    assertEquals(input.verification, 'verified');
+Deno.test("buildVerifiedUpsertInput: full place payload maps all metadata (fix-pass-2 item 3 preserved)", () => {
+  const input = buildVerifiedUpsertInput("ChIJ-full", {
+    restaurant_name: "Fallback Name",
+    restaurant_city: "Fallback City",
+    place: {
+      external_id: "ChIJ-full",
+      name: "Berenjak",
+      location: { address: "27 Romilly St", locality: "London", country: "UK" },
+      latitude: 51.5,
+      longitude: -0.13,
+      googleRating: 4.6,
+      googleRatingCount: 2100,
+      priceLevel: 2,
+      cuisine: "Persian",
+      phone: "+44 20 1234 5678",
+      website: "https://berenjak.example",
+      google_maps_uri: "https://maps.google.com/?cid=1",
+      hours: { weekdayDescriptions: ["Monday: 12–10"] },
+    },
+  });
+  assertEquals(input.name, "Berenjak");
+  assertEquals(input.location?.locality, "London");
+  assertEquals(input.latitude, 51.5);
+  assertEquals(input.googleRating, 4.6);
+  assertEquals(input.cuisine, "Persian");
+  assertEquals(input.phone, "+44 20 1234 5678");
+  assertEquals(input.googleMapsUri, "https://maps.google.com/?cid=1");
+  assertEquals(input.hours, { weekdayDescriptions: ["Monday: 12–10"] });
+  assertEquals(input.verification, "verified");
 });
 
-Deno.test('buildVerifiedUpsertInput: no place payload → name/city fallbacks, still no photo keys', () => {
-    const input = buildVerifiedUpsertInput('ChIJ-sparse', {
-        restaurant_name: 'Kono',
-        restaurant_city: 'New York',
-        place: null,
-    });
-    assertEquals(input.name, 'Kono');
-    assertEquals(input.location?.locality, 'New York');
-    assertEquals('photoReference' in input, false);
-    assertEquals('photoAttributionHtml' in input, false);
+Deno.test("buildVerifiedUpsertInput: no place payload → name/city fallbacks, still no photo keys", () => {
+  const input = buildVerifiedUpsertInput("ChIJ-sparse", {
+    restaurant_name: "Kono",
+    restaurant_city: "New York",
+    place: null,
+  });
+  assertEquals(input.name, "Kono");
+  assertEquals(input.location?.locality, "New York");
+  assertEquals("photoReference" in input, false);
+  assertEquals("photoAttributionHtml" in input, false);
 });
 
-Deno.test('dedupeSuccessfulRestaurantIds: dedupes, keeps ghost/already_pinned, drops failed + null', () => {
-    const ids = dedupeSuccessfulRestaurantIds([
-        { status: 'saved', restaurant_id: 'r1' },
-        { status: 'saved', restaurant_id: 'r1' },            // duplicate → one entry
-        { status: 'already_pinned', restaurant_id: 'r2' },    // repeat import → id still flows
-        { status: 'ghost', restaurant_id: 'r3' },             // ghost — job's verification filter skips it pre-token
-        { status: 'failed', restaurant_id: 'r4' },            // failed → excluded
-        { status: 'saved', restaurant_id: null },             // no id → excluded
-        { status: 'saved' },                                  // missing id → excluded
-    ]);
-    assertEquals(ids.sort(), ['r1', 'r2', 'r3']);
+Deno.test("dedupeSuccessfulRestaurantIds: dedupes, keeps ghost/already_pinned, drops failed + null", () => {
+  const ids = dedupeSuccessfulRestaurantIds([
+    { status: "saved", restaurant_id: "r1" },
+    { status: "saved", restaurant_id: "r1" }, // duplicate → one entry
+    { status: "already_pinned", restaurant_id: "r2" }, // repeat import → id still flows
+    { status: "ghost", restaurant_id: "r3" }, // ghost — job's verification filter skips it pre-token
+    { status: "failed", restaurant_id: "r4" }, // failed → excluded
+    { status: "saved", restaurant_id: null }, // no id → excluded
+    { status: "saved" }, // missing id → excluded
+  ]);
+  assertEquals(ids.sort(), ["r1", "r2", "r3"]);
 });
 
-Deno.test('dedupeSuccessfulRestaurantIds: empty results → empty (deferred job not scheduled)', () => {
-    assertEquals(dedupeSuccessfulRestaurantIds([]), []);
+Deno.test("dedupeSuccessfulRestaurantIds: empty results → empty (deferred job not scheduled)", () => {
+  assertEquals(dedupeSuccessfulRestaurantIds([]), []);
 });

@@ -8,7 +8,13 @@ import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
 // Import from utils.ts (doesn't trigger serve())
-import { parsePayload, clamp, firstNumber, mapRegularOpeningHours } from './utils.ts';
+import {
+    parsePayload,
+    clamp,
+    expectedSearchOwnerDecision,
+    firstNumber,
+    mapRegularOpeningHours,
+} from './utils.ts';
 
 Deno.test('places-search utility functions', async (t) => {
 
@@ -46,6 +52,15 @@ Deno.test('places-search utility functions', async (t) => {
         assertEquals(payload.query, 'pizza');
         assertEquals(payload.latitude, 40.7);  // Body overrides query
         assertEquals(payload.longitude, -74.0);
+    });
+
+    await t.step('expected owner fence is optional but strict when present', () => {
+        const owner = '19500000-0000-4000-8000-000000000001';
+        const other = '19500000-0000-4000-8000-000000000002';
+        assertEquals(expectedSearchOwnerDecision(undefined, owner), 'allow');
+        assertEquals(expectedSearchOwnerDecision(owner, owner), 'allow');
+        assertEquals(expectedSearchOwnerDecision(other, owner), 'mismatch');
+        assertEquals(expectedSearchOwnerDecision(null, owner), 'invalid');
     });
 
     await t.step('parsePayload() should use query params when no body', async () => {

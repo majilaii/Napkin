@@ -1,0 +1,40 @@
+name: Restaurant completeness sweep
+
+# Durable transport for the completeness queue. The Edge function is
+# default-inert, so landing this workflow before the rollout gate enables the
+# worker is safe: disabled invocations return a successful no-op.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: restaurant-completeness-sweep
+  cancel-in-progress: false
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Drain sealed completeness work
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
+        run: |
+          missing=()
+          [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]] && missing+=(SUPABASE_SERVICE_ROLE_KEY)
+          [[ -z "${COMPLETENESS_CRON_SECRET:-}" ]] && missing+=(COMPLETENESS_CRON_SECRET)
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 180 \
+            -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "x-completeness-cron: $COMPLETENESS_CRON_SECRET" \
+            --data '{"action":"drain","batch_limit":20}' \
+            https://ftvmseaqwwlcxtdlvxxz.supabase.co/functions/v1/restaurant-completeness

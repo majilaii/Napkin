@@ -391,6 +391,9 @@ class ShareViewController: UIViewController {
             "jobId": jobId,
             "kind": kind,
             "importNonce": UUID().uuidString,
+            // Fixed at manifest creation. An older installed extension writes no
+            // field and the updated app deliberately drains that manifest as legacy.
+            "protocolGeneration": "v2",
             "createdAt": Date().timeIntervalSince1970 * 1000,
             "attempts": 0,
             "status": "pending",

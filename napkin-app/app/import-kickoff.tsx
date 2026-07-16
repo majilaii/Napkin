@@ -10,7 +10,7 @@
  * Copy economy: functional labels in Manrope; the list TITLE (content) is the
  * only serif-italic. No explanatory sentence stacking. Theme tokens only.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, TextInput, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -18,8 +18,9 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
-import { getImport, setLargeJob, removeImport, pokeImportQueue } from '@/lib/importQueue';
+import { getImportForUser, setLargeJob, removeImport, pokeImportQueue } from '@/lib/importQueue';
 
 export default function ImportKickoffScreen() {
     const { jobId } = useLocalSearchParams<{ jobId: string }>();
@@ -28,12 +29,32 @@ export default function ImportKickoffScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const toast = useToast();
+    const { user } = useAuth();
 
     // Snapshot the enumerated job once — the drain holds a kickoff manifest.
-    const job = useMemo(() => (jobId ? getImport(jobId)?.largeJob ?? null : null), [jobId]);
+    const manifest = useMemo(
+        () => (jobId ? getImportForUser(jobId, user?.id) : null),
+        [jobId, user?.id],
+    );
+    const job = manifest?.largeJob ?? null;
 
     const [listName, setListName] = useState<string>(() => job?.destListTitle ?? job?.title ?? '');
     const [pinAll, setPinAll] = useState<boolean>(() => job?.pinAll ?? true);
+    const hydratedManifestKeyRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (!manifest || !job || !user?.id) {
+            hydratedManifestKeyRef.current = null;
+            setListName('');
+            setPinAll(true);
+            return;
+        }
+        const manifestKey = `${user.id}:${jobId ?? ''}:${manifest.importNonce}`;
+        if (hydratedManifestKeyRef.current === manifestKey) return;
+        hydratedManifestKeyRef.current = manifestKey;
+        setListName(job.destListTitle ?? job.title ?? '');
+        setPinAll(job.pinAll);
+    }, [job, jobId, manifest, user?.id]);
 
     const listCount = job?.listCount ?? 0;
     const trimmedName = listName.trim();

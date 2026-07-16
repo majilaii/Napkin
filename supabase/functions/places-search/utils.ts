@@ -4,6 +4,7 @@
  */
 
 export type SearchPayload = {
+    action?: 'match_correction';
     query?: string;
     place_id?: string;
     latitude?: number;
@@ -17,6 +18,10 @@ export type SearchPayload = {
      * recovering from missing-payload deep links.
      */
     persist?: boolean;
+    import_nonce?: string;
+    prior_resolution_id?: string | null;
+    chosen_external_id?: string;
+    expected_owner_id?: unknown;
 };
 
 export async function parsePayload(req: Request): Promise<SearchPayload> {
@@ -26,6 +31,7 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
             const body = (await req.json()) as SearchPayload;
 
             return {
+                action: body.action,
                 query: body.query ?? searchParams.get('query') ?? undefined,
                 place_id: body.place_id ?? searchParams.get('place_id') ?? undefined,
                 latitude: firstNumber(body.latitude, searchParams.get('latitude')),
@@ -35,6 +41,10 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
                 persist: typeof body.persist === 'boolean'
                     ? body.persist
                     : searchParams.get('persist') === 'true' || undefined,
+                import_nonce: body.import_nonce,
+                prior_resolution_id: body.prior_resolution_id,
+                chosen_external_id: body.chosen_external_id,
+                expected_owner_id: body.expected_owner_id,
             };
         } catch {
             // fall through to query params only
@@ -50,6 +60,19 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
         radius: firstNumber(undefined, searchParams.get('radius')),
         persist: searchParams.get('persist') === 'true' || undefined,
     };
+}
+
+export type ExpectedSearchOwnerDecision = 'allow' | 'invalid' | 'mismatch';
+
+/** Optional owner echo for async import correction/search calls. */
+export function expectedSearchOwnerDecision(
+    expectedOwnerId: unknown,
+    authenticatedOwnerId: string,
+): ExpectedSearchOwnerDecision {
+    if (expectedOwnerId === undefined) return 'allow';
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (typeof expectedOwnerId !== 'string' || !uuid.test(expectedOwnerId)) return 'invalid';
+    return expectedOwnerId === authenticatedOwnerId ? 'allow' : 'mismatch';
 }
 
 export function clamp(value: number, min: number, max: number) {

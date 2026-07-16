@@ -25,6 +25,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { emitImportDone } from '../_shared/notify.ts';
 import { encodeCursor, decodeCursor, type CursorTuple } from '../_shared/pagination.ts';
+import { resolveCanonicalRestaurantIds } from '../_shared/canonicalRestaurant.ts';
 
 // ── Wire types ────────────────────────────────────────────────────────────────
 
@@ -270,6 +271,11 @@ async function hydrate(
     const actorIds = unique(rows.map(r => r.actor_user_id).filter(Boolean) as string[]);
     const tableIds = unique(rows.map(r => r.subject_table_id).filter(Boolean) as string[]);
     const restaurantIds = unique(rows.map(r => r.subject_restaurant_id).filter(Boolean) as string[]);
+    // Notifications deliberately retain their immutable FK to an alias tombstone.
+    // Resolve only for hydration/deep-link output so historical inbox rows survive
+    // a merge while always displaying and opening the live canonical restaurant.
+    const canonicalBySubject = await resolveCanonicalRestaurantIds(supabase, restaurantIds);
+    const canonicalRestaurantIds = unique([...canonicalBySubject.values()]);
     const entryIds = unique(rows.map(r => r.subject_entry_id).filter(Boolean) as string[]);
 
     // Batch-fetch related entities in parallel.
@@ -280,8 +286,8 @@ async function hydrate(
         tableIds.length
             ? supabase.from('tables').select('id, name').in('id', tableIds)
             : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
-        restaurantIds.length
-            ? supabase.from('restaurants').select('id, name, photo_url').in('id', restaurantIds)
+        canonicalRestaurantIds.length
+            ? supabase.from('restaurants').select('id, name, photo_url').in('id', canonicalRestaurantIds)
             : Promise.resolve({ data: [] as { id: string; name: string; photo_url: string | null }[], error: null }),
         entryIds.length
             ? supabase.from('entries').select('id, user_id, table_id, rating, content, photo_url, restaurant_id, visited_at, visibility').in('id', entryIds)
@@ -312,6 +318,10 @@ async function hydrate(
     const profileById = byId(profilesRes.data ?? [], 'user_id');
     const tableById = byId(tablesRes.data ?? [], 'id');
     const restaurantById = byId(restaurantsRes.data ?? [], 'id');
+    for (const [subjectId, canonicalId] of canonicalBySubject) {
+        const canonical = restaurantById.get(canonicalId);
+        if (canonical) restaurantById.set(subjectId, canonical);
+    }
     const entryById = byId(entriesRes.data ?? [], 'id');
 
     // TICKET-133: batch-fetch invitation status for all table_invite rows on the

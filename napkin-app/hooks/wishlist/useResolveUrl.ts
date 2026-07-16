@@ -24,6 +24,8 @@ type Confidence = 'exact' | 'high' | 'low';
 export interface ResolvedCandidate {
     /** TICKET-063: stable sha256-derived id for this candidate (used as key + save nonce). */
     candidate_id?: string;
+    /** TICKET-195: authoritative, caller-bound evidence id minted by the resolver. */
+    resolution_id?: string | null;
     restaurant: {
         id: string;
         name: string | null;

@@ -18,8 +18,18 @@ BEGIN
       'authenticated retains entries.photo_url UPDATE';
     ASSERT pg_catalog.has_column_privilege('authenticated','public.entries','content','INSERT'),
       'non-photo entries INSERT column was not regranted';
-    ASSERT pg_catalog.has_column_privilege('authenticated','public.entries','content','UPDATE'),
-      'non-photo entries UPDATE column was not regranted';
+    FOREACH v_col IN ARRAY ARRAY[
+      'id','user_id','restaurant_id','place_id','user_place_id','rating',
+      'content','dish_description','cooked_by','value_profile','visited_at',
+      'created_at','updated_at','table_id','table_night_id','visibility',
+      'vibe_rating','flavor_rating','service_rating','value_rating',
+      'reaction_count','comment_count','top_emojis','public_reaction_count',
+      'public_reply_count','public_top_emojis','client_nonce','liked'
+    ] LOOP
+      ASSERT pg_catalog.has_column_privilege(
+        'authenticated','public.entries',v_col,'UPDATE'
+      ), pg_catalog.format('safe entries.%s UPDATE column was not regranted',v_col);
+    END LOOP;
     ASSERT NOT pg_catalog.has_column_privilege('authenticated','public.entries','supper_id','UPDATE'),
       'B-2 broadened UPDATE to locked entries.supper_id';
     ASSERT NOT pg_catalog.has_table_privilege('authenticated','public.entry_photos','INSERT'),
@@ -236,10 +246,14 @@ BEGIN
 
     -- B-2 retains authenticated scalar entry insert/update via the existing
     -- own-row RLS policies while the photo column privilege stays closed.
+    -- Supply the id instead of using RETURNING: entries_select_v2's authored
+    -- helper intentionally reads committed rows and is not an INSERT-returning
+    -- oracle.  This assertion is about the DML grants/RLS path itself.
+    scalar_entry := '19620000-3000-4000-8000-000000000001';
     PERFORM set_config('request.jwt.claims',pg_catalog.json_build_object('sub',u)::text,true);
     SET LOCAL ROLE authenticated;
-    INSERT INTO public.entries (user_id,content)
-    VALUES (u,'scalar insert survives B2') RETURNING id INTO scalar_entry;
+    INSERT INTO public.entries (id,user_id,content)
+    VALUES (scalar_entry,u,'scalar insert survives B2');
     UPDATE public.entries SET content='scalar update survives B2' WHERE id=scalar_entry;
     RESET ROLE;
     ASSERT (SELECT content='scalar update survives B2' FROM public.entries WHERE id=scalar_entry),

@@ -26,6 +26,7 @@ import {
     ImportToListSheet,
     ListDetailSheet,
     ScopedListMap,
+    UnmappedListSpotsSheet,
     type ListDetailSheetHandle,
 } from '@/components/lists';
 import { ListEntryRow } from '@/components/lists/ListEntryRow';
@@ -48,7 +49,7 @@ import { HandoffSheet } from '@/components/wishlist';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 
 const NO_FILTERS = { city: null, cuisine: null, price: null } as const;
-type Overlay = 'none' | 'share' | 'import';
+type Overlay = 'none' | 'share' | 'import' | 'repair';
 
 export default function ListDetailScreen() {
     const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
@@ -155,6 +156,18 @@ export default function ListDetailScreen() {
     const unmappableCount = useMemo(
         () => countUnmappableListEntries(entries, NO_FILTERS),
         [entries],
+    );
+    const repairableUnmappableEntries = useMemo(
+        () =>
+            entries.filter(
+                (entry) =>
+                    !hasValidCoordinates(entry) &&
+                    entry.restaurant.verification !== 'verified' &&
+                    entry.restaurant.created_by === user?.id &&
+                    entry.restaurant.merged_into == null &&
+                    Number.isSafeInteger(entry.restaurant.completeness_version),
+            ),
+        [entries, user?.id],
     );
     const sheetVisibleHeight = H > 0 ? visibleHeight(H, settledSnap) : 0;
 
@@ -406,6 +419,11 @@ export default function ListDetailScreen() {
                         <ScopedListMap
                             items={mapItems}
                             unmappableCount={unmappableCount}
+                            onOpenUnmapped={
+                                canEditEntries && repairableUnmappableEntries.length > 0
+                                    ? () => openOverlay('repair')
+                                    : undefined
+                            }
                             userCoords={coords}
                             locationStatus={locationStatus}
                             focusRequest={focusRequest}
@@ -487,6 +505,16 @@ export default function ListDetailScreen() {
                             listId={list.id}
                             listTitle={list.title}
                             existingRestaurantIds={existingRestaurantIds}
+                        />
+                    ) : null}
+
+                    {canEditEntries && repairableUnmappableEntries.length > 0 ? (
+                        <UnmappedListSpotsSheet
+                            visible={overlay === 'repair'}
+                            onClose={() => setOverlay('none')}
+                            listId={list.id}
+                            entries={repairableUnmappableEntries}
+                            palette={palette}
                         />
                     ) : null}
                 </>

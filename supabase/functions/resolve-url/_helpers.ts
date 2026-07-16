@@ -14,15 +14,15 @@
  * Mirrors the SourceType union in index.ts (kept in sync — this is the testable copy).
  */
 export type SourceType =
-    | 'tiktok'
-    | 'google_maps'
-    | 'web'
-    | 'instagram'
-    | 'reddit'
-    | 'substack'
-    | 'screenshot'
-    | 'vision'
-    | 'video';
+  | "tiktok"
+  | "google_maps"
+  | "web"
+  | "instagram"
+  | "reddit"
+  | "substack"
+  | "screenshot"
+  | "vision"
+  | "video";
 
 /**
  * Detect the source_type from a URL host.
@@ -34,23 +34,29 @@ export type SourceType =
  * Unrecognized hosts → 'web'.
  */
 export function detectSourceTypeFromHost(host: string): SourceType {
-    const h = host.toLowerCase();
-    if (h === 'tiktok.com' || h === 'www.tiktok.com' || h === 'vm.tiktok.com' || h === 'm.tiktok.com') {
-        return 'tiktok';
-    }
-    if (h === 'maps.app.goo.gl' || h === 'maps.google.com' || h === 'goo.gl') {
-        return 'google_maps';
-    }
-    if (h === 'instagram.com' || h === 'www.instagram.com') {
-        return 'instagram';
-    }
-    if (h === 'reddit.com' || h === 'www.reddit.com' || h === 'redd.it' || h.endsWith('.reddit.com')) {
-        return 'reddit';
-    }
-    if (h === 'substack.com' || h.endsWith('.substack.com')) {
-        return 'substack';
-    }
-    return 'web';
+  const h = host.toLowerCase();
+  if (
+    h === "tiktok.com" || h === "www.tiktok.com" || h === "vm.tiktok.com" ||
+    h === "m.tiktok.com"
+  ) {
+    return "tiktok";
+  }
+  if (h === "maps.app.goo.gl" || h === "maps.google.com" || h === "goo.gl") {
+    return "google_maps";
+  }
+  if (h === "instagram.com" || h === "www.instagram.com") {
+    return "instagram";
+  }
+  if (
+    h === "reddit.com" || h === "www.reddit.com" || h === "redd.it" ||
+    h.endsWith(".reddit.com")
+  ) {
+    return "reddit";
+  }
+  if (h === "substack.com" || h.endsWith(".substack.com")) {
+    return "substack";
+  }
+  return "web";
 }
 
 /**
@@ -62,7 +68,7 @@ export function detectSourceTypeFromHost(host: string): SourceType {
  * degrade to manual search like any noisy-title web page if extraction is poor.
  */
 export function isWebExtractionSource(s: SourceType): boolean {
-    return s === 'web' || s === 'reddit' || s === 'substack';
+  return s === "web" || s === "reddit" || s === "substack";
 }
 
 /**
@@ -72,7 +78,7 @@ export function isWebExtractionSource(s: SourceType): boolean {
  * and returns false.
  */
 export function isGhostExternalId(id: string | null | undefined): boolean {
-    return !id || id === 'ghost_pending' || id === '';
+  return !id || id === "ghost_pending" || id === "";
 }
 
 /**
@@ -84,8 +90,11 @@ export function isGhostExternalId(id: string | null | undefined): boolean {
  * AUTHORITATIVE. This TypeScript mirror must stay in sync with that SQL. If the SQL
  * pattern changes, update this function to match.
  */
-export function buildGhostExternalId(userId: string, clientNonce: string): string {
-    return `ghost_${userId}_${clientNonce}`;
+export function buildGhostExternalId(
+  userId: string,
+  clientNonce: string,
+): string {
+  return `ghost_${userId}_${clientNonce}`;
 }
 
 /**
@@ -93,15 +102,15 @@ export function buildGhostExternalId(userId: string, clientNonce: string): strin
  * The memberRows must be queried with member_id = user_id (TICKET-034 doctrine).
  */
 export function filterUnauthorizedTableIds(
-    tableIds: string[],
-    memberRows: { table_id: string }[],
+  tableIds: string[],
+  memberRows: { table_id: string }[],
 ): Set<string> {
-    const authorized = new Set(memberRows.map((r) => r.table_id));
-    const unauthorized = new Set<string>();
-    for (const tid of tableIds) {
-        if (!authorized.has(tid)) unauthorized.add(tid);
-    }
-    return unauthorized;
+  const authorized = new Set(memberRows.map((r) => r.table_id));
+  const unauthorized = new Set<string>();
+  for (const tid of tableIds) {
+    if (!authorized.has(tid)) unauthorized.add(tid);
+  }
+  return unauthorized;
 }
 
 /**
@@ -117,12 +126,12 @@ export function filterUnauthorizedTableIds(
  * every spot is pinnable. This helper is only consulted on the handoff path.
  */
 export function isSpotPinnable(
-    restaurantId: string | null | undefined,
-    liveRestaurantIds: Set<string> | null,
+  restaurantId: string | null | undefined,
+  liveRestaurantIds: Set<string> | null,
 ): boolean {
-    if (liveRestaurantIds === null) return true; // no handoff gate
-    if (!restaurantId) return false;             // live spots always carry a real id
-    return liveRestaurantIds.has(restaurantId);
+  if (liveRestaurantIds === null) return true; // no handoff gate
+  if (!restaurantId) return false; // live spots always carry a real id
+  return liveRestaurantIds.has(restaurantId);
 }
 
 /**
@@ -134,15 +143,17 @@ export function isSpotPinnable(
  * same row to verified with full Places metadata.
  */
 export function mapVerifiedRestaurantIds(
-    rows: Array<{ id: string; external_id: string | null; verification?: string | null }>,
+  rows: Array<
+    { id: string; external_id: string | null; verification?: string | null }
+  >,
 ): Map<string, string> {
-    const map = new Map<string, string>();
-    for (const row of rows) {
-        if (row.external_id && row.verification === 'verified') {
-            map.set(row.external_id, row.id);
-        }
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    if (row.external_id && row.verification === "verified") {
+      map.set(row.external_id, row.id);
     }
-    return map;
+  }
+  return map;
 }
 
 // ── TICKET-195: import-only Places venue-type backstop ───────────────────────
@@ -155,36 +166,36 @@ export function mapVerifiedRestaurantIds(
  * candidate is accepted when the TOP text-search result intersects this list.
  */
 export const IMPORT_PLACE_TYPE_ALLOWLIST = [
-    'restaurant',
-    'bar',
-    'cafe',
-    'bakery',
-    'meal_takeaway',
-    'meal_delivery',
-    'night_club',
-    'food',
+  "restaurant",
+  "bar",
+  "cafe",
+  "bakery",
+  "meal_takeaway",
+  "meal_delivery",
+  "night_club",
+  "food",
 ] as const;
 
 const IMPORT_PLACE_TYPE_SET = new Set<string>(IMPORT_PLACE_TYPE_ALLOWLIST);
 
 export interface ImportPlaceTypeCandidate {
-    categories?: unknown;
+  categories?: unknown;
 }
 
 export interface ImportPlaceSearchResult<T> {
-    candidates: T[];
-    /** True only when a top result existed but failed the venue-type allowlist. */
-    typeRejected: boolean;
+  candidates: T[];
+  /** True only when a top result existed but failed the venue-type allowlist. */
+  typeRejected: boolean;
 }
 
 /** True when a Places result carries at least one allowed food/drink type. */
 export function hasAllowedImportPlaceType(categories: unknown): boolean {
-    if (!Array.isArray(categories)) return false;
-    return categories.some(
-        (category) =>
-            typeof category === 'string' &&
-            IMPORT_PLACE_TYPE_SET.has(category.trim().toLowerCase()),
-    );
+  if (!Array.isArray(categories)) return false;
+  return categories.some(
+    (category) =>
+      typeof category === "string" &&
+      IMPORT_PLACE_TYPE_SET.has(category.trim().toLowerCase()),
+  );
 }
 
 /**
@@ -195,16 +206,18 @@ export function hasAllowedImportPlaceType(categories: unknown): boolean {
  * we intentionally do not promote a lower-ranked result. An empty search is an
  * ordinary no-match (ghost-capable), not a type rejection.
  */
-export async function resolveImportPlaceSearch<T extends ImportPlaceTypeCandidate>(
-    search: () => T[] | Promise<T[]>,
+export async function resolveImportPlaceSearch<
+  T extends ImportPlaceTypeCandidate,
+>(
+  search: () => T[] | Promise<T[]>,
 ): Promise<ImportPlaceSearchResult<T>> {
-    const candidates = await search();
-    const top = candidates[0];
-    if (!top) return { candidates, typeRejected: false };
-    if (!hasAllowedImportPlaceType(top.categories)) {
-        return { candidates: [], typeRejected: true };
-    }
-    return { candidates, typeRejected: false };
+  const candidates = await search();
+  const top = candidates[0];
+  if (!top) return { candidates, typeRejected: false };
+  if (!hasAllowedImportPlaceType(top.categories)) {
+    return { candidates: [], typeRejected: true };
+  }
+  return { candidates, typeRejected: false };
 }
 
 /**
@@ -217,14 +230,14 @@ export async function resolveImportPlaceSearch<T extends ImportPlaceTypeCandidat
  * row before any restaurant upsert / wishlist RPC.
  */
 export function isTypeRejectedSaveSpot(value: unknown): boolean {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const spot = value as Record<string, unknown>;
-    if (spot['type_rejected'] === true) return true;
-    const place = spot['place'];
-    return !!place &&
-        typeof place === 'object' &&
-        !Array.isArray(place) &&
-        (place as Record<string, unknown>)['type_rejected'] === true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const spot = value as Record<string, unknown>;
+  if (spot["type_rejected"] === true) return true;
+  const place = spot["place"];
+  return !!place &&
+    typeof place === "object" &&
+    !Array.isArray(place) &&
+    (place as Record<string, unknown>)["type_rejected"] === true;
 }
 
 // ── TICKET-152: resolve_spots + pin_wishlist decision helpers ─────────────────
@@ -234,14 +247,176 @@ export function isTypeRejectedSaveSpot(value: unknown): boolean {
 
 /** One item of a resolve_spots request, after validation + normalization. */
 export interface ResolveSpotItem {
-    name: string;
-    address: string | null;
-    client_nonce: string;
+  name: string;
+  address: string | null;
+  client_nonce: string;
+}
+
+export type ImportResolutionDecision =
+  | "matched"
+  | "no_result"
+  | "name_reject"
+  | "locality_reject"
+  | "ambiguous"
+  | "transient"
+  | "unattempted_budget";
+
+const NON_MATCH_RESOLUTION_DECISIONS = new Set<ImportResolutionDecision>([
+  "no_result",
+  "name_reject",
+  "locality_reject",
+  "ambiguous",
+  "transient",
+  "unattempted_budget",
+]);
+
+/**
+ * Convert one server-produced candidate into the immutable provenance shape.
+ * A real external id is always authoritative `matched` evidence. Without one,
+ * preserve the resolver's explicit reject/defer reason instead of collapsing
+ * every outcome to `no_result`.
+ */
+export function resolutionDecisionForCandidate(value: unknown): {
+  decision: ImportResolutionDecision;
+  matchedExternalId: string | null;
+} {
+  const row = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const restaurant =
+    row["restaurant"] && typeof row["restaurant"] === "object" &&
+      !Array.isArray(row["restaurant"])
+      ? row["restaurant"] as Record<string, unknown>
+      : {};
+  const externalId = [
+    row["external_id"],
+    row["google_place_id"],
+    restaurant["external_id"],
+    restaurant["id"],
+  ].find((entry) => typeof entry === "string" && entry.trim() !== "");
+  if (typeof externalId === "string") {
+    return { decision: "matched", matchedExternalId: externalId.trim() };
+  }
+
+  const explicit = row["resolution_decision"];
+  return {
+    decision: typeof explicit === "string" &&
+        NON_MATCH_RESOLUTION_DECISIONS.has(explicit as ImportResolutionDecision)
+      ? explicit as ImportResolutionDecision
+      : "no_result",
+    matchedExternalId: null,
+  };
+}
+
+/**
+ * Recover a server-recorded Place id that a failed Details branch attempted.
+ * It is a retry hint only: it deliberately does not occupy matched_external_id,
+ * and internal ghost/tombstone identifiers are never eligible provider ids.
+ */
+export function attemptedExternalIdFromResolutionEvidence(
+  value: unknown,
+): string | null {
+  const evidence = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  const candidateValue = evidence?.["candidate"];
+  const candidate = candidateValue && typeof candidateValue === "object" &&
+      !Array.isArray(candidateValue)
+    ? candidateValue as Record<string, unknown>
+    : null;
+  const attempted = candidate?.["attempted_external_id"];
+  if (typeof attempted !== "string" || attempted.trim() === "") return null;
+  const normalized = attempted.trim();
+  if (
+    normalized === "ghost_pending" ||
+    normalized.startsWith("ghost_") ||
+    normalized.startsWith("merged_")
+  ) return null;
+  return normalized;
+}
+
+/** Only an explicit v2 stamp opts resolve_spots into queueable failure rows. */
+export function isV2ResolveSpotsProtocol(value: unknown): boolean {
+  return value === "v2";
+}
+
+/**
+ * Map a non-success places-search response without treating every HTTP 429 as
+ * the same condition. `BUDGET_DEFERRED` is the shared SKU/freeze gate and does
+ * not consume a completeness attempt; the interactive request throttle (also
+ * 429) and all provider/network failures are ordinary retryable transients.
+ */
+export function placesFailureDecision(
+  status: number,
+  payload: unknown,
+): "transient" | "unattempted_budget" {
+  const body = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : null;
+  const error = body?.["error"];
+  const errorRecord =
+    error && typeof error === "object" && !Array.isArray(error)
+      ? error as Record<string, unknown>
+      : null;
+  return status === 429 && errorRecord?.["code"] === "BUDGET_DEFERRED"
+    ? "unattempted_budget"
+    : "transient";
+}
+
+/** Fail-closed import bucket mapping without mislabeling DB failure as exhaustion. */
+export function resolveSpotsRateGate(
+  error: unknown,
+  row: unknown,
+): "allowed" | "transient" | "unattempted_budget" {
+  if (error) return "transient";
+  if (!row || typeof row !== "object" || Array.isArray(row)) return "transient";
+  return (row as Record<string, unknown>)["allowed"] === true
+    ? "allowed"
+    : "unattempted_budget";
+}
+
+/** One bound non-match row per item lets v2 persist and queue typed failures. */
+export function buildResolveSpotDecisionResult(
+  item: ResolveSpotItem,
+  candidateId: string,
+  decision: Exclude<ImportResolutionDecision, "matched">,
+) {
+  return {
+    client_nonce: item.client_nonce,
+    candidate_id: candidateId,
+    restaurant_id: null,
+    external_id: null,
+    restaurant_name: item.name,
+    restaurant_city: null,
+    place: {
+      id: "",
+      name: item.name,
+      formattedAddress: item.address,
+      city: null,
+      external_id: null,
+      location: { address: item.address ?? undefined },
+    },
+    confidence: "low" as const,
+    ghost: true,
+    resolution_decision: decision,
+  };
+}
+
+/** One zero-spend row per item lets v2 persist and queue during a freeze. */
+export function buildUnattemptedResolveSpotResult(
+  item: ResolveSpotItem,
+  candidateId: string,
+) {
+  return buildResolveSpotDecisionResult(
+    item,
+    candidateId,
+    "unattempted_budget",
+  );
 }
 
 export type ResolveSpotsValidation =
-    | { ok: true; items: ResolveSpotItem[] }
-    | { ok: false; message: string };
+  | { ok: true; items: ResolveSpotItem[] }
+  | { ok: false; message: string };
 
 /**
  * Validate + normalize a resolve_spots request body (TICKET-152).
@@ -259,36 +434,39 @@ export type ResolveSpotsValidation =
  * address is coerced to string | null (the full address rides into the Places query).
  */
 export function validateResolveSpotsArgs(
-    importNonce: unknown,
-    items: unknown,
+  importNonce: unknown,
+  items: unknown,
 ): ResolveSpotsValidation {
-    if (typeof importNonce !== 'string' || importNonce.trim().length === 0) {
-        return { ok: false, message: 'import_nonce is required' };
+  if (typeof importNonce !== "string" || importNonce.trim().length === 0) {
+    return { ok: false, message: "import_nonce is required" };
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return { ok: false, message: "items[] must contain 1–20 entries" };
+  }
+  if (items.length > 20) {
+    return { ok: false, message: "items[] exceeds the 20-item cap" };
+  }
+  const normalized: ResolveSpotItem[] = [];
+  for (const raw of items) {
+    const item = (raw && typeof raw === "object" && !Array.isArray(raw))
+      ? raw as Record<string, unknown>
+      : null;
+    const name = item && typeof item["name"] === "string"
+      ? item["name"].trim()
+      : "";
+    const clientNonce = item && typeof item["client_nonce"] === "string"
+      ? item["client_nonce"].trim()
+      : "";
+    if (!name || !clientNonce) {
+      return { ok: false, message: "each item requires name and client_nonce" };
     }
-    if (!Array.isArray(items) || items.length === 0) {
-        return { ok: false, message: 'items[] must contain 1–20 entries' };
-    }
-    if (items.length > 20) {
-        return { ok: false, message: 'items[] exceeds the 20-item cap' };
-    }
-    const normalized: ResolveSpotItem[] = [];
-    for (const raw of items) {
-        const item = (raw && typeof raw === 'object' && !Array.isArray(raw))
-            ? raw as Record<string, unknown>
-            : null;
-        const name = item && typeof item['name'] === 'string' ? item['name'].trim() : '';
-        const clientNonce = item && typeof item['client_nonce'] === 'string'
-            ? item['client_nonce'].trim()
-            : '';
-        if (!name || !clientNonce) {
-            return { ok: false, message: 'each item requires name and client_nonce' };
-        }
-        const address = item && typeof item['address'] === 'string' && item['address'].trim().length > 0
-            ? item['address'].trim()
-            : null;
-        normalized.push({ name, address, client_nonce: clientNonce });
-    }
-    return { ok: true, items: normalized };
+    const address = item && typeof item["address"] === "string" &&
+        item["address"].trim().length > 0
+      ? item["address"].trim()
+      : null;
+    normalized.push({ name, address, client_nonce: clientNonce });
+  }
+  return { ok: true, items: normalized };
 }
 
 /**
@@ -298,7 +476,7 @@ export function validateResolveSpotsArgs(
  * the field keeps today's wishlist-pinning behavior byte-for-byte.
  */
 export function normalizePinWishlist(raw: unknown): boolean {
-    return raw === false ? false : true;
+  return raw === false ? false : true;
 }
 
 /**
@@ -312,29 +490,29 @@ export function normalizePinWishlist(raw: unknown): boolean {
  *                external_id), so no dup.
  */
 export function listOnlySaveKind(
-    resolvedRestaurantId: string | null | undefined,
-    safeExternalId: string | null | undefined,
-): 'existing' | 'verified' | 'ghost' {
-    if (resolvedRestaurantId) return 'existing';
-    if (safeExternalId) return 'verified';
-    return 'ghost';
+  resolvedRestaurantId: string | null | undefined,
+  safeExternalId: string | null | undefined,
+): "existing" | "verified" | "ghost" {
+  if (resolvedRestaurantId) return "existing";
+  if (safeExternalId) return "verified";
+  return "ghost";
 }
 
 /**
  * Kill-switch gate (TICKET-152): when env RESOLVE_SPOTS_GHOST_ONLY holds a truthy
- * value, resolve_spots short-circuits to { results: [], ghost_mode: true } with
- * ZERO Places calls — the "monthly Places spend cap hit" degradation lever, flipped
+ * value, resolve_spots emits one `unattempted_budget` result per item with ZERO
+ * Places calls — enough server provenance for v2 to durably enqueue the chunk.
  * by the founder (there is no automatic spend meter). '0' / 'false' / 'off' / '' → off.
  */
 export function isGhostOnlyMode(envValue: string | null | undefined): boolean {
-    if (!envValue) return false;
-    const v = envValue.trim().toLowerCase();
-    return v !== '' && v !== '0' && v !== 'false' && v !== 'off';
+  if (!envValue) return false;
+  const v = envValue.trim().toLowerCase();
+  return v !== "" && v !== "0" && v !== "false" && v !== "off";
 }
 
 // ── TICKET-187: save_spots photo-field quarantine ─────────────────────────────
 
-import type { RestaurantInput } from '../_shared/restaurant.ts';
+import type { RestaurantInput } from "../_shared/restaurant.ts";
 
 /**
  * Full place payload forwarded by the client for metadata-complete upserts
@@ -345,23 +523,23 @@ import type { RestaurantInput } from '../_shared/restaurant.ts';
  * restaurant row.
  */
 export interface SaveSpotPlacePayload {
-    external_id?: string | null;
-    name?: string | null;
-    location?: { address?: string; locality?: string; country?: string };
-    latitude?: number | null;
-    longitude?: number | null;
-    googleRating?: number | null;
-    googleRatingCount?: number | null;
-    priceLevel?: number | null;
-    cuisine?: string | null;
-    // TICKET-081: optional restaurant-page metadata forwarded from the client.
-    // hours carries weekdayDescriptions only — no openNow (stale once cached; the page
-    // derives "today" by matching the weekday name, not array position).
-    phone?: string | null;
-    website?: string | null;
-    googleMapsUri?: string | null;
-    google_maps_uri?: string | null;
-    hours?: { weekdayDescriptions: string[] } | null;
+  external_id?: string | null;
+  name?: string | null;
+  location?: { address?: string; locality?: string; country?: string };
+  latitude?: number | null;
+  longitude?: number | null;
+  googleRating?: number | null;
+  googleRatingCount?: number | null;
+  priceLevel?: number | null;
+  cuisine?: string | null;
+  // TICKET-081: optional restaurant-page metadata forwarded from the client.
+  // hours carries weekdayDescriptions only — no openNow (stale once cached; the page
+  // derives "today" by matching the weekday name, not array position).
+  phone?: string | null;
+  website?: string | null;
+  googleMapsUri?: string | null;
+  google_maps_uri?: string | null;
+  hours?: { weekdayDescriptions: string[] } | null;
 }
 
 /**
@@ -375,35 +553,35 @@ export interface SaveSpotPlacePayload {
  * deferred acquireAndMirrorHeroPhotos job owns ALL photo work.
  */
 export function buildVerifiedUpsertInput(
-    externalId: string,
-    spot: {
-        restaurant_name?: string | null;
-        restaurant_city?: string | null;
-        place?: SaveSpotPlacePayload | null;
-    },
+  externalId: string,
+  spot: {
+    restaurant_name?: string | null;
+    restaurant_city?: string | null;
+    place?: SaveSpotPlacePayload | null;
+  },
 ): RestaurantInput {
-    const p = spot.place;
-    return {
-        external_id: externalId,
-        name: p?.name ?? spot.restaurant_name ?? 'Unknown',
-        location: {
-            address: p?.location?.address ?? undefined,
-            locality: p?.location?.locality ?? spot.restaurant_city ?? undefined,
-            country: p?.location?.country ?? undefined,
-        },
-        latitude: p?.latitude ?? undefined,
-        longitude: p?.longitude ?? undefined,
-        googleRating: p?.googleRating ?? undefined,
-        googleRatingCount: p?.googleRatingCount ?? undefined,
-        priceLevel: p?.priceLevel ?? undefined,
-        cuisine: p?.cuisine ?? undefined,
-        // TICKET-081: forward metadata too when present (additive).
-        phone: p?.phone ?? undefined,
-        website: p?.website ?? undefined,
-        googleMapsUri: p?.googleMapsUri ?? p?.google_maps_uri ?? undefined,
-        hours: p?.hours ?? undefined,
-        verification: 'verified',
-    };
+  const p = spot.place;
+  return {
+    external_id: externalId,
+    name: p?.name ?? spot.restaurant_name ?? "Unknown",
+    location: {
+      address: p?.location?.address ?? undefined,
+      locality: p?.location?.locality ?? spot.restaurant_city ?? undefined,
+      country: p?.location?.country ?? undefined,
+    },
+    latitude: p?.latitude ?? undefined,
+    longitude: p?.longitude ?? undefined,
+    googleRating: p?.googleRating ?? undefined,
+    googleRatingCount: p?.googleRatingCount ?? undefined,
+    priceLevel: p?.priceLevel ?? undefined,
+    cuisine: p?.cuisine ?? undefined,
+    // TICKET-081: forward metadata too when present (additive).
+    phone: p?.phone ?? undefined,
+    website: p?.website ?? undefined,
+    googleMapsUri: p?.googleMapsUri ?? p?.google_maps_uri ?? undefined,
+    hours: p?.hours ?? undefined,
+    verification: "verified",
+  };
 }
 
 /**
@@ -415,11 +593,193 @@ export function buildVerifiedUpsertInput(
  * restaurant_id branch: the id is still known from the result row.
  */
 export function dedupeSuccessfulRestaurantIds(
-    results: Array<{ status: string; restaurant_id?: string | null }>,
+  results: Array<{ status: string; restaurant_id?: string | null }>,
 ): string[] {
-    const ids = new Set<string>();
-    for (const r of results) {
-        if (r.status !== 'failed' && r.restaurant_id) ids.add(r.restaurant_id);
+  const ids = new Set<string>();
+  for (const r of results) {
+    if (r.status !== "failed" && r.restaurant_id) ids.add(r.restaurant_id);
+  }
+  return [...ids];
+}
+
+// ── TICKET-195: save protocol classification + measurable legacy sunset ──
+
+export interface SaveProtocolSpot {
+  client_nonce?: string | null;
+  resolution_id?: string | null;
+}
+
+export interface V2SaveProtocolBody {
+  protocol_version?: unknown;
+  protocol_generation?: unknown;
+  destination_intent?: unknown;
+  expected_destinations?: unknown;
+}
+
+export type ExpectedImportOwnerDecision = "allow" | "invalid" | "mismatch";
+
+/**
+ * Optional deployed-client-compatible owner fence. New durable-import clients
+ * echo the manifest owner so an auth switch during an async resolve/save cannot
+ * run the old manifest under the newly active JWT. Absence remains allowed for
+ * installed clients; presence is strict and checked before paid or write work.
+ */
+export function expectedImportOwnerDecision(
+  expectedOwnerId: unknown,
+  authenticatedOwnerId: string,
+): ExpectedImportOwnerDecision {
+  if (expectedOwnerId === undefined) return "allow";
+  const uuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (typeof expectedOwnerId !== "string" || !uuid.test(expectedOwnerId)) {
+    return "invalid";
+  }
+  return expectedOwnerId === authenticatedOwnerId ? "allow" : "mismatch";
+}
+
+/**
+ * A single v2-only field opts the entire request into v2 validation. Keeping
+ * this list explicit prevents a partially upgraded client from falling through
+ * to the legacy response contract.
+ */
+export function isV2SaveProtocolRequest(
+  body: V2SaveProtocolBody,
+  spots: SaveProtocolSpot[] | undefined,
+): boolean {
+  return body.protocol_version === 2 ||
+    Object.prototype.hasOwnProperty.call(body, "protocol_generation") ||
+    Object.prototype.hasOwnProperty.call(body, "destination_intent") ||
+    Object.prototype.hasOwnProperty.call(body, "expected_destinations") ||
+    !!spots?.some((spot) =>
+      Object.prototype.hasOwnProperty.call(spot, "resolution_id")
+    );
+}
+
+/** Complete v2 shape validation shared by the live handler and unit tests. */
+export function validateV2SaveProtocol(
+  importNonce: unknown,
+  spots: SaveProtocolSpot[] | undefined,
+  body: V2SaveProtocolBody,
+): string | null {
+  const uuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (body.protocol_version !== 2 || body.protocol_generation !== "v2") {
+    return "protocol_version=2 and protocol_generation=v2 are required";
+  }
+  if (typeof importNonce !== "string" || !uuid.test(importNonce)) {
+    return "import_nonce must be a UUID";
+  }
+  if (!Array.isArray(spots) || spots.length < 1 || spots.length > 20) {
+    return "spots must contain 1..20 items";
+  }
+  if (
+    spots.some((spot) =>
+      !uuid.test(spot.client_nonce ?? "") ||
+      typeof spot.resolution_id !== "string" || !uuid.test(spot.resolution_id)
+    )
+  ) {
+    return "every v2 spot needs UUID client_nonce and resolution_id";
+  }
+  const expected = body.expected_destinations;
+  if (
+    !Number.isInteger(expected) || (expected as number) < 1 ||
+    (expected as number) > 2000
+  ) {
+    return "expected_destinations must be an integer from 1..2000";
+  }
+  const destinations = body.destination_intent;
+  if (
+    !Array.isArray(destinations) || destinations.length < 1 ||
+    destinations.length > 400
+  ) {
+    return "destination_intent must be a non-empty bounded array";
+  }
+  const itemNonces = new Set(spots.map((spot) => spot.client_nonce));
+  for (const raw of destinations) {
+    const destination = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw as Record<string, unknown>
+      : null;
+    if (
+      !destination ||
+      typeof destination.item_nonce !== "string" ||
+      !uuid.test(destination.item_nonce) ||
+      !itemNonces.has(destination.item_nonce) ||
+      typeof destination.destination_nonce !== "string" ||
+      !uuid.test(destination.destination_nonce) ||
+      !["wishlist", "table", "list", "new_list"].includes(
+        String(destination.destination_kind ?? ""),
+      )
+    ) {
+      return "each destination must be bound to a submitted item with UUID nonces";
     }
-    return [...ids];
+  }
+  return null;
+}
+
+export interface InlineCompletenessItem {
+  id?: string;
+  item_nonce?: string;
+}
+
+/**
+ * Prepare the exact per-request inline claims after a v2 enqueue.
+ *
+ * The SQL response is scoped to submitted nonces, but this filter is retained
+ * at the function boundary for rolling-deploy compatibility with an older RPC
+ * that returned every item in the job. Each item gets a distinct claimant so
+ * two items resolving to the same Place id cannot both re-enter the provider
+ * single-flight under one shared claim owner.
+ */
+export function buildInlineCompletenessClaims<T extends InlineCompletenessItem>(
+  enqueuedItems: readonly T[],
+  submittedItemNonces: ReadonlySet<string>,
+  nextClaimant: () => string = () => crypto.randomUUID(),
+): Array<{ item: T; workerId: string }> {
+  return enqueuedItems
+    .filter((item) =>
+      typeof item.id === "string" && item.id.length > 0 &&
+      typeof item.item_nonce === "string" &&
+      submittedItemNonces.has(item.item_nonce)
+    )
+    .map((item) => ({ item, workerId: nextClaimant() }));
+}
+
+export interface LegacySaveSunsetDecision {
+  minimumBuild: number | null;
+  observedBuild: number | null;
+  belowFloor: boolean;
+  reject: boolean;
+}
+
+/**
+ * LEGACY_SAVE_MIN_BUILD is measurable even before enforcement. Deploys start in
+ * warn mode; LEGACY_SAVE_ENFORCEMENT=reject is the later, explicit sunset lever.
+ * Missing/invalid client metadata is conservatively build 0 once a floor exists.
+ */
+export function evaluateLegacySaveSunset(
+  minimumBuildRaw: string | null | undefined,
+  enforcementRaw: string | null | undefined,
+  clientBuildRaw: unknown,
+): LegacySaveSunsetDecision {
+  const parsedMinimum = Number(minimumBuildRaw);
+  const minimumBuild = Number.isSafeInteger(parsedMinimum) && parsedMinimum > 0
+    ? parsedMinimum
+    : null;
+  const parsedObserved = typeof clientBuildRaw === "number"
+    ? clientBuildRaw
+    : typeof clientBuildRaw === "string" && clientBuildRaw.trim() !== ""
+    ? Number(clientBuildRaw)
+    : NaN;
+  const observedBuild =
+    Number.isSafeInteger(parsedObserved) && parsedObserved >= 0
+      ? parsedObserved
+      : null;
+  const belowFloor = minimumBuild !== null &&
+    (observedBuild ?? 0) < minimumBuild;
+  return {
+    minimumBuild,
+    observedBuild,
+    belowFloor,
+    reject: belowFloor && enforcementRaw?.trim().toLowerCase() === "reject",
+  };
 }

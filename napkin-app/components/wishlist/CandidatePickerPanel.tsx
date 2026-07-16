@@ -73,6 +73,11 @@ export interface CandidatePickerPanelProps {
      */
     onToggleTicked: (key: string) => void;
     /**
+     * Once a v2 request starts, its item/destination payload is immutable. Keep
+     * the same selection visible for a replay while still allowing PIN to retry.
+     */
+    selectionLocked?: boolean;
+    /**
      * Note text value — owned by ImportLinkSheet so it survives
      * picking ↔ editing-match transitions.
      */
@@ -139,6 +144,7 @@ export function CandidatePickerPanel({
     palette: paletteProp,
     ticked,
     onToggleTicked,
+    selectionLocked = false,
     noteText,
     onNoteChange,
     onShareToTable,
@@ -155,8 +161,9 @@ export function CandidatePickerPanel({
     const palette = paletteProp ?? (Colors[scheme] as Palette);
 
     const toggleCandidate = useCallback((c: ResolvedCandidate) => {
+        if (selectionLocked) return;
         onToggleTicked(keyFor(c));
-    }, [onToggleTicked]);
+    }, [onToggleTicked, selectionLocked]);
 
     const tickedCandidates = useMemo(
         () => candidates.filter((c) => ticked.has(keyFor(c)) && !c.already_wishlisted),
@@ -240,7 +247,8 @@ export function CandidatePickerPanel({
                             onCorrect={() => onCorrectRow(c)}
                             onOpenRestaurant={onOpenRestaurant}
                             palette={palette}
-                            hideCorrect={hideCorrect}
+                            hideCorrect={hideCorrect || selectionLocked}
+                            selectionLocked={selectionLocked}
                             extraMurmur={rowMurmur ? rowMurmur(c) : null}
                         />
                     );
@@ -249,7 +257,9 @@ export function CandidatePickerPanel({
 
             {/* Footer murmur */}
             <Text style={[styles.footerMurmur, { color: palette.textMuted }]}>
-                {tickedCount === 0
+                {selectionLocked
+                    ? 'selection held for a safe retry'
+                    : tickedCount === 0
                     ? 'tap a spot to select it'
                     : tickedCount === 1
                     ? `1 spot selected`
@@ -272,7 +282,8 @@ export function CandidatePickerPanel({
                     >
                         <TextInput
                             value={noteText}
-                            onChangeText={onNoteChange}
+                            onChangeText={selectionLocked ? undefined : onNoteChange}
+                            editable={!selectionLocked}
                             placeholder="what made it memorable…"
                             placeholderTextColor={palette.textMuted}
                             multiline
@@ -317,18 +328,22 @@ export function CandidatePickerPanel({
                                         {chosenTable.name}
                                     </Text>
                                 </Text>
-                                <Pressable
-                                    onPress={onClearTable}
-                                    hitSlop={8}
-                                    accessibilityLabel="remove table selection"
-                                    style={styles.clearTableButton}
-                                >
-                                    <Text style={[Type.caption, { color: palette.textMuted }]}>
-                                        {'×'}
-                                    </Text>
-                                </Pressable>
+                                {!selectionLocked ? (
+                                    <Pressable
+                                        onPress={onClearTable}
+                                        hitSlop={8}
+                                        accessibilityLabel="remove table selection"
+                                        style={styles.clearTableButton}
+                                    >
+                                        <Text
+                                            style={[Type.caption, { color: palette.textMuted }]}
+                                        >
+                                            {'×'}
+                                        </Text>
+                                    </Pressable>
+                                ) : null}
                             </>
-                        ) : (
+                        ) : !selectionLocked ? (
                             <Pressable
                                 onPress={onShareToTable}
                                 hitSlop={8}
@@ -338,7 +353,7 @@ export function CandidatePickerPanel({
                                     share to a table
                                 </Text>
                             </Pressable>
-                        )}
+                        ) : null}
                     </View>
                     {hasGhostTicked && (
                         <Text style={[Type.caption, styles.ghostNote, { color: palette.textMuted }]}>
@@ -363,6 +378,8 @@ interface CandidateRowProps {
     palette: Palette;
     /** TICKET-072: when true, suppresses the terracotta "fix" affordance. */
     hideCorrect?: boolean;
+    /** Immutable v2 replay: keep the selected row visible but non-editable. */
+    selectionLocked?: boolean;
     /**
      * TICKET-072: extra murmur appended after city · cuisine.
      * e.g. "their 4.5" for handoff receive rows.
@@ -379,6 +396,7 @@ function CandidateRow({
     onOpenRestaurant,
     palette,
     hideCorrect,
+    selectionLocked,
     extraMurmur,
 }: CandidateRowProps) {
     const r = candidate.restaurant;
@@ -404,7 +422,7 @@ function CandidateRow({
             accessibilityRole="checkbox"
             accessibilityState={{ checked: isAlreadySaved ? true : checked }}
             accessibilityLabel={`${checked ? 'Remove' : 'Add'} ${r.name ?? 'restaurant'}`}
-            onPress={isAlreadySaved ? undefined : onToggle}
+            onPress={isAlreadySaved || selectionLocked ? undefined : onToggle}
             style={[
                 styles.row,
                 { opacity: (checked || isAlreadySaved) ? 1 : 0.45 },

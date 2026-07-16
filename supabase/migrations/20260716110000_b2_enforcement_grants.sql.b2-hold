@@ -51,6 +51,40 @@ BEGIN
 END;
 $entry_columns$;
 
+-- Preserve the exact client-safe UPDATE surface established by TICKET-159.
+-- Keep this list static: newly-added columns remain server-only until they are
+-- deliberately reviewed, and both photo_url and supper_id stay excluded.
+GRANT UPDATE (
+    id,
+    user_id,
+    restaurant_id,
+    place_id,
+    user_place_id,
+    rating,
+    content,
+    dish_description,
+    cooked_by,
+    value_profile,
+    visited_at,
+    created_at,
+    updated_at,
+    table_id,
+    table_night_id,
+    visibility,
+    vibe_rating,
+    flavor_rating,
+    service_rating,
+    value_rating,
+    reaction_count,
+    comment_count,
+    top_emojis,
+    public_reaction_count,
+    public_reply_count,
+    public_top_emojis,
+    client_nonce,
+    liked
+) ON TABLE public.entries TO authenticated;
+
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.entry_photos
     FROM PUBLIC, anon, authenticated;
 

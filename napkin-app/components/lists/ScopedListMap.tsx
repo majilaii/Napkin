@@ -53,8 +53,10 @@ type Palette = typeof Colors.light;
 export interface ScopedListMapProps {
     /** Mappable pins for THIS list (listEntriesToWishlistMapItems). */
     items: WishlistMapItem[];
-    /** Rows without a usable coordinate — a quiet, non-interactive murmur. */
+    /** Rows without a usable coordinate. */
     unmappableCount: number;
+    /** Creator-only repair affordance; absent keeps the murmur read-only. */
+    onOpenUnmapped?: () => void;
     userCoords: GeoLatLng | null;
     locationStatus: LocationStatus;
     /** Event-like focus (row-locate / pin-tap): repeat taps re-fire via `seq`,
@@ -176,6 +178,7 @@ function ScopedListMarker({ item, selected, palette, onPress }: ListMarkerProps)
 export function ScopedListMap({
     items,
     unmappableCount,
+    onOpenUnmapped,
     userCoords,
     locationStatus,
     focusRequest,
@@ -402,14 +405,21 @@ export function ScopedListMap({
 
             {/* Unmappable murmur — quiet, non-interactive (the rows already list them). */}
             {unmappableCount > 0 ? (
-                <View
+                <Pressable
+                    onPress={onOpenUnmapped}
+                    disabled={!onOpenUnmapped}
                     style={[styles.murmur, { top: insets.top + CHROME_TOP, backgroundColor: frostBg }, Shadow.ambient]}
-                    pointerEvents="none"
+                    accessibilityRole={onOpenUnmapped ? 'button' : undefined}
+                    accessibilityLabel={
+                        onOpenUnmapped
+                            ? `repair ${unmappableCount} ${unmappableCount === 1 ? 'spot' : 'spots'} not on the map`
+                            : undefined
+                    }
                 >
                     <Text style={[styles.murmurText, { color: palette.textMuted }]}>
                         {`${unmappableCount} ${unmappableCount === 1 ? 'spot isn’t' : 'spots aren’t'} on the map`}
                     </Text>
-                </View>
+                </Pressable>
             ) : null}
 
             {/* Attribution — ToS-required ghosted caption, maptiler mode only. */}
@@ -457,7 +467,8 @@ const styles = StyleSheet.create({
         position: 'absolute',
         alignSelf: 'center',
         paddingHorizontal: 14,
-        paddingVertical: 7,
+        minHeight: 40,
+        justifyContent: 'center',
         borderRadius: 999,
     },
     murmurText: {

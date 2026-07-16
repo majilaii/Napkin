@@ -396,7 +396,7 @@ function RootLayoutNav() {
         >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="auth" options={{ headerShown: false }} />
-          {/* TICKET-107: first-sign-in onboarding stack (name · city · teach) */}
+          {/* TICKET-107/204: first-sign-in onboarding (name · photo · city · follows?) */}
           <Stack.Screen name="onboarding" options={{ headerShown: false }} />
           <Stack.Screen
             name="create-entry"
