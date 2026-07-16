@@ -309,6 +309,8 @@ CREATE TABLE public.job_runs (
 );
 
 CREATE INDEX job_runs_job_started_idx ON public.job_runs (job_name, started_at DESC);
+CREATE UNIQUE INDEX job_runs_job_fence_idx
+    ON public.job_runs (job_name, fence_token);
 CREATE INDEX job_runs_retry_idx ON public.job_runs (status, next_attempt_at);
 
 CREATE TABLE public.email_outbox (

@@ -444,7 +444,10 @@ BEGIN
     SELECT r.* INTO v_previous
     FROM public.job_runs r
     WHERE r.job_name = p_job_name
-    ORDER BY r.started_at DESC, r.id DESC
+    -- The singleton lease fence is the per-job monotonic run order.  Do not
+    -- use started_at/UUID here: several retries can occur in one transaction,
+    -- where now()-backed timestamps tie and UUID ordering is random.
+    ORDER BY r.fence_token DESC
     LIMIT 1
     FOR UPDATE;
     IF FOUND THEN
@@ -519,7 +522,7 @@ BEGIN
     SELECT r.cursor INTO v_resume_cursor
     FROM public.job_runs r
     WHERE r.job_name = p_job_name AND r.status = 'ok'
-    ORDER BY r.finished_at DESC, r.id DESC
+    ORDER BY r.fence_token DESC
     LIMIT 1;
 
     INSERT INTO public.job_runs (
@@ -1920,7 +1923,7 @@ BEGIN
     FROM public.job_runs r
     WHERE r.job_name = p_job_name AND r.id <> p_run_id
       AND r.finished_at IS NOT NULL
-    ORDER BY r.started_at DESC LIMIT 1;
+    ORDER BY r.fence_token DESC LIMIT 1;
     v_has_previous := FOUND;
     v_stuck_alarm := COALESCE(p_backlog_count, 0) > 0
         AND v_has_previous

@@ -901,6 +901,7 @@ DECLARE
     u1 uuid := '19610000-0000-4000-8000-000000000001';
     u2 uuid := '19610000-0000-4000-8000-000000000002';
     t1 uuid := '19610000-2000-4000-8000-000000000001';
+    unauthorized_table uuid := '19619999-0000-4000-8000-000000000001';
     r1 uuid := '19610000-1000-4000-8000-000000000001';
     c text := 'https://ftvmseaqwwlcxtdlvxxz.supabase.co/storage/v1/object/public/entry-photos/approved/19610000-0000-4000-8000-000000000001/'||repeat('c',64)||'.jpg';
     d text := 'https://ftvmseaqwwlcxtdlvxxz.supabase.co/storage/v1/object/public/entry-photos/approved/19610000-0000-4000-8000-000000000001/'||repeat('d',64)||'.jpg';
@@ -916,6 +917,14 @@ BEGIN
     -- An approved upload survives a failed sink transaction unbound, and the
     -- identical client retry can bind it exactly once after the unrelated
     -- authorization error is corrected.
+    INSERT INTO public.tables (id,owner_id,name)
+    VALUES (unauthorized_table,u2,'Unauthorized Moderation Table');
+    INSERT INTO public.table_members (table_id,member_id,role)
+    VALUES (unauthorized_table,u2,'admin');
+    ASSERT public.is_table_member(unauthorized_table,u2)
+       AND NOT public.is_table_member(unauthorized_table,u1),
+      'failed-entry fixture did not create a real unauthorized Table';
+
     INSERT INTO public.image_hash_verdicts (sha256,verdict,likelihoods)
     VALUES (repeat('7',64),'pass','{}') ON CONFLICT DO NOTHING;
     INSERT INTO public.user_image_objects (
@@ -932,7 +941,7 @@ BEGIN
           'restaurant_id',r1,'rating',4,'visited_at',now(),
           'client_nonce',retry_nonce,'photo_url',retry_url,
           'photo_urls',pg_catalog.jsonb_build_array(retry_url)
-        ),ARRAY['19619999-0000-4000-8000-000000000001'::uuid],ARRAY[u1],NULL
+        ),ARRAY[unauthorized_table],ARRAY[u1],NULL
       );
     EXCEPTION WHEN OTHERS THEN
       caught:=SQLERRM LIKE '%table_not_authorized%';
@@ -1143,7 +1152,8 @@ BEGIN
     )), 'failed post-PUT cleanup was not reclaimable';
     ASSERT public.fn_finish_staging_gc(
       crashed_stage_id,'stage-crash-2',true,NULL
-    ) AND NOT EXISTS (
+    ), 'reclaimed post-PUT cleanup finish was rejected';
+    ASSERT NOT EXISTS (
       SELECT 1 FROM public.staging_reservations r WHERE r.id=crashed_stage_id
     ), 'reclaimed post-PUT cleanup did not reach terminal removal';
 
@@ -1326,8 +1336,9 @@ BEGIN
     ASSERT public.fn_claim_moderation_job(
       'alarm_selftest','backoff-too-soon',60,'ops@example.invalid') IS NULL,
       'immediate retry bypassed next_attempt_at';
-    ASSERT (SELECT holder IS NULL AND lease_expires IS NULL FROM public.job_leases
-            WHERE job_name='alarm_selftest'),
+    ASSERT (SELECT l.holder IS NULL AND l.lease_expires IS NULL
+            FROM public.job_leases l
+            WHERE l.job_name='alarm_selftest'),
       'backoff denial did not release newly-acquired lease';
     UPDATE public.job_runs SET next_attempt_at=now()-interval '1 second' WHERE id=run_id;
     j:=public.fn_claim_moderation_job('alarm_selftest','backoff-2',60,'ops@example.invalid');
@@ -1375,6 +1386,14 @@ BEGIN
         ASSERT public.fn_fail_moderation_job(
           job,holder,token,run_id,'forced failure',now(),'ops@example.invalid'),
           format('%s forced failure was not fenced',job);
+        -- Make the old started_at/UUID ordering fail deterministically. Every
+        -- run in this DO shares transaction-stable now(); a max UUID on the
+        -- first failed run must not make attempt 3 rediscover attempt 1.
+        IF job='grandfather' AND attempt=1 THEN
+          UPDATE public.job_runs
+          SET id='ffffffff-ffff-ffff-ffff-ffffffffffff'
+          WHERE id=run_id;
+        END IF;
       END LOOP;
       ASSERT (SELECT count(*)=1 FROM public.email_outbox o
               WHERE o.job_name=job AND o.alarm_kind='retry_exhausted'),
@@ -1641,7 +1660,7 @@ BEGIN
     ASSERT j @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('id',legacy_queue)),
       'fully-unreferenced legacy queue was not reclaimed';
     j:=public.fn_unlink_gc_ref(legacy_queue,'legacy-share-2');
-    ASSERT j->>'legacy_path'=legacy_url,
+    ASSERT j->>'legacy_path'=(u1::text||'/shared-legacy.jpg'),
       'legacy bytes did not become deletable after the final sink cleared';
     ASSERT public.fn_finish_gc_queue(legacy_queue,'legacy-share-2',true,NULL),
       'legacy shared-path queue could not finish';
@@ -1834,7 +1853,8 @@ BEGIN
       caught:=SQLERRM LIKE '%account_deleting%';
     END;
     ASSERT caught AND EXISTS (
-      SELECT 1 FROM public.image_object_refs WHERE object_id=bound_object_id
+      SELECT 1 FROM public.image_object_refs r
+      WHERE r.object_id=bound_object_id
     ), 'tombstoned NULL bind unlinked an existing approved ref';
 
     -- Simulate the paused handler's approved PUT arriving after freeze.  The
