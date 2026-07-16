@@ -11,7 +11,7 @@ import { useRouter } from 'expo-router';
 import { useCompleteOnboarding } from '@/hooks/onboarding/useCompleteOnboarding';
 import { getPreviewOnboardingOnLaunchCached } from '@/lib/devPrefs';
 import { useAuth } from '@/providers/AuthProvider';
-import { type OnboardingDraft, useOnboardingDraft } from './OnboardingDraftContext';
+import { type OnboardingDraft, useOnboardingDraft } from '@/app/onboarding/OnboardingDraftContext';
 
 const COMPLETION_ERROR =
     "We couldn't finish setup. Check your connection and try again.";

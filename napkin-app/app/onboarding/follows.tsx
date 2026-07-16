@@ -27,7 +27,7 @@ import { useFollow } from '@/hooks/users/useFollow';
 import { CoDinerFollowCard } from '@/components/feed/CoDinerFollowCard';
 import { resolveEmptyState } from '@/components/feed/feedEmptyStateGate';
 import { onboardingStyles as s } from './styles';
-import { useFinishOnboarding } from './useFinishOnboarding';
+import { useFinishOnboarding } from '@/hooks/onboarding/useFinishOnboarding';
 
 export default function OnboardingFollowsScreen() {
     const scheme = useColorScheme() ?? 'light';

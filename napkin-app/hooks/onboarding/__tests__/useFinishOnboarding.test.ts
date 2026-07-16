@@ -7,7 +7,7 @@ jest.mock('@/lib/devPrefs', () => ({
 jest.mock('@/hooks/onboarding/useCompleteOnboarding', () => ({
     useCompleteOnboarding: jest.fn(),
 }));
-jest.mock('./OnboardingDraftContext', () => ({
+jest.mock('@/app/onboarding/OnboardingDraftContext', () => ({
     useOnboardingDraft: jest.fn(),
 }));
 
@@ -17,8 +17,8 @@ import { useRouter } from 'expo-router';
 import { useCompleteOnboarding } from '@/hooks/onboarding/useCompleteOnboarding';
 import { getPreviewOnboardingOnLaunchCached } from '@/lib/devPrefs';
 import { useAuth } from '@/providers/AuthProvider';
-import { useOnboardingDraft } from './OnboardingDraftContext';
-import { useFinishOnboarding } from './useFinishOnboarding';
+import { useOnboardingDraft } from '@/app/onboarding/OnboardingDraftContext';
+import { useFinishOnboarding } from '../useFinishOnboarding';
 
 const replace = jest.fn();
 const mutate = jest.fn();
