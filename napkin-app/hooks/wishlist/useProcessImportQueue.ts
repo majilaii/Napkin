@@ -64,6 +64,11 @@ import {
 } from '@/lib/importQueue';
 import { evaluateFastPath, isContentGate } from '@/lib/importFastPath';
 import {
+    fusePhotoSlideText,
+    photoImportContextFromDiagnostics,
+    type PhotoImportContext,
+} from '@/lib/photoImportFusion';
+import {
     VIDEO_DOWNLOAD_TIMEOUT_MS,
     OCR_WALLCLOCK_BUDGET_MS,
     STT_TIMEOUT_MS,
@@ -482,6 +487,26 @@ export function useProcessImportQueue() {
                         // ghost-save this chunk; the switch is re-read per chunk.
                         forceGhost = resolveData?.ghost_mode === true;
                         results = forceGhost ? [] : (resolveData?.results ?? []);
+                        const observedTypeRejected = resolveData?.type_rejected;
+                        if (
+                            typeof observedTypeRejected === 'number' &&
+                            Number.isFinite(observedTypeRejected)
+                        ) {
+                            const priorTypeRejected =
+                                typeof m.diag?.type_rejected === 'number' &&
+                                Number.isFinite(m.diag.type_rejected)
+                                    ? Math.max(0, Math.floor(m.diag.type_rejected))
+                                    : 0;
+                            // Max is resume-safe: if a crash lands before the paid
+                            // resolution checkpoint, retrying this chunk cannot
+                            // double-count the same Places drops.
+                            setImportDiagnostics(m.jobId, {
+                                type_rejected: Math.max(
+                                    priorTypeRejected,
+                                    Math.max(0, Math.floor(observedTypeRejected)),
+                                ),
+                            });
+                        }
                         // P2 checkpoint: persist the paid-for resolution BEFORE the
                         // save, so a crash anywhere in the save/route window resumes
                         // straight to save — no double Places spend. commitChunk
@@ -515,23 +540,29 @@ export function useProcessImportQueue() {
                 }
             }
 
-            // Save (idempotent on frozen nonces).
+            // Save (idempotent on frozen nonces). A fully type-rejected chunk has
+            // no inputs by design: advance it as failed/needs-look without calling
+            // save_spots with an invalid empty array (and never ghost-stage it).
             let saveResult: LargeSaveResult;
-            try {
-                saveResult = await saveChunkSpots(
-                    jobNow,
-                    forceGhost ? buildGhostSpots(chunk) : buildResolvedSpots(results, chunk),
-                );
-            } catch (err) {
-                // save_spots has no rate bucket — a 429 HERE is not a budget signal,
-                // so everything non-deterministic (429/503/5xx/network/session) is a
-                // plain resumable transient. The resolve checkpoint above means the
-                // retry re-saves WITHOUT re-resolving (P2). Deterministic → poison.
-                if (classifyDrainError(errStatus(err), isSessionError(err)) !== 'deterministic') {
+            const saveInputs = forceGhost
+                ? buildGhostSpots(chunk)
+                : buildResolvedSpots(results, chunk);
+            if (saveInputs.length === 0) {
+                saveResult = { results: [] };
+            } else {
+                try {
+                    saveResult = await saveChunkSpots(jobNow, saveInputs);
+                } catch (err) {
+                    // save_spots has no rate bucket — a 429 HERE is not a budget signal,
+                    // so everything non-deterministic (429/503/5xx/network/session) is a
+                    // plain resumable transient. The resolve checkpoint above means the
+                    // retry re-saves WITHOUT re-resolving (P2). Deterministic → poison.
+                    if (classifyDrainError(errStatus(err), isSessionError(err)) !== 'deterministic') {
+                        return;
+                    }
+                    bumpChunkAttempts(jobNow);
                     return;
                 }
-                bumpChunkAttempts(jobNow);
-                return;
             }
 
             const outcomes = toChunkOutcomes(chunk, results, saveResult, forceGhost);
@@ -587,6 +618,26 @@ export function useProcessImportQueue() {
             // until a re-drain re-parses it). Stays false on a re-drain; the persisted
             // diag covers that side.
             let fastPath = false;
+            // A review hold re-enters with spots already checkpointed, so recover the
+            // photo-only request context from the equally durable diagnostics. Fresh
+            // photo resolution replaces this below with the exact carousel count.
+            let photoImportContext: PhotoImportContext | null =
+                photoImportContextFromDiagnostics(m.diag);
+            let photoSlideCount = photoImportContext?.slide_count ?? 0;
+            let typeRejected =
+                typeof m.diag?.type_rejected === 'number' &&
+                Number.isFinite(m.diag.type_rejected)
+                    ? Math.max(0, Math.floor(m.diag.type_rejected))
+                    : 0;
+            let channelDiagnostics: Record<string, unknown> | null = null;
+            const mergeTypeRejected = (data: Pick<ResolveUrlData, 'type_rejected'> | null) => {
+                const count = data?.type_rejected;
+                if (typeof count !== 'number' || !Number.isFinite(count)) return;
+                // A fallback may retry the same candidate set. Max attributes the
+                // deepest observed drop count without double-counting retries.
+                typeRejected = Math.max(typeRejected, Math.max(0, Math.floor(count)));
+                setImportDiagnostics(m.jobId, { type_rejected: typeRejected });
+            };
 
             // First process: acquire candidates (OCR for video / caption for url),
             // build + PERSIST spots (frozen nonces) before the save.
@@ -683,6 +734,7 @@ export function useProcessImportQueue() {
                                 fastPathGate = 'cheap_error'; // structural — never review-holds
                             }
                             if (cheap) {
+                                mergeTypeRejected(cheap);
                                 const cheapCandidates = cheap.candidates ?? [];
                                 fastPathGate = evaluateFastPath({
                                     provider,
@@ -728,42 +780,85 @@ export function useProcessImportQueue() {
                                 // The photo marker's `text` is '' (no transcript), so
                                 // latestPageText is null — but the caption (desc)
                                 // carries the city/hashtag signal Places needs. Route
-                                // it through latestPageText so the shared fusion below
-                                // becomes [ocr, desc] and the diag caption_chars stays
-                                // truthful. (Video posts never reach here.)
+                                // Keep it in latestPageText for truthful diagnostics;
+                                // fusePhotoSlideText adds it once as [caption] below.
+                                // (Video posts never reach here.)
                                 latestPageText = desc || null;
                                 const slideUrls =
                                     (perception as { slideUrls?: string[] }).slideUrls ?? [];
                                 // TICKET-180 stage 2/6: photo branch — on-device slide OCR.
                                 if (slideUrls.length > 0) setImportStage(m.jobId, 'reading slides');
-                                const slideFiles: string[] = [];
-                                for (const slideUrl of slideUrls) {
+                                const slideFiles: Array<string | null> = Array(
+                                    slideUrls.length,
+                                ).fill(null);
+                                for (
+                                    let slideIndex = 0;
+                                    slideIndex < slideUrls.length;
+                                    slideIndex++
+                                ) {
                                     // Shared budget across all slides — the signed CDN
                                     // is not referer-bound (verified), so m.url (the
                                     // share link in any form) is a fine Referer.
                                     const remaining = Math.max(0, stageDeadlineAt - Date.now());
                                     if (remaining <= 0) break;
                                     const file = await downloadSlideImage(
-                                        slideUrl,
+                                        slideUrls[slideIndex],
                                         m.url as string,
                                         remaining,
                                     );
-                                    if (file) slideFiles.push(file);
+                                    slideFiles[slideIndex] = file;
                                 }
-                                photoSlides = slideFiles.length;
-                                if (slideFiles.length > 0) {
-                                    try {
-                                        const res = await extractFromImages(slideFiles, {
-                                            ocrBudgetMs: OCR_WALLCLOCK_BUDGET_MS,
-                                        });
-                                        ocrLines = res?.ocr?.length ?? 0;
-                                        ocrText =
-                                            (res?.ocr ?? []).filter(Boolean).join('\n').trim() ||
-                                            null;
-                                    } catch {
-                                        // slide OCR is best-effort — fall back to {url}
+                                photoSlides = slideFiles.filter(
+                                    (file): file is string => file != null,
+                                ).length;
+                                photoSlideCount = slideUrls.length;
+                                photoImportContext =
+                                    photoSlideCount > 0
+                                        ? { source_kind: 'photo', slide_count: photoSlideCount }
+                                        : null;
+                                const slideLines: string[][] = slideFiles.map(() => []);
+                                if (photoSlides > 0) {
+                                    // Each native call sees ONE slide, so its internal
+                                    // dedupe cannot erase repeated cross-slide lines.
+                                    // One JS deadline spans the entire loop; every call
+                                    // receives only what remains, never a fresh 45s.
+                                    const ocrDeadlineAt = Date.now() + OCR_WALLCLOCK_BUDGET_MS;
+                                    for (
+                                        let slideIndex = 0;
+                                        slideIndex < slideFiles.length;
+                                        slideIndex++
+                                    ) {
+                                        const file = slideFiles[slideIndex];
+                                        if (!file) continue;
+                                        const remainingOcrBudgetMs = Math.max(
+                                            0,
+                                            ocrDeadlineAt - Date.now(),
+                                        );
+                                        if (remainingOcrBudgetMs <= 0) break;
+                                        try {
+                                            const res = await extractFromImages([file], {
+                                                ocrBudgetMs: remainingOcrBudgetMs,
+                                            });
+                                            slideLines[slideIndex] = (res?.ocr ?? [])
+                                                .map((line) => line.trim())
+                                                .filter(Boolean);
+                                        } catch {
+                                            // One bad slide must not erase the others.
+                                        }
                                     }
-                                    for (const f of slideFiles) deleteCachedSlide(f);
+                                    ocrLines = slideLines.reduce(
+                                        (sum, lines) => sum + lines.length,
+                                        0,
+                                    );
+                                }
+                                // Preserve the source carousel shape even when a
+                                // slide download/OCR yields no lines. The caption is
+                                // fused exactly once in its own labelled section.
+                                ocrText = photoSlideCount > 0
+                                    ? fusePhotoSlideText(slideLines, desc)
+                                    : null;
+                                for (const file of slideFiles) {
+                                    if (file) void deleteCachedSlide(file);
                                 }
                             }
                             // TICKET-180 stage 3/6: video branch — pull the mp4 (only
@@ -850,18 +945,17 @@ export function useProcessImportQueue() {
                                 break; // extraction ran — don't re-download
                             }
                             // TICKET-176: a photo post now FUSES on-device slide OCR
-                            // with the caption ([ocrText, caption]) — the spots live
-                            // on the slides. The TICKET-175 force-null survives ONLY
-                            // when NO slide text was produced (old binary / all
-                            // downloads flaked / blank slides): then extractedText
-                            // stays null and the server's {url} thumbnail-vision tier
-                            // gets a chance (167 behavior, harmless when dead). A
-                            // video post is unaffected (isPhotoPost false).
-                            extractedText =
-                                isPhotoPost && !ocrText
-                                    ? null
-                                    : [ocrText, latestPageText].filter(Boolean).join('\n').trim() ||
-                                      null;
+                            // with the caption as explicit labelled sections — the
+                            // spots live on the slides. Empty slide sections are kept
+                            // so slide_count and the prompt's boundaries stay aligned;
+                            // the ordinary zero-candidate URL fallback still gets a
+                            // photo-aware caption pass. Video posts are unaffected.
+                            extractedText = isPhotoPost
+                                ? ocrText
+                                : [ocrText, latestPageText]
+                                    .filter(Boolean)
+                                    .join('\n')
+                                    .trim() || null;
                             // R3: did escalation add ANY new perception text? OCR
                             // lines (video frames OR photo slides), on-device STT, or
                             // a page-text CHANNEL the retry recovered that the cheap
@@ -876,13 +970,16 @@ export function useProcessImportQueue() {
                         // "why did this import flop?" question is unanswerable. R9:
                         // fast_path + gate ride in the diag (MERGE via
                         // setImportDiagnostics) so a re-drain reports truthfully.
-                        const diag = {
+                        channelDiagnostics = {
                             provider,
                             page: !!perception,
                             caption_chars: latestPageText?.length ?? 0,
                             tiktok_asr: perception?.hasTranscript ?? false,
                             video: downloadOk,
                             photo_post: isPhotoPost,
+                            // Exact carousel count used by the photo extractor cap.
+                            // Keep photo_slides below as the legacy/downloaded count.
+                            slide_count: photoSlideCount,
                             // TICKET-176: how many slides downloaded for the OCR pass
                             // (0 on a video post) — ocr_lines above now counts slide
                             // OCR too, so the pair explains a photo-list flop.
@@ -891,9 +988,12 @@ export function useProcessImportQueue() {
                             stt_chars: sttChars,
                             fast_path: fastPath,
                             gate: fastPathGate,
+                            type_rejected: typeRejected,
                         };
-                        console.log('[import] channels', JSON.stringify(diag));
-                        setImportDiagnostics(m.jobId, diag);
+                        // Checkpoint the perception channels before the server
+                        // resolve. The final log/write below replaces the seeded
+                        // rejection count after Places has answered.
+                        setImportDiagnostics(m.jobId, channelDiagnostics);
 
                         // TICKET-156: capture the fresh (unexpired) provider cover
                         // + IG handle from the LAST perception (the retry loop may
@@ -928,10 +1028,17 @@ export function useProcessImportQueue() {
                             'resolve-url',
                             {
                                 body: extractedText
-                                    ? { extracted_text: extractedText }
-                                    : { url: m.url, supports_large_lists: true },
+                                    ? {
+                                        extracted_text: extractedText,
+                                        ...(photoImportContext ?? {}),
+                                    }
+                                    : {
+                                        url: m.url,
+                                        supports_large_lists: true,
+                                    },
                             },
                         );
+                        mergeTypeRejected(resolved);
                         // A large Maps list → build the durable job + HOLD for the kickoff
                         // sheet. Feature-detect on `mode` (never a version): an old server
                         // or a ≤20 list returns normal candidates and falls through to
@@ -975,6 +1082,7 @@ export function useProcessImportQueue() {
                             const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
                                 body: { url: m.url },
                             });
+                            mergeTypeRejected(fallback);
                             candidates = fallback?.candidates ?? [];
                             resolvedSourceType = fallback?.source_type ?? resolvedSourceType;
                             // listCount must describe the response that produced candidates —
@@ -1014,8 +1122,29 @@ export function useProcessImportQueue() {
                     const resolved = await callEdgeFn<ResolveUrlData>('resolve-url', {
                         body: { extracted_text: extractedText },
                     });
+                    mergeTypeRejected(resolved);
                     candidates = resolved?.candidates ?? [];
                 }
+
+                // Final photo-only cap: protects the generic {url} fallback and
+                // new clients talking to an older server that ignores photo
+                // context. Video and every non-photo import keep their existing
+                // candidate limits.
+                if (photoImportContext) {
+                    candidates = candidates.slice(0, photoImportContext.slide_count);
+                }
+
+                // Emit the attributable diagnostic only AFTER every resolve/fallback
+                // has had a chance to report its Places type drops. This must run
+                // before the empty-candidate branch removes the manifest, otherwise
+                // an all-rejected photo misfire leaves only a misleading zero.
+                const finalDiagnostics = {
+                    ...(channelDiagnostics ?? {}),
+                    slide_count: photoSlideCount,
+                    type_rejected: typeRejected,
+                };
+                console.log('[import] channels', JSON.stringify(finalDiagnostics));
+                setImportDiagnostics(m.jobId, finalDiagnostics);
 
                 // ── TICKET-164 [R3] no-new-evidence escalation guard ────────────
                 // A CONTENT-reason gate reject (stance / count_short / ghost /
@@ -1195,7 +1324,14 @@ export function useProcessImportQueue() {
             if (tableIds.length === 0) {
                 result = await callEdgeFn<SaveImportSpotsResult>('resolve-url', {
                     action: 'save_spots',
-                    body: { import_nonce: m.importNonce, spots, source, notify_done: true, pin_wishlist: pinWishlist },
+                    body: {
+                        import_nonce: m.importNonce,
+                        spots,
+                        source,
+                        notify_done: true,
+                        pin_wishlist: pinWishlist,
+                        ...(photoImportContext ?? {}),
+                    },
                 });
             } else {
                 for (let i = 0; i < tableIds.length; i++) {
@@ -1212,6 +1348,7 @@ export function useProcessImportQueue() {
                             source,
                             notify_done: i === 0,
                             ...(i === 0 ? { pin_wishlist: true } : {}),
+                            ...(photoImportContext ?? {}),
                         },
                     });
                     if (i === 0) result = r; // first call pinned the wishlist + did routing

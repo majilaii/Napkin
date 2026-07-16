@@ -145,6 +145,88 @@ export function mapVerifiedRestaurantIds(
     return map;
 }
 
+// ── TICKET-195: import-only Places venue-type backstop ───────────────────────
+
+/**
+ * Google Places types accepted at the import candidate resolve seam.
+ *
+ * This allowlist deliberately lives in resolve-url (not places-search): search-tab
+ * results and ghost upserts must keep their existing broad Places behaviour. A
+ * candidate is accepted when the TOP text-search result intersects this list.
+ */
+export const IMPORT_PLACE_TYPE_ALLOWLIST = [
+    'restaurant',
+    'bar',
+    'cafe',
+    'bakery',
+    'meal_takeaway',
+    'meal_delivery',
+    'night_club',
+    'food',
+] as const;
+
+const IMPORT_PLACE_TYPE_SET = new Set<string>(IMPORT_PLACE_TYPE_ALLOWLIST);
+
+export interface ImportPlaceTypeCandidate {
+    categories?: unknown;
+}
+
+export interface ImportPlaceSearchResult<T> {
+    candidates: T[];
+    /** True only when a top result existed but failed the venue-type allowlist. */
+    typeRejected: boolean;
+}
+
+/** True when a Places result carries at least one allowed food/drink type. */
+export function hasAllowedImportPlaceType(categories: unknown): boolean {
+    if (!Array.isArray(categories)) return false;
+    return categories.some(
+        (category) =>
+            typeof category === 'string' &&
+            IMPORT_PLACE_TYPE_SET.has(category.trim().toLowerCase()),
+    );
+}
+
+/**
+ * Run an import-only Places text search and enforce the top-result type gate.
+ *
+ * The search dependency is injected so Deno tests never call the network. If the
+ * top result is not a food/drink venue, the WHOLE candidate search is rejected —
+ * we intentionally do not promote a lower-ranked result. An empty search is an
+ * ordinary no-match (ghost-capable), not a type rejection.
+ */
+export async function resolveImportPlaceSearch<T extends ImportPlaceTypeCandidate>(
+    search: () => T[] | Promise<T[]>,
+): Promise<ImportPlaceSearchResult<T>> {
+    const candidates = await search();
+    const top = candidates[0];
+    if (!top) return { candidates, typeRejected: false };
+    if (!hasAllowedImportPlaceType(top.categories)) {
+        return { candidates: [], typeRejected: true };
+    }
+    return { candidates, typeRejected: false };
+}
+
+/**
+ * Compatibility guard for save_spots.
+ *
+ * New large-import clients understand the top-level `type_rejected` result flag
+ * and omit the row before save. Older clients drop unknown top-level fields but
+ * preserve `place` verbatim, so resolve_spots also carries
+ * `place.type_rejected=true`. The server recognizes both forms and refuses the
+ * row before any restaurant upsert / wishlist RPC.
+ */
+export function isTypeRejectedSaveSpot(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const spot = value as Record<string, unknown>;
+    if (spot['type_rejected'] === true) return true;
+    const place = spot['place'];
+    return !!place &&
+        typeof place === 'object' &&
+        !Array.isArray(place) &&
+        (place as Record<string, unknown>)['type_rejected'] === true;
+}
+
 // ── TICKET-152: resolve_spots + pin_wishlist decision helpers ─────────────────
 // These are the *decision* helpers only (pure, testable). The network-touching
 // resolve core (staged → resolveCandidateToPlace in parallel → similarity gate)

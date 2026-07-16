@@ -24,9 +24,38 @@ import {
     isSpotPinnable,
     detectSourceTypeFromHost,
     isWebExtractionSource,
+    isTypeRejectedSaveSpot,
 } from './_helpers.ts';
 import { deriveClientNonce } from '../handoff/nonce.ts';
 import { loadHandoffWriteAuthorization, type LiveSpotsClient } from '../handoff/snapshot.ts';
+
+// ── TICKET-195: type-rejected import rows never reach a write ────────────────
+
+Deno.test('isTypeRejectedSaveSpot: recognizes new top-level marker', () => {
+    assertEquals(isTypeRejectedSaveSpot({ type_rejected: true, place: null }), true);
+});
+
+Deno.test('isTypeRejectedSaveSpot: recognizes nested compatibility marker preserved by old clients', () => {
+    assertEquals(
+        isTypeRejectedSaveSpot({
+            external_id: null,
+            place: { type_rejected: true },
+        }),
+        true,
+    );
+});
+
+Deno.test('isTypeRejectedSaveSpot: ordinary resolved and ghost spots remain writable', () => {
+    assertEquals(
+        isTypeRejectedSaveSpot({ place: { external_id: 'ChIJ-food', categories: ['restaurant'] } }),
+        false,
+    );
+    assertEquals(
+        isTypeRejectedSaveSpot({ place: { external_id: null, name: 'Unresolved venue' } }),
+        false,
+    );
+    assertEquals(isTypeRejectedSaveSpot(null), false);
+});
 
 // ── 1. Source passthrough — object not stringified ────────────────────────────
 //

@@ -68,12 +68,16 @@ export interface ResolveSpotResult {
     confidence?: string;
     /** true ⇒ no verified Places match (similarity-gate miss / no result). */
     ghost: boolean;
+    /** TICKET-195: non-food/drink Places top result; never send to save_spots. */
+    type_rejected?: true;
 }
 
 export interface ResolveSpotsData {
     results: ResolveSpotResult[];
     /** true ⇒ kill-switch (RESOLVE_SPOTS_GHOST_ONLY) — no Places ran. */
     ghost_mode: boolean;
+    /** Count rejected by the import-only Places venue-type backstop. */
+    type_rejected?: number;
 }
 
 export interface LargeSaveSpotResult {
@@ -460,16 +464,18 @@ export function ghostSpot(it: LargeImportJobItem): LargeImportSpotInput {
 
 /** Build save_spots input from resolve_spots results — iterate the CHUNK
  *  (authoritative), look up by nonce, and ghost-save any defensively-missing
- *  result rather than dropping it. */
+ *  result rather than dropping it. The one intentional drop is an explicit
+ *  server type rejection: it is scene noise, never a ghost venue. */
 export function buildResolvedSpots(
     results: ResolveSpotResult[],
     chunk: LargeImportJobItem[],
 ): LargeImportSpotInput[] {
     const byNonce = new Map(results.map((r) => [r.client_nonce, r]));
-    return chunk.map((it) => {
+    return chunk.flatMap((it): LargeImportSpotInput[] => {
         const r = byNonce.get(it.client_nonce);
-        if (!r) return ghostSpot(it);
-        return {
+        if (r?.type_rejected === true) return [];
+        if (!r) return [ghostSpot(it)];
+        return [{
             candidate_id: r.candidate_id ?? it.client_nonce,
             client_nonce: it.client_nonce,
             restaurant_id: r.restaurant_id ?? null,
@@ -479,7 +485,7 @@ export function buildResolvedSpots(
             table_id: null,
             table_client_nonce: null,
             place: r.place ?? null,
-        };
+        }];
     });
 }
 

@@ -85,6 +85,8 @@ export interface ResolveUrlData {
      * count gate (handleVideoText only). ABSENT (undefined) = an old server →
      * escalate; null = no marker → the count gate passes. Never a denominator. */
     list_count_raw?: number | null;
+    /** TICKET-195: candidates dropped by the import-only Places type backstop. */
+    type_rejected?: number;
 }
 
 export type ResolveUrlState = 'idle' | 'loading' | 'success' | 'error';
