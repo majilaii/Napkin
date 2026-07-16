@@ -513,7 +513,7 @@ begin
     end if;
 
     v_window_start := pg_catalog.to_timestamp(
-        pg_catalog.floor(pg_catalog.extract(epoch from v_now) / p_window_seconds) * p_window_seconds
+        pg_catalog.floor(pg_catalog.date_part('epoch', v_now) / p_window_seconds) * p_window_seconds
     );
     v_window_end := v_window_start + (p_window_seconds * interval '1 second');
 
@@ -526,7 +526,7 @@ begin
     return query select
         v_count <= p_max,
         case when v_count <= p_max then 0
-             else pg_catalog.greatest(0, pg_catalog.extract(epoch from (v_window_end - v_now))::integer)
+             else pg_catalog.greatest(0, pg_catalog.date_part('epoch', v_window_end - v_now)::integer)
         end;
 end;
 $fn$;
