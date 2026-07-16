@@ -71,7 +71,6 @@ const userHeaders = {
 };
 const serviceHeaders = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
     apikey: SERVICE_ROLE_KEY,
 };
 
@@ -240,7 +239,11 @@ console.log('✓ required-resolution fn_save_import_spot overload');
 
 const drain = await jsonFetch('/functions/v1/restaurant-completeness', {
     method: 'POST',
-    headers: { ...serviceHeaders, 'x-completeness-cron': CRON_SECRET },
+    headers: {
+        'Content-Type': 'application/json',
+        apikey: SERVICE_ROLE_KEY,
+        'x-completeness-cron': CRON_SECRET,
+    },
     body: JSON.stringify({ action: 'drain', batch_limit: 1, sweep_limit: 1 }),
 });
 assertStatus('default-inert completeness drain', drain, 200);

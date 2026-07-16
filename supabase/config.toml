@@ -16,6 +16,11 @@ verify_jwt = false
 # Public table-invite landing page — no JWT required (browsers, unfurl bots)
 verify_jwt = false
 
+[functions.restaurant-completeness]
+# Owner JWTs and scheduled drains are authorized independently by the handler.
+# This also permits modern opaque sb_secret_* keys, which are not JWTs.
+verify_jwt = false
+
 [auth]
 # TICKET-090: password-recovery emails 302 to these deep links. Without the
 # allowlist entry Supabase falls back to site_url and the link dead-ends.
