@@ -29,7 +29,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useCoDiners } from '@/hooks/feed/useCoDiners';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
-import { useFinishOnboarding } from './useFinishOnboarding';
+import { useFinishOnboarding } from '@/hooks/onboarding/useFinishOnboarding';
 
 export default function OnboardingCityScreen() {
     const scheme = useColorScheme() ?? 'light';
