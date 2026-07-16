@@ -4,7 +4,7 @@
  *
  * Grammar:
  *   kicker: "noted · tue · kono" (verb + date + companions if any)
- *   restaurant: italic Newsreader masthead
+ *   restaurant: upright Newsreader masthead
  *   pull-quote: user's content as serif-italic with em-dash + 2px terracotta left rule
  *   empty-note variant: "— no note. the [dish] spoke for itself." or "— no note."
  *   rating: GiantRatingNumeral (X/5 form) in foot row
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_700Bold',
     },
     restaurantName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_500Medium',
         fontSize: 22,
         lineHeight: 27,
         letterSpacing: -0.3,
@@ -211,7 +211,7 @@ const styles = StyleSheet.create({
         marginTop: 18,
     },
     emptyNote: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_400Regular',
         fontSize: 13,
         lineHeight: 20,
     },

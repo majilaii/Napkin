@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
         gap: 4,
     },
     summaryCount: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Manrope_500Medium',
         fontSize: 13,
         fontVariant: ['tabular-nums'],
     },

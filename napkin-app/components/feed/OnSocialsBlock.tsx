@@ -24,7 +24,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     PlacesCredit,
@@ -41,7 +41,8 @@ type Palette = typeof Colors.light;
 type Glyph = React.ComponentProps<typeof Ionicons>['name'];
 
 const CARD_WIDTH = 136;
-const MEDIA_HEIGHT = Math.round((CARD_WIDTH * 4) / 3); // 3:4 portrait
+const MEDIA_HEIGHT = 118;
+const CARD_HEIGHT = 166;
 
 function platformGlyph(platform: SocialsCard['platform']): Glyph {
     if (platform === 'tiktok') return 'logo-tiktok';
@@ -146,49 +147,72 @@ function SocialsClipCard({
     const router = useRouter();
 
     const signal = socialsSignalLine(card);
+    const mediaBackground = chipTint(card.restaurant_id, palette);
 
     return (
         <PressableScale
             onPress={() =>
                 router.push({ pathname: '/restaurant/[id]', params: { id: card.restaurant_id } })
             }
-            style={[styles.card, { backgroundColor: palette.card }, Shadow.note]}
+            style={styles.card}
             haptic="light"
             accessibilityRole="button"
             accessibilityLabel={`${card.name}. ${signal}`}
+            testID="social-card"
         >
-            <View style={[styles.media, { backgroundColor: chipTint(card.restaurant_id, palette) }]}>
-                {thumbUrl ? (
-                    <ExpoImage
-                        source={{ uri: thumbUrl }}
-                        style={StyleSheet.absoluteFillObject}
-                        contentFit="cover"
-                        recyclingKey={thumbUrl}
-                        transition={120}
-                        onError={() => thumbFailureKey && onPhotoError(thumbFailureKey)}
-                    />
-                ) : heroUrl ? (
-                    <ExpoImage
-                        source={{ uri: heroUrl }}
-                        style={StyleSheet.absoluteFillObject}
-                        contentFit="cover"
-                        recyclingKey={heroUrl}
-                        transition={120}
-                        onError={() => heroFailureKey && onPhotoError(heroFailureKey)}
-                    />
-                ) : (
-                    <Ionicons
-                        name={platformGlyph(card.platform)}
-                        size={26}
-                        color={palette.textMuted}
-                    />
-                )}
+            <View
+                style={[styles.mediaFrame, { backgroundColor: mediaBackground }, Shadow.ambient]}
+                testID="social-media-frame"
+            >
+                <View
+                    style={[
+                        styles.media,
+                        {
+                            backgroundColor: mediaBackground,
+                            borderColor: palette.imageOutline,
+                        },
+                    ]}
+                >
+                    {thumbUrl ? (
+                        <ExpoImage
+                            source={{ uri: thumbUrl }}
+                            style={StyleSheet.absoluteFillObject}
+                            contentFit="cover"
+                            recyclingKey={thumbUrl}
+                            transition={120}
+                            onError={() => thumbFailureKey && onPhotoError(thumbFailureKey)}
+                        />
+                    ) : heroUrl ? (
+                        <ExpoImage
+                            source={{ uri: heroUrl }}
+                            style={StyleSheet.absoluteFillObject}
+                            contentFit="cover"
+                            recyclingKey={heroUrl}
+                            transition={120}
+                            onError={() => heroFailureKey && onPhotoError(heroFailureKey)}
+                        />
+                    ) : (
+                        <Ionicons
+                            name={platformGlyph(card.platform)}
+                            size={26}
+                            color={palette.textMuted}
+                        />
+                    )}
+                </View>
             </View>
             <View style={styles.caption}>
-                <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
+                <Text
+                    style={[styles.name, { color: palette.text }]}
+                    numberOfLines={1}
+                    testID="social-name"
+                >
                     {card.name}
                 </Text>
-                <Text style={[styles.signal, { color: palette.textMuted }]} numberOfLines={1}>
+                <Text
+                    style={[styles.signal, { color: palette.textSecondary }]}
+                    numberOfLines={1}
+                    testID="social-signal"
+                >
                     {signal}
                 </Text>
             </View>
@@ -198,38 +222,47 @@ function SocialsClipCard({
 
 const styles = StyleSheet.create({
     railContent: {
-        paddingHorizontal: Spacing.lg,
+        paddingHorizontal: 20,
+        paddingBottom: 6,
         gap: 12,
     },
     card: {
         width: CARD_WIDTH,
-        borderRadius: Radius.lg,
-        overflow: 'hidden',
+        height: CARD_HEIGHT,
+    },
+    mediaFrame: {
+        width: CARD_WIDTH,
+        height: MEDIA_HEIGHT,
+        borderRadius: 14,
     },
     media: {
         width: CARD_WIDTH,
         height: MEDIA_HEIGHT,
+        borderRadius: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
     },
     aggregateCredit: {
-        marginHorizontal: Spacing.lg,
+        marginHorizontal: 20,
         marginTop: 6,
     },
     caption: {
-        paddingHorizontal: 10,
-        paddingTop: 8,
-        paddingBottom: 10,
-        gap: 3,
+        paddingTop: 9,
     },
     name: {
         fontFamily: 'Newsreader_500Medium',
-        fontSize: 16,
-        lineHeight: 19,
+        fontSize: 15,
+        fontWeight: '500',
+        lineHeight: 18,
+        height: 18,
     },
     signal: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-        lineHeight: 15,
+        fontSize: 13,
+        lineHeight: 18,
+        height: 18,
+        marginTop: 3,
     },
 });

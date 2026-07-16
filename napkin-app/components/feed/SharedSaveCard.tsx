@@ -173,7 +173,7 @@ export function SharedSaveCard({
             >
                 <View style={styles.restaurantText}>
                     {isPending ? (
-                        <Text style={[Type.headlineItalic, { color: palette.textMuted, fontSize: 17 }]}>
+                        <Text style={[styles.pendingName, { color: palette.textMuted }]}>
                             reading it...
                         </Text>
                     ) : (
@@ -269,11 +269,17 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     restaurantName: {
-        ...Type.headlineItalic,
+        fontFamily: 'Newsreader_500Medium',
+        fontWeight: '500',
         fontSize: 17,
         lineHeight: 22,
         marginBottom: 1,
-    } as any,
+    },
+    pendingName: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 13,
+        lineHeight: 18,
+    },
     note: {
         marginTop: 6,
     },

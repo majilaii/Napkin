@@ -38,11 +38,12 @@ import {
     Text,
     View,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { pickDefaultTier, populatedTiers } from '@/lib/restaurantSignal';
 import { derivePlaceTags } from '@/lib/placeTags';
 import { FRIEND_TEST } from '@/constants/flags';
@@ -60,6 +61,7 @@ import {
     restaurantFromPlace,
     type RestaurantPageRestaurant,
     type PageVisit,
+    type PhotoItem,
 } from '@/hooks/restaurants/useRestaurantPage';
 import {
     useLookupByPlaceId,
@@ -81,6 +83,7 @@ import {
     BottomActionBar,
 } from '@/components/restaurants';
 import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippings';
+import type { ClippingCardData } from '@/components/restaurants/ClippingCard';
 import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { AddToListSheet } from '@/components/lists';
@@ -88,6 +91,8 @@ import { SetTableSheet } from '@/components/suppers';
 // TICKET-095: gather the table (propose a future date here)
 import { GatherSheet } from '@/components/gatherings';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
+import { PlacesCredit } from '@/components/ui/PlacesCredit';
+import { resolveRestaurantMastheadPhoto } from '@/lib/restaurantMastheadPhoto';
 
 type Palette = typeof Colors.light;
 
@@ -153,6 +158,88 @@ function formatQuoteDate(dateStr: string): string {
 function priceTierLabel(level: number | null): string {
     if (level == null) return '';
     return '$'.repeat(Math.max(1, Math.min(4, level)));
+}
+
+function RestaurantMastheadPhotoPlate({
+    restaurant,
+    entryPhotos,
+    clips,
+    palette,
+}: {
+    restaurant: RestaurantPageRestaurant;
+    entryPhotos: readonly PhotoItem[];
+    clips: readonly ClippingCardData[];
+    palette: Palette;
+}) {
+    const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
+
+    React.useEffect(() => {
+        setFailedUrls(new Set());
+    }, [restaurant.id]);
+
+    const photo = resolveRestaurantMastheadPhoto({
+        entryPhotos,
+        clips,
+        restaurant,
+        failedUrls,
+    });
+    if (!photo) return null;
+
+    return (
+        <View style={styles.mastheadPhotoBlock} testID="restaurant-masthead-photo-block">
+            <View
+                style={[
+                    styles.mastheadPhotoShadow,
+                    { backgroundColor: palette.surfaceJournalLow },
+                    Shadow.ambient,
+                ]}
+            >
+                <View
+                    accessible
+                    accessibilityRole="image"
+                    accessibilityLabel={`${restaurant.name} photo`}
+                    style={[
+                        styles.mastheadPhotoPlate,
+                        {
+                            backgroundColor: palette.surfaceJournalLow,
+                            borderColor: palette.imageOutline,
+                        },
+                    ]}
+                >
+                    <ExpoImage
+                        source={{ uri: photo.url }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        transition={160}
+                        recyclingKey={photo.url}
+                        onError={() => setFailedUrls((current) => new Set(current).add(photo.url))}
+                        accessible={false}
+                        testID="restaurant-masthead-photo"
+                    />
+                    {photo.placesWash ? (
+                        <View
+                            pointerEvents="none"
+                            style={[
+                                StyleSheet.absoluteFill,
+                                {
+                                    backgroundColor: palette.placesOverlayTint,
+                                    opacity: palette.placesOverlayOpacity,
+                                },
+                            ]}
+                        />
+                    ) : null}
+                </View>
+            </View>
+            {photo.credit ? (
+                <PlacesCredit
+                    credits={[photo.credit]}
+                    photoCount={1}
+                    testID="restaurant-masthead-places-credit"
+                    style={styles.mastheadPhotoCredit}
+                />
+            ) : null}
+        </View>
+    );
 }
 
 // ── Screen ─────────────────────────────────────────────────────────────────────
@@ -611,9 +698,9 @@ export default function RestaurantScreen() {
                         </View>
                     ) : null}
 
-                    {/* Map hero (design 2a) — faded warm map + pin standing in for the
-                        photo we'll never have; identity block sits on the fade. Falls
-                        back to a flat paper header when there are no coordinates. */}
+                    {/* Map hero (design 2a) — faded warm map keeps the page's geographic
+                        identity and left-masthead hierarchy. Falls back to flat paper
+                        when there are no coordinates. */}
                     {restaurant ? (
                         <MapHero
                             lat={heroCoords?.lat ?? null}
@@ -624,6 +711,18 @@ export default function RestaurantScreen() {
                             relationshipLine={relationshipLine}
                             onBack={() => router.back()}
                             topInset={insets.top}
+                            palette={palette}
+                        />
+                    ) : null}
+
+                    {/* One inset 3:2 memory plate: own entry → durable clip thumb →
+                        attributed Places hero. No safe photo leaves the masthead
+                        exactly as the pure-type/map treatment above. */}
+                    {restaurant ? (
+                        <RestaurantMastheadPhotoPlate
+                            restaurant={restaurant}
+                            entryPhotos={pageData?.photos?.from_your_table ?? []}
+                            clips={clippings}
                             palette={palette}
                         />
                     ) : null}
@@ -959,6 +1058,22 @@ const styles = StyleSheet.create({
     loadingCenter: {
         paddingVertical: Spacing.xxl,
         alignItems: 'center',
+    },
+    mastheadPhotoBlock: {
+        marginHorizontal: Spacing.lg,
+    },
+    mastheadPhotoShadow: {
+        aspectRatio: 3 / 2,
+        borderRadius: Radius.lg,
+    },
+    mastheadPhotoPlate: {
+        flex: 1,
+        borderRadius: Radius.lg,
+        borderWidth: 1,
+        overflow: 'hidden',
+    },
+    mastheadPhotoCredit: {
+        marginTop: Spacing.sm,
     },
     // Tag chips — Places taxonomy ("fine dining", "small plates", "wine bar")
     tagRow: {

@@ -54,7 +54,7 @@ describe('feedByline', () => {
 });
 
 describe('feedMastheadDate', () => {
-    it('renders SMALL-CAPS weekday · month day', () => {
-        expect(feedMastheadDate(NOW)).toBe('SUNDAY · JULY 5');
+    it('renders lowercase weekday · month day for the masthead type token', () => {
+        expect(feedMastheadDate(NOW)).toBe('sunday · july 5');
     });
 });

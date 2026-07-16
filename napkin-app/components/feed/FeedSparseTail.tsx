@@ -2,12 +2,13 @@
  * FeedSparseTail — TICKET-103, purified in TICKET-125. Closes a thin FOLLOWING
  * feed with a quiet caught-up mark.
  *
- *   · you're caught up ·        ← typographic mark, not a card
+ *   ────
+ *   you're caught up            ← quiet end mark, not a card
  *
  * Rendered by FollowingFeed's ListFooterComponent when the sparse-tail gate is
- * true (feed reached end-of-list with < 8 rows). The caught-up mark is a quiet
- * italic murmur — no background, no chrome — per the "space does the sectioning"
- * rule. The "Worth a look" DiscoveryLedger that used to sit below it moved to
+ * true (feed reached end-of-list with < 8 rows). A 64pt ghost rule and faint
+ * functional label close the ledger without becoming another card. The "Worth
+ * a look" DiscoveryLedger that used to sit below it moved to
  * the For You mode (TICKET-125) — Following is now pure follows, nothing else.
  */
 import React from 'react';
@@ -21,18 +22,28 @@ export function FeedSparseTail() {
     const palette = Colors[scheme];
 
     return (
-        <View>
-            <Text style={[styles.caught, { color: palette.textMuted }]}>· you&rsquo;re caught up ·</Text>
+        <View style={styles.wrap}>
+            <View style={[styles.rule, { backgroundColor: palette.ghostRule }]} />
+            <Text style={[styles.caught, { color: palette.textFaint }]}>you&rsquo;re caught up</Text>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
+    wrap: {
+        alignItems: 'center',
+        paddingTop: 26,
+        paddingBottom: 20,
+    },
+    rule: {
+        width: 64,
+        height: StyleSheet.hairlineWidth,
+        marginBottom: 10,
+    },
     caught: {
         textAlign: 'center',
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Manrope_500Medium',
         fontSize: 13,
-        marginTop: 30,
-        marginBottom: 26,
+        lineHeight: 18,
     },
 });

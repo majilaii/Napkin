@@ -1,13 +1,12 @@
 /**
  * FeedModeTabs — two-wide underline toggle for the Feed tab (TICKET-125).
  *
- * For You | Following. Adapted from SearchModeTabs (the locked toggle idiom,
- * decision 2): warm-paper background, upright functional labels, terracotta
- * underline + text on the active tab, and 44pt tap targets.
+ * For You | Following. Intrinsic-width labels mirror the approved masthead:
+ * active ink, terracotta underline, a ghosted rule, and 44pt tap targets.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export type FeedMode = 'for-you' | 'following';
@@ -27,7 +26,12 @@ export function FeedModeTabs({ mode, onModeChange }: Props) {
     const palette = Colors[scheme];
 
     return (
-        <View style={[styles.container, { backgroundColor: palette.background }]}>
+        <View
+            style={[
+                styles.container,
+                { backgroundColor: palette.background, borderBottomColor: palette.ghostRule },
+            ]}
+        >
             {TABS.map((tab) => {
                 const isActive = tab.mode === mode;
                 return (
@@ -43,8 +47,8 @@ export function FeedModeTabs({ mode, onModeChange }: Props) {
                             style={[
                                 styles.label,
                                 isActive
-                                    ? { color: palette.primary }
-                                    : { color: palette.textMuted },
+                                    ? { color: palette.text }
+                                    : { color: palette.textFaint },
                             ]}
                         >
                             {tab.label}
@@ -64,28 +68,34 @@ export function FeedModeTabs({ mode, onModeChange }: Props) {
 const styles = StyleSheet.create({
     container: {
         flexDirection: 'row',
-        paddingHorizontal: Spacing.md,
-        paddingBottom: Spacing.xs,
+        gap: 22,
+        marginHorizontal: 20,
+        marginTop: -5,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     tab: {
-        flex: 1,
+        minWidth: 44,
         height: 44,
         alignItems: 'center',
-        justifyContent: 'center',
+        justifyContent: 'flex-end',
+        paddingBottom: 9,
         position: 'relative',
     },
     tabPressed: {
         opacity: 0.7,
     },
     label: {
-        ...Type.titleMedium,
-        lineHeight: 22,
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+        fontWeight: '600',
+        lineHeight: 18,
+        letterSpacing: 0.26,
     },
     underline: {
         position: 'absolute',
         bottom: 0,
-        left: 8,
-        right: 8,
+        left: 0,
+        right: 0,
         height: 2,
         borderRadius: 1,
     },
