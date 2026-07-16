@@ -17,6 +17,8 @@ import {
     normalizePinWishlist,
     listOnlySaveKind,
     isGhostOnlyMode,
+    IMPORT_PLACE_TYPE_ALLOWLIST,
+    resolveImportPlaceSearch,
 } from './_helpers.ts';
 import { mapsItemsToStaged } from './mapsList.ts';
 
@@ -162,4 +164,46 @@ Deno.test('isGhostOnlyMode: any truthy value → on', () => {
     assertEquals(isGhostOnlyMode('true'), true);
     assertEquals(isGhostOnlyMode('on'), true);
     assertEquals(isGhostOnlyMode('yes'), true);
+});
+
+// ── 5. TICKET-195 import-only Places type backstop ───────────────────────────
+
+Deno.test('resolveImportPlaceSearch: every food/drink allowlist type accepts the top result', async () => {
+    for (const category of IMPORT_PLACE_TYPE_ALLOWLIST) {
+        let calls = 0;
+        const top = { id: `place-${category}`, categories: ['point_of_interest', category] };
+        const result = await resolveImportPlaceSearch(() => {
+            calls += 1;
+            return [top];
+        });
+        assertEquals(calls, 1, `${category}: injected search runs once`);
+        assertEquals(result, { candidates: [top], typeRejected: false }, `${category}: accepted`);
+    }
+});
+
+Deno.test('resolveImportPlaceSearch: non-venue top result is rejected and lower result is not promoted', async () => {
+    const foundation = {
+        id: 'foundation',
+        categories: ['non_profit_organization', 'point_of_interest'],
+    };
+    const lowerCafe = { id: 'lower-cafe', categories: ['cafe', 'food'] };
+    const result = await resolveImportPlaceSearch(() => [foundation, lowerCafe]);
+
+    assertEquals(result, {
+        candidates: [],
+        typeRejected: true,
+    }, 'the top result is authoritative; scene-text junk must not fall through');
+});
+
+Deno.test('resolveImportPlaceSearch: absent/malformed top types fail closed as type rejection', async () => {
+    for (const categories of [undefined, null, 'restaurant', [], [42]]) {
+        const result = await resolveImportPlaceSearch(() => [{ id: 'bad-types', categories }]);
+        assertEquals(result.typeRejected, true);
+        assertEquals(result.candidates, []);
+    }
+});
+
+Deno.test('resolveImportPlaceSearch: no Places result is ordinary no-match, not type rejection', async () => {
+    const result = await resolveImportPlaceSearch(() => [] as Array<{ categories: string[] }>);
+    assertEquals(result, { candidates: [], typeRejected: false });
 });

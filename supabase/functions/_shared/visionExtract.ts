@@ -3,7 +3,7 @@
  * TICKET-063 Step 2 (rewrites TICKET-060 Step 2).
  *
  * Exported functions (multi-candidate, TICKET-063):
- *   extractFromTextMulti(caption, signal?) → ExtractedCandidate[]
+ *   extractFromTextMulti(caption, signal?, max?, context?) → ExtractedCandidate[]
  *   extractFromVisionMulti(imageBase64, mimeType, caption?, signal?) → ExtractedCandidate[]
  *
  * Single-candidate wrappers (thin, for async screenshot path back-compat):
@@ -67,6 +67,18 @@ export const EXTRACTION_MODEL_DEFAULT = 'claude-haiku-4-5-20251001';
 // the last spot. Haiku output is cheap; headroom costs nothing.
 const MAX_TOKENS = 2048;
 
+/**
+ * Optional context for text extracted from a photo carousel. The app caps
+ * downloaded TikTok photo slides at 12, so accepting a larger value here would
+ * only let an untrusted request inflate the model/parser candidate budget.
+ */
+export interface PhotoExtractionContext {
+    sourceKind: 'photo';
+    slideCount: number;
+}
+
+const MAX_PHOTO_SLIDE_COUNT = 12;
+
 // ── System prompts ─────────────────────────────────────────────────────────────
 
 /**
@@ -76,7 +88,42 @@ const MAX_TOKENS = 2048;
  *   2. Infer city from hashtags/handle/context when explicit city is absent
  *   3. Return a top-level JSON array, one object per restaurant
  */
-function buildMultiSystemPrompt(cap: number): string {
+export function validPhotoSlideCount(context?: PhotoExtractionContext): number | null {
+    if (
+        context?.sourceKind !== 'photo' ||
+        !Number.isFinite(context.slideCount) ||
+        !Number.isInteger(context.slideCount) ||
+        context.slideCount < 1 ||
+        context.slideCount > MAX_PHOTO_SLIDE_COUNT
+    ) {
+        return null;
+    }
+    return context.slideCount;
+}
+
+export function buildMultiSystemPrompt(
+    cap: number,
+    context?: PhotoExtractionContext,
+): string {
+    const photoSlideCount = validPhotoSlideCount(context);
+    const effectiveCap = photoSlideCount ?? cap;
+    const photoModeBlock = photoSlideCount === null
+        ? ''
+        : `
+
+PHOTO CAROUSEL MODE — these rules OVERRIDE the video/general recall rules above:
+- Recommendations live in the creator's OVERLAY text, typically a repeated style
+  across slides with patterns such as "Name, Area" or "Name — dish". Use the
+  explicit [slide N of ${photoSlideCount}] sections as slide boundaries.
+- Incidental text visible in the photographed scene is scene noise, NOT a
+  recommendation. Do NOT extract neighboring storefront signs, posters, banners,
+  event/charity/foundation names, menu items, or text on street furniture merely
+  because it looks name-shaped or belongs to a real place.
+- Return AT MOST ONE venue per slide unless that slide's overlay or the [caption]
+  explicitly lists multiple venue recommendations.
+- When unsure whether a string is a creator recommendation or incidental scene
+  text, OMIT it. Do not emit a low-confidence candidate for ambiguous scene text.`;
+
     return `You are a restaurant extraction assistant. Given an image and/or text, extract ALL distinct restaurants mentioned or visible.
 Respond with ONLY a JSON array — no prose, no markdown, no wrapper object. Each element matches this schema:
 {
@@ -130,8 +177,8 @@ Rules:
 - city_inferred: set true when you inferred the city from context clues (hashtags, handle, phrases like "in soho", "my nyc picks") rather than an explicit label. Set false when the city is stated outright.
 - booking_url: only if explicitly visible (Resy, OpenTable URL). Otherwise null.
 - google_place_id: only if a Google Maps place_id is visible. Otherwise null.
-- If no restaurant is identifiable, return an empty array: []
-- Cap at ${cap} restaurants. If more are present, include only the first ${cap} mentioned.
+- If no restaurant is identifiable, return an empty array: []${photoModeBlock}
+- Cap at ${effectiveCap} restaurants. If more are present, include only the first ${effectiveCap} mentioned.
 - Output ONLY the JSON array. No explanation. No markdown fences.`;
 }
 
@@ -237,7 +284,7 @@ function coerceCandidate(p: unknown): ExtractedCandidate {
  *   4. If salvage also fails → return [] (never throws; fail-soft preserved).
  *
  * Elements that don't have a parseable name are filtered out.
- * Result is capped at 6.
+ * Result is capped at `max` (6 by default; video callers pass 12).
  */
 export function parseMultiExtractionResponse(raw: string, max = 6): ExtractedCandidate[] {
     const cleaned = raw
@@ -343,7 +390,8 @@ function salvageTruncatedArray(text: string): unknown[] | null {
 
 /**
  * Extract ALL restaurant info from text (caption/title/hashtags).
- * Returns ExtractedCandidate[] (0–6 entries).
+ * Returns ExtractedCandidate[] capped by `max`, or by the validated slide count
+ * when photo-carousel context is present.
  * On any error → fails soft to [].
  *
  * TICKET-063: multi-candidate, city inference, AbortSignal threading.
@@ -352,6 +400,7 @@ export async function extractFromTextMulti(
     caption: string,
     signal?: AbortSignal,
     max = 6,
+    context?: PhotoExtractionContext,
 ): Promise<ExtractedCandidate[]> {
     if (signal?.aborted) return [];
 
@@ -362,10 +411,16 @@ export async function extractFromTextMulti(
     }
 
     const modelId = Deno.env.get('EXTRACTION_MODEL') ?? EXTRACTION_MODEL_DEFAULT;
+    // Photo carousels use their validated slide count as the cap. With no photo
+    // context, the existing 6-cap default and video-listicle 12-cap are unchanged.
+    const photoSlideCount = validPhotoSlideCount(context);
+    const effectiveMax = photoSlideCount ?? max;
     // A higher cap (video listicles pass 12) needs a matching prompt instruction
     // AND a bigger token budget so the JSON array isn't truncated.
-    const system = max === 6 ? MULTI_SYSTEM_PROMPT : buildMultiSystemPrompt(max);
-    const maxTokens = max > 6 ? 2560 : MAX_TOKENS;
+    const system = context === undefined && max === 6
+        ? MULTI_SYSTEM_PROMPT
+        : buildMultiSystemPrompt(max, context);
+    const maxTokens = effectiveMax > 6 ? 2560 : MAX_TOKENS;
 
     const messages: AnthropicMessage[] = [{
         role: 'user',
@@ -377,7 +432,7 @@ export async function extractFromTextMulti(
 
     try {
         const raw = await callAnthropic(messages, modelId, apiKey, signal, system, maxTokens);
-        let parsed = parseMultiExtractionResponse(raw, max);
+        let parsed = parseMultiExtractionResponse(raw, effectiveMax);
         // TICKET-086c: a malformed response used to fail soft to [] with no
         // retry — the entire import silently read as "no spots found". One
         // re-ask at temperature 1 (temp-0 would reproduce the same malformed
@@ -394,7 +449,7 @@ export async function extractFromTextMulti(
             const retryRaw = await callAnthropic(
                 messages, modelId, apiKey, signal, system, maxTokens, 1,
             );
-            parsed = parseMultiExtractionResponse(retryRaw, max);
+            parsed = parseMultiExtractionResponse(retryRaw, effectiveMax);
             if (parsed.length > 0) {
                 console.warn('visionExtract: first parse yielded 0, retry rescued', parsed.length);
             }

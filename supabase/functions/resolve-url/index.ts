@@ -54,7 +54,9 @@ import {
     extractFromText,
     extractFromTextMulti,
     extractFromVisionMulti,
+    validPhotoSlideCount,
     type ExtractedCandidate,
+    type PhotoExtractionContext,
 } from '../_shared/visionExtract.ts';
 import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
 // TICKET-086c: dedupe/merge/rank + the Places similarity gate extracted to
@@ -198,6 +200,8 @@ interface ResolveUrlResponse {
     ig_nudge?: boolean;
     /** TICKET-063: advertised list count from the listicle heuristic (≤6). */
     list_count?: number | null;
+    /** TICKET-195: import candidates dropped by the Places venue-type backstop. */
+    type_rejected?: number;
     /**
      * TICKET-164: the UNCLAMPED, caption-first advertised list count for the import
      * fast-path count gate (`list_count` is clamped to ≤6 and must not be reused as
@@ -499,6 +503,22 @@ async function callPlacesSearch(
     return Array.isArray(candidates) ? candidates : [];
 }
 
+/**
+ * Import-candidate-only wrapper around places-search's broad text search.
+ * Search tab and ghost-upsert callers keep using callPlacesSearch directly.
+ */
+function callImportPlacesSearch(
+    query: string,
+    authHeader: string,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
+    signal: AbortSignal,
+): Promise<{ candidates: PlacesPayload[]; typeRejected: boolean }> {
+    return resolveImportPlaceSearch(() =>
+        callPlacesSearch(query, authHeader, supabaseUrl, supabaseAnonKey, signal)
+    );
+}
+
 // ── Exported decision helpers (TICKET-063 fix-pass-1, testable) ──────────────
 // Implementations live in _helpers.ts (no serve() call) so test files can
 // import them without triggering the HTTP server.
@@ -519,6 +539,8 @@ import {
     // photo fields, ever) + the deferred-job id collection.
     buildVerifiedUpsertInput,
     dedupeSuccessfulRestaurantIds,
+    resolveImportPlaceSearch,
+    isTypeRejectedSaveSpot,
     type SaveSpotPlacePayload,
     type SourceType,
 } from './_helpers.ts';
@@ -570,8 +592,15 @@ async function callPlacesDetails(
  * - If candidate has google_place_id: DB lookup by external_id first,
  *   then Places Details by id on miss (NEVER text-search for a place_id candidate).
  * - Otherwise: text search by name+city.
- * - Never-block: returns null on any failure.
+ * - Never-block: ordinary failures return { place: null, typeRejected: false }.
+ * - A text-search top result outside the food/drink allowlist is distinguishable
+ *   so callers can DROP it instead of turning it into a ghost.
  */
+interface CandidatePlaceResolution {
+    place: PlacesPayload | null;
+    typeRejected: boolean;
+}
+
 async function resolveCandidateToPlace(
     supabase: any,
     candidate: ExtractedCandidate,
@@ -579,8 +608,8 @@ async function resolveCandidateToPlace(
     supabaseUrl: string,
     supabaseAnonKey: string,
     signal: AbortSignal,
-): Promise<PlacesPayload | null> {
-    if (!candidate.name) return null;
+): Promise<CandidatePlaceResolution> {
+    if (!candidate.name) return { place: null, typeRejected: false };
 
     // ARCH-REVIEW-2 #8: if google_place_id → DB lookup first, else Places Details.
     // FIX #5: NEVER fall through to text search for a place_id candidate.
@@ -593,7 +622,7 @@ async function resolveCandidateToPlace(
         if (existing) {
             if (existing.verification === 'verified') {
                 // Verified row: return cached DB payload immediately.
-                return buildPlacesPayloadFromDb(existing, candidate);
+                return { place: buildPlacesPayloadFromDb(existing, candidate), typeRejected: false };
             }
             // Stale unverified row — attempt a Places Details refresh.
             // On success, the candidate flows the external_id save path which upserts
@@ -601,29 +630,31 @@ async function resolveCandidateToPlace(
             // On failure, degrade gracefully to what we have in DB (item 2's quarantine
             // keeps unverified rows out of Table shares regardless).
             try {
-                return await callPlacesDetails(
+                const place = await callPlacesDetails(
                     candidate.google_place_id,
                     authHeader,
                     supabaseUrl,
                     supabaseAnonKey,
                     signal,
                 );
+                return { place, typeRejected: false };
             } catch {
-                return buildPlacesPayloadFromDb(existing, candidate);
+                return { place: buildPlacesPayloadFromDb(existing, candidate), typeRejected: false };
             }
         }
         // DB miss → Places Details by id (binding #8 / fix #5: never text-search here).
         try {
-            return await callPlacesDetails(
+            const place = await callPlacesDetails(
                 candidate.google_place_id,
                 authHeader,
                 supabaseUrl,
                 supabaseAnonKey,
                 signal,
             );
+            return { place, typeRejected: false };
         } catch {
             // Fail-soft: unresolved → ghost candidate
-            return null;
+            return { place: null, typeRejected: false };
         }
     }
 
@@ -634,23 +665,28 @@ async function resolveCandidateToPlace(
         .filter(Boolean)
         .join(', ');
     try {
-        const results = await callPlacesSearch(
+        const { candidates: results, typeRejected } = await callImportPlacesSearch(
             query, authHeader, supabaseUrl, supabaseAnonKey, signal,
         );
+        if (typeRejected) return { place: null, typeRejected: true };
         const top = results[0] ?? null;
         // TICKET-086c similarity gate: a garbled name text-search returns SOME
         // popular place; accepting it blind masquerades as "resolved" and the
         // real spot silently leaves the funnel (post-Places dedupe can then
         // collapse two distinct spots onto the same wrong place). No plausible
         // name overlap → ghost instead; the review UI already handles ghosts.
-        if (top && !namesOverlap(candidate.name, top.name)) return null;
+        if (top && !namesOverlap(candidate.name, top.name)) {
+            return { place: null, typeRejected: false };
+        }
         // TICKET-177 locality guard: a garbled name can EXACT-match a real venue
         // in the wrong town ("Cartouche" for Kartuli → Cartouche, HERTFORD, while
         // the video said London). A result whose locality shares no token with
         // the extracted city/area becomes a ghost — visible + fixable in review
         // — instead of a confident wrong-town pin.
-        if (top && !localityConsistent(candidate, top)) return null;
-        return top;
+        if (top && !localityConsistent(candidate, top)) {
+            return { place: null, typeRejected: false };
+        }
+        return { place: top, typeRejected: false };
     } catch (e: any) {
         // A Places THROTTLE must stay distinguishable by callers that surface it as
         // a resumable 503 (TICKET-152 M3: resolve_spots reserves 429 for the import
@@ -658,7 +694,7 @@ async function resolveCandidateToPlace(
         // re-throwing the throttle is behavior-preserving for them (→ null → ghost),
         // exactly as before. Any other failure still degrades to a ghost here.
         if (e?.code === 'PLACES_RATE_LIMITED') throw e;
-        return null;
+        return { place: null, typeRejected: false };
     }
 }
 
@@ -693,8 +729,8 @@ function buildPlacesPayloadFromDb(row: any, fallback: ExtractedCandidate): Place
 // resolve_spots action both run: resolve each staged candidate to a Place in
 // parallel (the TICKET-086c similarity gate lives inside resolveCandidateToPlace).
 // It MUST stay here, not in the pure `_helpers.ts` — it does I/O (only the decision
-// helpers are pure-testable). Returns places index-aligned with `staged`, plus a
-// `throttled` flag set when a Places sub-call was rate-limited: handleUrlResolve
+// helpers are pure-testable). Returns places and type-rejection flags index-aligned
+// with `staged`, plus a `throttled` flag set when a Places sub-call was rate-limited: handleUrlResolve
 // ignores it (a throttled candidate stays null → ghost, exactly as before), while
 // resolve_spots surfaces it as a resumable 503 (M3 — a transient Places throttle
 // must never be mistaken for the terminal import_spots budget).
@@ -705,22 +741,33 @@ async function resolveStagedPlacesParallel(
     supabaseUrl: string,
     supabaseAnonKey: string,
     placeSignal: AbortSignal,
-): Promise<{ places: (PlacesPayload | null)[]; throttled: boolean }> {
+): Promise<{
+    places: (PlacesPayload | null)[];
+    typeRejectedByIndex: boolean[];
+    typeRejectedCount: number;
+    throttled: boolean;
+}> {
     let throttled = false;
-    const places = await Promise.all(
+    const resolutions = await Promise.all(
         staged.map(async (s) => {
-            if (placeSignal.aborted) return null;
+            if (placeSignal.aborted) return { place: null, typeRejected: false };
             try {
                 return await resolveCandidateToPlace(
                     supabase, s.extracted, authHeader, supabaseUrl, supabaseAnonKey, placeSignal,
                 );
             } catch (e: any) {
                 if (e?.code === 'PLACES_RATE_LIMITED') throttled = true;
-                return null;
+                return { place: null, typeRejected: false };
             }
         }),
     );
-    return { places, throttled };
+    const typeRejectedByIndex = resolutions.map((r) => r.typeRejected);
+    return {
+        places: resolutions.map((r) => r.place),
+        typeRejectedByIndex,
+        typeRejectedCount: typeRejectedByIndex.filter(Boolean).length,
+        throttled,
+    };
 }
 
 // ── Vision helpers (original single-candidate paths, unchanged) ───────────────
@@ -795,6 +842,7 @@ async function handleVisionExtract(
                 partial_source: null,
                 extracted_confidence: 'low',
                 needs_confirm: true,
+                type_rejected: 0,
             },
         });
     }
@@ -804,10 +852,13 @@ async function handleVisionExtract(
 
     const query = [extracted.name, extracted.city].filter(Boolean).join(', ');
     let placeCandidates: PlacesPayload[] = [];
+    let typeRejectedCount = 0;
     try {
-        placeCandidates = await callPlacesSearch(
+        const search = await callImportPlacesSearch(
             query, authHeader, supabaseUrl, supabaseAnonKey, abortController.signal,
         );
+        placeCandidates = search.candidates;
+        typeRejectedCount = search.typeRejected ? 1 : 0;
     } catch { /* zero-candidate */ }
 
     const googlePlaceIds = placeCandidates.map((p) => p.id).filter(Boolean);
@@ -863,7 +914,7 @@ async function handleVisionExtract(
         })
     );
 
-    if (candidates.length === 0 && extracted.name) {
+    if (candidates.length === 0 && extracted.name && typeRejectedCount === 0) {
         // FIX #2: ghost candidates use google_place_id=null and external_id=null.
         // The sentinel 'ghost_pending' caused cross-user row collapse in fn_save_import_spot.
         // The RPC mints a stable 'ghost_{user}_{nonce}' external_id at save time.
@@ -906,6 +957,7 @@ async function handleVisionExtract(
             candidates,
             partial_source: null,
             extracted_confidence: extracted.confidence,
+            type_rejected: typeRejectedCount,
         },
     });
 }
@@ -1254,7 +1306,35 @@ async function handleSaveSpots(
     // Per-request cap — generous enough for video listicles (extraction caps at
     // 12) with abuse headroom. Was 6 (the old text-only spec), which silently
     // dropped spots 7+ of an 11-spot import → only 6 of 11 saved (TICKET-082).
-    const capped = spots.slice(0, 20);
+    const requestedCapped = spots.slice(0, 20);
+    // TICKET-195: resolve_spots carries a nested marker specifically so older
+    // clients preserve the rejection through to this server. Refuse it BEFORE
+    // membership reads, restaurant upserts, or fn_save_import_spot; it is scene
+    // text noise, not a ghost restaurant.
+    const typeRejectedSpots = requestedCapped.filter(isTypeRejectedSaveSpot);
+    const capped = requestedCapped.filter((spot) => !isTypeRejectedSaveSpot(spot));
+    const typeRejectedResults = typeRejectedSpots.map((spot) => ({
+        candidate_id: spot.candidate_id,
+        client_nonce: spot.client_nonce,
+        status: 'failed' as const,
+        error: 'place type is not an importable food or drink venue',
+        code: 'TYPE_REJECTED',
+    }));
+    if (capped.length === 0) {
+        return jsonResponse({
+            data: {
+                results: typeRejectedResults,
+                summary: {
+                    saved: 0,
+                    already_pinned: 0,
+                    ghost: 0,
+                    failed: typeRejectedResults.length,
+                },
+                job_id: null,
+                type_rejected: typeRejectedResults.length,
+            },
+        });
+    }
 
     // ── TICKET-072 ARCH-REVIEW-2 #1/#4 + TICKET-077: handoff_token gate ──────
     // When handoff_token is present, the server authorizes the pin against the
@@ -1356,7 +1436,7 @@ async function handleSaveSpots(
         restaurant_id?: string | null;
         error?: string;
         code?: string;
-    }> = [];
+    }> = [...typeRejectedResults];
 
     for (const spot of capped) {
         // FIX #3: early fail for unauthorized table_ids
@@ -1578,6 +1658,7 @@ async function handleSaveSpots(
                 failed: failedCount,
             },
             job_id: batchJobId,
+            type_rejected: typeRejectedResults.length,
         },
     });
 
@@ -1787,7 +1868,7 @@ async function handleResolveSpots(
         MAPS_LIST_CAP,
     );
     const placeSignal = deadline.stageSignal(2500);
-    const { places, throttled } = await resolveStagedPlacesParallel(
+    const { places, typeRejectedByIndex, typeRejectedCount, throttled } = await resolveStagedPlacesParallel(
         supabase, staged, authHeader, supabaseUrl, supabaseAnonKey, placeSignal,
     );
 
@@ -1812,6 +1893,24 @@ async function handleResolveSpots(
         staged.map(async (s, i) => {
             const clientNonce = items[i].client_nonce;
             const candidateId = await computeCandidateId(importNonce, normalizeName(s.extracted.name), i);
+            if (typeRejectedByIndex[i]) {
+                // Keep the nonce echo 1:1 so chunk accounting remains deterministic.
+                // New clients read the typed flag and omit this row from save_spots.
+                // Old clients preserve `place` verbatim, so the nested marker reaches
+                // handleSaveSpots's pre-write compatibility guard.
+                return {
+                    client_nonce: clientNonce,
+                    candidate_id: candidateId,
+                    restaurant_id: null,
+                    external_id: null,
+                    restaurant_name: s.extracted.name,
+                    restaurant_city: s.extracted.city,
+                    place: { type_rejected: true as const },
+                    confidence: 'low' as Confidence,
+                    ghost: false,
+                    type_rejected: true as const,
+                };
+            }
             const place = places[i];
             if (place && place.id) {
                 const restaurant: PlacesPayload = {
@@ -1873,7 +1972,13 @@ async function handleResolveSpots(
         }),
     );
 
-    return jsonResponse({ data: { results, ghost_mode: false } });
+    return jsonResponse({
+        data: {
+            results,
+            ghost_mode: false,
+            type_rejected: typeRejectedCount,
+        },
+    });
 }
 
 // ── Main pipeline (TICKET-063 multi-candidate URL path) ───────────────────────
@@ -2065,12 +2170,14 @@ async function handleUrlResolve(
 
     if (sourceType === 'google_maps' && query) {
         // Google Maps: single Places search, no model extraction needed
+        let typeRejectedCount = 0;
         try {
-            const results = await callPlacesSearch(
+            const search = await callImportPlacesSearch(
                 query, authHeader, supabaseUrl, supabaseAnonKey,
                 deadline.stageSignal(2500),
             );
-            resolvedPlaces = results.slice(0, 3).map((r) => r);
+            typeRejectedCount = search.typeRejected ? 1 : 0;
+            resolvedPlaces = search.candidates.slice(0, 3).map((r) => r);
         } catch {
             resolvedPlaces = [];
         }
@@ -2139,6 +2246,7 @@ async function handleUrlResolve(
                 // the ≤6 listicle-heuristic denominator (it is a fake "N of M" for a
                 // lone place). Omit it so clients never render a phantom count.
                 list_count: null,
+                type_rejected: typeRejectedCount,
             } satisfies ResolveUrlResponse,
         });
     }
@@ -2161,11 +2269,14 @@ async function handleUrlResolve(
 
         // Direct Places search on the caption-derived query
         let placeCandidates: PlacesPayload[] = [];
+        let typeRejectedCount = 0;
         try {
-            placeCandidates = await callPlacesSearch(
+            const search = await callImportPlacesSearch(
                 query, authHeader, supabaseUrl, supabaseAnonKey,
                 deadline.stageSignal(2500),
             );
+            placeCandidates = search.candidates;
+            typeRejectedCount = search.typeRejected ? 1 : 0;
         } catch (e: any) {
             if (e?.code === 'PLACES_RATE_LIMITED') {
                 return errorResponse('PLACES_RATE_LIMITED', 'Search is temporarily unavailable — try again', 503);
@@ -2178,7 +2289,7 @@ async function handleUrlResolve(
 
         return buildLegacyCandidateResponse(
             supabase, user, placeCandidates, sourceType, query, notePrefill, partialSource,
-            contentHash, listMarker.count,
+            contentHash, listMarker.count, typeRejectedCount,
         );
     }
 
@@ -2186,7 +2297,11 @@ async function handleUrlResolve(
     // core (TICKET-152). `throttled` is ignored here: a throttled candidate stays
     // null → ghost, byte-for-byte the prior inline `catch → null` behavior.
     const placeSignal = deadline.stageSignal(2500);
-    const { places: placeResults } = await resolveStagedPlacesParallel(
+    const {
+        places: placeResults,
+        typeRejectedByIndex,
+        typeRejectedCount,
+    } = await resolveStagedPlacesParallel(
         supabase, staged, authHeader, supabaseUrl, supabaseAnonKey, placeSignal,
     );
 
@@ -2194,6 +2309,10 @@ async function handleUrlResolve(
     const seenPlaceIds = new Set<string>();
     const dedupedStaged: Array<{ staged: typeof staged[0]; place: PlacesPayload | null }> = [];
     for (let i = 0; i < staged.length; i++) {
+        // Unlike an ordinary no-match/name/locality miss (which remains a
+        // reviewable ghost), a non-food Places top result is scene-text noise and
+        // must never reach the candidate staging queue.
+        if (typeRejectedByIndex[i]) continue;
         const place = placeResults[i];
         const placeId = place?.id ?? staged[i].extracted.google_place_id;
         if (placeId && seenPlaceIds.has(placeId)) continue;
@@ -2295,7 +2414,7 @@ async function handleUrlResolve(
     );
 
     // best_query = top candidate name + city (or cleaned caption fallback)
-    const topCandidate = staged[0]?.extracted;
+    const topCandidate = dedupedStaged[0]?.staged.extracted;
     const bestQuery = topCandidate?.name
         ? [topCandidate.name, topCandidate.city].filter(Boolean).join(', ')
         : query;
@@ -2309,6 +2428,7 @@ async function handleUrlResolve(
             partial_source: partialSource,
             // Maps list: the TRUE item count, so the client can say "20 of 34".
             list_count: mapsList ? mapsList.items.length : listMarker.count,
+            type_rejected: typeRejectedCount,
         } satisfies ResolveUrlResponse,
     });
 }
@@ -2327,6 +2447,7 @@ async function buildLegacyCandidateResponse(
     partialSource: Omit<WishlistSourceTikTok, 'type' | 'url'> | null,
     contentHash: string,
     listCount: number | null,
+    typeRejectedCount: number,
 ): Promise<Response> {
     if (placeCandidates.length === 0) {
         return jsonResponse({
@@ -2337,6 +2458,7 @@ async function buildLegacyCandidateResponse(
                 candidates: [],
                 partial_source: partialSource,
                 list_count: listCount,
+                type_rejected: typeRejectedCount,
             } satisfies ResolveUrlResponse,
         });
     }
@@ -2402,6 +2524,7 @@ async function buildLegacyCandidateResponse(
             candidates,
             partial_source: partialSource,
             list_count: listCount,
+            type_rejected: typeRejectedCount,
         } satisfies ResolveUrlResponse,
     });
 }
@@ -2427,10 +2550,15 @@ async function handleVideoText(
     authHeader: string,
     supabaseUrl: string,
     supabaseAnonKey: string,
+    photoContext?: PhotoExtractionContext,
 ): Promise<Response> {
     const sourceType: SourceType = 'video';
     const notePrefill = caption ? captionToNote(caption) : '';
-    const CAP = 12;
+    // TICKET-195: a valid photo carousel uses its exact slide count across the
+    // prompt, response parser, and dedupe cap. Missing/invalid context preserves
+    // the established video 12-cap byte-for-byte.
+    const photoSlideCount = validPhotoSlideCount(photoContext);
+    const CAP = photoSlideCount ?? 12;
 
     // Caption (hashtags/handle → city hints) joins the on-device text. The cheap
     // tier (TICKET-164 fast path) sends caption=desc + extracted_text=transcript,
@@ -2444,9 +2572,16 @@ async function handleVideoText(
     const listCountRaw = detectListMarker(caption || fullText).countRaw;
 
     // Content hash for cache + stable candidate ids (re-importing a clip is free).
+    // Namespace photo rows by mode + validated count: an app update may have sent
+    // sectioned slide text to an older server before the photo prompt deployed,
+    // and that generic cached extraction must not bypass the new photo rules.
+    // No photo context keeps the historical `video:${fullText}` identity exactly.
+    const cacheNamespace = photoSlideCount === null
+        ? 'video'
+        : `photo:${photoSlideCount}`;
     const hashBuf = await crypto.subtle.digest(
         'SHA-256',
-        new TextEncoder().encode(`video:${fullText}`).buffer as ArrayBuffer,
+        new TextEncoder().encode(`${cacheNamespace}:${fullText}`).buffer as ArrayBuffer,
     );
     const contentHash = Array.from(new Uint8Array(hashBuf))
         .map((b) => b.toString(16).padStart(2, '0'))
@@ -2464,7 +2599,12 @@ async function handleVideoText(
         // and the whole import read as "no spots found".
         const extractTimer = setTimeout(() => extractAc.abort(), 15000);
         try {
-            textCandidates = await extractFromTextMulti(fullText, extractAc.signal, CAP);
+            textCandidates = await extractFromTextMulti(
+                fullText,
+                extractAc.signal,
+                CAP,
+                photoContext,
+            );
         } catch {
             textCandidates = [];
         } finally {
@@ -2476,8 +2616,8 @@ async function handleVideoText(
         }
     }
 
-    // CAP=12: listicles routinely run to 10–11 spots. dedupeAndRank's default
-    // cap is 6 (right for the URL path); the video path passes 12 explicitly.
+    // Video stays at 12; photo uses the exact validated slide count. The default
+    // dedupeAndRank cap is 6 (right for the URL path), so both paths pass theirs.
     const staged = dedupeAndRank(textCandidates ?? [], [], CAP);
     if (staged.length === 0) {
         return jsonResponse({
@@ -2489,6 +2629,7 @@ async function handleVideoText(
                 partial_source: null,
                 list_count: listMarker.count,
                 list_count_raw: listCountRaw,
+                type_rejected: 0,
             } satisfies ResolveUrlResponse,
         });
     }
@@ -2496,19 +2637,16 @@ async function handleVideoText(
     // Resolve each candidate to a Place in parallel (bounded).
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 9000);
-    let placeResults: (PlacesPayload | null)[];
+    let placeResults: (PlacesPayload | null)[] = [];
+    let typeRejectedByIndex: boolean[] = [];
+    let typeRejectedCount = 0;
     try {
-        placeResults = await Promise.all(
-            staged.map(async (s) => {
-                try {
-                    return await resolveCandidateToPlace(
-                        supabase, s.extracted, authHeader, supabaseUrl, supabaseAnonKey, ac.signal,
-                    );
-                } catch {
-                    return null;
-                }
-            }),
+        const resolution = await resolveStagedPlacesParallel(
+            supabase, staged, authHeader, supabaseUrl, supabaseAnonKey, ac.signal,
         );
+        placeResults = resolution.places;
+        typeRejectedByIndex = resolution.typeRejectedByIndex;
+        typeRejectedCount = resolution.typeRejectedCount;
     } finally {
         clearTimeout(timer);
     }
@@ -2517,6 +2655,7 @@ async function handleVideoText(
     const seenPlaceIds = new Set<string>();
     const deduped: Array<{ s: StagedCandidate; place: PlacesPayload | null }> = [];
     for (let i = 0; i < staged.length; i++) {
+        if (typeRejectedByIndex[i]) continue;
         const place = placeResults[i];
         const placeId = place?.id ?? staged[i].extracted.google_place_id;
         if (placeId && seenPlaceIds.has(placeId)) continue;
@@ -2597,7 +2736,7 @@ async function handleVideoText(
         }),
     );
 
-    const top = staged[0]?.extracted;
+    const top = deduped[0]?.s.extracted;
     const bestQuery = top?.name ? [top.name, top.city].filter(Boolean).join(', ') : null;
 
     return jsonResponse({
@@ -2609,6 +2748,7 @@ async function handleVideoText(
             partial_source: null,
             list_count: listMarker.count,
             list_count_raw: listCountRaw,
+            type_rejected: typeRejectedCount,
         } satisfies ResolveUrlResponse,
     });
 }
@@ -2633,6 +2773,9 @@ serve(async (req) => {
         image_path?: string;
         /** TICKET-082: on-device video OCR + voiceover transcript (text-only path). */
         extracted_text?: string;
+        /** TICKET-195: additive photo-carousel extraction context. */
+        source_kind?: string;
+        slide_count?: number;
         caption?: string;
         action?: string;
         job_id?: string;
@@ -2748,9 +2891,14 @@ serve(async (req) => {
             );
         }
         try {
+            const photoContext: PhotoExtractionContext | undefined =
+                body?.source_kind === 'photo' && typeof body?.slide_count === 'number'
+                    ? { sourceKind: 'photo', slideCount: body.slide_count }
+                    : undefined;
             return await handleVideoText(
                 supabase, user, extractedText, body?.caption ?? null,
                 authHeader, supabaseUrl, supabaseAnonKey,
+                photoContext,
             );
         } catch (e: any) {
             console.error('resolve-url video-text error:', e);
