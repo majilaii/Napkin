@@ -1,4 +1,6 @@
 import {
+    allowsGenericUrlFallback,
+    capPhotoImportCandidates,
     fusePhotoSlideText,
     photoImportContextFromDiagnostics,
 } from '../photoImportFusion';
@@ -58,5 +60,42 @@ describe('photoImportContextFromDiagnostics', () => {
         expect(photoImportContextFromDiagnostics({ photo_post: true, slide_count: 0 })).toBeNull();
         expect(photoImportContextFromDiagnostics({ photo_post: true, slide_count: 2.5 })).toBeNull();
         expect(photoImportContextFromDiagnostics({ photo_post: true, slide_count: 13 })).toBeNull();
+    });
+});
+
+describe('capPhotoImportCandidates', () => {
+    it('uses the 12-item listicle ceiling instead of a two-slide ceiling', () => {
+        const tenCandidates = Array.from({ length: 10 }, (_, index) => `venue-${index + 1}`);
+
+        expect(
+            capPhotoImportCandidates(tenCandidates, {
+                source_kind: 'photo',
+                slide_count: 2,
+            }),
+        ).toEqual(tenCandidates);
+    });
+
+    it('keeps compatibility protection at 12 for photo imports only', () => {
+        const thirteenCandidates = Array.from({ length: 13 }, (_, index) => index + 1);
+
+        expect(
+            capPhotoImportCandidates(thirteenCandidates, {
+                source_kind: 'photo',
+                slide_count: 1,
+            }),
+        ).toEqual(thirteenCandidates.slice(0, 12));
+        expect(capPhotoImportCandidates(thirteenCandidates, null)).toBe(thirteenCandidates);
+    });
+});
+
+describe('allowsGenericUrlFallback', () => {
+    it('does not let a generic prompt bypass valid photo scene-noise rules', () => {
+        expect(
+            allowsGenericUrlFallback({
+                source_kind: 'photo',
+                slide_count: 5,
+            }),
+        ).toBe(false);
+        expect(allowsGenericUrlFallback(null)).toBe(true);
     });
 });

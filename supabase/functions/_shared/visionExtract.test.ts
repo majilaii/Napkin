@@ -221,7 +221,7 @@ Deno.test('parseMultiExtractionResponse: unknown confidence → coerced to low',
 
 // ── Photo-carousel extraction context (TICKET-195) ───────────────────────────────
 
-Deno.test('buildMultiSystemPrompt: photo context adds scene-noise rules and slide cap', async () => {
+Deno.test('buildMultiSystemPrompt: photo context keeps scene-noise rules with listicle cap', async () => {
     const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
     const prompt = buildMultiSystemPrompt(12, { sourceKind: 'photo', slideCount: 5 });
 
@@ -232,7 +232,8 @@ Deno.test('buildMultiSystemPrompt: photo context adds scene-noise rules and slid
     assertStringIncludes(prompt, 'AT MOST ONE venue per slide');
     assertStringIncludes(prompt, 'When unsure whether a string is a creator recommendation');
     assertStringIncludes(prompt, 'OMIT it');
-    assertStringIncludes(prompt, 'Cap at 5 restaurants');
+    assertStringIncludes(prompt, 'Cap at 12 restaurants');
+    assertEquals(prompt.includes('Cap at 5 restaurants'), false);
 });
 
 Deno.test('buildMultiSystemPrompt: no photo context preserves video rules and caller cap', async () => {
@@ -255,14 +256,27 @@ Deno.test('buildMultiSystemPrompt: rejects untrusted photo slide counts', async 
     }
 });
 
-Deno.test('extractFromTextMulti: photo slide count alone overrides prompt and parser cap', async () => {
+Deno.test('extractFromTextMulti: two-slide photo listicle preserves all ten ordered venues', async () => {
     const originalKey = Deno.env.get('ANTHROPIC_API_KEY');
     const originalFetch = globalThis.fetch;
     let requestBody: Record<string, unknown> | null = null;
-    const items = Array.from({ length: 8 }, (_, i) => ({
-        name: `Restaurant ${i + 1}`,
+    const venues = [
+        ['RIVA', 'Barnes'],
+        ['The River Café', 'Hammersmith'],
+        ['Canteen', 'Notting Hill'],
+        ['Trattoria Brutto', 'Farringdon'],
+        ['Quo Vadis', 'Soho'],
+        ['The Devonshire', 'Soho'],
+        ['Josephine', 'Chelsea'],
+        ['Toklas', 'Temple'],
+        ['Dorian', 'Notting Hill'],
+        ['Manteca', 'Shoreditch'],
+    ] as const;
+    const items = venues.map(([name, area]) => ({
+        name,
         city: 'London',
         city_inferred: false,
+        area,
         cuisine: null,
         address: null,
         booking_url: null,
@@ -282,20 +296,110 @@ Deno.test('extractFromTextMulti: photo slide count alone overrides prompt and pa
 
         const { extractFromTextMulti } = await import('./visionExtract.ts');
         const results = await extractFromTextMulti(
-            '[slide 1 of 5]\nRestaurant 1',
+            '[slide 1 of 2]\n' +
+                venues.map(([name, area], index) => `${index + 1}. ${name} (${area})`).join('\n') +
+                '\n[slide 2 of 2]\nRoast chicken on a plate\n' +
+                '[caption]\nTen London favourites worth crossing town for',
+            undefined,
+            12,
+            { sourceKind: 'photo', slideCount: 2 },
+        );
+
+        assertEquals(results.map((candidate) => candidate.name), venues.map(([name]) => name));
+        assertStringIncludes(String(requestBody?.['system']), 'PHOTO CAROUSEL MODE');
+        assertStringIncludes(String(requestBody?.['system']), '[slide N of 2]');
+        assertStringIncludes(String(requestBody?.['system']), 'Cap at 12 restaurants');
+        assertEquals(String(requestBody?.['system']).includes('Cap at 2 restaurants'), false);
+        assertEquals(requestBody?.['max_tokens'], 2560);
+
+        const videoResults = await extractFromTextMulti('Ten video picks', undefined, 12);
+        assertEquals(videoResults.length, 10);
+        assertEquals(String(requestBody?.['system']).includes('PHOTO CAROUSEL MODE'), false);
+        assertStringIncludes(String(requestBody?.['system']), 'Cap at 12 restaurants');
+    } finally {
+        globalThis.fetch = originalFetch;
+        if (originalKey === undefined) Deno.env.delete('ANTHROPIC_API_KEY');
+        else Deno.env.set('ANTHROPIC_API_KEY', originalKey);
+    }
+});
+
+Deno.test('extractFromTextMulti: five-slide scene carousel retains at-most-one-per-slide guard', async () => {
+    const originalKey = Deno.env.get('ANTHROPIC_API_KEY');
+    const originalFetch = globalThis.fetch;
+    let requestBody: Record<string, unknown> | null = null;
+    const recommendedItems = Array.from({ length: 5 }, (_, i) => ({
+        name: `Recommended Venue ${i + 1}`,
+        city: 'London',
+        city_inferred: false,
+        area: null,
+        cuisine: null,
+        address: null,
+        booking_url: null,
+        hours: null,
+        confidence: 'high',
+        google_place_id: null,
+    }));
+    const sceneNoiseItems = [
+        'Neighbour Shop Sign',
+        'Charity Foundation',
+        'Street Banner Cafe',
+    ].map((name) => ({
+        name,
+        city: 'London',
+        city_inferred: false,
+        area: null,
+        cuisine: null,
+        address: null,
+        booking_url: null,
+        hours: null,
+        confidence: 'low',
+        google_place_id: null,
+    }));
+
+    try {
+        Deno.env.set('ANTHROPIC_API_KEY', 'test-key');
+        globalThis.fetch = ((_input: Request | URL | string, init?: RequestInit) => {
+            requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            const system = String(requestBody?.['system']);
+            // Simulate a model obeying the complete prompt contract. If any guard
+            // regresses, the scene names leak into the response and the test fails.
+            const hasPhotoNoiseGuard =
+                system.includes('Incidental text visible in the photographed scene is scene noise') &&
+                system.includes('AT MOST ONE venue per slide unless') &&
+                system.includes('When unsure whether a string is a creator recommendation') &&
+                system.includes('OMIT it');
+            const responseItems = hasPhotoNoiseGuard
+                ? recommendedItems
+                : [...recommendedItems, ...sceneNoiseItems];
+            return Promise.resolve(new Response(JSON.stringify({
+                content: [{ type: 'text', text: JSON.stringify(responseItems) }],
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        }) as typeof fetch;
+
+        const { extractFromTextMulti } = await import('./visionExtract.ts');
+        const results = await extractFromTextMulti(
+            '[slide 1 of 5]\nLunch at Recommended Venue 1\nNEIGHBOUR SHOP SIGN\n' +
+                '[slide 2 of 5]\nCoffee at Recommended Venue 2\nCHARITY FOUNDATION POSTER\n' +
+                '[slide 3 of 5]\nDinner at Recommended Venue 3\nSTREET BANNER\n' +
+                '[slide 4 of 5]\nDrinks at Recommended Venue 4\nEVENT HOARDING\n' +
+                '[slide 5 of 5]\nDessert at Recommended Venue 5\nMENU BOARD\n' +
+                '[caption]\nA day of eating around London',
             undefined,
             12,
             { sourceKind: 'photo', slideCount: 5 },
         );
 
-        assertEquals(results.length, 5);
-        assertStringIncludes(String(requestBody?.['system']), 'PHOTO CAROUSEL MODE');
-        assertStringIncludes(String(requestBody?.['system']), 'Cap at 5 restaurants');
-
-        const videoResults = await extractFromTextMulti('Eight video picks', undefined, 12);
-        assertEquals(videoResults.length, 8);
-        assertEquals(String(requestBody?.['system']).includes('PHOTO CAROUSEL MODE'), false);
-        assertStringIncludes(String(requestBody?.['system']), 'Cap at 12 restaurants');
+        assertEquals(
+            results.map((candidate) => candidate.name),
+            recommendedItems.map((item) => item.name),
+        );
+        const system = String(requestBody?.['system']);
+        assertStringIncludes(system, 'Incidental text visible in the photographed scene is scene noise');
+        assertStringIncludes(system, 'AT MOST ONE venue per slide unless');
+        assertStringIncludes(system, 'When unsure whether a string is a creator recommendation');
+        assertStringIncludes(system, 'OMIT it');
+        assertStringIncludes(system, 'Cap at 12 restaurants');
+        assertEquals(system.includes('Cap at 5 restaurants'), false);
     } finally {
         globalThis.fetch = originalFetch;
         if (originalKey === undefined) Deno.env.delete('ANTHROPIC_API_KEY');

@@ -73,6 +73,8 @@ import {
 } from '@/lib/importProtocol';
 import { evaluateFastPath, isContentGate } from '@/lib/importFastPath';
 import {
+    allowsGenericUrlFallback,
+    capPhotoImportCandidates,
     fusePhotoSlideText,
     photoImportContextFromDiagnostics,
     type PhotoImportContext,
@@ -973,14 +975,14 @@ export function useProcessImportQueue() {
                             // download each signed slide JPEG under ONE shared stage
                             // deadline (they're small — one budget for all, not per
                             // file) and OCR them on-device. Slide files are deleted
-                            // right after extraction. When the binary predates v3
-                            // (extractFromImages → null) OR no slide yields text,
-                            // ocrText stays null and the {url} fallback runs (167).
+                            // right after extraction. A client with no slide context
+                            // keeps the legacy {url} path; once context exists, a
+                            // generic fallback may not bypass the photo noise rules.
                             if (isPhotoPost) {
                                 // The photo marker's `text` is '' (no transcript), so
                                 // latestPageText is null — but the caption (desc)
-                                // carries the city/hashtag signal Places needs. Route
-                                // Keep it in latestPageText for truthful diagnostics;
+                                // carries the city/hashtag signal Places needs. Keep
+                                // it in latestPageText for truthful diagnostics;
                                 // fusePhotoSlideText adds it once as [caption] below.
                                 // (Video posts never reach here.)
                                 latestPageText = desc || null;
@@ -1160,9 +1162,9 @@ export function useProcessImportQueue() {
                             // TICKET-176: a photo post now FUSES on-device slide OCR
                             // with the caption as explicit labelled sections — the
                             // spots live on the slides. Empty slide sections are kept
-                            // so slide_count and the prompt's boundaries stay aligned;
-                            // the ordinary zero-candidate URL fallback still gets a
-                            // photo-aware caption pass. Video posts are unaffected.
+                            // so slide_count and the prompt's boundaries stay aligned.
+                            // A zero-candidate photo-aware pass stays empty rather than
+                            // retrying through a generic prompt. Videos are unaffected.
                             extractedText = isPhotoPost
                                 ? ocrText
                                 : [ocrText, latestPageText]
@@ -1190,7 +1192,7 @@ export function useProcessImportQueue() {
                             tiktok_asr: perception?.hasTranscript ?? false,
                             video: downloadOk,
                             photo_post: isPhotoPost,
-                            // Exact carousel count used by the photo extractor cap.
+                            // Exact carousel count used for photo prompt boundaries.
                             // Keep photo_slides below as the legacy/downloaded count.
                             slide_count: photoSlideCount,
                             // TICKET-176: how many slides downloaded for the OCR pass
@@ -1286,11 +1288,13 @@ export function useProcessImportQueue() {
                         // succeeded) — then the fallback re-resolves the same data.
                         // A no-video escalation (flaked download / perception-shape
                         // drift) may fall back: the server's url tier adds oEmbed +
-                        // thumbnail vision the client never had.
+                        // thumbnail vision the client never had. A photo-aware pass
+                        // may not: the generic tier lacks its scene-noise rules.
                         if (
                             candidates.length === 0 &&
                             extractedText &&
                             provider !== 'instagram' &&
+                            allowsGenericUrlFallback(photoImportContext) &&
                             !(cheapTierRan && downloadOk)
                         ) {
                             const fallback = await callImportResolveUrl<ResolveUrlData>(
@@ -1346,13 +1350,10 @@ export function useProcessImportQueue() {
                     candidates = resolved?.candidates ?? [];
                 }
 
-                // Final photo-only cap: protects the generic {url} fallback and
-                // new clients talking to an older server that ignores photo
-                // context. Video and every non-photo import keep their existing
-                // candidate limits.
-                if (photoImportContext) {
-                    candidates = candidates.slice(0, photoImportContext.slide_count);
-                }
+                // Final photo-only compatibility cap protects the generic {url}
+                // fallback and clients talking to an older server. It follows the
+                // 12-item listicle ceiling; slide_count remains prompt context only.
+                candidates = capPhotoImportCandidates(candidates, photoImportContext);
 
                 // Emit the attributable diagnostic only AFTER every resolve/fallback
                 // has had a chance to report its Places type drops. This must run

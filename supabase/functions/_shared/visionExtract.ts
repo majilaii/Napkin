@@ -68,15 +68,20 @@ export const EXTRACTION_MODEL_DEFAULT = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 2048;
 
 /**
- * Optional context for text extracted from a photo carousel. The app caps
- * downloaded TikTok photo slides at 12, so accepting a larger value here would
- * only let an untrusted request inflate the model/parser candidate budget.
+ * Optional context for text extracted from a photo carousel. The slide count is
+ * prompt context only: it preserves carousel boundaries for the per-slide noise
+ * rules, but never determines the numeric candidate ceiling.
  */
 export interface PhotoExtractionContext {
     sourceKind: 'photo';
     slideCount: number;
 }
 
+/** Shared numeric ceiling for video and photo listicles. */
+export const LISTICLE_CANDIDATE_CAP = 12;
+
+// Separate transport/context bound. It happens to equal the listicle ceiling,
+// but changing the number of downloaded slides must never change candidate cap.
 const MAX_PHOTO_SLIDE_COUNT = 12;
 
 // ── System prompts ─────────────────────────────────────────────────────────────
@@ -106,7 +111,7 @@ export function buildMultiSystemPrompt(
     context?: PhotoExtractionContext,
 ): string {
     const photoSlideCount = validPhotoSlideCount(context);
-    const effectiveCap = photoSlideCount ?? cap;
+    const effectiveCap = photoSlideCount === null ? cap : LISTICLE_CANDIDATE_CAP;
     const photoModeBlock = photoSlideCount === null
         ? ''
         : `
@@ -284,7 +289,7 @@ function coerceCandidate(p: unknown): ExtractedCandidate {
  *   4. If salvage also fails → return [] (never throws; fail-soft preserved).
  *
  * Elements that don't have a parseable name are filtered out.
- * Result is capped at `max` (6 by default; video callers pass 12).
+ * Result is capped at `max` (6 by default; listicle callers pass 12).
  */
 export function parseMultiExtractionResponse(raw: string, max = 6): ExtractedCandidate[] {
     const cleaned = raw
@@ -390,8 +395,8 @@ function salvageTruncatedArray(text: string): unknown[] | null {
 
 /**
  * Extract ALL restaurant info from text (caption/title/hashtags).
- * Returns ExtractedCandidate[] capped by `max`, or by the validated slide count
- * when photo-carousel context is present.
+ * Returns ExtractedCandidate[] capped by `max`, or by the standard listicle cap
+ * when valid photo-carousel context is present. Slide count is prompt context only.
  * On any error → fails soft to [].
  *
  * TICKET-063: multi-candidate, city inference, AbortSignal threading.
@@ -411,11 +416,11 @@ export async function extractFromTextMulti(
     }
 
     const modelId = Deno.env.get('EXTRACTION_MODEL') ?? EXTRACTION_MODEL_DEFAULT;
-    // Photo carousels use their validated slide count as the cap. With no photo
-    // context, the existing 6-cap default and video-listicle 12-cap are unchanged.
+    // Photo carousels use the same 12-candidate budget as video listicles. The
+    // validated slide count only enables prompt boundaries/noise rules.
     const photoSlideCount = validPhotoSlideCount(context);
-    const effectiveMax = photoSlideCount ?? max;
-    // A higher cap (video listicles pass 12) needs a matching prompt instruction
+    const effectiveMax = photoSlideCount === null ? max : LISTICLE_CANDIDATE_CAP;
+    // A higher listicle cap needs a matching prompt instruction
     // AND a bigger token budget so the JSON array isn't truncated.
     const system = context === undefined && max === 6
         ? MULTI_SYSTEM_PROMPT
