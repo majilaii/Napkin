@@ -1,4 +1,9 @@
-import { peekCardHeightsForRail, peekRailCardHeight } from '../peekLayout';
+import {
+    peekCardHeight,
+    peekCardHeightsForRail,
+    peekRailCardHeight,
+    peekRailMaxCardHeight,
+} from '../peekLayout';
 import type { WishlistMapItem } from '../mapShared';
 
 const base: WishlistMapItem = {
@@ -11,6 +16,11 @@ const base: WishlistMapItem = {
 };
 
 describe('peek rail height', () => {
+    it('is exactly 136pt for every ordinary photo and no-photo card', () => {
+        expect(peekRailCardHeight(1)).toBe(136);
+        expect(peekCardHeight(1, false)).toBe(136);
+    });
+
     it('is identical across a mixed-layer rail', () => {
         const items: WishlistMapItem[] = [
             base,
@@ -21,7 +31,7 @@ describe('peek rail height', () => {
             { ...base, id: 'list', listContext: { listId: 'list-1', rank: 1 } },
         ];
 
-        expect(new Set(peekCardHeightsForRail(items, 1)).size).toBe(1);
+        expect(peekCardHeightsForRail(items, 1)).toEqual(items.map(() => 136));
     });
 
     it('cannot reflow when enrichment arrives', () => {
@@ -34,7 +44,7 @@ describe('peek rail height', () => {
         };
 
         // Enrichment is intentionally not a layout input. Its arrival fills the
-        // reserved slots while every item keeps the same rail-wide height.
+        // compact caption while every ordinary item keeps the same height.
         expect(arrivedEnrichment.media).toHaveLength(1);
         expect(peekCardHeightsForRail(rail, 1.35)).toEqual(beforeEnrichment);
     });
@@ -42,5 +52,11 @@ describe('peek rail height', () => {
     it('grows once for the rail and caps Dynamic Type at 2x', () => {
         expect(peekRailCardHeight(1.5)).toBeGreaterThan(peekRailCardHeight(1));
         expect(peekRailCardHeight(3)).toBe(peekRailCardHeight(2));
+    });
+
+    it('allows height growth only for the off-image Places credit line', () => {
+        expect(peekCardHeight(1, true)).toBe(151);
+        expect(peekRailMaxCardHeight(1)).toBe(151);
+        expect(peekCardHeight(1, true)).toBeGreaterThan(peekCardHeight(1, false));
     });
 });

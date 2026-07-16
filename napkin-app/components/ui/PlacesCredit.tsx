@@ -123,6 +123,8 @@ interface PlacesCreditProps {
     testID?: string;
     /** Disable nested link taps when the line sits inside a larger press target. */
     interactive?: boolean;
+    /** Optional local Dynamic Type cap for fixed-height compact surfaces. */
+    maxFontSizeMultiplier?: number;
 }
 
 /**
@@ -136,6 +138,7 @@ export function PlacesCredit({
     style,
     testID = 'places-credit',
     interactive = true,
+    maxFontSizeMultiplier,
 }: PlacesCreditProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -148,6 +151,7 @@ export function PlacesCredit({
     return (
         <Text
             testID={testID}
+            maxFontSizeMultiplier={maxFontSizeMultiplier}
             numberOfLines={1}
             ellipsizeMode="tail"
             style={[
@@ -164,6 +168,7 @@ export function PlacesCredit({
                     {index > 0 ? ', ' : null}
                     <Text
                         testID={`${testID}-author-${index}`}
+                        maxFontSizeMultiplier={maxFontSizeMultiplier}
                         accessibilityRole={interactive && author.href ? 'link' : undefined}
                         onPress={interactive && author.href ? () => {
                             void Linking.openURL(author.href!).catch(() => undefined);

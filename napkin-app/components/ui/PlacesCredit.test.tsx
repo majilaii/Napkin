@@ -120,4 +120,14 @@ describe('PlacesCredit', () => {
         expect(nestedAuthor.props.onPress).toBeUndefined();
         expect(nestedAuthor.props.accessibilityRole).toBeUndefined();
     });
+
+    it('applies an optional compact-surface font cap to the line and author', () => {
+        const jane = attributed('Jane Doe');
+        const renderer = render(
+            <PlacesCredit credits={[jane.credit]} maxFontSizeMultiplier={2} />,
+        );
+
+        expect(textByTestId(renderer, 'places-credit').props.maxFontSizeMultiplier).toBe(2);
+        expect(textByTestId(renderer, 'places-credit-author-0').props.maxFontSizeMultiplier).toBe(2);
+    });
 });

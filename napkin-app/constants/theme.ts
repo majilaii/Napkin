@@ -43,6 +43,11 @@ export const Colors = {
     primary: '#a03f28',              // terracotta
     primaryContainer: '#c0573e',     // lighter terracotta
     primaryMuted: 'rgba(160, 63, 40, 0.08)',
+    // Compact map-caption actions. These are deliberately separate from
+    // primaryMuted: the founder-approved peek uses a precise 9% CTA wash and a
+    // quieter 6% selected-heart wash without changing other surfaces.
+    mapPeekPrimaryWash: 'rgba(160, 63, 40, 0.09)',
+    mapPeekSavedWash: 'rgba(160, 63, 40, 0.06)',
     terracottaWarm: '#c0573e',       // --terracotta-warm
     terracottaDeep: '#7c2d12',       // --terracotta-deep
     terracottaInk: '#9a3412',        // --terracotta-ink (nib-stroke)
@@ -142,6 +147,8 @@ export const Colors = {
     primary: '#ffb4a3',
     primaryContainer: '#812914',
     primaryMuted: 'rgba(255, 180, 163, 0.12)',
+    mapPeekPrimaryWash: 'rgba(255, 180, 163, 0.12)',
+    mapPeekSavedWash: 'rgba(255, 180, 163, 0.09)',
     terracottaWarm: '#d4766a',
     terracottaDeep: '#ff7a5a',
     terracottaInk: '#ff967d',
@@ -340,6 +347,14 @@ export const Type = {
     letterSpacing: -0.2,
     lineHeight: 26,
   } as TextStyle,
+  /** Founder-approved compact map-caption restaurant name. */
+  mapPeekName: {
+    fontSize: 21,
+    fontWeight: '600' as const,
+    fontFamily: 'Newsreader_600SemiBold',
+    letterSpacing: -0.28,
+    lineHeight: 24,
+  } as TextStyle,
   editorialBody: {
     fontSize: 17,
     fontWeight: '400' as const,
@@ -393,6 +408,26 @@ export const Type = {
     fontWeight: '500' as const,
     fontFamily: 'Manrope_500Medium',
     lineHeight: 19,
+  } as TextStyle,
+  /** Compact map-caption metadata and relationship line. */
+  mapPeekMeta: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    fontFamily: 'Manrope_600SemiBold',
+    lineHeight: 18,
+  } as TextStyle,
+  mapPeekDetailStrong: {
+    fontSize: 13,
+    fontWeight: '800' as const,
+    fontFamily: 'Manrope_800ExtraBold',
+    lineHeight: 18,
+  } as TextStyle,
+  mapPeekAction: {
+    fontSize: 13,
+    fontWeight: '800' as const,
+    fontFamily: 'Manrope_800ExtraBold',
+    lineHeight: 18,
+    letterSpacing: 0.05,
   } as TextStyle,
 
   // Titles — Manrope for functional

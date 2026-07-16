@@ -181,7 +181,9 @@ describe('deriveTaste (band aggregate, junk venue types filtered)', () => {
         }
         expect(JUNK_VENUE_TYPES.has('restaurant')).toBe(true);
         expect(JUNK_VENUE_TYPES.has('hotel')).toBe(true);
-        expect(JUNK_VENUE_TYPES.size).toBe(15);
+        expect(JUNK_VENUE_TYPES.has('association or organization')).toBe(true);
+        expect(JUNK_VENUE_TYPES.has('point of interest')).toBe(true);
+        expect(JUNK_VENUE_TYPES.has('establishment')).toBe(true);
     });
 });
 
