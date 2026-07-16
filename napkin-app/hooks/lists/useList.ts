@@ -25,6 +25,12 @@ export interface ListEntryRestaurant {
     google_rating: number | null;
     price_level: number | null;
     external_id: string | null;
+    /** Creator of an unverified ghost; repair authority is bound to this user. */
+    created_by?: string | null;
+    /** Alias tombstones are not repair candidates even if an old embed lingers. */
+    merged_into?: string | null;
+    /** Optimistic-concurrency token for creator-only ghost repair. */
+    completeness_version?: number;
     /**
      * TICKET-074 fix-pass: share eligibility counts verified entries only
      * (the handoff snapshot is verified-only). Optional for responses from a

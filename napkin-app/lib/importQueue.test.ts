@@ -47,12 +47,16 @@ import * as mediaExtract from '@/modules/media-extract';
 import {
     enqueueVideoImport,
     getImport,
+    getImportForUser,
+    claimImportOwner,
     setImportMode,
     setImportSource,
     setImportSpots,
     setImportStage,
     setImportDestinations,
     confirmImportReview,
+    ensureImportV2Routing,
+    importManifestProtocol,
     effectivePinWishlist,
     type ImportManifest,
     type PersistedImportSpot,
@@ -91,6 +95,7 @@ describe('review-first import creation', () => {
         const manifest = await enqueueVideoImport('/shared/video-review-first.mov');
 
         expect(manifest.mode).toBe('review');
+        expect(manifest.protocolGeneration).toBe('v2');
         expect(manifest.destinations).toEqual({
             wishlist: true,
             listIds: [],
@@ -115,6 +120,7 @@ describe('review-first import creation', () => {
         store.set(legacy.jobId, JSON.stringify(legacy));
 
         expect(getImport(legacy.jobId)?.mode).toBe('review');
+        expect(importManifestProtocol(getImport(legacy.jobId)!)).toBe('legacy');
 
         seedManifest({ jobId: 'confirmed-auto', mode: 'auto' });
         expect(getImport('confirmed-auto')?.mode).toBe('auto');
@@ -127,6 +133,41 @@ describe('review-first import creation', () => {
             'Failed to persist import manifest',
         );
         expect(store.size).toBe(0);
+    });
+
+    it('binds signed-in captures and never deduplicates a video across owners', async () => {
+        const first = await enqueueVideoImport('/shared/owner-bound.mov', 'user-a');
+        const second = await enqueueVideoImport('/shared/owner-bound.mov', 'user-b');
+
+        expect(first.jobId).not.toBe(second.jobId);
+        expect(getImportForUser(first.jobId, 'user-a')?.userId).toBe('user-a');
+        expect(getImportForUser(first.jobId, 'user-b')).toBeNull();
+        expect(getImportForUser(second.jobId, 'user-b')?.userId).toBe('user-b');
+    });
+
+    it('lets the first signed-in user claim an ownerless capture exactly once', () => {
+        seedManifest({ jobId: 'ownerless', userId: null });
+
+        expect(claimImportOwner('ownerless', 'user-a')?.userId).toBe('user-a');
+        expect(claimImportOwner('ownerless', 'user-b')).toBeNull();
+        expect(getImportForUser('ownerless', 'user-a')?.jobId).toBe('ownerless');
+        expect(getImportForUser('ownerless', 'user-b')).toBeNull();
+    });
+
+    it('keeps direct-screen reads empty until the drain claims an ownerless capture', () => {
+        seedManifest({ jobId: 'ownerless-direct-read', userId: null });
+
+        expect(getImportForUser('ownerless-direct-read', 'user-a')).toBeNull();
+        expect(getImport('ownerless-direct-read')?.userId).toBeNull();
+        expect(nativeMock.__writeCount()).toBe(0);
+    });
+
+    it('does not report an owner claim when the durable rewrite fails', () => {
+        seedManifest({ jobId: 'ownerless-write-fail', userId: null });
+        nativeMock.__failNextWrite();
+
+        expect(claimImportOwner('ownerless-write-fail', 'user-a')).toBeNull();
+        expect(getImport('ownerless-write-fail')?.userId).toBeNull();
     });
 });
 
@@ -336,6 +377,34 @@ describe('atomic review confirmation', () => {
             },
             pinWishlist: true,
         });
+        expect(getImport('confirm-1')?.destinationNonces).toBeUndefined();
+        expect(getImport('confirm-1')?.expectedDestinations).toBeUndefined();
+    });
+
+    it('freezes stable v2 item × destination cardinality at release', () => {
+        seedManifest({ jobId: 'confirm-v2', mode: 'review', protocolGeneration: 'v2' });
+
+        const ok = confirmImportReview('confirm-v2', {
+            spots: [{ ...spot, resolution_id: 'resolution-1' }],
+            listIds: ['list-a'],
+            newListTitles: ['new list'],
+            tableIds: ['table-b'],
+            pinWishlist: false,
+        });
+        const first = getImport('confirm-v2');
+        expect(ok).toBe(true);
+        expect(first?.expectedDestinations).toBe(4);
+        expect(first?.destinationNonces?.wishlist).toBeTruthy();
+        expect(first?.destinationNonces?.tables['table-b']).toBeTruthy();
+        expect(first?.destinationNonces?.lists['list-a']).toBeTruthy();
+        expect(first?.destinationNonces?.newLists['new list']).toMatchObject({
+            destinationNonce: expect.any(String),
+            titleNonce: expect.any(String),
+        });
+
+        ensureImportV2Routing('confirm-v2');
+        expect(getImport('confirm-v2')?.destinationNonces).toEqual(first?.destinationNonces);
+        expect(getImport('confirm-v2')?.expectedDestinations).toBe(4);
     });
 
     it('returns false and leaves the held manifest untouched when native persistence fails', () => {

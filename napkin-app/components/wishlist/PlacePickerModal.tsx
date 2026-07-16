@@ -26,6 +26,10 @@ import { callEdgeFn } from '@/lib/edgeInvoke';
 
 export interface PlacePickerResult {
     id: string;
+    /** Canonical provider id when `id` is an existing Napkin restaurant UUID. */
+    external_id?: string | null;
+    /** Server-minted provenance when a search endpoint already evaluated it. */
+    resolution_id?: string | null;
     name: string;
     city: string | null;
     cuisine: string | null;

@@ -58,6 +58,27 @@ describe('createManualImportSpot', () => {
         expect(spot.place).toBeNull();
         expect(spot.table_id).toBeNull();
     });
+
+    it('threads fresh server provenance for a manually corrected existing restaurant', () => {
+        const spot = createManualImportSpot(
+            {
+                id: '123e4567-e89b-12d3-a456-426614174000',
+                external_id: 'places/oranj',
+                name: 'Oranj',
+                city: 'London',
+                cuisine: null,
+            },
+            [],
+            () => 'nonce',
+            'resolution-fresh',
+        );
+
+        expect(spot).toMatchObject({
+            resolution_id: 'resolution-fresh',
+            restaurant_id: '123e4567-e89b-12d3-a456-426614174000',
+            external_id: null,
+        });
+    });
 });
 
 describe('reconcileImportSpotTables', () => {

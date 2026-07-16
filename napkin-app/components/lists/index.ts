@@ -7,6 +7,7 @@ export { ListEmojiPicker } from './ListEmojiPicker';
 export { ListDetailHeader, type ListDetailHeaderProps } from './ListDetailHeader';
 export { ListDetailSheet, type ListDetailSheetHandle } from './ListDetailSheet';
 export { ScopedListMap } from './ScopedListMap';
+export { UnmappedListSpotsSheet } from './UnmappedListSpotsSheet';
 export { ListEditForm } from './ListEditForm';
 export { EmptyListsState } from './EmptyListsState';
 export { ImportToListSheet } from './ImportToListSheet';

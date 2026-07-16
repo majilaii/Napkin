@@ -32,6 +32,7 @@ function largeJob(
         listCount: 0,
         title: null,
         imported: 0,
+        queued: 0,
         needsLook: 0,
         ...over,
     };
@@ -143,6 +144,17 @@ describe('deriveImportSlot', () => {
             NOW,
         );
         expect(slot).toMatchObject({ kind: 'digest', accent: 'attention' });
+    });
+
+    it('a deferred large digest stays in the completing state', () => {
+        const slot = deriveImportSlot(
+            [largeJob('done', { imported: 3, queued: 7, needsLook: 0 })],
+            [],
+            NOW,
+        );
+        expect(slot).toMatchObject({ kind: 'working', accent: 'calm' });
+        expect(slot?.title).toBe('7 spots are completing…');
+        expect(slot?.sublabel).toBe('3 already imported');
     });
 
     it('clean digest is calm and shows the imported count as places', () => {
