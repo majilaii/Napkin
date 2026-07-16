@@ -64,6 +64,8 @@ DECLARE
     v_q public.image_gc_queue;
     v_object_id uuid;
     v_refs integer;
+    v_legacy_path text;
+    v_public_marker text;
 BEGIN
     SELECT q.* INTO v_q
     FROM public.image_gc_queue q
@@ -132,13 +134,75 @@ BEGIN
     END IF;
 
     IF v_object_id IS NULL THEN
+        -- Defense in depth before handing a raw path to the service-role
+        -- Storage worker.  A deleted sink may contain any legacy string, so
+        -- require an unambiguous project-key spelling owned by the durable
+        -- queue user. Encoded separators/dot segments are terminal no-ops.
+        v_public_marker := '/storage/v1/object/public/' || v_q.bucket || '/';
+        v_legacy_path := v_q.path;
+        IF pg_catalog.strpos(COALESCE(v_legacy_path, ''), '://') > 0 THEN
+            IF pg_catalog.strpos(v_legacy_path, v_public_marker) = 0
+               OR v_legacy_path ~ '[?#]' THEN
+                v_legacy_path := NULL;
+            ELSE
+                v_legacy_path := pg_catalog.substr(
+                    v_legacy_path,
+                    pg_catalog.strpos(v_legacy_path, v_public_marker)
+                        + pg_catalog.length(v_public_marker)
+                );
+            END IF;
+        END IF;
+        IF v_q.bucket NOT IN ('avatars', 'entry-photos')
+           OR v_q.user_id IS NULL
+           OR v_legacy_path IS NULL OR v_legacy_path = ''
+           OR v_legacy_path LIKE '/%'
+           OR pg_catalog.strpos(v_legacy_path, pg_catalog.chr(92)) > 0
+           OR v_legacy_path LIKE '%//%'
+           OR v_legacy_path ~* '%(2f|5c|2e)'
+           OR ('/' || v_legacy_path || '/') LIKE '%/./%'
+           OR ('/' || v_legacy_path || '/') LIKE '%/../%'
+           OR NOT (
+                pg_catalog.split_part(v_legacy_path, '/', 1) = v_q.user_id::text
+                OR (
+                    pg_catalog.split_part(v_legacy_path, '/', 1) = 'approved'
+                    AND pg_catalog.split_part(v_legacy_path, '/', 2) = v_q.user_id::text
+                )
+           ) THEN
+            UPDATE public.image_gc_queue q
+            SET state = 'done', completed_at = pg_catalog.clock_timestamp(),
+                claimed_by = NULL, lease_expires = NULL,
+                last_error = 'unsafe_or_cross_owner_legacy_path'
+            WHERE q.id = p_queue_id AND q.claimed_by = p_worker;
+            RETURN pg_catalog.jsonb_build_object(
+                'queue_id', p_queue_id, 'object_id', NULL,
+                'unsafe_legacy_path', true, 'claimable', false
+            );
+        END IF;
+
         -- Legacy URLs are not registry-backed and can be shared by several
-        -- historical sinks.  Never delete their bytes while any visible sink
-        -- still carries the exact value; release this claim for a later pass.
-        IF v_q.path IS NOT NULL AND (
-            EXISTS (SELECT 1 FROM public.profiles p WHERE p.avatar_url = v_q.path)
-            OR EXISTS (SELECT 1 FROM public.entries e WHERE e.photo_url = v_q.path)
-            OR EXISTS (SELECT 1 FROM public.entry_photos ep WHERE ep.photo_url = v_q.path)
+        -- historical sinks. Compare both the raw value and the canonical
+        -- bucket-relative/public-URL identity before authorizing deletion.
+        IF EXISTS (
+            SELECT 1 FROM public.profiles p
+            WHERE p.avatar_url = v_q.path OR p.avatar_url = v_legacy_path
+               OR pg_catalog.right(
+                    p.avatar_url,
+                    pg_catalog.length(v_public_marker || v_legacy_path)
+                  ) = v_public_marker || v_legacy_path
+        ) OR EXISTS (
+            SELECT 1 FROM public.entries e
+            WHERE e.photo_url = v_q.path OR e.photo_url = v_legacy_path
+               OR pg_catalog.right(
+                    e.photo_url,
+                    pg_catalog.length(v_public_marker || v_legacy_path)
+                  ) = v_public_marker || v_legacy_path
+        ) OR EXISTS (
+            SELECT 1 FROM public.entry_photos ep
+            WHERE ep.photo_url = v_q.path OR ep.photo_url = v_legacy_path
+               OR pg_catalog.right(
+                    ep.photo_url,
+                    pg_catalog.length(v_public_marker || v_legacy_path)
+                  ) = v_public_marker || v_legacy_path
         ) THEN
             UPDATE public.image_gc_queue q
             SET state = 'pending', claimed_by = NULL, lease_expires = NULL,
@@ -157,7 +221,7 @@ BEGIN
         WHERE q.id = p_queue_id;
         RETURN pg_catalog.jsonb_build_object(
             'queue_id', p_queue_id, 'object_id', NULL,
-            'legacy_path', v_q.path, 'claimable', false
+            'legacy_path', v_legacy_path, 'claimable', false
         );
     END IF;
 

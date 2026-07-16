@@ -9,6 +9,7 @@ import {
   createProcessor,
   drainOutbox,
   loadModerationJobsConfig,
+  normalizeProjectQueuePath,
   preflightModerationJobs,
 } from "./runtime.ts";
 
@@ -404,6 +405,132 @@ Deno.test("ref GC distinguishes already-settled queues from rejected terminal CA
       { name: "fn_finish_gc_queue", success: false },
     ],
   );
+});
+
+Deno.test("legacy Storage deletion is owner-bound and canonical-live fenced", async () => {
+  const project = "https://project.supabase.co";
+  const user = "11111111-1111-4111-8111-111111111111";
+  const other = "22222222-2222-4222-8222-222222222222";
+  const publicPrefix = `${project}/storage/v1/object/public/avatars/`;
+
+  assertEquals(
+    normalizeProjectQueuePath(
+      `${publicPrefix}${user}/safe%20avatar.jpg`,
+      "avatars",
+      project,
+    ),
+    `${user}/safe avatar.jpg`,
+  );
+  for (
+    const unsafe of [
+      `${publicPrefix}${user}%2Fencoded-slash.jpg`,
+      `${publicPrefix}${user}/encoded%5Cbackslash.jpg`,
+      `${publicPrefix}${user}/%2E%2E/traversal.jpg`,
+      `https://attacker.example/storage/v1/object/public/avatars/${user}/foreign.jpg`,
+    ]
+  ) {
+    assertEquals(
+      normalizeProjectQueuePath(unsafe, "avatars", project),
+      null,
+    );
+  }
+
+  const lease = {
+    jobName: "gc_refdriven" as const,
+    holder: "worker",
+    fenceToken: 1,
+    runId: "10000000-0000-4000-8000-000000000011",
+    incidentId: "10000000-0000-4000-8000-000000000012",
+    attempt: 1,
+    cursor: null,
+  };
+  const run = async (
+    queueUser: string,
+    legacyPath: string,
+    liveAvatar: string | null = null,
+  ) => {
+    const removed: string[] = [];
+    const client = {
+      rpc: async (name: string) => {
+        if (name === "fn_claim_gc_queue") {
+          return {
+            data: [{
+              id: "queue",
+              user_id: queueUser,
+              bucket: "avatars",
+              path: legacyPath,
+            }],
+            error: null,
+          };
+        }
+        if (name === "fn_unlink_gc_ref") {
+          return {
+            data: { claimable: false, legacy_path: legacyPath },
+            error: null,
+          };
+        }
+        if (name === "fn_finish_gc_queue") {
+          return { data: true, error: null };
+        }
+        throw new Error(`unexpected RPC ${name}`);
+      },
+      from: (table: string) => ({
+        select: () => ({
+          eq: async () => ({
+            data: table === "profiles" && liveAvatar
+              ? [{ avatar_url: liveAvatar }]
+              : [],
+            error: null,
+          }),
+        }),
+      }),
+      storage: {
+        from: (bucket: string) => ({
+          remove: async (paths: string[]) => {
+            removed.push(`${bucket}:${paths[0]}`);
+            return { error: null };
+          },
+        }),
+      },
+    };
+    assertEquals(
+      await createProcessor(
+        "gc_refdriven",
+        client,
+        loadModerationJobsConfig((name) => ENV[name]),
+        async () => new Response(),
+      )(lease, async () => {}),
+      { itemsProcessed: 1, cursor: "queue" },
+    );
+    return removed;
+  };
+
+  // Cross-owner, ambiguous, traversal, and foreign spellings are no-ops.
+  for (
+    const unsafe of [
+      `${other}/victim.jpg`,
+      `${publicPrefix}${user}%2Fencoded-slash.jpg`,
+      `${publicPrefix}${user}/encoded%5Cbackslash.jpg`,
+      `${publicPrefix}${user}/%2E%2E/traversal.jpg`,
+      `https://attacker.example/storage/v1/object/public/avatars/${user}/foreign.jpg`,
+    ]
+  ) {
+    assertEquals(await run(user, unsafe), []);
+  }
+
+  // A different but safe URL spelling of a live sink resolves to the same
+  // physical key and must fence deletion.
+  assertEquals(
+    await run(
+      user,
+      `${user}/avatar.jpg`,
+      `${publicPrefix}${user}/%61vatar.jpg`,
+    ),
+    [],
+  );
+  assertEquals(await run(user, `${user}/orphan.jpg`), [
+    `avatars:${user}/orphan.jpg`,
+  ]);
 });
 
 Deno.test("alarm_selftest is manual-only and requires explicit live confirmation", async () => {

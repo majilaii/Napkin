@@ -356,7 +356,31 @@ function normalizeLegacySource(
   return path;
 }
 
-function normalizeProjectQueuePath(
+function decodeStoragePathSegments(encodedPath: string): string | null {
+  const encodedSegments = encodedPath.split("/");
+  if (encodedSegments.some((segment) => segment.length === 0)) return null;
+
+  const decoded: string[] = [];
+  for (const segment of encodedSegments) {
+    let value: string;
+    try {
+      value = decodeURIComponent(segment);
+    } catch {
+      return null;
+    }
+    // Encoded separators and dot-segments are ambiguous at the HTTP/Storage
+    // boundary. Never turn one spelling into a service-role delete for a
+    // different physical key.
+    if (
+      value.includes("/") || value.includes("\\") || value === "." ||
+      value === ".." || /%(?:2f|5c|2e)/i.test(value)
+    ) return null;
+    decoded.push(value);
+  }
+  return decoded.join("/");
+}
+
+export function normalizeProjectQueuePath(
   raw: string,
   bucket: string,
   supabaseUrl: string,
@@ -364,6 +388,12 @@ function normalizeProjectQueuePath(
   if (!["avatars", "entry-photos", "image-staging"].includes(bucket)) {
     return null;
   }
+  // URL parsing normalizes literal/encoded dot segments before exposing
+  // pathname. Reject them (and encoded separators) from the original value.
+  if (
+    raw.includes("\\") || /%(?:2f|5c|2e)/i.test(raw) ||
+    /(?:^|\/)\.{1,2}(?:\/|$)/.test(raw)
+  ) return null;
   let path = raw;
   if (raw.includes("://")) {
     let candidate: URL;
@@ -379,14 +409,13 @@ function normalizeProjectQueuePath(
     ) return null;
     const marker = `/storage/v1/object/public/${bucket}/`;
     if (!candidate.pathname.startsWith(marker)) return null;
-    try {
-      path = candidate.pathname.slice(marker.length)
-        .split("/")
-        .map((segment) => decodeURIComponent(segment))
-        .join("/");
-    } catch {
-      return null;
-    }
+    path = decodeStoragePathSegments(candidate.pathname.slice(marker.length)) ??
+      "";
+  } else if (raw.includes("%")) {
+    // A bucket-relative database value is already a Storage key, not a URL.
+    // Treat percent escapes as ambiguous instead of guessing whether Storage
+    // will interpret them before deletion.
+    return null;
   }
   if (
     !path ||
@@ -398,6 +427,84 @@ function normalizeProjectQueuePath(
     )
   ) return null;
   return path;
+}
+
+function pathBelongsToUser(path: string, userId: string): boolean {
+  const segments = path.split("/");
+  return segments[0] === userId ||
+    (segments[0] === "approved" && segments[1] === userId);
+}
+
+async function ownedLiveSinkUrls(
+  client: SupabaseLike,
+  bucket: "avatars" | "entry-photos",
+  userId: string,
+): Promise<string[]> {
+  if (bucket === "avatars") {
+    const { data, error } = await client.from("profiles")
+      .select("avatar_url")
+      .eq("user_id", userId);
+    if (error) {
+      throw new Error(
+        `avatar reference check: ${error.message ?? "failed"}`,
+      );
+    }
+    return dataRows(data).flatMap((row) =>
+      typeof row.avatar_url === "string" && row.avatar_url.length > 0
+        ? [row.avatar_url]
+        : []
+    );
+  }
+
+  const [heroResult, photoResult] = await Promise.all([
+    client.from("entries").select("photo_url").eq("user_id", userId),
+    client.from("entry_photos")
+      .select("photo_url,entries!inner(user_id)")
+      .eq("entries.user_id", userId),
+  ]);
+  if (heroResult.error) {
+    throw new Error(
+      `entry hero reference check: ${heroResult.error.message ?? "failed"}`,
+    );
+  }
+  if (photoResult.error) {
+    throw new Error(
+      `entry photo reference check: ${photoResult.error.message ?? "failed"}`,
+    );
+  }
+  return [...dataRows(heroResult.data), ...dataRows(photoResult.data)].flatMap(
+    (row) =>
+      typeof row.photo_url === "string" && row.photo_url.length > 0
+        ? [row.photo_url]
+        : [],
+  );
+}
+
+async function legacyDeleteIsSafe(
+  client: SupabaseLike,
+  queue: Record<string, any> | undefined,
+  rawPath: string,
+  bucket: string,
+  supabaseUrl: string,
+): Promise<{ bucket: "avatars" | "entry-photos"; path: string } | null> {
+  if (bucket !== "avatars" && bucket !== "entry-photos") return null;
+  const userId = typeof queue?.user_id === "string" ? queue.user_id : "";
+  const path = normalizeProjectQueuePath(rawPath, bucket, supabaseUrl);
+  if (!userId || !path || !pathBelongsToUser(path, userId)) return null;
+
+  // SQL protects exact string references. Repeat the check at the external
+  // deletion boundary using canonical Storage identities, so URL vs relative
+  // spellings and harmless percent-encoding cannot bypass the live-sink fence.
+  const liveUrls = await ownedLiveSinkUrls(client, bucket, userId);
+  for (const liveUrl of liveUrls) {
+    const livePath = normalizeProjectQueuePath(
+      liveUrl,
+      bucket,
+      supabaseUrl,
+    );
+    if (livePath === path) return null;
+  }
+  return { bucket, path };
 }
 
 async function removeStoragePath(
@@ -753,13 +860,23 @@ export function createProcessor(
           if (result.legacy_path) {
             const queue = claimed.get(row.queueId);
             const bucket = String(queue?.bucket ?? "");
-            const path = normalizeProjectQueuePath(
+            const deletion = await legacyDeleteIsSafe(
+              client,
+              queue,
               String(result.legacy_path),
               bucket,
               config.supabaseUrl,
             );
-            // Foreign quarantined URLs have no project-owned bytes.
-            if (path) await removeStoragePath(client, bucket, path);
+            // Foreign, ambiguous, cross-owner, and canonically-live paths are
+            // terminal no-ops. Only this final check may authorize the
+            // service-role Storage delete.
+            if (deletion) {
+              await removeStoragePath(
+                client,
+                deletion.bucket,
+                deletion.path,
+              );
+            }
             return null;
           }
           if (result.claimable !== true) {

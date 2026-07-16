@@ -1460,6 +1460,9 @@ DECLARE
     legacy_entry uuid;
     legacy_photo uuid;
     legacy_queue uuid;
+    canonical_queue uuid;
+    unsafe_queue uuid;
+    unsafe_path text;
     legacy_url text := 'https://ftvmseaqwwlcxtdlvxxz.supabase.co/storage/v1/object/public/entry-photos/'
         ||'19610000-0000-4000-8000-000000000001/shared-legacy.jpg';
     j jsonb;
@@ -1615,8 +1618,8 @@ BEGIN
     VALUES (u1,'shared legacy GC fixture',legacy_url) RETURNING id INTO legacy_entry;
     INSERT INTO public.entry_photos (entry_id,photo_url,sort_order)
     VALUES (legacy_entry,legacy_url,0) RETURNING id INTO legacy_photo;
-    INSERT INTO public.image_gc_queue (reason,bucket,path)
-    VALUES ('grandfather_rebound','entry-photos',legacy_url) RETURNING id INTO legacy_queue;
+    INSERT INTO public.image_gc_queue (user_id,reason,bucket,path)
+    VALUES (u1,'grandfather_rebound','entry-photos',legacy_url) RETURNING id INTO legacy_queue;
     j:=public.fn_claim_gc_queue('legacy-share-1',100);
     ASSERT j @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('id',legacy_queue)),
       'legacy shared-path queue was not claimed';
@@ -1642,6 +1645,43 @@ BEGIN
       'legacy bytes did not become deletable after the final sink cleared';
     ASSERT public.fn_finish_gc_queue(legacy_queue,'legacy-share-2',true,NULL),
       'legacy shared-path queue could not finish';
+
+    -- Canonical identity, not raw string equality, protects a live sink. A
+    -- relative queue path and the normal public URL are the same object.
+    INSERT INTO public.entries (user_id,content,photo_url)
+    VALUES (u1,'canonical legacy GC fixture',legacy_url)
+    RETURNING id INTO legacy_entry;
+    INSERT INTO public.image_gc_queue (user_id,reason,bucket,path)
+    VALUES (
+      u1,'grandfather_rebound','entry-photos',u1::text||'/shared-legacy.jpg'
+    ) RETURNING id INTO canonical_queue;
+    PERFORM public.fn_claim_gc_queue('legacy-canonical',100);
+    j:=public.fn_unlink_gc_ref(canonical_queue,'legacy-canonical');
+    ASSERT (j->>'deferred_shared_legacy')::boolean
+       AND (SELECT state='pending' FROM public.image_gc_queue WHERE id=canonical_queue),
+      'canonical live-sink spelling did not fence legacy byte deletion';
+    DELETE FROM public.entries WHERE id=legacy_entry;
+    DELETE FROM public.image_gc_queue WHERE id=canonical_queue;
+
+    -- A raw deleted sink is not authority to remove arbitrary service-role
+    -- paths. Cross-owner and ambiguous encodings become terminal no-ops.
+    FOREACH unsafe_path IN ARRAY ARRAY[
+      u2::text||'/victim.jpg',
+      u1::text||'%2Fencoded-slash.jpg',
+      u1::text||E'/encoded\\backslash.jpg',
+      u1::text||'/../traversal.jpg'
+    ] LOOP
+      INSERT INTO public.image_gc_queue (user_id,reason,bucket,path)
+      VALUES (u1,'entry_photo_delete','entry-photos',unsafe_path)
+      RETURNING id INTO unsafe_queue;
+      PERFORM public.fn_claim_gc_queue('legacy-unsafe-'||unsafe_queue::text,100);
+      j:=public.fn_unlink_gc_ref(
+        unsafe_queue,'legacy-unsafe-'||unsafe_queue::text
+      );
+      ASSERT (j->>'unsafe_legacy_path')::boolean
+         AND (SELECT state='done' FROM public.image_gc_queue WHERE id=unsafe_queue),
+        'unsafe/cross-owner legacy path was authorized for Storage deletion';
+    END LOOP;
 END;
 $spec$;
 
