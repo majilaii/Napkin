@@ -55,7 +55,11 @@ jobs:
           deno-version: v2.x
 
       - name: Assert completeness backfill contract
-        run: deno test --allow-env scripts/backfill/restaurant-completeness_test.ts
+        # deno resolves npm:-specifier types through root node_modules;
+        # without the install it dies on npm:@types/node before any test runs.
+        run: |
+          npm ci --ignore-scripts
+          deno test --allow-env scripts/backfill/restaurant-completeness_test.ts
 
       - name: Assert forward-only release classifier
         run: bash scripts/test-forward-only-release-classifier.sh
