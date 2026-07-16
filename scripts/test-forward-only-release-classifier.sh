@@ -19,6 +19,14 @@ commit_file() {
   git -C "$fixture" commit -qm "fixture: $path"
 }
 
+rename_file() {
+  local old_path="$1"
+  local new_path="$2"
+  mkdir -p "$fixture/$(dirname "$new_path")"
+  git -C "$fixture" mv "$old_path" "$new_path"
+  git -C "$fixture" commit -qm "fixture: rename $old_path to $new_path"
+}
+
 assert_classification() {
   local expected="$1"
   local label="$2"
@@ -46,5 +54,24 @@ assert_classification true 'workflow addition'
 
 commit_file .github/workflows/restaurant-completeness-cron.yml modified
 assert_classification false 'workflow modification'
+
+for version_pair in \
+  '20260716100000:20260716121000:control_plane' \
+  '20260716101000:20260716122000:workers' \
+  '20260716102000:20260716123000:writers'
+do
+  IFS=: read -r old_version new_version suffix <<<"$version_pair"
+  old_path="supabase/migrations/${old_version}_image_moderation_${suffix}.sql"
+  new_path="supabase/migrations/${new_version}_image_moderation_${suffix}.sql"
+
+  commit_file "$old_path" initial
+  assert_classification false "legacy $suffix migration addition"
+
+  rename_file "$old_path" "$new_path"
+  assert_classification true "$suffix migration timestamp correction"
+
+  commit_file "$new_path" modified
+  assert_classification false "$suffix migration modification"
+done
 
 printf '%s\n' 'forward-only release classifier: ok'

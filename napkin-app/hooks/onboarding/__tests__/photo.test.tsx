@@ -60,11 +60,11 @@ jest.mock('@/lib/imageStaging', () => ({
     stageAndModerate: (...args: unknown[]) => mockStageAndModerate(...args),
     isModerationRejected: (error: { code?: string }) => error?.code === 'moderation_rejected',
 }));
-jest.mock('./OnboardingDraftContext', () => ({
+jest.mock('@/app/onboarding/OnboardingDraftContext', () => ({
     useOnboardingDraft: () => ({ draft: mockDraft, patch: mockPatch }),
 }));
 
-import OnboardingPhotoScreen from './photo';
+import OnboardingPhotoScreen from '@/app/onboarding/photo';
 
 describe('mandatory onboarding photo', () => {
     beforeEach(() => {
