@@ -1,0 +1,72 @@
+-- TICKET-196 B-2 HOLD — DO NOT RENAME/APPLY before the forced-update window.
+-- Supabase only applies *.sql migrations; the .b2-hold suffix keeps this dark.
+-- When activation is approved, rename to a new, never-before-applied timestamp.
+--
+-- supabase db push does NOT wrap files in a transaction.  The explicit boundary
+-- below makes flag activation, sweep opening, grants, and policy drops atomic.
+
+BEGIN;
+
+DO $activate$
+DECLARE
+    v_rows integer;
+BEGIN
+    UPDATE public.moderation_config c
+    SET enforce = true, updated_at = pg_catalog.clock_timestamp()
+    WHERE c.key IN ('image_moderation', 'grandfather_sweep');
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    IF v_rows <> 2 THEN
+        RAISE EXCEPTION 'B-2 activation requires both moderation config rows; found %', v_rows;
+    END IF;
+END;
+$activate$;
+
+-- Every onboarding/completion field is server-owned after activation.
+REVOKE UPDATE ON TABLE public.profiles FROM PUBLIC, anon, authenticated;
+
+-- Close direct image-bearing entry writes while preserving the pre-existing
+-- scalar UPDATE column allowlist.  Table-level revocation does not remove the
+-- historical column grant on photo_url, so revoke that column explicitly.
+-- INSERT is enumerated dynamically for replay-safe additive scalar columns;
+-- UPDATE must not be dynamically broadened (notably supper_id is locked down).
+REVOKE INSERT, UPDATE ON TABLE public.entries FROM PUBLIC, anon, authenticated;
+REVOKE UPDATE (photo_url) ON TABLE public.entries
+    FROM PUBLIC, anon, authenticated;
+DO $entry_columns$
+DECLARE
+    v_columns text;
+BEGIN
+    SELECT pg_catalog.string_agg(pg_catalog.quote_ident(a.attname), ', ' ORDER BY a.attnum)
+    INTO v_columns
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = 'public.entries'::pg_catalog.regclass
+      AND a.attnum > 0 AND NOT a.attisdropped
+      AND a.attgenerated = ''
+      AND a.attname <> 'photo_url';
+    IF v_columns IS NULL THEN
+        RAISE EXCEPTION 'B-2 could not enumerate entries columns';
+    END IF;
+    EXECUTE 'GRANT INSERT (' || v_columns ||
+            ') ON TABLE public.entries TO authenticated';
+END;
+$entry_columns$;
+
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.entry_photos
+    FROM PUBLIC, anon, authenticated;
+
+-- B2_ROLLBACK_TEST_POINT: migration-replay injects a failure here, after the
+-- flag and privilege mutations but before the policy drops, to prove a true
+-- mid-file error rolls the whole explicit transaction back.
+
+-- Policy removal is defense in depth behind the privilege revokes and prevents
+-- a future broad table grant from silently reopening the old writers.
+DROP POLICY IF EXISTS "entry_photos_insert" ON public.entry_photos;
+DROP POLICY IF EXISTS "entry_photos_delete" ON public.entry_photos;
+DROP POLICY IF EXISTS "Authenticated upload own folder avatars" ON storage.objects;
+DROP POLICY IF EXISTS "Authenticated upload own folder entry-photos" ON storage.objects;
+REVOKE ALL ON FUNCTION public.fn_allow_legacy_image_storage_insert()
+    FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.fn_allow_legacy_image_storage_insert()
+    TO service_role;
+
+COMMIT;

@@ -25,12 +25,14 @@ on:
     paths:
       - 'supabase/migrations/**'
       - 'supabase/tests/**'
+      - 'scripts/test-image-moderation-concurrency.sh'
       - '.github/workflows/migration-replay.yml'
   push:
     branches: [main]
     paths:
       - 'supabase/migrations/**'
       - 'supabase/tests/**'
+      - 'scripts/test-image-moderation-concurrency.sh'
       - '.github/workflows/migration-replay.yml'
 
 concurrency:
@@ -100,3 +102,45 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/people_lists_discovery.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/image_moderation_b0.spec.sql
+
+      - name: Assert image-moderation multi-session invariants
+        # These are real competing transactions coordinated at barriers: the
+        # flag flip, atomic caps, 50-live quota, registry/GC row fences, scan
+        # lease, and singleton job claim cannot be proved by a one-session DO.
+        run: |
+          bash scripts/test-image-moderation-concurrency.sh \
+            "postgresql://postgres:postgres@127.0.0.1:54329/postgres"
+
+      - name: Assert held B-2 transaction and activation contract
+        run: |
+          set -euo pipefail
+          HOLD="supabase/migrations/20260716110000_b2_enforcement_grants.sql.b2-hold"
+          test "$(grep -c '^BEGIN;$' "$HOLD")" -eq 1
+          test "$(grep -c '^COMMIT;$' "$HOLD")" -eq 1
+
+          # Inject a genuine mid-file failure after flag + privilege changes but
+          # before policy drops. PostgreSQL must roll the whole explicit
+          # transaction back (db push does not provide one for us).
+          test "$(grep -c '^-- B2_ROLLBACK_TEST_POINT:' "$HOLD")" -eq 1
+          awk '{ print } /^-- B2_ROLLBACK_TEST_POINT:/ { print "SELECT 1/0;" }' \
+            "$HOLD" > /tmp/ticket-196-b2-forced-failure.sql
+          set +e
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 -f /tmp/ticket-196-b2-forced-failure.sql
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          test "$(psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" -Atc \
+            "select count(*) from public.moderation_config where enforce")" -eq 0
+          test "$(psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" -Atc \
+            "select count(*) from pg_policies where schemaname='public' and tablename='entry_photos' and policyname='entry_photos_insert'")" -eq 1
+
+          # Apply the held file only to this throwaway replay DB, then test the
+          # real post-activation privilege/order state.
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 -f "$HOLD"
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 -f supabase/tests/image_moderation_b2.spec.sql
