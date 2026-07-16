@@ -37,6 +37,7 @@ import {
     type RestaurantPickerPick,
 } from '@/components/search/RestaurantPickerScreen';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { SheetHeader } from '@/components/ui/SheetHeader';
 
 type Props = {
@@ -53,7 +54,19 @@ function sameTakes(a: ProfileQuickTake[], b: ProfileQuickTake[]): boolean {
     return JSON.stringify(toProfileQuickTakeInputs(a)) === JSON.stringify(toProfileQuickTakeInputs(b));
 }
 
-function DraftArtwork({ take, palette, isDark }: { take: ProfileQuickTake; palette: Palette; isDark: boolean }) {
+function DraftArtwork({
+    take,
+    photoUrl,
+    palette,
+    isDark,
+    onPhotoError,
+}: {
+    take: ProfileQuickTake;
+    photoUrl: string | null;
+    palette: Palette;
+    isDark: boolean;
+    onPhotoError: () => void;
+}) {
     return (
         <View
             style={[
@@ -64,9 +77,14 @@ function DraftArtwork({ take, palette, isDark }: { take: ProfileQuickTake; palet
                 },
             ]}
         >
-            {take.photo_url ? (
+            {photoUrl ? (
                 <>
-                    <Image source={{ uri: take.photo_url }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                    <Image
+                        source={{ uri: photoUrl }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        onError={onPhotoError}
+                    />
                     <View
                         style={[
                             StyleSheet.absoluteFill,
@@ -94,6 +112,8 @@ function DraftRow({
     index,
     total,
     onMove,
+    photoUrl,
+    onPhotoError,
 }: RenderItemParams<ProfileQuickTake> & {
     palette: Palette;
     isDark: boolean;
@@ -102,6 +122,8 @@ function DraftRow({
     index: number;
     total: number;
     onMove: (delta: -1 | 1) => void;
+    photoUrl: string | null;
+    onPhotoError: () => void;
 }) {
     return (
         <ScaleDecorator activeScale={1.02}>
@@ -147,7 +169,13 @@ function DraftRow({
                             {item.name}
                         </Text>
                     </View>
-                    <DraftArtwork take={item} palette={palette} isDark={isDark} />
+                    <DraftArtwork
+                        take={item}
+                        photoUrl={photoUrl}
+                        palette={palette}
+                        isDark={isDark}
+                        onPhotoError={onPhotoError}
+                    />
                 </Pressable>
                 <Pressable
                     onPress={onRemove}
@@ -309,6 +337,7 @@ export function QuickTakesSheet({
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const [editorDraft, setEditorDraft] = useState<ProfileQuickTake | null>(null);
     const [choosingRestaurant, setChoosingRestaurant] = useState(false);
+    const [failedPhotoUrls, setFailedPhotoUrls] = useState<Set<string>>(() => new Set());
     const wasVisible = useRef(false);
 
     useEffect(() => {
@@ -317,6 +346,7 @@ export function QuickTakesSheet({
             setEditingIndex(null);
             setEditorDraft(null);
             setChoosingRestaurant(false);
+            setFailedPhotoUrls(new Set());
         }
         wasVisible.current = visible;
     }, [visible, currentTakes]);
@@ -324,6 +354,20 @@ export function QuickTakesSheet({
     const hasDiff = useMemo(() => !sameTakes(drafts, currentTakes), [drafts, currentTakes]);
     const usedPrompts = useMemo(() => new Set(drafts.map((take) => take.prompt_key)), [drafts]);
     const availablePrompts = QUICK_TAKE_PROMPTS.filter((prompt) => !usedPrompts.has(prompt.key));
+    const resolvedPhotosByPrompt = useMemo(() => new Map(
+        drafts.map((take) => [take.prompt_key, resolveSourcedPhoto({
+            url: take.photo_url,
+            photoSource: take.photo_source,
+            attributionHtml: take.places_photo_attribution_html,
+            restaurantName: take.name,
+        })]),
+    ), [drafts]);
+    const renderedPlacesPhotos = useMemo(
+        () => [...resolvedPhotosByPrompt.values()].filter(
+            (photo) => !!photo.url && !failedPhotoUrls.has(photo.url),
+        ),
+        [failedPhotoUrls, resolvedPhotosByPrompt],
+    );
 
     const beginAdd = useCallback((promptKey?: QuickTakePromptKey) => {
         if (drafts.length >= MAX_PROFILE_QUICK_TAKES) return;
@@ -338,6 +382,8 @@ export function QuickTakesSheet({
             city: null,
             cuisine: null,
             photo_url: null,
+            photo_source: null,
+            places_photo_attribution_html: null,
             note: null,
         });
     }, [availablePrompts, drafts.length]);
@@ -403,6 +449,8 @@ export function QuickTakesSheet({
             cuisine: pick.cuisine,
             // The profile refetch supplies a server-gated Places photo only.
             photo_url: null,
+            photo_source: null,
+            places_photo_attribution_html: null,
         } : current);
         setChoosingRestaurant(false);
     }, []);
@@ -462,11 +510,24 @@ export function QuickTakesSheet({
                         keyExtractor={(item) => item.prompt_key}
                         onDragEnd={({ data }) => setDrafts(data.map((take, index) => ({ ...take, position: index + 1 })))}
                         contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + Spacing.xxl }]}
-                        ListHeaderComponent={drafts.length > 1 ? (
-                            <Text style={[Type.metadata, styles.helper, { color: palette.textMuted }]}>Hold ≡ to reorder.</Text>
+                        ListHeaderComponent={drafts.length > 1 || renderedPlacesPhotos.length > 0 ? (
+                            <View style={styles.listHeader}>
+                                {drafts.length > 1 ? (
+                                    <Text style={[Type.metadata, { color: palette.textMuted }]}>Hold ≡ to reorder.</Text>
+                                ) : null}
+                                <PlacesCredit
+                                    credits={renderedPlacesPhotos.map((photo) => photo.credit)}
+                                    photoCount={renderedPlacesPhotos.length}
+                                    testID="quick-takes-sheet-places-credit"
+                                />
+                            </View>
                         ) : null}
                         renderItem={(params) => {
                             const index = params.getIndex() ?? 0;
+                            const resolvedPhoto = resolvedPhotosByPrompt.get(params.item.prompt_key);
+                            const photoUrl = resolvedPhoto?.url && !failedPhotoUrls.has(resolvedPhoto.url)
+                                ? resolvedPhoto.url
+                                : null;
                             return (
                                 <DraftRow
                                     {...params}
@@ -477,6 +538,11 @@ export function QuickTakesSheet({
                                     onEdit={() => beginEdit(index)}
                                     onRemove={() => removeAt(index)}
                                     onMove={(delta) => moveDraft(index, delta)}
+                                    photoUrl={photoUrl}
+                                    onPhotoError={() => {
+                                        if (!photoUrl) return;
+                                        setFailedPhotoUrls((current) => new Set(current).add(photoUrl));
+                                    }}
                                 />
                             );
                         }}
@@ -510,7 +576,7 @@ export function QuickTakesSheet({
 const styles = StyleSheet.create({
     root: { flex: 1 },
     listContent: { paddingHorizontal: 22, paddingTop: Spacing.md, gap: 10 },
-    helper: { marginBottom: Spacing.xs },
+    listHeader: { gap: Spacing.xs, marginBottom: Spacing.xs },
     draftRow: {
         minHeight: 80,
         paddingVertical: Spacing.sm,

@@ -50,6 +50,9 @@ export type AtlasRestaurantTile = {
     name: string;
     cuisine: string | null;
     photo_url: string | null;
+    /** Optional for stale pages; unknown provenance suppresses the image. */
+    photo_source?: 'places' | 'user' | 'table' | 'none' | null;
+    places_photo_attribution_html?: string | null;
     lat: number | null;
     lng: number | null;
     rating: number | null;

@@ -23,6 +23,10 @@ export interface SavedList {
     entry_count: number;
     save_count: number;
     cover_photo_url: string | null;
+    /** Source-aware cover provenance; absent stale rows fail closed in cards. */
+    cover_photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    cover_attribution_html?: string | null;
+    cover_restaurant_name?: string | null;
     owner_display_name: string | null;
     owner_avatar_url: string | null;
     owner_username: string | null;

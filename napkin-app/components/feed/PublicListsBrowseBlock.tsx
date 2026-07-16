@@ -10,12 +10,13 @@
  * Covers (TICKET-189, public-safe chain only): `cover_photo_url` arrives from
  * the server ALREADY gated — the author's own cover, or the list's first
  * restaurant's mirrored Places hero (in which case `attribution_html` rides
- * along and the credit renders over the image) — else null → emoji/tint
+ * along and one quiet credit line renders below the image) — else null → emoji/tint
  * plate. NO member/entry-photo lookup happens here, ever: a user/table hero
  * as a derived cover on the public feed is banned (the server returns null
- * for those; this component must never re-derive one).
+ * for those; this component must never re-derive one). The client repeats the
+ * gate so a malformed or stale attribution can never leave an uncredited image.
  */
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,7 +25,11 @@ import { useRouter } from 'expo-router';
 
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
+import {
+    PlacesCredit,
+    resolveSourcedPhoto,
+    type ResolvedSourcedPhoto,
+} from '@/components/ui/PlacesCredit';
 import type { PublicListResult } from '@/hooks/lists/useSearchPublicLists';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import { SectionKicker } from './SectionKicker';
@@ -41,10 +46,16 @@ function spotLabel(list: PublicListResult) {
     return `${list.entry_count} ${list.entry_count === 1 ? 'spot' : 'spots'}`;
 }
 
-/** Places credit label when the cover is an attributed Places hero. */
-function coverCredit(list: PublicListResult): string | null {
-    if (!list.cover_photo_url || list.photo_source !== 'places') return null;
-    return parsePlacesAttribution(list.attribution_html)?.label ?? null;
+function resolveCover(list: PublicListResult) {
+    return resolveSourcedPhoto({
+        url: list.cover_photo_url,
+        // Public-feed covers are Places-only by contract. Do not widen this to
+        // user/Table restaurant heroes even though the shared resolver can
+        // display those sources on private/owned surfaces.
+        photoSource: list.photo_source === 'places' ? 'places' : null,
+        attributionHtml: list.attribution_html,
+        restaurantName: list.cover_restaurant_name,
+    });
 }
 
 function imageOutline(scheme: 'light' | 'dark') {
@@ -56,14 +67,17 @@ function ListFeature({
     palette,
     scheme,
     onPress,
+    cover,
+    onCoverError,
 }: {
     list: PublicListResult;
     palette: Palette;
     scheme: 'light' | 'dark';
     onPress: (list: PublicListResult) => void;
+    cover: ResolvedSourcedPhoto;
+    onCoverError: () => void;
 }) {
-    const hasCover = !!list.cover_photo_url;
-    const credit = coverCredit(list);
+    const hasCover = !!cover.url;
 
     return (
         <PressableScale
@@ -82,10 +96,11 @@ function ListFeature({
             >
                 {hasCover && (
                     <Image
-                        source={{ uri: list.cover_photo_url! }}
+                        source={{ uri: cover.url! }}
                         style={StyleSheet.absoluteFillObject}
                         contentFit="cover"
                         transition={180}
+                        onError={onCoverError}
                     />
                 )}
                 {hasCover && (
@@ -113,14 +128,6 @@ function ListFeature({
                             — {list.description}
                         </Text>
                     )}
-                    {!!credit && (
-                        <Text
-                            style={[styles.coverCredit, { color: palette.textOnImage }]}
-                            numberOfLines={1}
-                        >
-                            {credit}
-                        </Text>
-                    )}
                 </View>
             </View>
         </PressableScale>
@@ -132,14 +139,17 @@ function ListRailCard({
     palette,
     scheme,
     onPress,
+    cover,
+    onCoverError,
 }: {
     list: PublicListResult;
     palette: Palette;
     scheme: 'light' | 'dark';
     onPress: (list: PublicListResult) => void;
+    cover: ResolvedSourcedPhoto;
+    onCoverError: () => void;
 }) {
-    const hasCover = !!list.cover_photo_url;
-    const credit = coverCredit(list);
+    const hasCover = !!cover.url;
 
     return (
         <PressableScale
@@ -158,29 +168,15 @@ function ListRailCard({
             >
                 {hasCover ? (
                     <Image
-                        source={{ uri: list.cover_photo_url! }}
+                        source={{ uri: cover.url! }}
                         style={StyleSheet.absoluteFillObject}
                         contentFit="cover"
                         transition={180}
+                        onError={onCoverError}
                     />
                 ) : list.emoji ? (
                     <Text style={styles.emoji}>{list.emoji}</Text>
                 ) : null}
-                {hasCover && !!credit && (
-                    <>
-                        <LinearGradient
-                            colors={['rgba(28, 28, 25, 0)', 'rgba(28, 28, 25, 0.55)']}
-                            locations={[0.55, 1]}
-                            style={StyleSheet.absoluteFillObject}
-                        />
-                        <Text
-                            style={[styles.railCredit, { color: palette.textOnImage }]}
-                            numberOfLines={1}
-                        >
-                            {credit}
-                        </Text>
-                    </>
-                )}
             </View>
             <View style={styles.railCopy}>
                 <Text style={[styles.railTitle, { color: palette.text }]} numberOfLines={2}>
@@ -207,6 +203,25 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
     );
 
     const { showcase, rail } = useMemo(() => arrangePublicLists(lists), [lists]);
+    const presentedLists = useMemo(
+        () => showcase ? [showcase, ...rail] : rail,
+        [rail, showcase],
+    );
+    const coverSignature = presentedLists
+        .map((list) => `${list.id}:${list.cover_photo_url ?? ''}:${list.attribution_html ?? ''}`)
+        .join('|');
+    const [failedCoverKeys, setFailedCoverKeys] = useState<Set<string>>(() => new Set());
+    useEffect(() => setFailedCoverKeys(new Set()), [coverSignature]);
+    const coversById = new Map(presentedLists.map((list) => {
+        const cover = resolveCover(list);
+        const key = `${list.id}:${cover.url ?? ''}`;
+        return [list.id, failedCoverKeys.has(key)
+            ? { ...cover, url: null, credit: null }
+            : cover] as const;
+    }));
+    const renderedPlacesCovers = presentedLists
+        .map((list) => coversById.get(list.id)!)
+        .filter((cover) => !!cover.url && !!cover.credit);
 
     if (!showcase && rail.length === 0) return null;
 
@@ -214,7 +229,17 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
         <View>
             <SectionKicker>new lists</SectionKicker>
             {showcase && (
-                <ListFeature list={showcase} palette={palette} scheme={scheme} onPress={handlePress} />
+                <ListFeature
+                    list={showcase}
+                    palette={palette}
+                    scheme={scheme}
+                    onPress={handlePress}
+                    cover={coversById.get(showcase.id)!}
+                    onCoverError={() => {
+                        const url = coversById.get(showcase.id)?.url;
+                        if (url) setFailedCoverKeys((current) => new Set(current).add(`${showcase.id}:${url}`));
+                    }}
+                />
             )}
             {rail.length > 0 && (
                 <ScrollView
@@ -229,10 +254,22 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
                             palette={palette}
                             scheme={scheme}
                             onPress={handlePress}
+                            cover={coversById.get(list.id)!}
+                            onCoverError={() => {
+                                const url = coversById.get(list.id)?.url;
+                                if (url) setFailedCoverKeys((current) => new Set(current).add(`${list.id}:${url}`));
+                            }}
                         />
                     ))}
                 </ScrollView>
             )}
+            <PlacesCredit
+                credits={renderedPlacesCovers.map((cover) => cover.credit)}
+                photoCount={renderedPlacesCovers.length}
+                testID="public-lists-places-credit"
+                interactive={false}
+                style={styles.aggregateCredit}
+            />
             <PressableScale
                 onPress={() => router.push({ pathname: '/(tabs)/search', params: { mode: 'lists' } })}
                 style={styles.browseAll}
@@ -248,12 +285,11 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
 
 const styles = StyleSheet.create({
     featurePressable: {
-        height: 282,
         marginHorizontal: Spacing.lg,
         borderRadius: Radius.xxl,
     },
     featureClip: {
-        flex: 1,
+        height: 282,
         overflow: 'hidden',
         borderRadius: Radius.xxl,
         padding: Spacing.md,
@@ -279,22 +315,9 @@ const styles = StyleSheet.create({
         lineHeight: 19,
         marginTop: 7,
     },
-    coverCredit: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-        lineHeight: 14,
-        marginTop: 7,
-        opacity: 0.85,
-    },
-    railCredit: {
-        position: 'absolute',
-        bottom: 4,
-        left: 8,
-        right: 8,
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-        lineHeight: 14,
-        opacity: 0.9,
+    aggregateCredit: {
+        marginHorizontal: Spacing.lg,
+        marginTop: 6,
     },
     railContent: {
         paddingHorizontal: Spacing.lg,

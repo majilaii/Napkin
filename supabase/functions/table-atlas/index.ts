@@ -25,6 +25,10 @@ type CityRow = {
     member_count: number;
     last_visit_at: string;
     hero_photo_url: string | null;
+    hero_photo_source: string | null;
+    hero_places_photo_attribution_html: string | null;
+    /** Restaurant paired with the hero, used only for redundant-credit styling. */
+    hero_restaurant_name: string | null;
 };
 
 type AtlasStats = {
@@ -75,6 +79,8 @@ type RestaurantTile = {
     name: string;
     cuisine: string | null;
     photo_url: string | null;
+    photo_source: string | null;
+    places_photo_attribution_html: string | null;
     lat: number | null;
     lng: number | null;
     rating: number | null;
@@ -208,6 +214,8 @@ async function handleCityIndex(
                 name,
                 city,
                 photo_url,
+                photo_source,
+                places_photo_attribution_html,
                 lat,
                 lng
             )
@@ -233,6 +241,8 @@ async function handleCityIndex(
                 name,
                 city,
                 photo_url,
+                photo_source,
+                places_photo_attribution_html,
                 lat,
                 lng
             )
@@ -250,6 +260,9 @@ async function handleCityIndex(
         last_visit_at: string;
         // hero photo tracks the most-recent dated photo across all restaurants in the city
         hero_photo_url: string | null;
+        hero_photo_source: string | null;
+        hero_places_photo_attribution_html: string | null;
+        hero_restaurant_name: string | null;
         hero_photo_date: string;
     };
 
@@ -261,6 +274,9 @@ async function handleCityIndex(
         userId: string | null,
         date: string,
         photo: string | null,
+        photoSource: string | null,
+        placesAttributionHtml: string | null,
+        restaurantName: string,
     ) {
         if (!city) return;
         const existing = cityMap.get(city);
@@ -270,6 +286,9 @@ async function handleCityIndex(
                 user_ids: new Set(userId ? [userId] : []),
                 last_visit_at: date,
                 hero_photo_url: photo,
+                hero_photo_source: photo ? photoSource : null,
+                hero_places_photo_attribution_html: photo ? placesAttributionHtml : null,
+                hero_restaurant_name: photo ? restaurantName : null,
                 hero_photo_date: photo ? date : '',
             });
         } else {
@@ -279,6 +298,9 @@ async function handleCityIndex(
             // Pick photo from the most-recent visit that has one
             if (photo && date >= existing.hero_photo_date) {
                 existing.hero_photo_url = photo;
+                existing.hero_photo_source = photoSource;
+                existing.hero_places_photo_attribution_html = placesAttributionHtml;
+                existing.hero_restaurant_name = restaurantName;
                 existing.hero_photo_date = date;
             }
         }
@@ -287,7 +309,16 @@ async function handleCityIndex(
     for (const e of (entries ?? []) as any[]) {
         const r = e.restaurants;
         if (!r || !r.city) continue;
-        upsertCity(r.city, r.id, e.user_id, e.visited_at ?? e.created_at, r.photo_url);
+        upsertCity(
+            r.city,
+            r.id,
+            e.user_id,
+            e.visited_at ?? e.created_at,
+            r.photo_url,
+            r.photo_source ?? null,
+            r.places_photo_attribution_html ?? null,
+            r.name,
+        );
     }
     // TICKET-044: use projectRound for participant resolution (live and merged).
     for (const n of (nights ?? []) as any[]) {
@@ -297,10 +328,28 @@ async function handleCityIndex(
         const roundKind: 'live' | 'merged' = n.kind === 'merged' ? 'merged' : 'live';
         const { participants } = await projectRound(n.id, roundKind, supabase);
         for (const p of participants) {
-            upsertCity(r.city, r.id, p.user_id, date, r.photo_url);
+            upsertCity(
+                r.city,
+                r.id,
+                p.user_id,
+                date,
+                r.photo_url,
+                r.photo_source ?? null,
+                r.places_photo_attribution_html ?? null,
+                r.name,
+            );
         }
         if (participants.length === 0) {
-            upsertCity(r.city, r.id, null, date, r.photo_url);
+            upsertCity(
+                r.city,
+                r.id,
+                null,
+                date,
+                r.photo_url,
+                r.photo_source ?? null,
+                r.places_photo_attribution_html ?? null,
+                r.name,
+            );
         }
     }
 
@@ -313,6 +362,9 @@ async function handleCityIndex(
             member_count: data.user_ids.size,
             last_visit_at: data.last_visit_at,
             hero_photo_url: data.hero_photo_url,
+            hero_photo_source: data.hero_photo_source,
+            hero_places_photo_attribution_html: data.hero_places_photo_attribution_html,
+            hero_restaurant_name: data.hero_restaurant_name,
         }));
 
     const stats: AtlasStats = {
@@ -386,6 +438,8 @@ async function handleCityPage(
                 cuisine,
                 city,
                 photo_url,
+                photo_source,
+                places_photo_attribution_html,
                 lat,
                 lng
             )
@@ -427,6 +481,8 @@ async function handleCityPage(
                 cuisine,
                 city,
                 photo_url,
+                photo_source,
+                places_photo_attribution_html,
                 lat,
                 lng
             )
@@ -460,6 +516,8 @@ async function handleCityPage(
         name: string;
         cuisine: string | null;
         photo_url: string | null;
+        photo_source: string | null;
+        places_photo_attribution_html: string | null;
         lat: number | null;
         lng: number | null;
         last_visit_date: string;
@@ -487,6 +545,8 @@ async function handleCityPage(
             name: '',
             cuisine: null,
             photo_url: null,
+            photo_source: null,
+            places_photo_attribution_html: null,
             lat: null,
             lng: null,
             last_visit_date: rr.last_visit_date,
@@ -504,6 +564,8 @@ async function handleCityPage(
                 existing.name = r.name;
                 existing.cuisine = r.cuisine ?? null;
                 existing.photo_url = r.photo_url ?? null;
+                existing.photo_source = r.photo_source ?? null;
+                existing.places_photo_attribution_html = r.places_photo_attribution_html ?? null;
                 existing.lat = r.lat ?? null;
                 existing.lng = r.lng ?? null;
             }
@@ -515,6 +577,8 @@ async function handleCityPage(
             name: r.name,
             cuisine: r.cuisine ?? null,
             photo_url: r.photo_url ?? null,
+            photo_source: r.photo_source ?? null,
+            places_photo_attribution_html: r.places_photo_attribution_html ?? null,
             lat: r.lat ?? null,
             lng: r.lng ?? null,
             last_visit_date: '',
@@ -660,6 +724,8 @@ async function handleCityPage(
             name: agg.name,
             cuisine: agg.cuisine,
             photo_url: agg.photo_url,
+            photo_source: agg.photo_source,
+            places_photo_attribution_html: agg.places_photo_attribution_html,
             lat: agg.lat,
             lng: agg.lng,
             rating: rating != null ? Math.round(rating * 10) / 10 : null,

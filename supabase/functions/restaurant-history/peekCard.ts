@@ -455,14 +455,17 @@ export async function loadPeekCard(
         typeof restaurant.photo_url === 'string' &&
         restaurant.photo_url.trim()
     ) {
-        media.push({
-            kind: 'places',
-            url: restaurant.photo_url,
-            photo_source: 'places',
-            attribution: placesAttributionAuthor(
-                restaurant.places_photo_attribution_html,
-            ),
-        });
+        const attribution = placesAttributionAuthor(
+            restaurant.places_photo_attribution_html,
+        );
+        if (attribution) {
+            media.push({
+                kind: 'places',
+                url: restaurant.photo_url,
+                photo_source: 'places',
+                attribution,
+            });
+        }
     }
 
     const response: PeekCardResponse = {

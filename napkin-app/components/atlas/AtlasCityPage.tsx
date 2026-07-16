@@ -27,6 +27,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { PressableScale } from '@/components/ui/napkin';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { AtlasGridView } from './AtlasGridView';
 import { AtlasEmptyState } from './AtlasEmptyState';
 import { AtlasMapView, AtlasMapViewRef } from './AtlasMapView';
@@ -46,11 +47,11 @@ interface Props {
     data: TableAtlasCityData;
     currentUserId: string;
     /** Table members to build scope pills from */
-    members: Array<{
+    members: {
         user_id: string;
         display_name: string;
         avatar_url?: string | null;
-    }>;
+    }[];
     onBack: () => void;
     onRestaurantPress: (restaurantId: string) => void;
     onRefresh?: () => void;
@@ -71,97 +72,129 @@ interface PeekStripProps {
     onCardPress: (tile: AtlasRestaurantTile) => void;
 }
 
-function AtlasPeekStrip({ tiles, palette, onCardPress }: PeekStripProps) {
-    return (
-        <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.peekStripContent}
-            style={styles.peekStrip}
-        >
-            {tiles.map((tile) => {
-                const ratingStr =
-                    tile.rating != null ? tile.rating.toFixed(1) : '—';
+export function AtlasPeekStrip({ tiles, palette, onCardPress }: PeekStripProps) {
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
+    const resolvedTiles = useMemo(() => tiles.map((tile) => {
+        const photo = resolveSourcedPhoto({
+            url: tile.photo_url,
+            photoSource: tile.photo_source,
+            attributionHtml: tile.places_photo_attribution_html,
+            restaurantName: tile.name,
+        });
+        const failureKey = `${tile.id}:${photo.url ?? ''}`;
+        return {
+            tile,
+            photo: failedPhotoKeys.has(failureKey)
+                ? { ...photo, url: null, credit: null }
+                : photo,
+            failureKey,
+        };
+    }), [tiles, failedPhotoKeys]);
+    const placesCredits = resolvedTiles.flatMap(({ photo }) => photo.credit ? [photo.credit] : []);
 
-                return (
-                    <PressableScale
-                        key={tile.id}
-                        onPress={() => onCardPress(tile)}
-                        haptic="selection"
-                        scaleTo={0.97}
-                    >
-                        <View
-                            style={[
-                                styles.peekCard,
-                                { backgroundColor: palette.surfaceContainerLow },
-                            ]}
+    return (
+        <View style={styles.peekStripBlock}>
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.peekStripContent}
+                style={styles.peekStrip}
+            >
+                {resolvedTiles.map(({ tile, photo, failureKey }) => {
+                    const ratingStr =
+                        tile.rating != null ? tile.rating.toFixed(1) : '—';
+
+                    return (
+                        <PressableScale
+                            key={tile.id}
+                            onPress={() => onCardPress(tile)}
+                            haptic="selection"
+                            scaleTo={0.97}
                         >
-                            {/* Photo or placeholder */}
                             <View
                                 style={[
-                                    styles.peekPhoto,
-                                    { backgroundColor: palette.surfaceContainerHigh },
+                                    styles.peekCard,
+                                    { backgroundColor: palette.surfaceContainerLow },
                                 ]}
                             >
-                                {tile.photo_url ? (
-                                    <Image
-                                        source={{ uri: tile.photo_url }}
-                                        style={[
-                                            StyleSheet.absoluteFillObject,
-                                            styles.peekPhotoImg,
-                                        ]}
-                                        resizeMode="cover"
-                                    />
-                                ) : null}
-                                {/* Round chip overlay */}
-                                {tile.tile_type !== 'solo' && (
-                                    <View
-                                        style={[
-                                            styles.peekChip,
-                                            { backgroundColor: palette.amberChipHi },
-                                        ]}
-                                    >
-                                        <Text
+                                {/* Photo or placeholder */}
+                                <View
+                                    style={[
+                                        styles.peekPhoto,
+                                        { backgroundColor: palette.surfaceContainerHigh },
+                                    ]}
+                                >
+                                    {photo.url ? (
+                                        <Image
+                                            source={{ uri: photo.url }}
                                             style={[
-                                                styles.peekChipText,
-                                                { color: palette.amberInk },
+                                                StyleSheet.absoluteFillObject,
+                                                styles.peekPhotoImg,
+                                            ]}
+                                            resizeMode="cover"
+                                            onError={() => setFailedPhotoKeys(
+                                                (current) => new Set(current).add(failureKey),
+                                            )}
+                                        />
+                                    ) : null}
+                                    {/* Round chip overlay */}
+                                    {tile.tile_type !== 'solo' && (
+                                        <View
+                                            style={[
+                                                styles.peekChip,
+                                                { backgroundColor: palette.amberChipHi },
                                             ]}
                                         >
-                                            {tile.tile_type === 'mixed' ? 'mixed' : 'round'}
-                                        </Text>
-                                    </View>
-                                )}
-                            </View>
+                                            <Text
+                                                style={[
+                                                    styles.peekChipText,
+                                                    { color: palette.amberInk },
+                                                ]}
+                                            >
+                                                {tile.tile_type === 'mixed' ? 'mixed' : 'round'}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
 
-                            {/* Meta below photo */}
-                            <View style={styles.peekMeta}>
-                                <Text
-                                    style={[styles.peekName, { color: palette.text }]}
-                                    numberOfLines={1}
-                                >
-                                    {tile.name}
-                                </Text>
-                                <View style={styles.peekRow}>
+                                {/* Meta below photo */}
+                                <View style={styles.peekMeta}>
                                     <Text
-                                        style={[styles.peekCount, { color: palette.textMuted }]}
+                                        style={[styles.peekName, { color: palette.text }]}
                                         numberOfLines={1}
                                     >
-                                        {tile.tile_type === 'round' || tile.tile_type === 'mixed'
-                                            ? `${tile.member_names.length} of us`
-                                            : tile.member_names[0] ?? ''}
+                                        {tile.name}
                                     </Text>
-                                    <Text
-                                        style={[styles.peekRating, { color: palette.star }]}
-                                    >
-                                        {ratingStr}
-                                    </Text>
+                                    <View style={styles.peekRow}>
+                                        <Text
+                                            style={[styles.peekCount, { color: palette.textMuted }]}
+                                            numberOfLines={1}
+                                        >
+                                            {tile.tile_type === 'round' || tile.tile_type === 'mixed'
+                                                ? `${tile.member_names.length} of us`
+                                                : tile.member_names[0] ?? ''}
+                                        </Text>
+                                        <Text
+                                            style={[styles.peekRating, { color: palette.star }]}
+                                        >
+                                            {ratingStr}
+                                        </Text>
+                                    </View>
                                 </View>
                             </View>
-                        </View>
-                    </PressableScale>
-                );
-            })}
-        </ScrollView>
+                        </PressableScale>
+                    );
+                })}
+            </ScrollView>
+            {placesCredits.length > 0 ? (
+                <PlacesCredit
+                    credits={placesCredits}
+                    photoCount={placesCredits.length}
+                    testID="atlas-peek-strip-places-credit"
+                    style={styles.peekStripCredit}
+                />
+            ) : null}
+        </View>
     );
 }
 
@@ -636,14 +669,20 @@ const styles = StyleSheet.create({
     },
 
     // ── Peek strip ────────────────────────────────────────────────────────────
+    peekStripBlock: {
+        marginBottom: Spacing.md,
+    },
     peekStrip: {
         marginTop: 4,
-        marginBottom: Spacing.md,
     },
     peekStripContent: {
         paddingHorizontal: 20,
         paddingVertical: 6,
         gap: 10,
+    },
+    peekStripCredit: {
+        marginHorizontal: 20,
+        marginTop: 2,
     },
     peekCard: {
         width: 130,

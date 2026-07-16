@@ -17,6 +17,7 @@ import { Colors, IconSize, Radius, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { tintFor } from '@/lib/engraving';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
+import { PlacesCredit, type PlacesPhotoCredit } from '@/components/ui/PlacesCredit';
 import type { ListDetail, OwnerProfile } from '@/hooks/lists/useList';
 import type { ContextLine } from './listHeaderUtils';
 
@@ -33,8 +34,11 @@ export interface ListDetailHeaderProps {
     ownerProfile: OwnerProfile | null;
     /** deriveCover(entries).photoUrl — attributed restaurant hero, else tint plate. */
     cover: string | null;
-    /** deriveCover(entries).attributionLabel — null for non-Places covers. */
-    coverAttribution: string | null;
+    /** Aggregate attribution for every rendered Places thumbnail on this sheet. */
+    placesCredits: PlacesPhotoCredit[];
+    placesPhotoCount: number;
+    /** Reports a URI-bound cover failure so the owner can update aggregation. */
+    onCoverError?: (coverUrl: string) => void;
     /** deriveMetadataLine(...) — "{n} places" + optional " · saved {m} times". */
     metadata: string;
     /** deriveContextLine(...) — table / private / byline, or null. */
@@ -58,7 +62,9 @@ export function ListDetailHeader({
     list,
     ownerProfile,
     cover,
-    coverAttribution,
+    placesCredits,
+    placesPhotoCount,
+    onCoverError,
     metadata,
     contextLine,
     isOwner,
@@ -115,7 +121,10 @@ export function ListDetailHeader({
                             contentFit="cover"
                             recyclingKey={cover!}
                             transition={180}
-                            onError={() => setFailedCover(cover!)}
+                            onError={() => {
+                                setFailedCover(cover!);
+                                onCoverError?.(cover!);
+                            }}
                         />
                     ) : list.emoji ? (
                         <Text style={styles.coverEmoji}>{list.emoji}</Text>
@@ -140,15 +149,12 @@ export function ListDetailHeader({
                     <Text style={[styles.metadata, { color: palette.textMuted }]} numberOfLines={1}>
                         {metadata}
                     </Text>
-                    {showCoverImage && coverAttribution ? (
-                        <Text
-                            testID="list-detail-cover-attribution"
-                            style={[styles.coverCredit, { color: palette.textMuted }]}
-                            numberOfLines={1}
-                        >
-                            {coverAttribution}
-                        </Text>
-                    ) : null}
+                    <PlacesCredit
+                        credits={placesCredits}
+                        photoCount={placesPhotoCount}
+                        testID="list-detail-cover-attribution"
+                        style={styles.coverCredit}
+                    />
                 </View>
 
                 <View style={styles.identityActions}>

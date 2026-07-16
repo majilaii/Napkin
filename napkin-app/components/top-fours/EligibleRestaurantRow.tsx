@@ -12,11 +12,20 @@ import type { EligibleRestaurant } from '@/hooks/top-fours/useEligibleRestaurant
 
 interface Props {
     restaurant: EligibleRestaurant;
+    /** Already provenance-gated by the owning sheet. */
+    photoUrl: string | null;
     isSelected: boolean;
     onPress: (restaurant: EligibleRestaurant) => void;
+    onPhotoError?: () => void;
 }
 
-export function EligibleRestaurantRow({ restaurant, isSelected, onPress }: Props) {
+export function EligibleRestaurantRow({
+    restaurant,
+    photoUrl,
+    isSelected,
+    onPress,
+    onPhotoError,
+}: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
@@ -44,11 +53,12 @@ export function EligibleRestaurantRow({ restaurant, isSelected, onPress }: Props
                     },
                 ]}
             >
-                {restaurant.photo_url ? (
+                {photoUrl ? (
                     <ExpoImage
-                        source={{ uri: restaurant.photo_url }}
+                        source={{ uri: photoUrl }}
                         style={StyleSheet.absoluteFill}
                         contentFit="cover"
+                        onError={onPhotoError}
                     />
                 ) : null}
             </View>

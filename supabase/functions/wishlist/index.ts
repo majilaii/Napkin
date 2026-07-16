@@ -22,6 +22,8 @@ interface RestaurantRow {
     city: string | null;
     country: string | null;
     photo_url: string | null;
+    photo_source: string | null;
+    places_photo_attribution_html: string | null;
     cuisine: string | null;
     google_rating: number | null;
     price_level: number | null;
@@ -204,6 +206,8 @@ serve(async (req) => {
                         city,
                         country,
                         photo_url,
+                        photo_source,
+                        places_photo_attribution_html,
                         cuisine,
                         google_rating,
                         price_level,
@@ -286,6 +290,8 @@ serve(async (req) => {
                         city,
                         country,
                         photo_url,
+                        photo_source,
+                        places_photo_attribution_html,
                         cuisine,
                         google_rating,
                         price_level,

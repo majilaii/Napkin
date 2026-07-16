@@ -7,6 +7,8 @@ import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SwipeToDeleteRow } from '@/components/common';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { listRowPhotoFailureKey } from './listHeaderUtils';
 import type { ListEntry } from '@/hooks/lists/useList';
 
 type Palette = typeof Colors.light;
@@ -34,6 +36,8 @@ interface Props {
     onNoteChange: (note: string | null) => void;
     onToggleWishlist?: () => void;
     drag?: () => void;
+    failedPhotoKeys?: ReadonlySet<string>;
+    onPhotoError?: (failureKey: string) => void;
 }
 
 export function ListEntryRow({
@@ -52,6 +56,8 @@ export function ListEntryRow({
     onNoteChange,
     onToggleWishlist,
     drag,
+    failedPhotoKeys = new Set(),
+    onPhotoError,
 }: Props) {
     const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
     const palette = Colors[scheme] as Palette;
@@ -59,6 +65,16 @@ export function ListEntryRow({
     const [noteText, setNoteText] = useState(entry.note ?? '');
     const submittedDraftRef = useRef<string | null | undefined>(undefined);
     const restaurant = entry.restaurant;
+    const resolvedPhoto = resolveSourcedPhoto({
+        url: restaurant.photo_url,
+        photoSource: restaurant.photo_source,
+        attributionHtml: restaurant.places_photo_attribution_html,
+        restaurantName: restaurant.name,
+    });
+    const photoFailureKey = listRowPhotoFailureKey(entry);
+    const visiblePhotoUrl = photoFailureKey && failedPhotoKeys.has(photoFailureKey)
+        ? null
+        : resolvedPhoto.url;
 
     useEffect(() => {
         setNoteText(entry.note ?? '');
@@ -98,12 +114,13 @@ export function ListEntryRow({
                         testID="list-row-thumbnail"
                         style={[styles.photo, { backgroundColor: palette.surfaceContainerHigh }]}
                     >
-                        {restaurant.photo_url ? (
+                        {visiblePhotoUrl ? (
                             <Image
-                                source={{ uri: restaurant.photo_url }}
+                                source={{ uri: visiblePhotoUrl }}
                                 style={StyleSheet.absoluteFillObject}
                                 contentFit="cover"
                                 transition={180}
+                                onError={() => photoFailureKey && onPhotoError?.(photoFailureKey)}
                             />
                         ) : null}
                         <View

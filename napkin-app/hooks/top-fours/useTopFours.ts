@@ -18,6 +18,8 @@ export interface TopFourRestaurant {
     name: string;
     city: string | null;
     photo_url: string | null;
+    photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    places_photo_attribution_html?: string | null;
 }
 
 export interface TopFourPick {

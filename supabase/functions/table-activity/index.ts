@@ -956,7 +956,7 @@ serve(async (req) => {
             const { data: gatheringRestaurants } = gatheringRestIds.length > 0
                 ? await supabase
                     .from('restaurants')
-                    .select('id, name, city, photo_url')
+                    .select('id, name, city, photo_url, photo_source, places_photo_attribution_html')
                     .in('id', gatheringRestIds)
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 : { data: [] as any[] };

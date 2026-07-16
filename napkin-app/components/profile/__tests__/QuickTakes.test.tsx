@@ -12,6 +12,7 @@ jest.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
+    Linking: { openURL: jest.fn(() => Promise.resolve()) },
     StyleSheet: {
         absoluteFill: { position: 'absolute', inset: 0 },
         hairlineWidth: 1,
@@ -48,6 +49,8 @@ const PHOTO_TAKE: ProfileQuickTake = {
     city: 'London',
     cuisine: 'Modern British',
     photo_url: 'https://example.com/evelyns.jpg',
+    photo_source: 'places',
+    places_photo_attribution_html: '<a href="https://maps.example/ada">Ada Lens</a>',
     note: 'The set menu still feels generous.',
 };
 
@@ -164,6 +167,8 @@ it('renders the approved photo plate grid with olive semibold metadata', () => {
     const name = copyLink.findAllByType('Text')[0];
     const meta = copyLink.findAllByType('Text')[1];
     const note = renderer.root.findByProps({ testID: 'quick-take-detail-note' });
+    const credit = renderer.root.findAllByProps({ testID: 'quick-take-places-credit' })
+        .find((node: any) => node.type === 'Text');
 
     expect(
         detail.children
@@ -205,6 +210,11 @@ it('renders the approved photo plate grid with olive semibold metadata', () => {
         opacity: Colors.light.placesOverlayOpacity,
     });
     expect(overlay.props.pointerEvents).toBe('none');
+    expect(artLink.findAllByProps({ testID: 'quick-take-places-credit' })).toHaveLength(0);
+    expect(mediaRow.findAllByProps({ testID: 'quick-take-places-credit' })).toHaveLength(0);
+    expect(credit?.props.numberOfLines).toBe(1);
+    expect(credit?.findByProps({ testID: 'quick-take-places-credit-author-0' }).children)
+        .toEqual(['Ada Lens']);
     expect(resolvedPressableStyle(copyLink)).toMatchObject({
         flex: 1,
         minWidth: 0,
@@ -224,7 +234,7 @@ it('renders the approved photo plate grid with olive semibold metadata', () => {
         body.children
             .filter((node: any) => typeof node !== 'string')
             .map((node: any) => node.props.testID),
-    ).toEqual(['quick-take-detail-media-row', 'quick-take-detail-note']);
+    ).toEqual(['quick-take-detail-media-row', 'quick-take-places-credit', 'quick-take-detail-note']);
     expect(note.children).toEqual(['— The set menu still feels generous.']);
     expect(flattenStyle(note.props.style).marginTop).toBe(Spacing.sm + Spacing.xs);
     expect(flattenStyle(collapseSurface.props.style)).toMatchObject({
@@ -244,6 +254,7 @@ it('renders a pure-type, full-width restaurant link when no photo exists', () =>
     const copyLink = pressableWith(renderer, 'testID', 'quick-take-restaurant-copy-link');
 
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'quick-take-places-credit' })).toHaveLength(0);
     expect(pressableWith(renderer, 'testID', 'quick-take-restaurant-art-link')).toBeUndefined();
     expect(mediaRow.findAllByType('AnimatedView')).toHaveLength(0);
     expect(mediaRow.findAllByType('Pressable').map((node: any) => node.props.testID)).toEqual([
@@ -269,6 +280,7 @@ it('falls back to the same pure-type layout when the photo fails to load', () =>
     const copyLink = pressableWith(renderer, 'testID', 'quick-take-restaurant-copy-link');
 
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'quick-take-places-credit' })).toHaveLength(0);
     expect(pressableWith(renderer, 'testID', 'quick-take-restaurant-art-link')).toBeUndefined();
     expect(mediaRow.findAllByType('Pressable').map((node: any) => node.props.testID)).toEqual([
         'quick-take-restaurant-copy-link',
@@ -276,4 +288,15 @@ it('falls back to the same pure-type layout when the photo fails to load', () =>
 
     act(() => copyLink.props.onPress());
     expect(onOpenRestaurant).toHaveBeenCalledWith('restaurant-1');
+});
+
+it.each([
+    ['missing attribution', { places_photo_attribution_html: null }],
+    ['ambiguous provenance', { photo_source: null }],
+])('fails closed to pure type for %s', (_caseName, override) => {
+    const { renderer } = renderQuickTakes({ ...PHOTO_TAKE, ...override });
+
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(pressableWith(renderer, 'testID', 'quick-take-restaurant-art-link')).toBeUndefined();
+    expect(renderer.root.findAllByProps({ testID: 'quick-take-places-credit' })).toHaveLength(0);
 });

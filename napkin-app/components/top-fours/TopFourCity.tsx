@@ -7,7 +7,7 @@
  * Warm hairline top border (not first).
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActionSheetIOS, Alert, Platform } from 'react-native';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -17,6 +17,7 @@ import { TopFourPosterSlot } from './TopFourPosterSlot';
 import type { ClaimedCity, TopFourPick } from '@/hooks/top-fours/useTopFours';
 import { useSetHomeCity } from '@/hooks/top-fours/useSetHomeCity';
 import { useUnclaimCity } from '@/hooks/top-fours/useUnclaimCity';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 interface Props {
     city: ClaimedCity;
@@ -32,9 +33,27 @@ export function TopFourCity({ city, isFirst, isOwner, onEdit }: Props) {
     const palette = Colors[scheme];
     const setHome = useSetHomeCity();
     const unclaim = useUnclaimCity();
+    const [failedPhotos, setFailedPhotos] = useState<Set<string>>(() => new Set());
 
     const pickMap = new Map<number, TopFourPick>(
         city.picks.map(p => [p.position, p]),
+    );
+    const photoByPosition = useMemo(() => new Map(city.picks.map((pick) => {
+        const photo = resolveSourcedPhoto({
+            url: pick.restaurant.photo_url,
+            photoSource: pick.restaurant.photo_source,
+            attributionHtml: pick.restaurant.places_photo_attribution_html,
+            restaurantName: pick.restaurant.name,
+        });
+        const failureKey = `${pick.restaurant.id}:${photo.url ?? ''}`;
+        return [pick.position, {
+            url: photo.url && !failedPhotos.has(failureKey) ? photo.url : null,
+            credit: photo.url && !failedPhotos.has(failureKey) ? photo.credit : null,
+            failureKey,
+        }] as const;
+    })), [city.picks, failedPhotos]);
+    const renderedPlacesPhotos = [...photoByPosition.values()].filter(
+        (photo) => photo.url && photo.credit,
     );
 
     const handleOpenMenu = useCallback(() => {
@@ -172,11 +191,24 @@ export function TopFourCity({ city, isFirst, isOwner, onEdit }: Props) {
                     <TopFourPosterSlot
                         key={pos}
                         pick={pickMap.get(pos) ?? null}
+                        photoUrl={photoByPosition.get(pos)?.url ?? null}
                         isOwner={isOwner}
                         onOpenEdit={isOwner ? () => onEdit(city.city) : undefined}
+                        onPhotoError={photoByPosition.has(pos) ? () => {
+                            const failureKey = photoByPosition.get(pos)!.failureKey;
+                            setFailedPhotos((current) => new Set(current).add(failureKey));
+                        } : undefined}
                     />
                 ))}
             </View>
+            {renderedPlacesPhotos.length > 0 ? (
+                <PlacesCredit
+                    credits={renderedPlacesPhotos.map((photo) => photo.credit)}
+                    photoCount={renderedPlacesPhotos.length}
+                    testID="regional-top-four-places-credit"
+                    style={styles.placesCredit}
+                />
+            ) : null}
         </View>
     );
 }
@@ -209,5 +241,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 22,
         gap: 8,
         justifyContent: 'flex-start',
+    },
+    placesCredit: {
+        marginHorizontal: 22,
+        marginTop: 6,
     },
 });

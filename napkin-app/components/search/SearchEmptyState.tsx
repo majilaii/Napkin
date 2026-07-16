@@ -12,16 +12,19 @@
  * Brand-new user (all sections empty) → nothing but the search field.
  * No "see all" links — wishlist/lists have their own tabs.
  */
-import React from 'react';
-import { View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
+import { Spacing } from '@/constants/theme';
 import type { SearchResultRow as SearchResultRowType } from '@/hooks/search/useRestaurantSearch';
 import type { MyList } from '@/hooks/lists/useMyLists';
+import { PlacesCredit } from '@/components/ui/PlacesCredit';
 import { RecentSearchesList } from './RecentSearchesList';
 import { SearchResultRow } from './SearchResultRow';
 import { TierHeader } from './TierHeader';
 import { ListRow } from './ListRow';
 import type { NearbyPinnedRow } from './emptyStateUtils';
+import { deriveSearchPlacesCredits } from './searchPhotoPresentation';
 
 const TOP_LISTS_COUNT = 4;
 
@@ -44,7 +47,15 @@ export function SearchEmptyState({
     lists,
     onPressList,
 }: Props) {
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
+    const onPhotoError = useCallback((failureKey: string) => {
+        setFailedPhotoKeys((current) => new Set(current).add(failureKey));
+    }, []);
     const topLists = lists.slice(0, TOP_LISTS_COUNT);
+    const nearbyPlacesCredit = deriveSearchPlacesCredits(
+        nearbyPinned.map(({ row }) => row),
+        failedPhotoKeys,
+    );
 
     return (
         <View>
@@ -59,12 +70,23 @@ export function SearchEmptyState({
             {nearbyPinned.length > 0 && (
                 <View>
                     <TierHeader label="Pinned near you" />
+                    {nearbyPlacesCredit.credits.length > 0 ? (
+                        <View style={styles.placesCredit}>
+                            <PlacesCredit
+                                credits={nearbyPlacesCredit.credits}
+                                photoCount={nearbyPlacesCredit.photoCount}
+                                testID="search-nearby-places-credit"
+                            />
+                        </View>
+                    ) : null}
                     {nearbyPinned.map(({ row, distanceLabel }) => (
                         <SearchResultRow
                             key={row.id ?? row.name}
                             item={row}
                             onPress={onPressRestaurant}
                             distanceLabel={distanceLabel}
+                            failedPhotoKeys={failedPhotoKeys}
+                            onPhotoError={onPhotoError}
                         />
                     ))}
                 </View>
@@ -81,3 +103,10 @@ export function SearchEmptyState({
         </View>
     );
 }
+
+const styles = StyleSheet.create({
+    placesCredit: {
+        paddingHorizontal: Spacing.lg,
+        paddingBottom: Spacing.xs,
+    },
+});

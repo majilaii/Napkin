@@ -127,7 +127,14 @@ const profMap = new Map<string, ProfileInput>([
     [OTHER, { user_id: OTHER, display_name: 'Otto Other', avatar_url: null }],
 ]);
 
-const restaurant: RestaurantInput = { id: REST_ID, name: 'Kono', city: 'Hong Kong', photo_url: null };
+const restaurant: RestaurantInput = {
+    id: REST_ID,
+    name: 'Kono',
+    city: 'Hong Kong',
+    photo_url: 'https://images.example/kono.jpg',
+    photo_source: 'places',
+    places_photo_attribution_html: '<a href="https://maps.example/ada">Ada Lens</a>',
+};
 
 Deno.test('buildGatheringCard — 7-point parity contract', async (t) => {
     await t.step('matches the table-activity reference assembly field-for-field (sort_date aside)', () => {
@@ -226,6 +233,11 @@ Deno.test('buildGatheringCard — 7-point parity contract', async (t) => {
         const row = baseRow({ restaurant_id: null });
         const card = buildGatheringCard(row, [], [HOST], profMap, null, undefined, HOST);
         assertEquals(card.restaurant, null);
+    });
+
+    await t.step('restaurant carries photo provenance for rescue rendering', () => {
+        const card = buildGatheringCard(baseRow(), [], [HOST], profMap, restaurant, undefined, HOST);
+        assertEquals(card.restaurant, restaurant);
     });
 
     await t.step('carries rescheduled_from / note / status / supper_id / gather_on from the row', () => {

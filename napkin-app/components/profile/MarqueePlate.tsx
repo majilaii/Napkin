@@ -44,6 +44,7 @@ interface MarqueePlateProps {
     /** Compact Profile summary: prioritize the name over decorative mark/city. */
     compact?: boolean;
     onPress?: () => void;
+    onPhotoError?: (url: string) => void;
     style?: StyleProp<ViewStyle>;
 }
 
@@ -94,6 +95,7 @@ export function MarqueePlate({
     placesWash,
     compact = false,
     onPress,
+    onPhotoError,
     style,
 }: MarqueePlateProps) {
     const scheme = useColorScheme() ?? 'light';
@@ -130,7 +132,10 @@ export function MarqueePlate({
                         contentFit="cover"
                         transition={200}
                         recyclingKey={photoUrl ?? restaurantId}
-                        onError={() => setImgError(true)}
+                        onError={() => {
+                            setImgError(true);
+                            onPhotoError?.(photoUrl!);
+                        }}
                     />
                     {/* TICKET-157: warm Places wash — layered between the photo and the
                         bottom scrim so borrowed venue photos read distinct from the

@@ -130,6 +130,9 @@ export default function GatheringScreen() {
                             name: data.restaurant?.name ?? 'a spot',
                             city: data.restaurant?.city ?? null,
                             photo_url: data.restaurant?.photo_url ?? null,
+                            photo_source: data.restaurant?.photo_source ?? null,
+                            places_photo_attribution_html:
+                                data.restaurant?.places_photo_attribution_html ?? null,
                         }}
                         lockedTableId={data.table_id}
                         initialMemberIds={rescueCrew}

@@ -352,7 +352,7 @@ async function handleGet(
     if (row.restaurant_id) {
         const { data: restRow } = await supabase
             .from('restaurants')
-            .select('id, name, city, photo_url')
+            .select('id, name, city, photo_url, photo_source, places_photo_attribution_html')
             .eq('id', row.restaurant_id)
             .maybeSingle();
         restaurant = restRow ?? null;

@@ -12,6 +12,8 @@ export interface EligibleRestaurant {
     restaurant_id: string;
     name: string;
     photo_url: string | null;
+    photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    places_photo_attribution_html?: string | null;
     city: string | null;
     last_logged_at: string;
     best_rating: number | null;

@@ -22,11 +22,11 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Radius, Spacing } from '@/constants/theme';
+import { Colors, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { tintFor } from '@/lib/engraving';
-import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { ProfileListSummary } from '@/hooks/users/useUserProfile';
 import { SectionHeader } from './SectionHeader';
@@ -50,20 +50,16 @@ function ShelfCard({
     item,
     palette,
     onPress,
+    coverPhotoUrl,
+    onCoverError,
 }: {
     item: ShelfList;
     palette: Palette;
     onPress: () => void;
+    coverPhotoUrl: string | null;
+    onCoverError: (url: string) => void;
 }) {
-    // Bind failures to the URI that emitted them. A stale failure from the old
-    // first restaurant must not suppress a newly derived cover on this card.
-    const [failedCover, setFailedCover] = useState<string | null>(null);
-    useEffect(() => setFailedCover(null), [item.coverPhotoUrl]);
-
-    const showCoverImage = !!item.coverPhotoUrl && failedCover !== item.coverPhotoUrl;
-    const placesAttribution = showCoverImage && item.coverPhotoSource === 'places'
-        ? parsePlacesAttribution(item.coverAttributionHtml)
-        : null;
+    const showCoverImage = !!coverPhotoUrl;
 
     return (
         <PressableScale
@@ -81,28 +77,14 @@ function ShelfCard({
                 )}
                 {showCoverImage ? (
                     <Image
-                        key={item.coverPhotoUrl}
-                        source={{ uri: item.coverPhotoUrl! }}
+                        key={coverPhotoUrl}
+                        source={{ uri: coverPhotoUrl! }}
                         style={StyleSheet.absoluteFill}
                         contentFit="cover"
-                        recyclingKey={item.coverPhotoUrl!}
+                        recyclingKey={coverPhotoUrl!}
                         transition={180}
-                        onError={() => setFailedCover(item.coverPhotoUrl!)}
+                        onError={() => onCoverError(coverPhotoUrl!)}
                     />
-                ) : null}
-                {placesAttribution ? (
-                    <View
-                        pointerEvents="none"
-                        style={[styles.creditScrim, { backgroundColor: palette.scrimDark }]}
-                    >
-                        <Text
-                            testID="list-cover-attribution"
-                            style={[styles.coverCredit, { color: palette.textOnImage }]}
-                            numberOfLines={1}
-                        >
-                            {placesAttribution.label}
-                        </Text>
-                    </View>
                 ) : null}
                 <View
                     pointerEvents="none"
@@ -143,6 +125,31 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
     const palette = Colors[scheme] as Palette;
     const router = useRouter();
     const { data: myLists } = useMyLists(isSelf ? userId : null);
+    const items = isSelf
+        ? (myLists === undefined ? [] : myListsToShelf(myLists).slice(0, MAX_SHELF_CARDS))
+        : publicListsToShelf(publicLists).slice(0, MAX_SHELF_CARDS);
+    const coverSignature = items.map((item) => [
+        item.id,
+        item.coverPhotoUrl ?? '',
+        item.coverPhotoSource ?? '',
+        item.coverAttributionHtml ?? '',
+    ].join(':')).join('|');
+    const [failedCoverKeys, setFailedCoverKeys] = useState<Set<string>>(() => new Set());
+    useEffect(() => setFailedCoverKeys(new Set()), [coverSignature]);
+    const resolvedCovers = new Map(items.map((item) => [item.id, resolveSourcedPhoto({
+        url: item.coverPhotoUrl,
+        photoSource: item.coverPhotoSource,
+        attributionHtml: item.coverAttributionHtml,
+        restaurantName: item.coverRestaurantName,
+    })]));
+    const renderedPlacesCovers = items
+        .map((item) => ({ item, cover: resolvedCovers.get(item.id)! }))
+        .filter(({ item, cover }) => (
+            !!cover.url
+            && !!cover.credit
+            && !failedCoverKeys.has(`${item.id}:${cover.url}`)
+        ))
+        .map(({ cover }) => cover);
 
     const openList = (id: string) =>
         router.push({ pathname: '/list/[id]', params: { id } });
@@ -151,7 +158,6 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
         // Hold render until own lists resolve — avoids flashing the ghost card.
         if (myLists === undefined) return null;
         // Eager horizontal rail — cap mounts; the full set lives behind "see all".
-        const items = myListsToShelf(myLists).slice(0, MAX_SHELF_CARDS);
         const hasLists = items.length > 0;
         return (
             <View>
@@ -172,17 +178,29 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
                                 item={item}
                                 palette={palette}
                                 onPress={() => openList(item.id)}
+                                coverPhotoUrl={failedCoverKeys.has(`${item.id}:${resolvedCovers.get(item.id)?.url ?? ''}`)
+                                    ? null
+                                    : resolvedCovers.get(item.id)?.url ?? null}
+                                onCoverError={(url) => setFailedCoverKeys(
+                                    (current) => new Set(current).add(`${item.id}:${url}`),
+                                )}
                             />
                         ))
                     ) : (
                         <GhostCard palette={palette} onPress={() => router.push('/list/new')} />
                     )}
                 </ScrollView>
+                <PlacesCredit
+                    credits={renderedPlacesCovers.map((cover) => cover.credit)}
+                    photoCount={renderedPlacesCovers.length}
+                    testID="list-cover-attribution"
+                    interactive={false}
+                    style={styles.aggregateCredit}
+                />
             </View>
         );
     }
 
-    const items = publicListsToShelf(publicLists).slice(0, MAX_SHELF_CARDS);
     if (items.length === 0) return null;
     return (
         <View>
@@ -198,9 +216,22 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
                         item={item}
                         palette={palette}
                         onPress={() => openList(item.id)}
+                        coverPhotoUrl={failedCoverKeys.has(`${item.id}:${resolvedCovers.get(item.id)?.url ?? ''}`)
+                            ? null
+                            : resolvedCovers.get(item.id)?.url ?? null}
+                        onCoverError={(url) => setFailedCoverKeys(
+                            (current) => new Set(current).add(`${item.id}:${url}`),
+                        )}
                     />
                 ))}
             </ScrollView>
+            <PlacesCredit
+                credits={renderedPlacesCovers.map((cover) => cover.credit)}
+                photoCount={renderedPlacesCovers.length}
+                testID="list-cover-attribution"
+                interactive={false}
+                style={styles.aggregateCredit}
+            />
         </View>
     );
 }
@@ -217,6 +248,10 @@ const styles = StyleSheet.create({
         width: CARD_W,
         gap: 8,
     },
+    aggregateCredit: {
+        marginHorizontal: 22,
+        marginTop: 5,
+    },
     plate: {
         width: CARD_W,
         height: PLATE_H,
@@ -228,20 +263,6 @@ const styles = StyleSheet.create({
     plateOutline: {
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: Radius.lg,
-    },
-    creditScrim: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        paddingHorizontal: Spacing.sm,
-        paddingVertical: Spacing.xs,
-    },
-    coverCredit: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-        lineHeight: 14,
-        opacity: 0.9,
     },
     ghostPlate: {
         borderWidth: 1.5,

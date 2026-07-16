@@ -29,6 +29,7 @@ jest.mock('react-native', () => {
         View: host('View'),
         Text: host('Text'),
         ScrollView: host('ScrollView'),
+        Linking: { openURL: jest.fn(() => Promise.resolve()) },
         StyleSheet: {
             absoluteFill: { position: 'absolute' },
             hairlineWidth: 1,
@@ -104,7 +105,7 @@ function attributionCredits(renderer: any) {
 }
 
 describe('ListsShelf section header (rev 2 un-merge)', () => {
-    it('renders the parsed credit over an attributed Places cover', () => {
+    it('renders one parsed credit adjacent to an attributed Places cover', () => {
         mockMyLists = [{
             ...MY_LIST,
             cover_photo_url: 'https://cdn.example/places.jpg',
@@ -116,13 +117,57 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(1);
         expect(credits).toHaveLength(1);
-        expect(credits[0].children.join('')).toBe('Jane Doe');
+        expect(JSON.stringify(credits[0].children)).toContain('photo');
+        expect(JSON.stringify(credits[0].children)).toContain('Jane Doe');
         expect(credits[0].props.numberOfLines).toBe(1);
+        expect(renderer.root.findByType('Image').parent.findAllByProps({
+            testID: 'list-cover-attribution',
+        })).toHaveLength(0);
 
         const image = renderer.root.findByType('Image');
         act(() => image.props.onError());
         expect(renderer.root.findAllByType('Image')).toHaveLength(0);
         expect(attributionCredits(renderer)).toHaveLength(0);
+
+        act(() => renderer.unmount());
+    });
+
+    it('renders one deduped aggregate line for a shelf with multiple Places covers', () => {
+        mockMyLists = [
+            {
+                ...MY_LIST,
+                id: 'one',
+                cover_photo_url: 'https://cdn.example/one.jpg',
+                cover_photo_source: 'places',
+                cover_attribution_html: 'Jane Doe',
+            },
+            {
+                ...MY_LIST,
+                id: 'two',
+                cover_photo_url: 'https://cdn.example/two.jpg',
+                cover_photo_source: 'places',
+                cover_attribution_html: '  JANE   DOE ',
+            },
+            {
+                ...MY_LIST,
+                id: 'three',
+                cover_photo_url: 'https://cdn.example/three.jpg',
+                cover_photo_source: 'places',
+                cover_attribution_html: 'Marco',
+            },
+        ];
+        const renderer = render();
+        const credits = attributionCredits(renderer);
+
+        expect(renderer.root.findAllByType('Image')).toHaveLength(3);
+        expect(credits).toHaveLength(1);
+        expect(JSON.stringify(credits[0].children)).toContain('photos');
+        expect(JSON.stringify(credits[0].children)).toContain('Jane Doe');
+        expect(JSON.stringify(credits[0].children)).toContain('Marco');
+        for (const image of renderer.root.findAllByType('Image')) {
+            expect(image.parent.findAllByProps({ testID: 'list-cover-attribution' }))
+                .toHaveLength(0);
+        }
 
         act(() => renderer.unmount());
     });
@@ -138,6 +183,34 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(1);
         expect(attributionCredits(renderer)).toHaveLength(0);
+
+        act(() => renderer.unmount());
+    });
+
+    it('does not count an own photo in the Places photo grammar', () => {
+        mockMyLists = [
+            {
+                ...MY_LIST,
+                id: 'places',
+                cover_photo_url: 'https://cdn.example/places.jpg',
+                cover_photo_source: 'places',
+                cover_attribution_html: 'Jane Doe',
+            },
+            {
+                ...MY_LIST,
+                id: 'own',
+                cover_photo_url: 'https://cdn.example/own.jpg',
+                cover_photo_source: 'user',
+                cover_attribution_html: null,
+            },
+        ];
+        const renderer = render();
+        const [credit] = attributionCredits(renderer);
+
+        expect(renderer.root.findAllByType('Image')).toHaveLength(2);
+        expect(JSON.stringify(credit.children)).toContain('photo');
+        expect(JSON.stringify(credit.children)).not.toContain('photos');
+        expect(JSON.stringify(credit.children)).toContain('Jane Doe');
 
         act(() => renderer.unmount());
     });
@@ -181,7 +254,7 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
         expect(renderer.root.findByType('Image').props.source).toEqual({
             uri: 'https://cdn.example/new.jpg',
         });
-        expect(attributionCredits(renderer)[0].children.join('')).toBe('New credit');
+        expect(JSON.stringify(attributionCredits(renderer)[0].children)).toContain('New credit');
 
         act(() => renderer.unmount());
     });

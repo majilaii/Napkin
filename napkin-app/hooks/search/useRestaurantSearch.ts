@@ -20,6 +20,7 @@ import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { searchCache, type PlacesResult, type PersistedRow, type VisitedRow } from './searchCache';
+import { mergeSearchResults } from './mergeSearchResults';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,14 +36,17 @@ export interface SearchResultRow {
     city: string | null;
     cuisine: string | null;
     address: string | null;
-    /** For tier 1/2: stored photo_url. For tier 3: Places photoReference for thumb URL. */
+    /** Stored photo_url for persisted tier 1/2 rows; ghosts are always null. */
     photoUrl: string | null;
+    /**
+     * Persisted restaurant-hero provenance. Ghosts and stale cached rows are null;
+     * renderers must fail closed rather than infer Places from the URL.
+     */
+    photoSource?: 'user' | 'table' | 'places' | 'none' | null;
     photoReference: string | null;
     /**
-     * TICKET-057: Places photo attribution HTML synthesized from authorAttributions.
-     * Carried through SearchResultRow → placePayload JSON → ghost render so user
-     * stories #1/#2 fire on search-origin ghost pages, not only on direct lookups.
-     * Null when no attribution available (sentinel path will mark photo_source='none').
+     * Stored attribution for persisted Places photos, or Places API attribution
+     * retained on a text-only ghost for later persistence. Null when unavailable.
      */
     photoAttributionHtml: string | null;
     tier: SearchTier;
@@ -91,67 +95,6 @@ async function fetchPersistedDirect(
         'restaurant-history',
         { method: 'GET', action: 'search', params: { q: query } },
     );
-}
-
-function mergeResults(
-    places: PlacesResult[],
-    persisted: { visitedByMyTables: VisitedRow[]; onNapkin: PersistedRow[] },
-): SearchResults {
-    // Build set of external_ids that are already in persisted tiers
-    // external_id is where Google Place IDs are stored (renamed from google_place_id in 20251215134700)
-    const persistedExternalIds = new Set<string>();
-    for (const r of persisted.visitedByMyTables) {
-        if (r.external_id) persistedExternalIds.add(r.external_id);
-    }
-    for (const r of persisted.onNapkin) {
-        if (r.external_id) persistedExternalIds.add(r.external_id);
-    }
-
-    const visited: SearchResultRow[] = persisted.visitedByMyTables.map((r) => ({
-        id: r.id,
-        placeId: r.external_id ?? undefined,
-        name: r.name,
-        city: r.city,
-        cuisine: r.cuisine,
-        address: r.address ?? null,
-        photoUrl: r.photo_url,
-        photoReference: null,
-        photoAttributionHtml: null,
-        tier: 'visited',
-        socialTag: `visited by ${r.table_name}`,
-        mostRecentActivityAt: r.most_recent_activity_at,
-    }));
-
-    const onNapkin: SearchResultRow[] = persisted.onNapkin.map((r) => ({
-        id: r.id,
-        placeId: r.external_id ?? undefined,
-        name: r.name,
-        city: r.city,
-        cuisine: r.cuisine,
-        address: r.address ?? null,
-        photoUrl: r.photo_url,
-        photoReference: null,
-        photoAttributionHtml: null,
-        tier: 'onNapkin',
-    }));
-
-    // Ghost rows: Places results not already in tier 1/2
-    const morePlaces: SearchResultRow[] = places
-        .filter((p) => !persistedExternalIds.has(p.id))
-        .map((p) => ({
-            placeId: p.id,
-            name: p.name ?? 'Unknown',
-            city: p.city,
-            cuisine: p.cuisine,
-            address: p.formattedAddress,
-            photoUrl: null,
-            photoReference: p.photoReference,
-            photoAttributionHtml: p.photoAttributionHtml,
-            tier: 'morePlaces',
-            place: p,
-        }));
-
-    return { visited, onNapkin, morePlaces };
 }
 
 // ── Unified ranking (TICKET-167) ─────────────────────────────────────────────
@@ -232,12 +175,12 @@ export function useRestaurantSearch(
         if (!enabled) return { visited: [], onNapkin: [], morePlaces: [] };
 
         if (cachedResult) {
-            return mergeResults(cachedResult.places, cachedResult.persisted);
+            return mergeSearchResults(cachedResult.places, cachedResult.persisted);
         }
 
         const places = placesQuery.data ?? [];
         const persisted = persistedQuery.data ?? { visitedByMyTables: [], onNapkin: [] };
-        return mergeResults(places, persisted);
+        return mergeSearchResults(places, persisted);
     }, [
         enabled,
         cachedResult,

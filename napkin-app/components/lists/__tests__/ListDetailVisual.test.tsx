@@ -5,11 +5,13 @@ import { Colors } from '@/constants/theme';
 import type { ListDetail, ListEntry, OwnerProfile } from '@/hooks/lists/useList';
 import { ListDetailHeader, type ListDetailHeaderProps } from '../ListDetailHeader';
 import { ListEntryRow } from '../ListEntryRow';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 jest.mock('react-native', () => ({
     ActivityIndicator: 'ActivityIndicator',
+    Linking: { openURL: jest.fn(() => Promise.resolve()) },
     Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios },
     StyleSheet: {
         absoluteFillObject: { position: 'absolute', inset: 0 },
@@ -35,7 +37,15 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     );
 }
 
-function entry(photoUrl: string | null): ListEntry {
+function hostTextByTestId(root: any, testID: string) {
+    return root.findAllByProps({ testID }).find((node: any) => node.type === 'Text')!;
+}
+
+function entry(
+    photoUrl: string | null,
+    photoSource: ListEntry['restaurant']['photo_source'] = 'user',
+    attributionHtml: string | null = null,
+): ListEntry {
     return {
         id: 'entry-1',
         list_id: 'list-1',
@@ -50,6 +60,8 @@ function entry(photoUrl: string | null): ListEntry {
             city: 'New York',
             country: 'US',
             photo_url: photoUrl,
+            photo_source: photoSource,
+            places_photo_attribution_html: attributionHtml,
             cuisine: 'Japanese',
             google_rating: null,
             price_level: 3,
@@ -61,12 +73,17 @@ function entry(photoUrl: string | null): ListEntry {
     };
 }
 
-function renderRow(photoUrl: string | null, isWishlisted = false) {
+function renderRow(
+    photoUrl: string | null,
+    isWishlisted = false,
+    photoSource: ListEntry['restaurant']['photo_source'] = 'user',
+    attributionHtml: string | null = null,
+) {
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(
             <ListEntryRow
-                entry={entry(photoUrl)}
+                entry={entry(photoUrl, photoSource, attributionHtml)}
                 rank={3}
                 isOwner
                 isEditing={false}
@@ -108,6 +125,16 @@ describe('ListEntryRow design AA', () => {
         expect(thumbnail.findAllByType('ExpoImage')).toHaveLength(1);
         expect(flattenStyle(row.props.style)).toMatchObject({ paddingVertical: 8 });
         expect((flattenStyle(thumbnail.props.style).height as number) + 16).toBe(70);
+
+        act(() => renderer.unmount());
+    });
+
+    it('suppresses an AA-row Places thumbnail when its stored credit is missing', () => {
+        const renderer = renderRow('https://cdn.example/places.jpg', false, 'places', null);
+        const thumbnail = renderer.root.findByProps({ testID: 'list-row-thumbnail' });
+
+        expect(thumbnail.findAllByType('ExpoImage')).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ testID: 'places-credit' })).toHaveLength(0);
 
         act(() => renderer.unmount());
     });
@@ -214,11 +241,17 @@ function renderHeader(
 ) {
     const onAddSpots = jest.fn();
     const onShare = jest.fn();
+    const resolved = resolveSourcedPhoto({
+        url: cover,
+        photoSource: cover ? 'places' : null,
+        attributionHtml: coverAttribution,
+    });
     const props: ListDetailHeaderProps = {
         list: list(title),
         ownerProfile,
         cover,
-        coverAttribution,
+        placesCredits: resolved.credit ? [resolved.credit] : [],
+        placesPhotoCount: resolved.credit ? 1 : 0,
         metadata: '12 places',
         contextLine: { kind: 'table', text: 'Shared with everyone at this Table' },
         isOwner: true,
@@ -246,10 +279,12 @@ describe('ListDetailHeader design AA overlap guard', () => {
             'https://cdn.example/places.jpg',
         );
         const identity = renderer.root.findByProps({ testID: 'list-detail-header-identity' });
-        const credit = renderer.root.findByProps({ testID: 'list-detail-cover-attribution' });
+        const credit = hostTextByTestId(renderer.root, 'list-detail-cover-attribution');
 
-        expect(identity.findAllByProps({ testID: 'list-detail-cover-attribution' })).toHaveLength(1);
-        expect(credit.children.join('')).toBe('Jane Doe');
+        expect(identity.findAllByProps({ testID: 'list-detail-cover-attribution' })
+            .filter((node: any) => node.type === 'Text')).toHaveLength(1);
+        expect(JSON.stringify(credit.children)).toContain('photo');
+        expect(JSON.stringify(credit.children)).toContain('Jane Doe');
         expect(credit.props.numberOfLines).toBe(1);
         expect(flattenStyle(credit.props.style)).toMatchObject({
             fontFamily: 'Manrope_500Medium',
@@ -262,7 +297,8 @@ describe('ListDetailHeader design AA overlap guard', () => {
         const image = renderer.root.findByType('ExpoImage');
         act(() => image.props.onError());
         expect(renderer.root.findAllByType('ExpoImage')).toHaveLength(0);
-        expect(renderer.root.findAllByProps({ testID: 'list-detail-cover-attribution' })).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ testID: 'list-detail-cover-attribution' })
+            .filter((node: any) => node.type === 'Text')).toHaveLength(1);
 
         act(() => renderer.unmount());
     });
@@ -276,11 +312,17 @@ describe('ListDetailHeader design AA overlap guard', () => {
         const failOldCover = renderer.root.findByType('ExpoImage').props.onError;
 
         act(() => {
+            const next = resolveSourcedPhoto({
+                url: 'https://cdn.example/new.jpg',
+                photoSource: 'places',
+                attributionHtml: 'New credit',
+            });
             renderer.update(
                 <ListDetailHeader
                     {...props}
                     cover="https://cdn.example/new.jpg"
-                    coverAttribution="New credit"
+                    placesCredits={[next.credit!]}
+                    placesPhotoCount={1}
                 />,
             );
         });
@@ -289,9 +331,9 @@ describe('ListDetailHeader design AA overlap guard', () => {
         expect(renderer.root.findByType('ExpoImage').props.source).toEqual({
             uri: 'https://cdn.example/new.jpg',
         });
-        expect(
-            renderer.root.findByProps({ testID: 'list-detail-cover-attribution' }).children.join(''),
-        ).toBe('New credit');
+        expect(JSON.stringify(
+            hostTextByTestId(renderer.root, 'list-detail-cover-attribution').children,
+        )).toContain('New credit');
 
         act(() => renderer.unmount());
     });

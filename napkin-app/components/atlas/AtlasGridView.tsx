@@ -6,10 +6,11 @@
  *
  * Wireframe: atlas-canvas.html .photo-masonry
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { RestaurantTile } from './RestaurantTile';
 import type { AtlasRestaurantTile } from '@/hooks/tables/useTableAtlasCity';
 
@@ -26,57 +27,99 @@ const RIGHT_HEIGHTS = [170, 200, 175, 215, 165];
 export function AtlasGridView({ tiles, onTilePress, palette: paletteProp }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = paletteProp ?? Colors[scheme];
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
+
+    // Resolve once at the surface boundary so the aggregate line exactly
+    // describes the images that the child tiles are allowed to display.
+    const resolvedTiles = useMemo(() => tiles.map((tile) => {
+        const photo = resolveSourcedPhoto({
+            url: tile.photo_url,
+            photoSource: tile.photo_source,
+            attributionHtml: tile.places_photo_attribution_html,
+            restaurantName: tile.name,
+        });
+        const failureKey = `${tile.id}:${photo.url ?? ''}`;
+        return {
+            tile,
+            photo: failedPhotoKeys.has(failureKey)
+                ? { ...photo, url: null, credit: null }
+                : photo,
+            failureKey,
+        };
+    }), [tiles, failedPhotoKeys]);
 
     // Split into two columns
     const { leftCol, rightCol } = useMemo(() => {
-        const left: AtlasRestaurantTile[] = [];
-        const right: AtlasRestaurantTile[] = [];
-        tiles.forEach((tile, i) => {
-            if (i % 2 === 0) left.push(tile);
-            else right.push(tile);
+        const left: typeof resolvedTiles = [];
+        const right: typeof resolvedTiles = [];
+        resolvedTiles.forEach((resolved, i) => {
+            if (i % 2 === 0) left.push(resolved);
+            else right.push(resolved);
         });
         return { leftCol: left, rightCol: right };
-    }, [tiles]);
+    }, [resolvedTiles]);
+    const placesCredits = resolvedTiles.flatMap(({ photo }) => photo.credit ? [photo.credit] : []);
 
     return (
-        <View style={styles.masonry}>
-            {/* Left column */}
-            <View style={styles.col}>
-                {leftCol.map((tile, i) => (
-                    <View key={tile.id} style={styles.tileWrap}>
-                        <RestaurantTile
-                            tile={tile}
-                            onPress={() => onTilePress(tile.id)}
-                            heroHeight={LEFT_HEIGHTS[i % LEFT_HEIGHTS.length]}
-                            palette={palette}
-                        />
-                    </View>
-                ))}
+        <View style={styles.container}>
+            <View style={styles.masonry}>
+                {/* Left column */}
+                <View style={styles.col}>
+                    {leftCol.map(({ tile, photo, failureKey }, i) => (
+                        <View key={tile.id} style={styles.tileWrap}>
+                            <RestaurantTile
+                                tile={tile}
+                                resolvedPhoto={photo}
+                                onPress={() => onTilePress(tile.id)}
+                                heroHeight={LEFT_HEIGHTS[i % LEFT_HEIGHTS.length]}
+                                palette={palette}
+                                onPhotoError={() => setFailedPhotoKeys(
+                                    (current) => new Set(current).add(failureKey),
+                                )}
+                            />
+                        </View>
+                    ))}
+                </View>
+
+                {/* Right column */}
+                <View style={styles.col}>
+                    {rightCol.map(({ tile, photo, failureKey }, i) => (
+                        <View key={tile.id} style={styles.tileWrap}>
+                            <RestaurantTile
+                                tile={tile}
+                                resolvedPhoto={photo}
+                                onPress={() => onTilePress(tile.id)}
+                                heroHeight={RIGHT_HEIGHTS[i % RIGHT_HEIGHTS.length]}
+                                palette={palette}
+                                onPhotoError={() => setFailedPhotoKeys(
+                                    (current) => new Set(current).add(failureKey),
+                                )}
+                            />
+                        </View>
+                    ))}
+                </View>
             </View>
 
-            {/* Right column */}
-            <View style={styles.col}>
-                {rightCol.map((tile, i) => (
-                    <View key={tile.id} style={styles.tileWrap}>
-                        <RestaurantTile
-                            tile={tile}
-                            onPress={() => onTilePress(tile.id)}
-                            heroHeight={RIGHT_HEIGHTS[i % RIGHT_HEIGHTS.length]}
-                            palette={palette}
-                        />
-                    </View>
-                ))}
-            </View>
+            {placesCredits.length > 0 ? (
+                <PlacesCredit
+                    credits={placesCredits}
+                    photoCount={placesCredits.length}
+                    testID="atlas-grid-places-credit"
+                    style={styles.placesCredit}
+                />
+            ) : null}
         </View>
     );
 }
 
 const styles = StyleSheet.create({
+    container: {
+        paddingBottom: Spacing.md,
+    },
     masonry: {
         flexDirection: 'row',
         paddingHorizontal: 20,
         gap: 10,
-        paddingBottom: Spacing.md,
     },
     col: {
         flex: 1,
@@ -84,6 +127,10 @@ const styles = StyleSheet.create({
     },
     tileWrap: {
         // Individual tile wrapper — no extra style needed
+    },
+    placesCredit: {
+        marginHorizontal: 20,
+        marginTop: Spacing.sm,
     },
 });
 
