@@ -19,7 +19,7 @@
  * drawer (they live on the Map tab's List sheet + the profile).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Alert, ScrollView, Linking } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Alert, ScrollView, Linking, Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -32,6 +32,12 @@ import { useUserProfile } from '@/hooks/users';
 import { useDeleteAccount } from '@/hooks/account';
 import { Avatar } from '@/components/feed/Avatar';
 import { LEGAL_URLS } from '@/constants/links';
+import { FRIEND_TEST } from '@/constants/flags';
+import {
+    getPreviewOnboardingOnLaunch,
+    getPreviewOnboardingOnLaunchCached,
+    setPreviewOnboardingOnLaunch,
+} from '@/lib/devPrefs';
 import { getPermissionState } from '@/lib/localNotify';
 import { permissionPill, type PermissionPill } from '@/lib/permissionLabel';
 
@@ -66,6 +72,7 @@ function Row({
     onPress,
     last,
     leading,
+    trailing,
 }: {
     label: string;
     value?: string | null;
@@ -74,6 +81,7 @@ function Row({
     onPress?: () => void;
     last?: boolean;
     leading?: React.ReactNode;
+    trailing?: React.ReactNode;
 }) {
     const pillColor =
         pill?.tone === 'positive'
@@ -96,6 +104,7 @@ function Row({
                         {value}
                     </Text>
                 ) : null}
+                {trailing}
                 {onPress ? (
                     <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
                 ) : null}
@@ -145,6 +154,9 @@ export default function SettingsScreen() {
     // (so a trip out to system Settings and back reflects immediately).
     const [notifStatus, setNotifStatus] = useState<string>('undetermined');
     const [locStatus, setLocStatus] = useState<string>('undetermined');
+    const [previewOnLaunch, setPreviewOnLaunch] = useState(() =>
+        getPreviewOnboardingOnLaunchCached(),
+    );
     useFocusEffect(
         useCallback(() => {
             let alive = true;
@@ -154,6 +166,9 @@ export default function SettingsScreen() {
             Location.getForegroundPermissionsAsync()
                 .then((r) => alive && setLocStatus(r.status))
                 .catch(() => undefined);
+            getPreviewOnboardingOnLaunch().then(
+                (value) => alive && setPreviewOnLaunch(value),
+            );
             return () => {
                 alive = false;
             };
@@ -163,6 +178,10 @@ export default function SettingsScreen() {
     const goPrivacy = () => router.push('/settings/privacy');
     const openSystemSettings = () => {
         Linking.openSettings().catch(() => undefined);
+    };
+    const updatePreviewOnLaunch = (value: boolean) => {
+        setPreviewOnLaunch(value);
+        void setPreviewOnboardingOnLaunch(value);
     };
 
     // Two-step destructive confirm (guideline 5.1.1(v)) — unchanged from TICKET-090.
@@ -296,8 +315,27 @@ export default function SettingsScreen() {
                         value="Replay"
                         palette={palette}
                         onPress={() => router.push('/settings/import-tutorial' as any)}
-                        last
+                        last={FRIEND_TEST.hideOnboardingPreviewToggle}
                     />
+                    {!FRIEND_TEST.hideOnboardingPreviewToggle ? (
+                        <Row
+                            label="show onboarding on launch"
+                            palette={palette}
+                            trailing={
+                                <Switch
+                                    value={previewOnLaunch}
+                                    onValueChange={updatePreviewOnLaunch}
+                                    trackColor={{
+                                        false: palette.outlineVariant,
+                                        true: palette.primary,
+                                    }}
+                                    thumbColor="#fff"
+                                    accessibilityLabel="show onboarding on launch"
+                                />
+                            }
+                            last
+                        />
+                    ) : null}
                 </Section>
 
                 <Section title="about" palette={palette}>
